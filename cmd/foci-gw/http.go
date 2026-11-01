@@ -324,9 +324,22 @@ func policyOrFallback(p route.Policy) route.Policy {
 	return p
 }
 
-// broadcastResponse delivers a turn's response text to every live connection
-// for the agent (PolicyBroadcast): the session's own chat gets it via
-// SendToSession; every other surface gets it via SendText (its default chat).
+// broadcastResponse delivers a turn's response text for PolicyBroadcast. Two
+// shapes, decided by the session's confinement (platform.SessionConfinesReplies:
+// its live connection, or — decisive when none is live — its owning platform):
+//
+//   - A confining session (Slack, #2459 req 5) keeps the text in the
+//     session's own conversation ONLY: its conversations are private
+//     per-user, so fanning the reply out to other platforms would hand one
+//     user's traffic to a different audience. Nothing else is addressed —
+//     with no live connection for the session the reply is dropped and
+//     logged, never fanned out.
+//   - Every other session is served by the agent-wide fan-out alone
+//     (route.Broadcast): the session's own stored connection — identity-equal
+//     to a fan-out member for Telegram/Discord — is addressed via
+//     SendToSession, every other carrying connection (the app's unbound conn,
+//     routing to its default conversation) via SendText. Droppers are not in
+//     the set at all.
 func broadcastResponse(connMgr platform.ConnectionManager, agentID, sessionKey, text, logTag string) {
 	// The broadcast fan-out runs its turn behind a BufferSink, which emits no
 	// TextBlock, so the sink wrapper used everywhere else has nothing to
@@ -334,8 +347,24 @@ func broadcastResponse(connMgr platform.ConnectionManager, agentID, sessionKey, 
 	// the choke point for both broadcast callers: async /send
 	// (deliverBufferedQueued) and sync /send (handleSend).
 	agent.RecordConversationSent(sessionKey, text)
+	logger := log.NewComponentLogger(logTag)
 
 	sessionConn := connMgr.ForSession(sessionKey)
+	if platform.SessionConfinesReplies(connMgr, sessionKey) {
+		if sessionConn == nil {
+			// Confinement holds without a live connection (the session's
+			// owning platform declares it): falling back to the fan-out
+			// would hand one user's reply to other platforms' chats.
+			logger.Errorf("broadcast response for session %s dropped: replies are confined to its own conversation and no live connection serves it", sessionKey)
+			return
+		}
+		if err := sessionConn.SendToSession(sessionKey, text); err != nil {
+			logger.Errorf("broadcast delivery to session %s via %s: %v", sessionKey, sessionConn.PlatformName(), err)
+			return
+		}
+		logger.Infof("broadcast response for session %s delivered to its own conversation on %s (replies confined; no fan-out)", sessionKey, sessionConn.PlatformName())
+		return
+	}
 	delivered := 0
 	for _, conn := range route.Broadcast(connMgr, agentID) {
 		var err error
@@ -345,12 +374,12 @@ func broadcastResponse(connMgr platform.ConnectionManager, agentID, sessionKey, 
 			err = conn.SendText(text)
 		}
 		if err != nil {
-			log.NewComponentLogger(logTag).Errorf("broadcast delivery via %s: %v", conn.PlatformName(), err)
+			logger.Errorf("broadcast delivery via %s: %v", conn.PlatformName(), err)
 			continue
 		}
 		delivered++
 	}
-	log.NewComponentLogger(logTag).Infof("broadcast response for session %s delivered to %d connection(s)", sessionKey, delivered)
+	logger.Infof("broadcast response for session %s delivered to %d connection(s)", sessionKey, delivered)
 }
 
 // resolveDefaultSession resolves an agent's default session through the same

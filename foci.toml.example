@@ -295,6 +295,12 @@ system_files = [
 # [agents.platforms.discord]              # discord-specific fields
 # guild_id = ""                           # restrict to this guild (empty = all)
 # auto_thread = true                      # create threads for facet sessions
+#
+# [[agents.platforms]]
+# id = "slack"                            # slack carries only access/notify/display here;
+# [agents.platforms.access]               # the channel→agent mapping lives on the GLOBAL
+# allowed_users = ["U012AB3CDE"]          # [[platforms]] id="slack" entry (see below)
+# operator_users = []                     # commands are not available from Slack yet (#2459 B)
 
 # Per-agent blocked paths (replaces global):
 # [[agents.blocked_paths]]
@@ -423,8 +429,10 @@ system_files = [
 
 # ─── Platforms ────────────────────────────────────────────────────────
 # Platforms are configured as [[platforms]] array entries. Each entry has
-# an id ("telegram", "discord") and platform-specific settings.
-# Per-agent overrides use [[agents.platforms]] with the same structure.
+# an id ("telegram", "discord", "slack", "app") and platform-specific
+# settings. Per-agent overrides use [[agents.platforms]] with the same
+# structure (slack's per-agent entry carries only access/notify/display —
+# its channel→agent mapping is global).
 
 [[platforms]]
 id = "telegram"
@@ -471,6 +479,24 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # [platforms.discord]                  # discord-specific settings
 # auto_thread = true                   # create threads for facet sessions
 # guild_id = ""                        # restrict to a single guild (empty = all)
+
+# [[platforms]]
+# id = "slack"                         # one Slack app over Socket Mode (no public URL).
+# [platforms.access]                   # tokens go in secrets.toml: [slack] bot_token (xoxb-…)
+# allowed_users = ["U012AB3CDE"]       # Slack member IDs; empty + allowed_users_only=true (the
+# allowed_users_only = true            # default) means NOBODY can talk to the agents on Slack
+# [platforms.slack]
+# default_agent = "main"               # agent that answers DMs ("" = DMs start no turn)
+# bot_token_secret = "slack.bot_token" # secrets key overrides (defaults shown)
+# app_token_secret = "slack.app_token"
+# api_base = ""                        # Slack Web API base URL override (for tests)
+# request_timeout = "30s"              # HTTP timeout for every Slack Web API call
+# connect_timeout = "10s"              # Socket Mode WebSocket dial + handshake timeout
+# unmapped_reply_hold = "10m"          # how long one "not set up here" reply quiets an
+#                                      # unmapped channel's thread before it may repeat
+# [[platforms.slack.channels]]         # each channel maps to exactly ONE agent
+# id = "C0123456789"                   # Slack channel ID
+# agent = "main"                       # the agent that answers @mentions there
 
 # [[platforms]]
 # id = "app"                           # native FOCI app (WebSocket)

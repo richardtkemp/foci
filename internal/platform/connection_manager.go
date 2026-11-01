@@ -16,6 +16,7 @@ import (
 type aggregatingConnMgr struct {
 	named               map[string]ConnectionManager // platform name → manager
 	order               []string                     // iteration order
+	confines            map[string]bool              // platform name → provider declared session-reply confinement (#2459 req 5)
 	chatPlatformFn      func(agentID string, chatID int64) string
 	defaultSessionKeyFn func(agentID string) string // resolves most recently active session
 	preferredPlatformFn func(agentID string) string // configured default_platform (per-agent, else global); "" = no preference
@@ -23,16 +24,37 @@ type aggregatingConnMgr struct {
 
 func newAggregatingConnMgr(providers []MessagingProvider, chatPlatformFn func(agentID string, chatID int64) string, defaultSessionKeyFn func(agentID string) string, preferredPlatformFn func(agentID string) string) *aggregatingConnMgr {
 	named := make(map[string]ConnectionManager, len(providers))
+	caps := make(map[string]MessagingProvider, len(providers))
+	confines := make(map[string]bool, len(providers))
 	order := make([]string, len(providers))
 	for i, p := range providers {
 		name := p.Name()
 		named[name] = p.ConnectionManager()
+		caps[name] = p
+		if cp, ok := p.(ReplyConfiningProvider); ok && cp.ConfinesSessionReplies() {
+			confines[name] = true
+		}
 		order[i] = name
 	}
 	sort.Strings(order) // deterministic fallback order
+	// Stably partition never-default platforms (Slack) to the end: the
+	// Primary fallback must offer every platform that can receive agent-wide
+	// traffic before one whose unbound connection can only drop it (#2459).
+	// Stable, so the relative order of the others is unchanged.
+	ordered := make([]string, 0, len(order))
+	neverDefault := make([]string, 0, len(order))
+	for _, name := range order {
+		if nd, ok := caps[name].(NeverDefaultProvider); ok && nd.NeverDefaultChat() {
+			neverDefault = append(neverDefault, name)
+			continue
+		}
+		ordered = append(ordered, name)
+	}
+	order = append(ordered, neverDefault...)
 	return &aggregatingConnMgr{
 		named:               named,
 		order:               order,
+		confines:            confines,
 		chatPlatformFn:      chatPlatformFn,
 		defaultSessionKeyFn: defaultSessionKeyFn,
 		preferredPlatformFn: preferredPlatformFn,
@@ -179,6 +201,25 @@ func (a *aggregatingConnMgr) ForSessionOrPrimary(sessionKey, agentID string) Con
 	// misroute away from.
 	platformLog.Warnf("ambiguous routing for session %s agent %s: no platform claim, falling back to first primary", sessionKey, agentID)
 	return a.Primary(agentID)
+}
+
+// SessionPlatformConfinesReplies implements SessionConfinementResolver:
+// confinement is the OWNING platform's declaration (ReplyConfiningProvider,
+// captured at construction), never a property of whatever connection
+// happens to be live (#2459 req 5) — a session of a confining platform
+// must not have its replies fanned out to other platforms' chats just
+// because no live connection serves it. False for a chat no platform
+// claims, for a key without a chat id, and when no platform lookup is
+// wired.
+func (a *aggregatingConnMgr) SessionPlatformConfinesReplies(sessionKey string) bool {
+	if a.chatPlatformFn == nil {
+		return false
+	}
+	agentID, chatID := extractSessionInfo(sessionKey)
+	if agentID == "" || chatID == 0 {
+		return false
+	}
+	return a.confines[a.chatPlatformFn(agentID, chatID)]
 }
 
 func (a *aggregatingConnMgr) AcquireFacet(agentID string) (Connection, bool) {

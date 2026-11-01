@@ -40,9 +40,9 @@ func askBody(id string) []byte {
 
 func TestHTTPSubmitAnswerRoundTrip(t *testing.T) {
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
-		return "", true
+		return "", Presented
 	}
 	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
 
@@ -99,8 +99,8 @@ func TestHTTPPollUnknownID(t *testing.T) {
 }
 
 func TestHTTPSubmitDuplicateID(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
-		return "", true
+	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+		return "", Presented
 	}
 	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
 	srv := newHTTPTestServer(t, present, resolve, 0)
@@ -157,9 +157,9 @@ func TestHTTPSubmitWrongType(t *testing.T) {
 }
 
 func TestHTTPSubmitUnavailable(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
+	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
 		t.Fatal("present should not be called when no session resolves")
-		return "", false
+		return "", PresentFailed
 	}
 	resolve := func(string) (string, string) { return "", "" }
 	srv := newHTTPTestServer(t, present, resolve, 0)
@@ -178,11 +178,35 @@ func TestHTTPSubmitUnavailable(t *testing.T) {
 	}
 }
 
+// TestHTTPSubmitRefused pins the HTTP side of the refusal rule: an ask the
+// platform refuses (Slack until #2459 C) polls to the denial frame
+// (dismissed), the same frame the socket sends — never unavailable.
+func TestHTTPSubmitRefused(t *testing.T) {
+	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+		return "", PresentRefused
+	}
+	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
+	srv := newHTTPTestServer(t, present, resolve, 0)
+	tr := NewHTTPTransport(srv)
+
+	id, ok, _, _ := tr.Submit(askBody("refused-1"))
+	if !ok {
+		t.Fatal("submit itself should succeed; the denial arrives as the poll result")
+	}
+	af, found := tr.Poll(id, time.Second)
+	if !found {
+		t.Fatal("expected found=true")
+	}
+	if af.Status != StatusDismissed {
+		t.Errorf("status = %q, want %q (denied, not unavailable)", af.Status, StatusDismissed)
+	}
+}
+
 func TestHTTPTimeout(t *testing.T) {
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
-		return "", true
+		return "", Presented
 	}
 	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
 	srv := newHTTPTestServer(t, present, resolve, 30*time.Millisecond)
@@ -204,9 +228,9 @@ func TestHTTPTimeout(t *testing.T) {
 func TestHTTPCancel(t *testing.T) {
 	cb := &capturedCallback{}
 	cancelled := make(chan struct{})
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
-		return "", true
+		return "", Presented
 	}
 	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
 	srv, err := NewServer(ServerDeps{
@@ -259,9 +283,9 @@ func TestHTTPCancel(t *testing.T) {
 
 func TestHTTPSweepAbandoned(t *testing.T) {
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
-		return "", true
+		return "", Presented
 	}
 	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
 	srv := newHTTPTestServer(t, present, resolve, 0)
@@ -303,9 +327,9 @@ func notifyBody(id string, exitCode int) []byte {
 func TestHTTPNotifyEditsAnsweredAsk(t *testing.T) {
 	cb := &capturedCallback{}
 	nr := &notifyRecorder{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
-		return "platform-msg-http", true
+		return "platform-msg-http", Presented
 	}
 	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
 
@@ -355,8 +379,8 @@ func TestHTTPNotifyEditsAnsweredAsk(t *testing.T) {
 }
 
 func TestHTTPNotifyRejectsMalformedEnvelope(t *testing.T) {
-	srv := newHTTPTestServer(t, func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
-		return "", true
+	srv := newHTTPTestServer(t, func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+		return "", Presented
 	}, func(string) (string, string) { return "agent1", "agent1/chat1" }, 0)
 
 	_, ok, code, _ := srv.HandleNotifyFrame([]byte(`{not json`))

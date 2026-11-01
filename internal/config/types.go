@@ -712,14 +712,14 @@ type AccessConfig struct {
 // any scope level. Resolution follows the 5-level cascade via Merge.
 // All fields are nillable so nil means "not set, inherit from wider scope."
 type NotifyConfig struct {
-	InjectAgentWarnings *InjectionLevel `toml:"inject_agent_warnings"                   hot:"event" desc:"Whether internal warnings are fed directly into the agent's own conversation, as if said by the system, so it can see and react: all, errors only, or off"`                                                                                                                                        // inject warnings/errors into agent session
-	InjectChatWarnings  *InjectionLevel `toml:"inject_chat_warnings"                    hot:"event" desc:"Whether internal warnings are sent to you as chat notification messages: all, errors only, or off"`                                                                                                                                                                                                // send warnings/errors as chat notifications
-	StartupNotify       *bool           `toml:"startup_notify"           default:"true" desc:"Send a chat notification each time this agent starts up"`                                                                                                                                                                                                                                                      // send startup notification
-	CompactionNotify    *bool           `toml:"compaction_notify"        default:"true" hot:"event" desc:"Send a chat notification whenever the conversation history is compacted (summarized to free up context space)"`                                                                                                                                                                                    // send notification on compaction
-	TaskListNotify      *bool           `toml:"task_list_notify"         default:"true" hot:"event" desc:"Send a chat notification whenever the agent's todo list changes"`                                                                                                                                                                                                                                  // send notification on task list changes
-	CompactionDebug     *bool           `toml:"compaction_debug"                        hot:"event" desc:"Attach the full compaction summary as a file whenever compaction runs, to inspect what got summarized"`                                                                                                                                                                                            // send compaction summary as file attachment
-	WarningMaxPerWindow *int            `toml:"warning_max_per_window"   default:"3"    hot:"event" scope:"global,agent" desc:"Maximum identical warning notifications sent within a time window before further repeats are suppressed, to avoid spamming chat (default 3)"`                                                                                                                                 // max identical warnings per window before suppression (default 3)
-	RateLimitNotifyTo   *string         `toml:"rate_limit_notify_to" default:"session" hot:"event" scope:"global,agent" choices:"session,default,both" desc:"Where an Anthropic usage-limit warning is delivered: session sends it to the chat whose session hit the limit (falling back to the default chat), default always sends it to the agent's default chat, both sends it to each when they differ"` // #1857
+	InjectAgentWarnings *InjectionLevel `toml:"inject_agent_warnings"                   hot:"event" desc:"Whether internal warnings are fed directly into the agent's own conversation, as if said by the system, so it can see and react: all, errors only, or off"`                                                                                                                                                                                                                    // inject warnings/errors into agent session
+	InjectChatWarnings  *InjectionLevel `toml:"inject_chat_warnings"                    hot:"event" desc:"Whether internal warnings are sent to you as chat notification messages: all, errors only, or off"`                                                                                                                                                                                                                                                                            // send warnings/errors as chat notifications
+	StartupNotify       *bool           `toml:"startup_notify"           default:"true" desc:"Send a chat notification each time this agent starts up"`                                                                                                                                                                                                                                                                                                                                  // send startup notification
+	CompactionNotify    *bool           `toml:"compaction_notify"        default:"true" hot:"event" desc:"Send a chat notification whenever the conversation history is compacted (summarized to free up context space)"`                                                                                                                                                                                                                                                                // send notification on compaction
+	TaskListNotify      *bool           `toml:"task_list_notify"         default:"true" hot:"event" desc:"Send a chat notification whenever the agent's todo list changes"`                                                                                                                                                                                                                                                                                                              // send notification on task list changes
+	CompactionDebug     *bool           `toml:"compaction_debug"                        hot:"event" desc:"Attach the full compaction summary as a file whenever compaction runs, to inspect what got summarized"`                                                                                                                                                                                                                                                                        // send compaction summary as file attachment
+	WarningMaxPerWindow *int            `toml:"warning_max_per_window"   default:"3"    hot:"event" scope:"global,agent" desc:"Maximum identical warning notifications sent within a time window before further repeats are suppressed, to avoid spamming chat (default 3)"`                                                                                                                                                                                                             // max identical warnings per window before suppression (default 3)
+	RateLimitNotifyTo   *string         `toml:"rate_limit_notify_to" default:"session" hot:"event" scope:"global,agent" choices:"session,default,both" desc:"Where an Anthropic usage-limit warning is delivered: session sends it to the chat whose session hit the limit (falling back to the default chat), default always sends it to the agent's default chat, both sends it to each when they differ (never copied out of a session whose platform confines replies, e.g. Slack)"` // #1857
 }
 
 // Rate-limit notice delivery targets for [notify] rate_limit_notify_to.
@@ -792,7 +792,7 @@ func (n NotifyConfig) CompactionDebugEnabled() bool {
 // PlatformConfig is the unified platform configuration used for both global
 // [[platforms]] entries and per-agent [[agents.platforms]] overrides.
 type PlatformConfig struct {
-	ID string `toml:"id" desc:"Platform type: telegram, discord, or app"`
+	ID string `toml:"id" desc:"Platform type: telegram, discord, slack, or app"`
 
 	// Config groups (cascade via Merge)
 	Notify  NotifyConfig  `toml:"notify"`
@@ -806,9 +806,13 @@ type PlatformConfig struct {
 	FacetBots       []string `toml:"facet_bots"  desc:"Bot names used as short-lived facet side-sessions branched off the main chat"`
 	FacetSessionTTL string   `toml:"facet_session_ttl"  desc:"How long a /facet session, a temporary secondary bot split off from this chat, can sit idle before its slot is reclaimed for reuse (default 60m)" type:"duration"`
 
-	// Platform-specific subsections (at most one non-nil, must match ID)
+	// Platform-specific subsections (at most one non-nil, must match ID).
+	// Slack lives on the GLOBAL entry only — its channel→agent mapping spans
+	// agents, so a per-agent [[agents.platforms]] slack entry carries only
+	// access/notify/display overrides.
 	Telegram *TelegramSpecific `toml:"telegram"`
 	Discord  *DiscordSpecific  `toml:"discord"`
+	Slack    *SlackSpecific    `toml:"slack"`
 	App      *AppSpecific      `toml:"app"`
 }
 
@@ -871,6 +875,30 @@ type TelegramSpecific struct {
 type DiscordSpecific struct {
 	AutoThread *bool  `toml:"auto_thread" desc:"Automatically create a Discord thread for each conversation (default true)"`
 	GuildID    string `toml:"guild_id"    desc:"Discord guild (server) ID to restrict this bot to"`
+}
+
+// SlackChannel maps one Slack channel to the one agent that answers @mentions
+// in it. A channel mapped twice is a config error (validateSlack).
+type SlackChannel struct {
+	ID    string `toml:"id"    desc:"Slack conversation ID of the channel, e.g. C0123456789"`
+	Agent string `toml:"agent" desc:"The one agent that answers @mentions in this channel"`
+}
+
+// SlackSpecific holds Slack-only config, read from the GLOBAL [[platforms]]
+// id="slack" entry only: the channel → agent mapping spans agents, so a
+// per-agent slack entry carries only the cascading groups (access, notify,
+// display), never this block.
+type SlackSpecific struct {
+	DefaultAgent string `toml:"default_agent"    desc:"Agent that answers Slack direct messages; empty means DMs start no turn"`
+	// Channels is a slice of tables — set in the TOML file, not via
+	// /config set, so no desc tag (mirrors AccessConfig.AllowedUsers).
+	Channels          []SlackChannel `toml:"channels"`
+	BotTokenSecret    string         `toml:"bot_token_secret" desc:"Secret key holding the bot token xoxb-… (default slack.bot_token)"`
+	AppTokenSecret    string         `toml:"app_token_secret" desc:"Secret key holding the app-level token xapp-… for Socket Mode (default slack.app_token)"`
+	APIBase           string         `toml:"api_base"           desc:"Override the Slack Web API base URL (default https://slack.com/api; for tests)"`
+	RequestTimeout    string         `toml:"request_timeout"    desc:"HTTP timeout for every Slack Web API call, including the Socket Mode apps.connections.open (default 30s)" type:"duration"`
+	ConnectTimeout    string         `toml:"connect_timeout"    desc:"Timeout for the Socket Mode WebSocket dial and handshake (default 10s)" type:"duration"`
+	UnmappedReplyHold string         `toml:"unmapped_reply_hold" desc:"How long the one \"not set up here\" reply silences an unmapped channel's thread before it may be sent again (default 10m)" type:"duration"`
 }
 
 // AppSpecific holds app-provider-only config (the native-app WebSocket platform,

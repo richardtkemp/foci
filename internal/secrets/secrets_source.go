@@ -1,8 +1,11 @@
 package secrets
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -11,6 +14,7 @@ import (
 	"foci/internal/log"
 
 	"github.com/BurntSushi/toml"
+	"golang.org/x/sys/unix"
 )
 
 // secretsLog is the package's scoped logger; reload warnings go through it.
@@ -267,6 +271,11 @@ func (st *fileState) redactionValuesFor(agentID string) []string {
 type source struct {
 	path string
 
+	// static marks a source over fixed bytes (LoadNoFollow), not a path: it
+	// never stats, re-reads or writes anything, so the store serves exactly
+	// the bytes it was parsed from for its lifetime.
+	static bool
+
 	mu        sync.RWMutex
 	state     *fileState // last good contents; immutable
 	loaded    fileStamp  // observation state was loaded from
@@ -280,6 +289,11 @@ type source struct {
 // per call on the unchanged path; no goroutine, timer or watcher (#1269).
 func (src *source) current() *fileState {
 	src.mu.RLock()
+	if src.static {
+		st := src.state
+		src.mu.RUnlock()
+		return st
+	}
 	if cur := statFile(src.path); src.freshLocked(cur) {
 		st := src.state
 		src.mu.RUnlock()
@@ -502,6 +516,30 @@ func writeStringArrayField(buf *strings.Builder, key string, values []string) {
 	buf.WriteString("]\n")
 }
 
+// ParseError reports a malformed secrets file WITHOUT echoing any of its
+// bytes. The TOML parser's own message quotes the fragment it choked on —
+// for a malformed value that fragment IS (a prefix of) the secret — so the
+// parser's text never leaves this package; only the line number does.
+type ParseError struct {
+	line int // 1-based; 0 when the parser reported no position
+}
+
+// newParseError extracts the parser's position and discards its message.
+func newParseError(err error) *ParseError {
+	var pe toml.ParseError
+	if errors.As(err, &pe) {
+		return &ParseError{line: pe.Position.Line}
+	}
+	return &ParseError{}
+}
+
+func (e *ParseError) Error() string {
+	if e.line > 0 {
+		return fmt.Sprintf("parse secrets: malformed at line %d", e.line)
+	}
+	return "parse secrets: malformed"
+}
+
 // parseFile reads and parses the secrets file at path with Load's rules:
 // "[section] key = value" flattens to "section.key", [agents.ID] sub-tables
 // to per-agent maps, and a section with both allowed_agents and denied_agents
@@ -512,12 +550,17 @@ func parseFile(path string) (*fileState, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read secrets: %w", err)
 	}
+	return parseBytes(data)
+}
 
+// parseBytes parses secrets bytes with parseFile's rules; readFileNoFollow
+// hands it the verified descriptor's bytes for LoadNoFollow.
+func parseBytes(data []byte) (*fileState, error) {
 	st := emptyState()
 
 	var raw map[string]map[string]interface{}
 	if err := toml.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("parse secrets: %w", err)
+		return nil, newParseError(err)
 	}
 
 	// Flatten: [section] key = value → "section.key" = value
@@ -612,4 +655,81 @@ func flattenInto(agentID string, table map[string]interface{}, st *fileState) {
 			}
 		}
 	}
+}
+
+// readFileNoFollow opens path for reading WITHOUT following a symlink
+// ANYWHERE in it — not the final component and not any directory component
+// (a symlinked directory would redirect the read just as effectively as a
+// symlinked file). Every component is opened with openat(2) under the
+// previous one with O_NOFOLLOW, so a symlink at any depth fails with ELOOP
+// instead of being traversed. The final descriptor's own kind is checked —
+// anything but a regular file (a fifo, a directory) is refused before a
+// byte is read, and O_NONBLOCK keeps the open of a fifo from blocking until
+// a writer appears (it is a no-op on regular files). LoadNoFollow is the
+// only caller.
+func readFileNoFollow(path string) ([]byte, error) {
+	dir, base := filepath.Split(path)
+	if base == "" || base == "." || base == ".." {
+		return nil, fmt.Errorf("%s is not a regular file (not a file name)", path)
+	}
+	dirfd, err := openDirNoFollow(dir)
+	if err != nil {
+		return nil, err
+	}
+	fd, err := unix.Openat(dirfd, base, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if dirfd != atFDCWD {
+		_ = unix.Close(dirfd)
+	}
+	if err != nil {
+		return nil, err
+	}
+	f := os.NewFile(uintptr(fd), path)
+	defer f.Close() //nolint:errcheck
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file (%s)", path, info.Mode())
+	}
+	return io.ReadAll(f)
+}
+
+// atFDCWD is openat(2)'s "relative to the working directory" dirfd value.
+// x/sys/unix (not the stdlib syscall package, which has no Openat on
+// darwin) so the no-follow read builds on every platform foci runs on.
+const atFDCWD = unix.AT_FDCWD
+
+// openDirNoFollow opens dir for use as an openat(2) base, refusing to
+// traverse any symlink component: absolute paths start at the root
+// directory, relative ones at the working directory (atFDCWD), and each
+// named component is opened with O_NOFOLLOW|O_DIRECTORY beneath the last.
+// An empty dir ("") yields atFDCWD unchanged.
+func openDirNoFollow(dir string) (int, error) {
+	fd := atFDCWD
+	if filepath.IsAbs(dir) {
+		var err error
+		fd, err = unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+		if err != nil {
+			return -1, err
+		}
+	}
+	for _, part := range strings.Split(strings.TrimSuffix(dir, "/"), "/") {
+		if part == "" || part == "." {
+			continue
+		}
+		next, err := unix.Openat(fd, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if fd != atFDCWD {
+			_ = unix.Close(fd)
+		}
+		if err != nil {
+			// Name the refused component (path structure, never file
+			// bytes). With O_NOFOLLOW|O_DIRECTORY a symlinked component
+			// fails with ELOOP or ENOTDIR depending on the kernel's check
+			// order; either way it was not traversed.
+			return -1, fmt.Errorf("open directory component %q: %w", part, err)
+		}
+		fd = next
+	}
+	return fd, nil
 }

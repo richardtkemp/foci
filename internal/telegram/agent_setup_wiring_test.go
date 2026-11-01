@@ -222,6 +222,34 @@ func TestResolveAllowedUsers(t *testing.T) {
 	}
 }
 
+// TestResolveAllowedUsersOnly_CascadeTelegram pins the allowed_users_only
+// cascade for Telegram: the per-agent platform flag, else the global
+// platform flag, else true (strict) — the rule the shared
+// config.ResolveAllowedAccess cascade carries for every chat transport.
+func TestResolveAllowedUsersOnly_CascadeTelegram(t *testing.T) {
+	flag := func(v bool) *bool { return &v }
+	acfg := func(f *bool) config.AgentConfig {
+		return config.AgentConfig{Platforms: []config.PlatformConfig{{
+			ID: "telegram", Access: config.AccessConfig{AllowedUsersOnly: f},
+		}}}
+	}
+	gcfg := func(f *bool) *config.Config {
+		return &config.Config{Platforms: []config.PlatformConfig{{
+			ID: "telegram", Access: config.AccessConfig{AllowedUsersOnly: f},
+		}}}
+	}
+
+	if got := resolveAllowedUsersOnly(acfg(flag(false)), gcfg(flag(true))); got {
+		t.Error("agent flag = false must win over the global true")
+	}
+	if got := resolveAllowedUsersOnly(acfg(nil), gcfg(flag(false))); got {
+		t.Error("global flag = false must apply when the agent sets none")
+	}
+	if got := resolveAllowedUsersOnly(acfg(nil), gcfg(nil)); !got {
+		t.Error("no flag anywhere must default to strict (true)")
+	}
+}
+
 func TestConfigureFacetBot_WiresSessionPersistence(t *testing.T) {
 	// Proves ConfigureFacetBot installs voice providers and an
 	// OnSessionKeyChange hook that persists the facet→session mapping in the

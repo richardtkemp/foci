@@ -47,11 +47,22 @@ func ConnFor(cm platform.ConnectionManager, agentID, sessionKey string, policy P
 	return nil, DeliveryNone
 }
 
-// Broadcast returns every live connection for an agent across all platforms
-// — the delivery set for PolicyBroadcast targets and for the agent-wide notices
-// fanned out by broadcastNotify: the rate-limit GATE notice (Agent.RateLimitFunc,
-// "⚡ Rate limited (resets …)") and max-tokens warnings. Callers choose the send
-// method (SendNotification for notices, SendText for messages) per connection.
+// Broadcast returns every connection an agent-wide send can reach: all live
+// connections for the agent across all platforms, MINUS connections that
+// declare they drop agent-wide sends (platform.DropsAgentWideSends — e.g.
+// Slack's unbound conn, whose conversations are never default chats):
+// addressing one is a certain drop, so it is not a delivery target. Note the
+// app's unbound conn is NOT a dropper — it routes agent-wide sends to the
+// default conversation — and stays in the set. This is the delivery set for
+// PolicyBroadcast targets and for the agent-wide notices fanned out by
+// broadcastNotify: the rate-limit GATE notice (Agent.RateLimitFunc,
+// "⚡ Rate limited (resets …)") and max-tokens warnings. Callers choose the
+// send method (SendNotification for notices, SendText for messages) per
+// connection.
+//
+// A session's OWN conversation is not this function's business: broadcastResponse
+// delivers that through the session's ForSession connection, which must not
+// rely on appearing in — or being identity-equal to anything in — this set.
 //
 // It is NOT the path for CC's usage-limit warning (ccstream's rate_limit_event,
 // #1211/#1238). That one is delivered to a single chosen chat per
@@ -61,5 +72,12 @@ func Broadcast(cm platform.ConnectionManager, agentID string) []platform.Connect
 	if cm == nil {
 		return nil
 	}
-	return cm.AllForAgent(agentID)
+	var conns []platform.Connection
+	for _, c := range cm.AllForAgent(agentID) {
+		if platform.DropsAgentWideSends(c) {
+			continue
+		}
+		conns = append(conns, c)
+	}
+	return conns
 }

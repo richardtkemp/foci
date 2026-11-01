@@ -58,7 +58,7 @@ No fields — `base_url` is configured per-endpoint via `[endpoints.openai].url`
 
 ### `[[platforms]]`
 
-Platform configuration. Each entry defines a platform (telegram, discord, etc.) with an `id` field. All fields follow the 5-level cascade: per-agent platform → per-agent → global platform → global section (`[display]` / `[notify]`) → code default.
+Platform configuration. Each entry defines a platform (telegram, discord, slack, app) with an `id` field. All fields follow the 5-level cascade: per-agent platform → per-agent → global platform → global section (`[display]` / `[notify]`) → code default.
 
 ```toml
 [[platforms]]
@@ -82,7 +82,7 @@ auto_thread = true
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `id` | string | required | Platform identifier: `"telegram"`, `"discord"`, etc. |
+| `id` | string | required | Platform identifier: `"telegram"`, `"discord"`, `"slack"`, `"app"`. |
 | `bot` | string | `""` | Bot name. Token resolved from secret `"<platform>.<bot>"`. |
 | `bot_secret` | string | `""` | Override secret key for bot token. `""` uses `"<platform>.<bot>"`. |
 | `facet_bots` | string[] | `[]` | Shared facet bot pool. Bot tokens resolved via `"<platform>.<name>"` secret convention. |
@@ -173,6 +173,48 @@ Notes on the operator gate (#2279):
 | `auto_thread` | bool | `true` | Create threads for facet sessions. |
 | `guild_id` | string | `""` | Restrict to a single guild. Empty allows all guilds. |
 
+#### Slack-specific fields (`[platforms.slack]`)
+
+One Slack app over Socket Mode serving several agents. These fields live on the **global** `[[platforms]] id = "slack"` entry only — the channel→agent mapping spans agents, so a per-agent `[[agents.platforms]] id = "slack"` entry carries only the cascading groups (`access`, `notify`, `display`); a `[platforms.slack]` block on a per-agent entry, or on any other `[[platforms]]` entry (whatever its id), is a load error rather than silently ignored.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `default_agent` | string | `""` | Agent that answers direct messages. Empty means DMs start no turn (and get no reply). |
+| `channels` | array | `[]` | Channel→agent mapping, one entry per channel: `{ id = "C0123456789", agent = "helen" }`. Exactly one agent per channel — mapping a channel twice is a config error, as is naming an unknown agent. A mention in an unmapped channel gets one "not set up here" reply in its thread. |
+| `bot_token_secret` | string | `"slack.bot_token"` | Secrets key holding the bot token (`xoxb-…`). |
+| `app_token_secret` | string | `"slack.app_token"` | Secrets key holding the app-level token (`xapp-…`) used for Socket Mode. |
+| `api_base` | string | `"https://slack.com/api"` | Override the Slack Web API base URL (for tests). |
+| `request_timeout` | duration | `"30s"` | HTTP timeout for every Slack Web API call, including the Socket Mode `apps.connections.open`. |
+| `connect_timeout` | duration | `"10s"` | Timeout for the Socket Mode WebSocket dial and handshake. |
+| `unmapped_reply_hold` | duration | `"10m"` | How long one "not set up here" reply silences an unmapped channel's thread before it may be sent again. |
+
+The timeouts bound every outbound Slack call: a stalled Slack endpoint returns an error instead of hanging the session's worker (or all inbound traffic, for the calls the socket read loop makes synchronously). Streaming replies use the shared `display.stream_interval` (`[platforms.display]` inside the Slack `[[platforms]]` entry, or per-agent `[[agents.platforms]]` with `id = "slack"`; default `2s` — `chat.update` is Tier 3).
+
+`secrets.toml`:
+```toml
+[slack]
+bot_token = "xoxb-..."
+app_token = "xapp-..."
+```
+
+The tokens never appear in foci.toml, logs, error messages or agent context (secrets store only). A credential problem (missing key, empty value, wrong token shape) leaves Slack off: the startup log and `foci-gw -check-config` both name the secret KEY that is wrong, and the rest of foci starts normally. This includes a `[[platforms]] id = "slack"` entry with no `[platforms.slack]` block: the entry declares the platform, so the default credential keys and the "answers nothing" mapping check apply to it like any explicit block. `-check-config` reads `secrets.toml` beside the config only when a slack platform is configured, and opens it without following symlinks — every path component is opened with `openat` + `O_NOFOLLOW` and the read goes through that one verified regular-file descriptor, so a symlink anywhere in the path (a symlinked directory included) or anything but a regular file is refused rather than read. A malformed `secrets.toml` fails the check naming the line number only; the parser's message can quote fragments of the file, so it is never shown.
+
+`default_platform = "slack"` is rejected at load: a Slack conversation is never an agent's default chat, and never receives agent-wide traffic (startup notices, cron, keepalive, approval prompts).
+
+**Slack app setup** (one workspace, no public URL):
+
+1. Create an app at api.slack.com/apps → *From scratch*.
+2. **Socket Mode** → ON. Create an **app-level token** with the `connections:write` scope — this is the `xapp-…` value for `slack.app_token`.
+3. **OAuth & Permissions** → bot token scopes: `chat:write`, `app_mentions:read`, `im:history`, `files:write`. Install the app to the workspace — the **bot token** (`xoxb-…`) is the value for `slack.bot_token`.
+4. **Event Subscriptions** → ON, subscribe to bot events: `app_mention` and `message.im`.
+5. **App Home** → turn the **Messages Tab** ON (otherwise users cannot DM the app).
+6. Invite the bot to each mapped channel (`/invite @botname`).
+7. Put both tokens in `secrets.toml`, map your channels in `[platforms.slack]`, and list the Slack member IDs (`U…`, from a user's profile → **Copy member ID**) in `allowed_users`.
+
+Access uses the existing allowlist rule for now: with `allowed_users_only = true` (the default) and an empty `allowed_users`, **nobody can talk to the agent** — put the member IDs of the people who may use it in `allowed_users` (global and/or per-agent, resolved for the agent the message routes to). A refused message gets no reply at all; the refusal is only in foci's log. The one exception is the unmapped-channel notice above: a channel with no agent mapped has no allowlist to consult, so the single "not set up here" reply goes to **anyone** who @mentions the bot in such a channel, listed or not. `require_mention` is ignored on Slack: channels always need a mention (only `app_mention` events start turns there), DMs never do.
+
+**Limits of this release** (each lands in a later part of #2459): a person not on the allow list gets no reply — except the one-time "not set up here" notice in a channel with no agent mapped, which anyone who mentions the bot there receives; foci commands are not available from Slack (command-looking text reaches the agent as an ordinary message); an agent's approval requests raised from a Slack conversation are **denied immediately** with a short notice in the conversation — the same applies to a Slack-only agent's approvals from anywhere (cron, askgw), which have no operator destination yet; tool-call and thinking display are ignored (always off); replies go as plain text (no Markdown conversion) and very long replies are not split; the connection is not re-established if Slack closes it (restart foci); files you share are announced to the agent by name only; in a channel thread only the mentioning message is read. A message Slack refuses — too long for one Slack message, or sent faster than Slack allows — is logged and lost, not retried or split.
+
 #### App-specific fields (`[platforms.app]`)
 
 Settings for the native FOCI app (WebSocket) platform.
@@ -201,7 +243,7 @@ Settings for the native FOCI app (WebSocket) platform.
 
 #### Bot token resolution
 
-Bot tokens are resolved by convention: `"<platform>.<botname>"` in `secrets.toml`. No explicit bot map is needed.
+Bot tokens are resolved by convention: `"<platform>.<botname>"` in `secrets.toml`. No explicit bot map is needed. Slack resolves its two tokens from the keys named by `[platforms.slack].bot_token_secret` / `app_token_secret` (see the Slack section).
 
 For example, an agent with `bot = "primary"` on a telegram platform resolves its token from the secret key `telegram.primary`. To override the convention, set `bot_secret` on the platform entry.
 
@@ -1244,7 +1286,7 @@ Notification fields (`startup_notify`, `inject_agent_warnings`, etc.) are part o
 | `stream_interval` | string | `"250ms"`/`"1200ms"` | `[[platforms]]` | Duration between message edits during streaming. Default varies by platform. |
 | `compaction_debug` | bool | `false` | `[notify]` | Send the compaction summary to Telegram as a markdown file attachment after compaction completes. Useful for verifying what survived the cut. Part of `NotifyConfig` — follows the 5-level cascade. |
 | `warning_max_per_window` | int | `3` | `[notify]` | Max identical warnings per time window before suppression. `0` disables rate-limiting. Part of `NotifyConfig` — follows the 5-level cascade. |
-| `rate_limit_notify_to` | string | `"session"` | `[notify]` | Where an Anthropic usage-limit warning (Claude Code's `rate_limit_event`) is delivered. `"session"` sends it to the chat whose session crossed the threshold, falling back to the agent's default chat when that session has no live connection; `"default"` always sends it to the default chat (the behaviour before #1857); `"both"` sends it to the session chat and the default chat when they differ. The warning throttle is per-agent because the limit is account-wide, so under `"session"` only the session that *first* crossed a utilization bucket is told. Hot-applied. Part of `NotifyConfig` — global or per-agent. |
+| `rate_limit_notify_to` | string | `"session"` | `[notify]` | Where an Anthropic usage-limit warning (Claude Code's `rate_limit_event`) is delivered. `"session"` sends it to the chat whose session crossed the threshold, falling back to the agent's default chat when that session has no live connection; `"default"` always sends it to the default chat (the behaviour before #1857); `"both"` sends it to the session chat and the default chat when they differ — except for a session on a platform that confines replies to the session's own conversation (Slack, #2459): the notice stays in that session's conversation and is never copied to the default chat. The warning throttle is per-agent because the limit is account-wide, so under `"session"` only the session that *first* crossed a utilization bucket is told. Hot-applied. Part of `NotifyConfig` — global or per-agent. |
 | `cache_bust_detect` | bool | `false` | `[debug]` | Alert when `cache_read` drops >50% vs previous request. Part of `DebugConfig` — per-agent override via `[agents.debug]`. |
 | `facet_no_compact` | bool | `true` | `[sessions]` | Set `no_compact` on facet sessions. Facet sessions are short-lived parallel forks that shouldn't trigger compaction. Set to `false` if you want facet sessions to compact normally. |
 

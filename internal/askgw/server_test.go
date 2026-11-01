@@ -33,7 +33,7 @@ func (c *capturedCallback) fire(data string) {
 
 func startTestServer(t *testing.T, present PresentFn, resolve ResolveSessionFn) (*Server, string) {
 	t.Helper()
-	sockPath := filepath.Join(t.TempDir(), "askgw-test.sock")
+	sockPath := shortSockPath(t)
 	uid := strconv.Itoa(os.Getuid())
 
 	srv, err := NewServer(ServerDeps{
@@ -89,11 +89,26 @@ func readFrame(t *testing.T, r *bufio.Reader) map[string]any {
 	return m
 }
 
+// expectNoFrame fails if any frame arrives within the window. Ask
+// resolution owes the client an exact frame sequence — a refusal answers
+// with the dismissal frame and never acks, a presented ask acks exactly
+// once — so a stray or duplicate frame is a protocol bug, not noise.
+func expectNoFrame(t *testing.T, conn net.Conn, r *bufio.Reader) {
+	t.Helper()
+	if err := conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+	if line, err := r.ReadString('\n'); err == nil {
+		t.Errorf("unexpected extra frame: %s", strings.TrimSpace(line))
+	}
+}
+
 func TestE2E_AnsweredRoundTrip(t *testing.T) {
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
-		return "", true
+		return "", Presented
 	}
 	resolve := func(frameAgent string) (string, string) {
 		return "agent1", "agent1/chat1"
@@ -138,9 +153,9 @@ func TestE2E_AnsweredRoundTrip(t *testing.T) {
 }
 
 func TestE2E_UnavailableNoSession(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
+	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
 		t.Fatal("present should not be called")
-		return "", false
+		return "", PresentFailed
 	}
 	resolve := func(frameAgent string) (string, string) { return "", "" }
 
@@ -162,11 +177,15 @@ func TestE2E_UnavailableNoSession(t *testing.T) {
 	if ans["status"] != StatusUnavailable {
 		t.Errorf("status = %v, want %v", ans["status"], StatusUnavailable)
 	}
+
+	// The unavailable answer is terminal: no ack may follow it (an ack
+	// would tell the client the ask is live and pending).
+	expectNoFrame(t, conn, r)
 }
 
 func TestE2E_PresentFails(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
-		return "", false
+	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+		return "", PresentFailed
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
@@ -185,6 +204,154 @@ func TestE2E_PresentFails(t *testing.T) {
 	if ans["status"] != StatusUnavailable {
 		t.Errorf("status = %v, want %v", ans["status"], StatusUnavailable)
 	}
+
+	// Terminal here too: the failure resolved the ask, so nothing — not
+	// even an ack — may follow the answer.
+	expectNoFrame(t, conn, r)
+}
+
+// TestE2E_PresentRefusedDenied proves a REFUSED present (the session's
+// platform cannot show approval prompts — Slack until #2459 C) is DENIED,
+// not reported unavailable: the requester receives the dismissal frame
+// (status dismissed — no answer, nothing approved), no ack is ever sent,
+// and nothing is left pending (the same id is accepted again). A wrong
+// "unavailable" would tell the client the session was missing when in fact
+// foci refused.
+func TestE2E_PresentRefusedDenied(t *testing.T) {
+	calls := 0
+	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+		calls++
+		if calls == 1 {
+			return "", PresentRefused
+		}
+		return "", Presented
+	}
+	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
+	_, sockPath := startTestServer(t, present, resolve)
+
+	conn := dialServer(t, sockPath)
+	r := bufio.NewReader(conn)
+
+	sendFrame(t, conn, &AskFrame{
+		Protocol:  ProtocolVersion,
+		Type:      TypeAsk,
+		ID:        "e2e-refused",
+		Questions: makeQuestions(),
+	})
+
+	ans := readFrame(t, r)
+	if ans["type"] != TypeAnswer {
+		t.Fatalf("expected answer, got %v (an ack must never follow a refusal)", ans["type"])
+	}
+	if ans["status"] != StatusDismissed {
+		t.Errorf("status = %v, want %v (the denial frame)", ans["status"], StatusDismissed)
+	}
+	if ans["id"] != "e2e-refused" {
+		t.Errorf("id = %v, want e2e-refused", ans["id"])
+	}
+	if answers, ok := ans["answers"].(map[string]any); ok && len(answers) > 0 {
+		t.Errorf("answers = %v, want none (nothing was approved)", answers)
+	}
+
+	// The denial frame is the LAST frame of the ask: no ack may follow a
+	// refusal (an ack tells the client the ask is live and pending).
+	expectNoFrame(t, conn, r)
+
+	// Nothing pending: the same id over the same connection is accepted
+	// again (a leftover entry would be rejected as a duplicate).
+	sendFrame(t, conn, &AskFrame{
+		Protocol:  ProtocolVersion,
+		Type:      TypeAsk,
+		ID:        "e2e-refused",
+		Questions: makeQuestions(),
+	})
+	if got := readFrame(t, r); got["type"] != TypeAck {
+		t.Errorf("resubmit after refusal: got %v, want an ack (no entry left pending): %v", got["type"], got)
+	}
+
+	// A presented ask acks exactly once — no duplicate trailing it.
+	expectNoFrame(t, conn, r)
+}
+
+// TestE2E_MidAskPresentFailureResolves proves a later question that cannot
+// be shown resolves the whole ask at once (refused ⇒ denied, failed ⇒
+// unavailable) instead of hanging until the timeout: the human answered the
+// earlier questions, but the ask can never complete, and the client must
+// hear that now, not hours later.
+func TestE2E_MidAskPresentFailureResolves(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		outcome  PresentOutcome
+		wantStat string
+	}{
+		{"refused denies", PresentRefused, StatusDismissed},
+		{"failed is unavailable", PresentFailed, StatusUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cb := &capturedCallback{}
+			calls := 0
+			resolved := false
+			present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+				calls++
+				if calls == 1 {
+					cb.set(onResponse)
+					return "", Presented
+				}
+				if !resolved {
+					resolved = true // only the second question fails/refuses
+					return "", tc.outcome
+				}
+				return "", Presented
+			}
+			resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
+			_, sockPath := startTestServer(t, present, resolve)
+
+			conn := dialServer(t, sockPath)
+			r := bufio.NewReader(conn)
+
+			sendFrame(t, conn, &AskFrame{
+				Protocol: ProtocolVersion,
+				Type:     TypeAsk,
+				ID:       "e2e-mid",
+				Questions: []AskQuestion{
+					{Key: "q1", Header: "First", Question: "Pick one:", Options: []AskOption{{Label: "A"}, {Label: "B"}}},
+					{Key: "q2", Header: "Second", Question: "Pick again:", Options: []AskOption{{Label: "C"}, {Label: "D"}}},
+				},
+			})
+			if got := readFrame(t, r); got["type"] != TypeAck {
+				t.Fatalf("first question: expected ack, got %v", got["type"])
+			}
+
+			time.Sleep(50 * time.Millisecond)
+			cb.fire(question.OptionData(0)) // answer q1; q2's present then fails/refuses
+
+			ans := readFrame(t, r)
+			if ans["type"] != TypeAnswer {
+				t.Fatalf("expected answer, got %v", ans["type"])
+			}
+			if ans["status"] != tc.wantStat {
+				t.Errorf("status = %v, want %v", ans["status"], tc.wantStat)
+			}
+
+			// The mid-ask resolution is terminal: nothing may follow it
+			// before the resubmit below (a stray frame here would be read
+			// as the resubmit's ack).
+			expectNoFrame(t, conn, r)
+
+			// Nothing pending: the same id over the same connection is
+			// accepted again (a leftover entry would be rejected as a
+			// duplicate).
+			sendFrame(t, conn, &AskFrame{
+				Protocol:  ProtocolVersion,
+				Type:      TypeAsk,
+				ID:        "e2e-mid",
+				Questions: makeQuestions(),
+			})
+			if got := readFrame(t, r); got["type"] != TypeAck {
+				t.Errorf("resubmit after mid-ask failure: got %v, want an ack (no entry left pending): %v", got["type"], got)
+			}
+		})
+	}
 }
 
 func TestE2E_Cancel(t *testing.T) {
@@ -192,9 +359,9 @@ func TestE2E_Cancel(t *testing.T) {
 	var cancelMu sync.Mutex
 	cb := &capturedCallback{}
 
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
-		return "", true
+		return "", Presented
 	}
 	cancelPrompt := func(msgID, finalText string) {
 		cancelMu.Lock()
@@ -203,7 +370,7 @@ func TestE2E_Cancel(t *testing.T) {
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
-	sockPath := filepath.Join(t.TempDir(), "askgw-cancel.sock")
+	sockPath := shortSockPath(t)
 	uid := strconv.Itoa(os.Getuid())
 	srv, err := NewServer(ServerDeps{
 		SocketPath:     sockPath,
@@ -266,9 +433,9 @@ func TestE2E_Cancel(t *testing.T) {
 
 func TestE2E_DismissedViaCancelButton(t *testing.T) {
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
-		return "", true
+		return "", Presented
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
@@ -294,8 +461,8 @@ func TestE2E_DismissedViaCancelButton(t *testing.T) {
 }
 
 func TestE2E_BadProtocolRejected(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
-		return "", true
+	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+		return "", Presented
 	}
 	resolve := func(frameAgent string) (string, string) { return "a", "a/c" }
 
@@ -323,11 +490,11 @@ func TestE2E_MultiQuestion(t *testing.T) {
 	var callbacks []func(string)
 	var cbMu sync.Mutex
 
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cbMu.Lock()
 		callbacks = append(callbacks, onResponse)
 		cbMu.Unlock()
-		return "", true
+		return "", Presented
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
@@ -381,9 +548,9 @@ func TestE2E_ConnectionDropCancelsPending(t *testing.T) {
 	var cancelMu sync.Mutex
 	cb := &capturedCallback{}
 
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
-		return "", true
+		return "", Presented
 	}
 	cancelPrompt := func(msgID, finalText string) {
 		cancelMu.Lock()
@@ -392,7 +559,7 @@ func TestE2E_ConnectionDropCancelsPending(t *testing.T) {
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
-	sockPath := filepath.Join(t.TempDir(), "askgw-drop.sock")
+	sockPath := shortSockPath(t)
 	uid := strconv.Itoa(os.Getuid())
 	srv, err := NewServer(ServerDeps{
 		SocketPath:     sockPath,
@@ -447,12 +614,12 @@ func TestE2E_RejectBadUID(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("test requires non-root user")
 	}
-	sockPath := filepath.Join(t.TempDir(), "askgw-baduid.sock")
+	sockPath := shortSockPath(t)
 	srv, err := NewServer(ServerDeps{
 		SocketPath:  sockPath,
 		AllowedUIDs: []string{"99999"},
-		Present: func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
-			return "", true
+		Present: func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+			return "", Presented
 		},
 		CancelPrompt:   func(string, string) {},
 		ResolveSession: func(string) (string, string) { return "a", "a/c" },
@@ -491,8 +658,8 @@ func TestE2E_RejectBadUID(t *testing.T) {
 }
 
 func TestE2E_AckSentOnSuccess(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
-		return "", true
+	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+		return "", Presented
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
@@ -517,8 +684,8 @@ func TestE2E_AckSentOnSuccess(t *testing.T) {
 }
 
 func TestE2E_DuplicateAskID(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
-		return "", true
+	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+		return "", Presented
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
@@ -544,13 +711,13 @@ func TestE2E_DuplicateAskID(t *testing.T) {
 
 func TestE2E_GatewayTimeout(t *testing.T) {
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
-		return "", true
+		return "", Presented
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
-	sockPath := filepath.Join(t.TempDir(), "askgw-timeout.sock")
+	sockPath := shortSockPath(t)
 	uid := strconv.Itoa(os.Getuid())
 	srv, err := NewServer(ServerDeps{
 		SocketPath:     sockPath,
@@ -586,12 +753,12 @@ func TestE2E_GatewayTimeout(t *testing.T) {
 }
 
 func TestE2E_FrameTimeoutOverride(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
-		return "", true
+	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+		return "", Presented
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
-	sockPath := filepath.Join(t.TempDir(), "askgw-fto.sock")
+	sockPath := shortSockPath(t)
 	uid := strconv.Itoa(os.Getuid())
 	srv, err := NewServer(ServerDeps{
 		SocketPath:     sockPath,
@@ -698,9 +865,9 @@ func answerFirstQuestion(t *testing.T, conn net.Conn, r *bufio.Reader, cb *captu
 func TestE2E_NotifyEditsAnsweredMessage(t *testing.T) {
 	cb := &capturedCallback{}
 	nr := &notifyRecorder{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
-		return "platform-msg-1", true
+		return "platform-msg-1", Presented
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
@@ -785,9 +952,9 @@ func shortSockPath(t *testing.T) string {
 func TestE2E_NotifyFallsBackWhenNoPlatformMsgID(t *testing.T) {
 	cb := &capturedCallback{}
 	nr := &notifyRecorder{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
-		return "", true // e.g. the plain-text fallback send — no platform msgID to edit
+		return "", Presented // e.g. the plain-text fallback send — no platform msgID to edit
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
@@ -852,8 +1019,8 @@ func TestE2E_NotifyFallsBackWhenNoPlatformMsgID(t *testing.T) {
 
 func TestE2E_NotifyForUnknownIDIsDropped(t *testing.T) {
 	nr := &notifyRecorder{}
-	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
-		return "", true
+	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+		return "", Presented
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 

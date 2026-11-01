@@ -95,6 +95,7 @@ import (
 	"foci/internal/delegator/pretool"
 	"foci/internal/execguard"
 	"foci/internal/procx"
+	"foci/internal/secrets"
 	"foci/internal/shellenv"
 )
 
@@ -210,8 +211,58 @@ func runConfigCheckWith(path string, stdout, stderr io.Writer, d checkDeps) int 
 		return 1
 	}
 
+	// Slack credentials live in the secrets store, so a slack platform is the
+	// one config shape whose runtime readiness needs secrets.toml. Load it
+	// ONLY then (a config without slack must not grow a secrets dependency
+	// here) and report the same problems startup will log.
+	if p := cfg.Platform("slack"); p != nil {
+		if problems := slackCredentialProblems(path, cfg); len(problems) > 0 {
+			for _, pr := range problems {
+				_, _ = fmt.Fprintf(stderr, "config check FAILED: slack: %s\n", pr)
+			}
+			return 1
+		}
+	}
+
 	_, _ = fmt.Fprintln(stdout, "config check OK: "+path+" loads cleanly with no unknown keys")
 	return 0
+}
+
+// slackCredentialProblems resolves the Slack credential problems against
+// secrets.toml beside the config file — the same file (and the same
+// config.SlackProblems oracle) the provider's Init reads at startup, so the
+// check's verdict and startup agree. The file is read through
+// secrets.LoadNoFollow (every path component opened with openat +
+// O_NOFOLLOW, the final descriptor verified a regular file, parsed from that
+// descriptor's bytes) because this check runs as root during deploys while
+// the config directory stays writable by the service user: a symlink
+// planted at secrets.toml — or at any directory component of its path, which
+// would redirect the read just as effectively — must fail the open rather
+// than point the root reader somewhere else. A file that does not exist yet
+// is Load's empty store, so the verdict names the missing tokens; any other
+// load failure counts as one problem naming the error. A malformed file
+// fails with secrets' line-only ParseError, and the values are never
+// printed.
+func slackCredentialProblems(configPath string, cfg *config.Config) []string {
+	secretsPath := secretsPathFor(configPath)
+	// store stays the nil interface when no secrets file exists yet: every
+	// secret is missing, Load's own contract for a not-yet-created file.
+	var store config.SecretGetter
+	if st, err := secrets.LoadNoFollow(secretsPath); err != nil {
+		switch {
+		case errors.Is(err, syscall.ELOOP), errors.Is(err, syscall.ENOTDIR):
+			// ELOOP: the final component is a symlink. ENOTDIR: a directory
+			// component is a symlink (or genuinely not a directory) — the
+			// walk names the refused component in the error.
+			return []string{fmt.Sprintf("%s is reached through a symlink or a non-directory component — -check-config will not read through one; make secrets.toml a regular file at a real path (%v)", secretsPath, err)}
+		case errors.Is(err, fs.ErrNotExist):
+		default:
+			return []string{fmt.Sprintf("cannot read %s (needed to check the Slack tokens): %v", secretsPath, err)}
+		}
+	} else {
+		store = st
+	}
+	return config.SlackProblems(cfg, store)
 }
 
 // autoApproveCheckPlan is the outcome of deriving the view the preview will

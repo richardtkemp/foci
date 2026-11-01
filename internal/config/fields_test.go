@@ -214,6 +214,24 @@ func TestDefaultPermissionDescriptionNamesSessionScope(t *testing.T) {
 	}
 }
 
+// TestPlatformIDDescriptionNamesEveryMessagingPlatform pins the
+// platforms.id help text (#2459 A1): the field registry's desc tag is the
+// config editor's single source of truth for valid platform ids, and it
+// must name every messaging platform a [[platforms]] entry can be — slack
+// joined telegram, discord and app. An editor suggesting a platform that
+// cannot be configured (or hiding one that can) is a silent dead end for
+// the user.
+func TestPlatformIDDescriptionNamesEveryMessagingPlatform(t *testing.T) {
+	f, ok := LookupField("platforms.id")
+	if !ok {
+		t.Fatal("platforms.id not in the field registry")
+	}
+	want := "Platform type: telegram, discord, slack, or app"
+	if f.Description != want {
+		t.Errorf("platforms.id description = %q, want %q", f.Description, want)
+	}
+}
+
 func TestFieldSections(t *testing.T) {
 	// Proves FieldSections returns a deduplicated list of section names that
 	// includes all well-known sections.

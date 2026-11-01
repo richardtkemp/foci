@@ -34,7 +34,9 @@ struct methods.
 ### Chat Sessions (`c`)
 
 Conversation sessions bound to an external chat: a Telegram chat, Discord
-channel, or app conversation (whose conversationId is FNV-hashed to a chat ID).
+channel, app conversation (whose conversationId is FNV-hashed to a chat ID),
+or Slack conversation — one DM per user, one thread per channel, the
+dm/thread identity FNV-hashed the same way (`chatmeta.StableChatID`).
 
 **Format:** `{agentID}/c{chatID}` — **deterministic**: the same
 `(agent, chatID)` always yields the same key (`session.NewChatSessionKey`).

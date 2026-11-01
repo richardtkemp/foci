@@ -69,6 +69,34 @@ func Load(path string) (*Store, error) {
 	return &Store{src: src}, nil
 }
 
+// LoadNoFollow reads a secrets file the way a privileged pre-flight check
+// must (foci-gw -check-config runs as root during deploys while the config
+// directory stays writable by the service user): EVERY path component is
+// opened with openat(2) + O_NOFOLLOW beneath the previous one — a symlink
+// anywhere (a directory component redirects just as effectively as the
+// final component) fails with ELOOP instead of being followed — the final
+// descriptor is verified to be a regular file, and the store is parsed from
+// exactly the bytes read through that descriptor. There is no second open,
+// so a link planted between a check and a read cannot point the root reader
+// somewhere else. A malformed file fails with a *ParseError, which reports
+// the line number only: the parser's message can quote the file's bytes,
+// and a secrets value must never reach an error, a log, or stderr. Unlike
+// Load, a missing file is an error, not an empty store: the caller asked
+// for the bytes behind one specific path. The returned store is a static
+// snapshot — it serves the verified bytes for its lifetime and cannot be
+// mutated or saved. Use Load everywhere else.
+func LoadNoFollow(path string) (*Store, error) {
+	data, err := readFileNoFollow(path)
+	if err != nil {
+		return nil, err
+	}
+	st, err := parseBytes(data)
+	if err != nil {
+		return nil, err
+	}
+	return &Store{src: &source{state: st, static: true}}, nil
+}
+
 // ForAgent returns a Store scoped to the given agent ID, sharing the same
 // source as s. Agent-specific values overlay globals; keys not overridden
 // fall back to globals; global sections with allowed_agents/denied_agents
@@ -85,6 +113,16 @@ func (s *Store) ForAgent(agentID string) *Store {
 func (s *Store) rootOnly() error {
 	if s.agentID != "" {
 		return fmt.Errorf("secrets store for agent %q is read-only — use the root store", s.agentID)
+	}
+	return nil
+}
+
+// notStatic rejects write operations on a static store (LoadNoFollow): its
+// state is a snapshot of verified bytes with no path to refresh from or
+// persist to, so a mutation could only live as a lie about the file.
+func (s *Store) notStatic() error {
+	if s.src.static {
+		return fmt.Errorf("secrets store is a static snapshot (LoadNoFollow) — it cannot be mutated or saved")
 	}
 	return nil
 }
@@ -115,6 +153,9 @@ func (s *Store) Set(name, value string) error {
 	if err := s.rootOnly(); err != nil {
 		return err
 	}
+	if err := s.notStatic(); err != nil {
+		return err
+	}
 	s.src.mutate(func(st *fileState) *fileState {
 		values := cloneMap(st.values)
 		values[name] = value
@@ -126,6 +167,9 @@ func (s *Store) Set(name, value string) error {
 // Remove deletes a secret by its flat key. Returns true if found.
 func (s *Store) Remove(name string) (bool, error) {
 	if err := s.rootOnly(); err != nil {
+		return false, err
+	}
+	if err := s.notStatic(); err != nil {
 		return false, err
 	}
 	removed := false
@@ -148,6 +192,9 @@ func (s *Store) Remove(name string) (bool, error) {
 // source.save for the locking that keeps concurrent readers safe.
 func (s *Store) Save() error {
 	if err := s.rootOnly(); err != nil {
+		return err
+	}
+	if err := s.notStatic(); err != nil {
 		return err
 	}
 	return s.src.save()

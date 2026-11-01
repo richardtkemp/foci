@@ -214,6 +214,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), [Nanobot](https://github
 |---|---|---|---|---|
 | Telegram | ✅ | ✅ | ✅ | ✅ |
 | Discord | ✅ | ✅ | ✅ | ✅ |
+| Slack | ✅ Socket Mode (#2459) | ✅ Socket Mode or HTTP | ✅ | ✅ Socket Mode |
 | Other popular platforms | ❌ | ✅ | ✅ 17+ platforms | ✅ 26+ platforms |
 | Android app | ✅ | ✅ andClaw (Play Store) | ❌ | ❌ Termux only |
 | WebChat UI | ❌ | ✅ Control UI | ✅ WebUI | ✅ Open WebUI |

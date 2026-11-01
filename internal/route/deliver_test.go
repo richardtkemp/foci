@@ -7,11 +7,16 @@ import (
 )
 
 // fakeConn is a minimal platform.Connection stand-in for routing tests; only
-// identity matters, so the methods are inert.
+// identity matters, so the methods are inert. drops models the one
+// broadcast-relevant capability: true is a connection that can only drop
+// agent-wide sends (platform.AgentWideDropper — Slack's unbound conn).
 type fakeConn struct {
 	platform.Connection
-	name string
+	name  string
+	drops bool
 }
+
+func (f *fakeConn) DropsAgentWideSends() bool { return f.drops }
 
 // fakeConnMgr implements the ConnectionManager lookups ConnFor/Broadcast use.
 type fakeConnMgr struct {
@@ -74,7 +79,8 @@ func TestConnFor(t *testing.T) {
 // TestBroadcast proves Broadcast returns the agent's full connection set and
 // tolerates a nil manager.
 func TestBroadcast(t *testing.T) {
-	a, b := &fakeConn{name: "a"}, &fakeConn{name: "b"}
+	a := &fakeConn{name: "a"}
+	b := &fakeConn{name: "b"}
 	cm := &fakeConnMgr{all: []platform.Connection{a, b}}
 	conns := Broadcast(cm, "agent")
 	if len(conns) != 2 || conns[0] != a || conns[1] != b {
@@ -82,5 +88,36 @@ func TestBroadcast(t *testing.T) {
 	}
 	if got := Broadcast(nil, "agent"); got != nil {
 		t.Errorf("Broadcast(nil) = %v, want nil", got)
+	}
+}
+
+// TestBroadcast_SkipsAgentWideDroppers proves a connection that declares it
+// drops agent-wide sends (Slack's unbound conn) is not a broadcast target:
+// addressing it would be a certain drop, so its presence in AllForAgent must
+// neither deliver to it nor log a delivery failure for it. Its position in
+// the set must not matter.
+func TestBroadcast_SkipsAgentWideDroppers(t *testing.T) {
+	telegram := &fakeConn{name: "telegram"}
+	slack := &fakeConn{name: "slack", drops: true}
+	for _, tc := range []struct {
+		name string
+		all  []platform.Connection
+		want []platform.Connection
+	}{
+		{"dropper last", []platform.Connection{telegram, slack}, []platform.Connection{telegram}},
+		{"dropper first", []platform.Connection{slack, telegram}, []platform.Connection{telegram}},
+		{"only dropper", []platform.Connection{slack}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conns := Broadcast(&fakeConnMgr{all: tc.all}, "agent")
+			if len(conns) != len(tc.want) {
+				t.Fatalf("Broadcast = %d conns, want %d", len(conns), len(tc.want))
+			}
+			for i, want := range tc.want {
+				if conns[i] != want {
+					t.Errorf("conn %d = %v, want %v", i, conns[i], want)
+				}
+			}
+		})
 	}
 }

@@ -89,9 +89,9 @@ func sudoAsk(id string, timeoutSeconds float64) *AskFrame {
 func TestLifecycleLog_SocketAnswered(t *testing.T) {
 	logs := captureLog(t)
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
-		return "plat-42", true
+		return "plat-42", Presented
 	}
 	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
 	_, sockPath := startTestServer(t, present, resolve)
@@ -119,8 +119,8 @@ func TestLifecycleLog_SocketAnswered(t *testing.T) {
 
 func TestLifecycleLog_SocketTimeoutIsWarn(t *testing.T) {
 	logs := captureLog(t)
-	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
-		return "", true
+	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+		return "", Presented
 	}
 	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
 	_, sockPath := startTestServer(t, present, resolve)
@@ -138,9 +138,9 @@ func TestLifecycleLog_SocketTimeoutIsWarn(t *testing.T) {
 func TestLifecycleLog_HTTPArrivalAnswerTimeout(t *testing.T) {
 	logs := captureLog(t)
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
-		return "", true
+		return "", Presented
 	}
 	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
 	tr := NewHTTPTransport(newHTTPTestServer(t, present, resolve, 30*time.Millisecond))

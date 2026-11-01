@@ -18,6 +18,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"foci/internal/agent"
+	"foci/internal/chatmeta"
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/delegator"
@@ -1459,16 +1460,10 @@ func (h *Hub) mintFacetConversation(agentID, sessionKey string) (string, error) 
 
 // chatIDForConv maps a (string) conversationId to a stable positive int64
 // chat ID, so reconnects with the same conversationId resolve to the same
-// foci session. FNV-64a; collision probability is negligible for the handful
-// of conversations a device holds.
+// foci session. The derivation lives in chatmeta.StableChatID (shared with
+// the Slack transport); pinned by TestChatIDForConv_PinnedValues.
 func chatIDForConv(convID string) int64 {
-	hsh := fnv.New64a()
-	_, _ = hsh.Write([]byte(convID))
-	v := int64(hsh.Sum64() & 0x7fffffffffffffff) //nolint:gosec // masked to 63 bits, always fits int64
-	if v == 0 {
-		v = 1
-	}
-	return v
+	return chatmeta.StableChatID(convID)
 }
 
 // sessionKeyForChat resolves the foci session key for an (agent, chatID).

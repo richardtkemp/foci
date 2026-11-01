@@ -1188,6 +1188,15 @@ func (idx *SessionIndex) DeleteAgentMetadata(agentID, key string) error {
 
 // Chat Metadata Methods
 
+// ChatMetaNeverDefault is the chat_metadata key (value "true") marking a chat
+// that must never be resolved as an agent's default session. Written by
+// transports whose conversations belong to other people (a colleague's Slack
+// DM or channel thread, #2459) at first contact; consulted by every rung of
+// DefaultSessionKeyForAgentOn, so agent-wide traffic (startup notices, cron,
+// keepalive, approval prompts) never lands in such a chat however recently it
+// was active.
+const ChatMetaNeverDefault = "never_default"
+
 // SetChatMetadata stores a metadata value for a chat.
 // Platform identifies the source platform (e.g. "telegram", "discord").
 // Use "" for platform-agnostic lookups (e.g. legacy migration, cross-platform queries).
@@ -1621,9 +1630,25 @@ func (idx *SessionIndex) DeleteSystemState(key string) error {
 // Clears any previous default for that agent on the same platform, then sets
 // the new one via an is_default=true row in chat_metadata.
 // Each platform maintains its own independent default.
+//
+// A chat carrying the never_default flag (a conversation that belongs to
+// someone else, e.g. a colleague's Slack DM or channel thread, #2459) is
+// refused: agent-wide traffic (startup notices, cron, keepalive, approval
+// prompts) must never land in it, so it cannot be pinned as a default.
 func (idx *SessionIndex) SetDefaultChat(agentID, platform string, chatID int64) error {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
+
+	var neverDefault int
+	err := idx.db.QueryRow(
+		`SELECT 1 FROM chat_metadata WHERE agent_id = ? AND chat_id = ? AND key = '`+ChatMetaNeverDefault+`' AND value = 'true' LIMIT 1`,
+		agentID, chatID,
+	).Scan(&neverDefault)
+	if err == nil {
+		return fmt.Errorf("chat %d is never a default chat (a conversation that must not receive agent-wide traffic, e.g. a Slack conversation); it cannot be pinned", chatID)
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 
 	// Clear any existing default for this agent on this platform.
 	if _, err := idx.db.Exec(
@@ -1634,7 +1659,7 @@ func (idx *SessionIndex) SetDefaultChat(agentID, platform string, chatID int64) 
 	}
 
 	// Set new default.
-	_, err := idx.db.Exec(
+	_, err = idx.db.Exec(
 		chatMetaTable.upsertSQL,
 		agentID, platform, chatID, "is_default", "true",
 	)
@@ -1782,12 +1807,23 @@ func (idx *SessionIndex) DefaultSessionKeyForAgentOn(agentID, preferredPlatform 
 		 WHERE arch.agent_id = cm.agent_id AND arch.platform = cm.platform
 		   AND arch.chat_id = cm.chat_id AND arch.key = 'is_archived' AND arch.value = 'true') `
 
+	// Every rung also excludes never-default chats: conversations on
+	// transports whose chats must never become an agent's default (a
+	// colleague's Slack DM or channel thread, #2459) carry a never_default
+	// chat_metadata row, and agent-wide traffic (startup notices, cron,
+	// keepalive, approval prompts) must never post into them.
+	notNeverDefault := func(agentCol, chatCol string) string {
+		return `AND NOT EXISTS (SELECT 1 FROM chat_metadata nd
+		 WHERE nd.agent_id = ` + agentCol + ` AND nd.chat_id = ` + chatCol + `
+		   AND nd.key = '` + ChatMetaNeverDefault + `' AND nd.value = 'true') `
+	}
+
 	if preferredPlatform != "" {
 		// Preferred platform's pinned default chat.
 		var chatID int64
 		err := idx.db.QueryRow(
 			`SELECT cm.chat_id FROM chat_metadata cm
-			 WHERE cm.agent_id = ? AND cm.platform = ? AND cm.key = 'is_default' AND cm.value = 'true' `+notArchived,
+			 WHERE cm.agent_id = ? AND cm.platform = ? AND cm.key = 'is_default' AND cm.value = 'true' `+notArchived+notNeverDefault("cm.agent_id", "cm.chat_id"),
 			agentID, preferredPlatform,
 		).Scan(&chatID)
 		if err == nil && chatID != 0 {
@@ -1815,7 +1851,7 @@ func (idx *SessionIndex) DefaultSessionKeyForAgentOn(agentID, preferredPlatform 
 			`SELECT cm.chat_id FROM (SELECT DISTINCT agent_id, platform, chat_id FROM chat_metadata WHERE key = 'registered' AND value = 'true') cm
 			 LEFT JOIN session_index si
 			   ON si.agent_id = cm.agent_id AND si.chat_id = cm.chat_id AND si.is_root = 1
-			 WHERE cm.agent_id = ? AND cm.platform = ? AND cm.chat_id != 0 `+convGuard+notArchived+`
+			 WHERE cm.agent_id = ? AND cm.platform = ? AND cm.chat_id != 0 `+convGuard+notArchived+notNeverDefault("cm.agent_id", "cm.chat_id")+`
 			 ORDER BY unixepoch(si.last_user_activity_at) DESC NULLS LAST
 			 LIMIT 1`,
 			agentID, preferredPlatform,
@@ -1835,7 +1871,7 @@ func (idx *SessionIndex) DefaultSessionKeyForAgentOn(agentID, preferredPlatform 
 		`SELECT cm.chat_id FROM chat_metadata cm
 		 LEFT JOIN session_index si
 		   ON si.agent_id = cm.agent_id AND si.chat_id = cm.chat_id AND si.is_root = 1
-		 WHERE cm.agent_id = ? AND cm.key = 'is_default' AND cm.value = 'true' `+notArchived+`
+		 WHERE cm.agent_id = ? AND cm.key = 'is_default' AND cm.value = 'true' `+notArchived+notNeverDefault("cm.agent_id", "cm.chat_id")+`
 		 ORDER BY unixepoch(si.last_user_activity_at) DESC NULLS LAST
 		 LIMIT 1`,
 		agentID,
@@ -1850,7 +1886,9 @@ func (idx *SessionIndex) DefaultSessionKeyForAgentOn(agentID, preferredPlatform 
 	// agent's primary instance root ('i', classified 'unknown'), both of which
 	// are legitimate user-facing default sessions. No session_type filter: it
 	// would wrongly drop the instance root (e.g. an agent that received /send
-	// before any chat binding), breaking default resolution.
+	// before any chat binding), breaking default resolution. A never-default
+	// chat is excluded here too (rung 4 is the one a merely-active Slack
+	// session would otherwise win).
 	var key string
 	err = idx.db.QueryRow(
 		`SELECT session_key FROM session_index si
@@ -1858,6 +1896,7 @@ func (idx *SessionIndex) DefaultSessionKeyForAgentOn(agentID, preferredPlatform 
 		   AND NOT EXISTS (SELECT 1 FROM chat_metadata arch
 		     WHERE arch.agent_id = si.agent_id AND arch.chat_id = si.chat_id
 		       AND arch.key = 'is_archived' AND arch.value = 'true')
+		   `+notNeverDefault("si.agent_id", "si.chat_id")+`
 		 ORDER BY unixepoch(si.last_user_activity_at) DESC NULLS LAST, unixepoch(si.created_at) DESC
 		 LIMIT 1`,
 		agentID,

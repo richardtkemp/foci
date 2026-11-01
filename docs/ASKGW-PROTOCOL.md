@@ -25,6 +25,7 @@ The server receives an `ask` frame, validates it, resolves the target agent/sess
 **Presentation:**
 - Message IDs namespaced as `askgw-<askID>-q<idx>` so they never collide with CC permission prompts.
 - For multi-question asks, questions are presented one at a time. Each answer advances to the next question. The final `answer` frame includes all responses.
+- A question the platform REFUSES to show — the session's platform cannot show approval prompts (Slack until #2459 C) — denies the ask at once: nothing is posted, nothing is acked, and the requester receives the dismissal frame (`status: "dismissed"`, no answers). The same resolution applies to a later question of a multi-question ask that cannot be shown: the ask resolves at once instead of waiting out its timeout.
 
 **On acceptance:** the server sends an `ack` frame back to the client.
 
@@ -59,7 +60,7 @@ Sent when the human responds, the timeout expires, or the human dismisses the pr
 |--------|---------|
 | `answered` | Human selected an option (or options, for multi-select) |
 | `timeout` | Per-entry timer expired before the human responded |
-| `dismissed` | Human dismissed the prompt via the UI |
+| `dismissed` | The ask was withdrawn without a decision: the human dismissed the prompt via the UI, or foci refused to present it (the session's platform cannot show approval prompts — Slack until #2459 C) — denied at once, nothing shown, nothing approved |
 | `unavailable` | No active session for the target agent at presentation time |
 
 Answers are keyed by question `key`. Single-select answers are a JSON string (the option label); multi-select answers are a JSON array.

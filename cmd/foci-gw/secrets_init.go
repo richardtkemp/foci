@@ -19,11 +19,19 @@ type secretsResult struct {
 	cleanup    func()
 }
 
+// secretsPathFor is the one derivation of the secrets file path: always
+// secrets.toml beside the config file. Startup's loader, the credential
+// reload watcher and -check-config's Slack credential check must all agree
+// on it.
+func secretsPathFor(configPath string) string {
+	return filepath.Join(filepath.Dir(configPath), "secrets.toml")
+}
+
 // initSecrets loads secrets.toml, runs security checks, generates the HTTP API key,
 // and sets up bitwarden (if enabled).
 func initSecrets(configPath string, cfg *config.Config) secretsResult {
 	// Load secrets (from secrets.toml alongside config file)
-	secretsPath := filepath.Join(filepath.Dir(configPath), "secrets.toml")
+	secretsPath := secretsPathFor(configPath)
 	store, err := secrets.Load(secretsPath)
 	if err != nil {
 		log.Fatalf("main", "load secrets: %v", err)

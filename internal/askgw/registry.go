@@ -283,6 +283,29 @@ func (r *Registry) resolveDismissed(connID uint64, askID string) {
 	askgwLog.Infof("ask dismissed id=%s conn=%d after %s summary=%q", askID, connID, r.waited(e), e.summary)
 }
 
+// resolveRefused resolves an ask foci refused to present: the session's
+// platform cannot show approval prompts (platform.ApprovalRefuser — Slack
+// until #2459 part C routes approvals to an operator), so the ask is DENIED
+// at once (#2459 A1 req 7). The requester receives the same AnswerFrame a
+// UI dismissal produces — status dismissed, no answers: no decision was
+// made and nothing was approved — and the refusal is logged at WARN because
+// no human ever saw the question. The entry is removed, so nothing is left
+// pending and a later notify finds no answered ask to render (correct:
+// nothing was approved, there is nothing to report).
+func (r *Registry) resolveRefused(connID uint64, askID string) {
+	e := r.Remove(connID, askID)
+	if e == nil {
+		return
+	}
+	_ = e.w.WriteFrame(AnswerFrame{
+		Protocol: ProtocolVersion,
+		Type:     TypeAnswer,
+		ID:       askID,
+		Status:   StatusDismissed,
+	})
+	askgwLog.Warnf("ask refused id=%s conn=%d after %s session=%s summary=%q: the session's platform cannot show approval prompts; denied (#2459 C routes approvals to an operator)", askID, connID, r.waited(e), e.sessionKey, e.summary)
+}
+
 func (r *Registry) ResolveUnavailable(w connWriter, askID string) {
 	_ = w.WriteFrame(AnswerFrame{
 		Protocol: ProtocolVersion,

@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"foci/internal/askgw"
 	"foci/internal/platform"
 	"foci/internal/question"
 )
@@ -30,15 +31,15 @@ func TestAskgwPresenter_AppFirstThenAgentChat(t *testing.T) {
 				appButtons = buttons
 				return tc.appShows
 			}
-			chat := func(agentID, sessionKey, msgID, text, summary string, cs []question.Choice, onResponse func(string)) (string, bool) {
+			chat := func(agentID, sessionKey, msgID, text, summary string, cs []question.Choice, onResponse func(string)) (string, askgw.PresentOutcome) {
 				chatCalls++
 				if agentID != "clutch" || sessionKey != "sk" || msgID != "askgw-a1-q0" {
 					t.Errorf("chat got agent=%q session=%q msg=%q", agentID, sessionKey, msgID)
 				}
-				return "chat-msg-1", true
+				return "chat-msg-1", askgw.Presented
 			}
-			msgID, ok := askgwPresenter(app, chat)("clutch", "sk", "askgw-a1-q0", "Run ls?", "Sudo", choices, func(string) {})
-			if !ok {
+			msgID, outcome := askgwPresenter(app, chat)("clutch", "sk", "askgw-a1-q0", "Run ls?", "Sudo", choices, func(string) {})
+			if outcome != askgw.Presented {
 				t.Fatal("present failed")
 			}
 			if appCalls != 1 {

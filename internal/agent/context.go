@@ -22,6 +22,14 @@ func RegisterPlatformTrigger(trigger string) {
 	platformTriggers.Store(trigger, true)
 }
 
+// IsPlatformTrigger reports whether trigger names a registered messaging
+// platform (see RegisterPlatformTrigger) — the read side of the registration
+// every messaging provider performs in its init().
+func IsPlatformTrigger(trigger string) bool {
+	_, ok := platformTriggers.Load(trigger)
+	return ok
+}
+
 // turnMetadataKey is the context key for TurnMetadata.
 type turnMetadataKey struct{}
 
@@ -160,7 +168,7 @@ func ReceivedAtFromContext(ctx context.Context) time.Time {
 // (typed via a messaging platform, spoken via voice, or sent via HTTP /send).
 // Returns false for system-initiated triggers (keepalive, branch, cron, warnings, etc.).
 func isUserTrigger(trigger string) bool {
-	if _, ok := platformTriggers.Load(trigger); ok {
+	if IsPlatformTrigger(trigger) {
 		return true
 	}
 	switch trigger {
@@ -173,8 +181,8 @@ func isUserTrigger(trigger string) bool {
 
 // isInteractiveTrigger reports whether a turn originates from real-time user
 // input on an interactive surface: a registered messaging platform (telegram,
-// discord, app) or voice. Only these turns may steer — fold into an in-flight
-// turn via the backend's mid-turn drain. Every other trigger is
+// discord, slack, app) or voice. Only these turns may steer — fold into an
+// in-flight turn via the backend's mid-turn drain. Every other trigger is
 // system-initiated — HTTP /send (foci send, cron), webhooks, wakes,
 // inter-session notifies, error/restart injections, memory passes — and must
 // wait gracefully for the in-flight turn to complete instead (the
@@ -184,7 +192,7 @@ func isUserTrigger(trigger string) bool {
 // count as user-initiated for nudges and logging, but they are not
 // real-time input and must never steer running work.
 func isInteractiveTrigger(trigger string) bool {
-	if _, ok := platformTriggers.Load(trigger); ok {
+	if IsPlatformTrigger(trigger) {
 		return true
 	}
 	return trigger == "voice"
@@ -392,7 +400,7 @@ func nudgesAllowed(ts *TurnState) bool {
 
 // triggerToPlatform maps a trigger label to a platform name for the [meta] header.
 // Platform tells the agent which transport/source delivered the message:
-//   - telegram/app/discord: a messaging platform (registered, identity-mapped)
+//   - telegram/app/discord/slack: a messaging platform (registered, identity-mapped)
 //   - voice: voice (speech-to-text)
 //   - external: HTTP /send endpoint (foci send CLI + raw API callers)
 //   - agent: an inter-agent send_to_session
@@ -408,7 +416,7 @@ func nudgesAllowed(ts *TurnState) bool {
 //   - depth: a depth-mode leaf's first turn, the feed's Ack, or a fan-in (#2588)
 //   - cron: fallback for a genuinely-unclassified trigger (should not normally appear)
 func triggerToPlatform(trigger string) string {
-	if _, ok := platformTriggers.Load(trigger); ok {
+	if IsPlatformTrigger(trigger) {
 		return trigger
 	}
 	switch trigger {

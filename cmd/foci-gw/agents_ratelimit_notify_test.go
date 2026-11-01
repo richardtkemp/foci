@@ -5,17 +5,27 @@ import (
 	"testing"
 
 	"foci/internal/config"
+	"foci/internal/log"
 	"foci/internal/platform"
 )
 
-// rlConn records the notifications delivered to it.
+// rlConn records the notifications delivered to it. confines models
+// platform.ReplyConfiner (Slack's bound views): wired per test so the tests
+// prove the delivery decision reads the capability, not the platform name.
+// drops models platform.AgentWideDropper (Slack's unbound conn), whose
+// SendNotification can address nothing.
 type rlConn struct {
 	*stubConn
-	name    string
-	notices []string
+	name     string
+	confines bool
+	drops    bool
+	notices  []string
 }
 
 func (c *rlConn) SendNotification(s string) { c.notices = append(c.notices, s) }
+func (c *rlConn) ConfinesReplies() bool     { return c.confines }
+func (c *rlConn) DropsAgentWideSends() bool { return c.drops }
+func (c *rlConn) PlatformName() string      { return c.name }
 
 func newRLConn(name, sessionKey string) *rlConn {
 	return &rlConn{stubConn: &stubConn{sessionKey: sessionKey}, name: name}
@@ -24,10 +34,21 @@ func newRLConn(name, sessionKey string) *rlConn {
 // rlConnMgr is a ConnectionManager whose session connection is a DIFFERENT
 // object from the agent's primary — the only shape that can tell "delivered to
 // the triggering chat" from "delivered to the default chat" apart.
+// confinedKey models the aggregating manager's SessionConfinementResolver
+// answer: the session's chat is owned by a platform whose provider declares
+// session-reply confinement, so confinement holds with no live connection.
 type rlConnMgr struct {
-	primary    *rlConn
-	sessionKey string
-	session    *rlConn
+	primary     *rlConn
+	sessionKey  string
+	session     *rlConn
+	confinedKey string
+}
+
+// SessionPlatformConfinesReplies is the owning-platform confinement answer
+// (see the confinedKey field); empty answers false, so the ordinary-shape
+// tests below are unaffected.
+func (m *rlConnMgr) SessionPlatformConfinesReplies(sessionKey string) bool {
+	return m.confinedKey != "" && sessionKey == m.confinedKey
 }
 
 func (m *rlConnMgr) Primary(string) platform.Connection {
@@ -128,5 +149,62 @@ func TestDeliverRateLimitNoticeNoConnection(t *testing.T) {
 	m := &rlConnMgr{}
 	for _, target := range config.ValidRateLimitNotifyTargets {
 		deliverRateLimitNotice(m, "clutch", "clutch/main", rlNotice, target)
+	}
+}
+
+// TestDeliverRateLimitNoticeBothConfinedSessionStaysInSession: under "both", a
+// session whose connection confines replies (a Slack view) must NOT have its
+// notice copied to the agent's primary — that would hand one user's usage
+// notice to a different audience on another platform (#2459 req 5). The
+// session's own conversation still gets it.
+func TestDeliverRateLimitNoticeBothConfinedSessionStaysInSession(t *testing.T) {
+	t.Parallel()
+	m := newRLMgr()
+	m.session.confines = true
+	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyBoth)
+	if got := len(m.session.notices); got != 1 {
+		t.Errorf("session conn got %d notices %v, want 1", got, m.session.notices)
+	}
+	if got := len(m.primary.notices); got != 0 {
+		t.Errorf("primary conn got %d notices %v, want 0 — a confined session's notice must not be copied out of its conversation", got, m.primary.notices)
+	}
+}
+
+// TestDeliverRateLimitNoticeBothConfinedWithoutConnectionStaysOut proves the
+// nil-connection arm of the same rule (#2459 req 5): under "both", a session
+// whose OWNING platform confines replies — declared by the platform, not by
+// any live connection — must not have its notice copied to the primary when
+// no live connection serves it. The notice is dropped, never copied out.
+func TestDeliverRateLimitNoticeBothConfinedWithoutConnectionStaysOut(t *testing.T) {
+	t.Parallel()
+	m := newRLMgr()
+	m.session = nil
+	m.confinedKey = m.sessionKey
+	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyBoth)
+	if got := len(m.primary.notices); got != 0 {
+		t.Errorf("primary conn got %d notices %v, want 0 — a confined session with no live connection drops the notice, never copies it to another platform's chat", got, m.primary.notices)
+	}
+}
+
+// TestDeliverRateLimitNoticeDropLoggedAsDrop proves the delivery log tells the
+// truth for a connection that cannot address a session-blind notice (an
+// agent-wide dropper — Slack's unbound conn, reached here through the
+// "session" arm's fallback): the outcome line says the notice was dropped by
+// that connection, never that it was delivered.
+func TestDeliverRateLimitNoticeDropLoggedAsDrop(t *testing.T) {
+	t.Parallel()
+	logs := captureLog(t, log.DEBUG)
+	session := "clutch/" + runToken("rldrop")
+	dropper := newRLConn("slack", "")
+	dropper.drops = true
+	m := &rlConnMgr{primary: dropper, sessionKey: session}
+
+	deliverRateLimitNotice(m, "clutch", session, rlNotice, config.RateLimitNotifySession)
+
+	if got := logs.Lines("DEBUG", "notice dropped by "+dropper.name); len(got) != 1 {
+		t.Errorf("drop DEBUG lines = %d, want exactly 1:\n%s", len(got), logs.String())
+	}
+	if got := logs.Lines("DEBUG", "notice delivered", session); len(got) != 0 {
+		t.Errorf("a dropped notice was logged as delivered: %v", got)
 	}
 }

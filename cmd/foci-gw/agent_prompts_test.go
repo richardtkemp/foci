@@ -37,3 +37,16 @@ func TestSeedDefaultPrompts_DoesNotOverwrite(t *testing.T) {
 		t.Errorf("seed overwrote a user-edited backend file: %q", data)
 	}
 }
+
+// TestSeedDefaultPrompts_SeedsSlackPlatformPrompt proves the Slack platform
+// guidance is seeded as an editable copy like telegram/app/discord (#2459).
+func TestSeedDefaultPrompts_SeedsSlackPlatformPrompt(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	seedDefaultPrompts(dir, 0o644, nil)
+	for _, name := range []string{"platform-telegram.md", "platform-app.md", "platform-discord.md", "platform-slack.md"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("%s not seeded: %v", name, err)
+		}
+	}
+}

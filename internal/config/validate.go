@@ -240,6 +240,14 @@ func (cfg *Config) Validate(knownBackends []string) error {
 		return err
 	}
 
+	if err := cfg.validateSlack(); err != nil {
+		return err
+	}
+
+	if err := cfg.validatePerAgentSlackBlocks(); err != nil {
+		return err
+	}
+
 	if err := cfg.validateAskgw(); err != nil {
 		return err
 	}
@@ -818,19 +826,24 @@ func DetectBotTokenConflicts(agents []AgentConfig, secrets SecretGetter) []BotTo
 }
 
 // validateDefaultPlatforms checks that every default_platform value (global
-// and per-agent) names a configured [[platforms]] entry.
+// and per-agent) names a configured [[platforms]] entry — and never "slack":
+// a Slack conversation can never become an agent's default chat (#2459), so
+// preferring it for default-session delivery is a config error.
 func (cfg *Config) validateDefaultPlatforms() error {
 	known := make(map[string]bool, len(cfg.Platforms))
 	for _, p := range cfg.Platforms {
 		known[p.ID] = true
 	}
 	check := func(scope, v string) error {
+		if v == "slack" {
+			return fmt.Errorf("%s default_platform = \"slack\": Slack conversations are never default chats (they never receive agent-wide traffic); pick another platform", scope)
+		}
 		if v == "" || known[v] {
 			return nil
 		}
 		return fmt.Errorf("%s default_platform = %q: no such [[platforms]] entry configured", scope, v)
 	}
-	if err := check("", cfg.DefaultPlatform); err != nil {
+	if err := check("global", cfg.DefaultPlatform); err != nil {
 		return err
 	}
 	for _, a := range cfg.Agents {

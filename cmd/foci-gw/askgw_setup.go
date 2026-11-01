@@ -45,27 +45,7 @@ func setupAskgw(cfg *config.Config, agents *agentRegistry, connMgr platform.Conn
 		return agentID, sk
 	}
 
-	chatPresent := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
-		buttons := askgwButtons(choices)
-		resolve := connResolver(connMgr, sessionKey, agentID)
-		conn := resolve()
-		if conn == nil {
-			return "", false
-		}
-		platformMsgID, err := platform.SendInteractiveMessageWithID(resolve, msgID, summary, text, buttons, func(choice platform.ButtonChoice) string {
-			onResponse(choice.Data)
-			if choice.Data == question.CancelData {
-				return "❌ Cancelled"
-			}
-			return "✅ " + choice.Label
-		}, func() {
-			onResponse(question.CancelData)
-		})
-		if err != nil {
-			return "", false
-		}
-		return platformMsgID, true
-	}
+	chatPresent := askgwPresentFn(connMgr)
 
 	present := askgwPresenter(app.PresentAskgwPrompt, chatPresent)
 
@@ -140,9 +120,9 @@ type appPromptFn func(id, header, text string, buttons []platform.ButtonChoice, 
 // an empty platform msgID, so a later `notify` goes to notifyFallback: there
 // is no chat message to edit.
 func askgwPresenter(appPresent appPromptFn, chat askgw.PresentFn) askgw.PresentFn {
-	return func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+	return func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, askgw.PresentOutcome) {
 		if appPresent(msgID, summary, text, askgwButtons(choices), onResponse) {
-			return "", true
+			return "", askgw.Presented
 		}
 		return chat(agentID, sessionKey, msgID, text, summary, choices, onResponse)
 	}

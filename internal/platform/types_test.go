@@ -32,10 +32,10 @@ func TestMessageHandlerInterface(t *testing.T) {
 	_ = h.Warnings()
 }
 
-// TestConnectionManagerInterface verifies that noopConnMgr implements ConnectionManager.
+// TestConnectionManagerInterface verifies that NoopConnectionManager implements ConnectionManager.
 // This is a compile-time check that catches interface drift.
 func TestConnectionManagerInterface(t *testing.T) {
-	var _ ConnectionManager = (*noopConnMgr)(nil)
+	var _ ConnectionManager = (*NoopConnectionManager)(nil)
 	var _ ConnectionManager = (*aggregatingConnMgr)(nil)
 }
 
@@ -94,7 +94,7 @@ type mockProvider struct {
 func (p *mockProvider) Name() string                                            { return p.name }
 func (p *mockProvider) IsConfigured(*config.Config) (bool, string)              { return false, "mock" }
 func (p *mockProvider) Init(ProviderDeps) error                                 { return nil }
-func (p *mockProvider) ConnectionManager() ConnectionManager                    { return &noopConnMgr{} }
+func (p *mockProvider) ConnectionManager() ConnectionManager                    { return &NoopConnectionManager{} }
 func (p *mockProvider) SetupAgentConnection(AgentConnectionParams) *SetupResult { return nil }
 func (p *mockProvider) SetupSharedFacet(SharedFacetParams)                      {}
 func (p *mockProvider) RestoreFacetSessions(RestoreParams)                      {}
@@ -166,7 +166,7 @@ func TestMessagingNilSafe(t *testing.T) {
 
 	// All methods should be safe on nil
 	if cm := m.ConnectionManager(); cm == nil {
-		t.Error("ConnectionManager on nil should return noopConnMgr, not nil")
+		t.Error("ConnectionManager on nil should return NoopConnectionManager, not nil")
 	}
 	if names := m.ActivePlatformNames(); names != nil {
 		t.Errorf("ActivePlatformNames on nil = %v, want nil", names)
@@ -191,9 +191,9 @@ func TestMessagingNilSafe(t *testing.T) {
 	}
 }
 
-// Verifies noopConnMgr returns expected zero values.
+// Verifies NoopConnectionManager returns expected zero values.
 func TestNoopConnMgr(t *testing.T) {
-	n := &noopConnMgr{}
+	n := &NoopConnectionManager{}
 	if n.Primary("x") != nil {
 		t.Error("Primary should return nil")
 	}
@@ -413,5 +413,105 @@ func TestIsSilencingPrefix(t *testing.T) {
 				t.Errorf("IsSilencingPrefix(%q) = %v, want %v", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+// refusingConn is a Connection stub that implements ApprovalRefuser with a
+// switchable answer, so the helper's false leg is exercised too.
+type refusingConn struct {
+	mockConnection
+	refuses bool
+}
+
+func (c *refusingConn) RefusesApprovals() bool { return c.refuses }
+
+// TestRefusesApprovals_Helper proves the nil-safe reader for the approval
+// refusal capability (#2459 A1): true only on a connection that implements
+// ApprovalRefuser and answers true; false on nil, on plain connections, and
+// on one that answers false.
+func TestRefusesApprovals_Helper(t *testing.T) {
+	if RefusesApprovals(nil) {
+		t.Error("RefusesApprovals(nil) = true; nil must never refuse")
+	}
+	var plain Connection = &mockConnection{}
+	if RefusesApprovals(plain) {
+		t.Error("plain connection refuses; only ApprovalRefuser implementations may")
+	}
+	var off Connection = &refusingConn{refuses: false}
+	if RefusesApprovals(off) {
+		t.Error("connection answering false refuses; the answer must be honoured")
+	}
+	var on Connection = &refusingConn{refuses: true}
+	if !RefusesApprovals(on) {
+		t.Error("ApprovalRefuser connection does not refuse")
+	}
+}
+
+// confiningConn is a Connection stub that implements ReplyConfiner with a
+// switchable answer, so the helper's false leg is exercised too.
+type confiningConn struct {
+	mockConnection
+	confines bool
+}
+
+func (c *confiningConn) ConfinesReplies() bool { return c.confines }
+
+// TestConfinesReplies_Helper proves the nil-safe reader for the reply
+// confinement capability (#2459 A1 req 5): true only on a connection that
+// implements ReplyConfiner and answers true; false on nil, on plain
+// connections, and on one that answers false.
+func TestConfinesReplies_Helper(t *testing.T) {
+	if ConfinesReplies(nil) {
+		t.Error("ConfinesReplies(nil) = true; nil must never confine")
+	}
+	var plain Connection = &mockConnection{}
+	if ConfinesReplies(plain) {
+		t.Error("plain connection confines; only ReplyConfiner implementations may")
+	}
+	var off Connection = &confiningConn{confines: false}
+	if ConfinesReplies(off) {
+		t.Error("connection answering false confines; the answer must be honoured")
+	}
+	var on Connection = &confiningConn{confines: true}
+	if !ConfinesReplies(on) {
+		t.Error("ReplyConfiner connection does not confine")
+	}
+}
+
+// resolverConnMgr is a ConnectionManager stub that also answers the
+// owning-platform confinement question (SessionConfinementResolver), for the
+// session-level helper's platform input.
+type resolverConnMgr struct {
+	testConnMgr
+	confinedKey string
+}
+
+func (m *resolverConnMgr) SessionPlatformConfinesReplies(sessionKey string) bool {
+	return m.confinedKey != "" && sessionKey == m.confinedKey
+}
+
+// TestSessionConfinesReplies_Helper proves the session-level confinement
+// reader (#2459 req 5): a live session connection declaring ReplyConfiner
+// confines; with no live connection the manager's owning-platform answer
+// decides; nil managers, plain connections and unanswered keys never confine.
+func TestSessionConfinesReplies_Helper(t *testing.T) {
+	if SessionConfinesReplies(nil, "ag/c1") {
+		t.Error("SessionConfinesReplies(nil, …) = true; nil must never confine")
+	}
+	confined := &confiningConn{confines: true}
+	byConn := &testConnMgr{sessions: map[string]Connection{"ag/c1": confined}}
+	if !SessionConfinesReplies(byConn, "ag/c1") {
+		t.Error("a confining live session connection must confine")
+	}
+	if SessionConfinesReplies(byConn, "ag/c2") {
+		t.Error("a key with no live connection confined; the platform input is the only other source")
+	}
+	byPlatform := &resolverConnMgr{confinedKey: "ag/c2"}
+	if !SessionConfinesReplies(byPlatform, "ag/c2") {
+		t.Error("the owning platform's declaration must confine with no live connection")
+	}
+	unanswered := &resolverConnMgr{confinedKey: "ag/c9"}
+	if SessionConfinesReplies(unanswered, "ag/c2") {
+		t.Error("a key the owning platform does not confine must not confine")
 	}
 }

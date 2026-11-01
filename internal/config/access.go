@@ -2,6 +2,47 @@ package config
 
 import "strings"
 
+// AllowedAccess is one agent's resolved message allowlist on one platform:
+// the union of the agent-level and global allowed_users, and the
+// allowed_users_only flag that wins the two-level cascade.
+type AllowedAccess struct {
+	Users []string
+	Only  bool
+}
+
+// ResolveAllowedAccess resolves an agent's access.allowed_users /
+// allowed_users_only on one platform from the raw agent and global config
+// levels — the single copy of the cascade every chat transport uses (telegram
+// and discord historically carried two private duplicates; slack joins them):
+//
+//   - Users is the union of the agent's and the global allowed_users for the
+//     platform (agent entries first, deduplicated).
+//
+//   - Only is the agent's allowed_users_only flag when set, else the global
+//     flag, else true (strict). Combined with platform.UserAllowed: only
+//     listed users pass, so an empty list blocks everyone; when explicitly
+//     false, an empty list allows anyone while a non-empty list still filters.
+//
+// A change only takes effect after a restart.
+func ResolveAllowedAccess(cfg *Config, acfg AgentConfig, platformID string) AllowedAccess {
+	var agentUsers, globalUsers []string
+	if p := acfg.Platform(platformID); p != nil {
+		agentUsers = p.Access.AllowedUsers
+	}
+	if gp := cfg.Platform(platformID); gp != nil {
+		globalUsers = gp.Access.AllowedUsers
+	}
+	users := SuperveneSlice(agentUsers, globalUsers, func(s string) string { return s })
+
+	only := true
+	if p := acfg.Platform(platformID); p != nil && p.Access.AllowedUsersOnly != nil {
+		only = *p.Access.AllowedUsersOnly
+	} else if gp := cfg.Platform(platformID); gp != nil && gp.Access.AllowedUsersOnly != nil {
+		only = *gp.Access.AllowedUsersOnly
+	}
+	return AllowedAccess{Users: users, Only: only}
+}
+
 // DefaultNonOperatorCommands returns a fresh copy of the commands a non-operator
 // may run when non_operator_commands is set at neither the agent nor the global
 // platform level: help, reset and stop (#2279).

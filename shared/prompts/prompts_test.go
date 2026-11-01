@@ -68,6 +68,22 @@ func TestBranchOrientationFacetHasVars(t *testing.T) {
 	}
 }
 
+// TestPlatformSlackPrompt pins the Slack platform prompt's contract (#2459
+// A1): it exists, tells the model its replies are already delivered, and
+// names the two interim limits the deployment actually enforces — no tool
+// approvals (denied at once) and no slash commands.
+func TestPlatformSlackPrompt(t *testing.T) {
+	text := Platform("slack")
+	if text == "" {
+		t.Fatal("Platform(\"slack\") is empty — platform-slack.md missing from the embed")
+	}
+	for _, want := range []string{"already delivered", "approval", "slash commands"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("slack platform prompt missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestResolvePromptEmptyPath(t *testing.T) {
 	got := ResolvePrompt("", "test", "embedded-default")
 	if got != "embedded-default" {

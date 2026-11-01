@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"foci/internal/config"
 	"foci/internal/session"
 )
 
@@ -30,6 +31,165 @@ type namedConn struct {
 }
 
 func (c *namedConn) Username() string { return c.name }
+
+// TestAggregatingPrimary_OrderUnchangedWithoutNeverDefault pins the Primary
+// fallback order for providers that are NOT never-default platforms: the
+// platform owning the default session wins, and with no default session the
+// alphabetical `order` fallback picks the first primary. The never-default
+// reordering added for Slack (#2459) must leave this ladder unchanged.
+func TestAggregatingPrimary_OrderUnchangedWithoutNeverDefault(t *testing.T) {
+	telegramConn := &namedConn{name: "telegram-bot"}
+	appConn := &namedConn{name: "app-bot"}
+	telegramMgr := &testConnMgr{primary: telegramConn}
+	appMgr := &testConnMgr{primary: appConn}
+
+	mgr := &aggregatingConnMgr{
+		named: map[string]ConnectionManager{
+			"telegram": telegramMgr,
+			"app":      appMgr,
+		},
+		order: []string{"app", "telegram"}, // alphabetical, as newAggregatingConnMgr sorts
+		defaultSessionKeyFn: func(string) string {
+			return "ag/c42" // a default session on a telegram chat
+		},
+		chatPlatformFn: func(_ string, chatID int64) string {
+			if chatID == 42 {
+				return "telegram"
+			}
+			return ""
+		},
+	}
+
+	// The platform owning the default session is preferred.
+	if got := mgr.Primary("ag"); got.Username() != "telegram-bot" {
+		t.Errorf("Primary (default session owner) = %q, want telegram-bot", got.Username())
+	}
+
+	// No default session at all: alphabetical fallback order.
+	mgr.defaultSessionKeyFn = nil
+	if got := mgr.Primary("ag"); got.Username() != "app-bot" {
+		t.Errorf("Primary (fallback order) = %q, want app-bot (first in order)", got.Username())
+	}
+
+	// A default session whose platform has no connection falls back too.
+	mgr.defaultSessionKeyFn = func(string) string { return "ag/c42" }
+	mgr.chatPlatformFn = func(string, int64) string { return "" }
+	if got := mgr.Primary("ag"); got.Username() != "app-bot" {
+		t.Errorf("Primary (unowned default) = %q, want app-bot", got.Username())
+	}
+}
+
+// TestAggregatingPrimary_NeverDefaultProviderOrderedLast proves the
+// never-default partition (#2459): with a Slack provider (which declares
+// NeverDefaultChat) beside ordinary providers and no default session, the
+// Primary fallback prefers the ordinary platform — Slack's unbound
+// connection (which can only drop agent-wide sends) is offered last.
+func TestAggregatingPrimary_NeverDefaultProviderOrderedLast(t *testing.T) {
+	slackConn := &namedConn{name: "slack-unbound"}
+	telegramConn := &namedConn{name: "telegram-bot"}
+	providers := []MessagingProvider{
+		&fakeProvider{name: "slack", mgr: &testConnMgr{primary: slackConn}, never: true},
+		&fakeProvider{name: "telegram", mgr: &testConnMgr{primary: telegramConn}},
+	}
+	// Registration order: slack BEFORE telegram; sorted alphabetically slack
+	// would also come first — only the partition moves it last.
+	mgr := newAggregatingConnMgr(providers, nil, nil, nil)
+	if got := mgr.Primary("ag"); got.Username() != "telegram-bot" {
+		t.Errorf("Primary = %q, want telegram-bot (never-default providers order last)", got.Username())
+	}
+	// With a default session owned by slack, rung resolution still skips it
+	// in production because slack chats never carry a default session; here
+	// the fallback alone is pinned (the rung's never_default exclusion is
+	// pinned in internal/session).
+	mgr.defaultSessionKeyFn = func(string) string { return "" }
+	if got := mgr.Primary("ag"); got.Username() != "telegram-bot" {
+		t.Errorf("Primary (no default) = %q, want telegram-bot", got.Username())
+	}
+	// Only the never-default platform: it is still returned (last resort
+	// beats nil) — dropping happens in the connection, not the manager.
+	onlySlack := newAggregatingConnMgr([]MessagingProvider{
+		&fakeProvider{name: "slack", mgr: &testConnMgr{primary: slackConn}, never: true},
+	}, nil, nil, nil)
+	if got := onlySlack.Primary("ag"); got.Username() != "slack-unbound" {
+		t.Errorf("Primary (slack only) = %q, want the slack connection (last resort)", got.Username())
+	}
+}
+
+// TestAggregatingSessionPlatformConfinesReplies proves the aggregator answers
+// session-reply confinement from the OWNING platform's declaration
+// (ReplyConfiningProvider), with no live connection involved (#2459 req 5):
+// true only for a chat claimed by a confining provider — false for an
+// ordinary platform's chat, an unclaimed chat, a key with no chat id, and a
+// manager with no platform lookup wired.
+func TestAggregatingSessionPlatformConfinesReplies(t *testing.T) {
+	providers := []MessagingProvider{
+		&fakeProvider{name: "slack", mgr: &testConnMgr{}, never: true, confining: true},
+		&fakeProvider{name: "telegram", mgr: &testConnMgr{}},
+	}
+	chatPlatformFn := func(_ string, chatID int64) string {
+		return map[int64]string{7: "slack", 9: "telegram"}[chatID]
+	}
+	mgr := newAggregatingConnMgr(providers, chatPlatformFn, nil, nil)
+
+	if !mgr.SessionPlatformConfinesReplies("ag/c7") {
+		t.Error("chat owned by the confining platform: want the confinement declared")
+	}
+	if mgr.SessionPlatformConfinesReplies("ag/c9") {
+		t.Error("chat owned by an ordinary platform: want no confinement")
+	}
+	if mgr.SessionPlatformConfinesReplies("ag/c42") {
+		t.Error("unclaimed chat: want no confinement")
+	}
+	if mgr.SessionPlatformConfinesReplies("ag/iwork") {
+		t.Error("key with no chat id: want no confinement")
+	}
+
+	// A key with no chat id has no owning platform to ask — the manager
+	// must not consult the lookup at all for it (the guard has the same
+	// shape as ForSession's), whatever a degenerate lookup would answer
+	// for chat id 0.
+	degenerate := newAggregatingConnMgr(providers, func(string, int64) string { return "slack" }, nil, nil)
+	if degenerate.SessionPlatformConfinesReplies("ag/iwork") {
+		t.Error("key with no chat id: want no confinement — no platform owns a chat that does not exist")
+	}
+
+	// No platform lookup at all: nothing is known to confine.
+	noLookup := newAggregatingConnMgr(providers, nil, nil, nil)
+	if noLookup.SessionPlatformConfinesReplies("ag/c7") {
+		t.Error("manager without a platform lookup: want no confinement")
+	}
+}
+
+// fakeProvider is a MessagingProvider stub whose optional capability
+// answers (NeverDefaultChat, ConfinesSessionReplies) are configurable.
+type fakeProvider struct {
+	name      string
+	mgr       ConnectionManager
+	never     bool
+	confining bool
+}
+
+func (p *fakeProvider) Name() string { return p.name }
+func (p *fakeProvider) IsConfigured(*config.Config) (bool, string) {
+	return true, ""
+}
+func (p *fakeProvider) Init(ProviderDeps) error              { return nil }
+func (p *fakeProvider) ConnectionManager() ConnectionManager { return p.mgr }
+func (p *fakeProvider) SetupAgentConnection(AgentConnectionParams) *SetupResult {
+	return nil
+}
+func (p *fakeProvider) SetupSharedFacet(SharedFacetParams)                  {}
+func (p *fakeProvider) RestoreFacetSessions(RestoreParams)                  {}
+func (p *fakeProvider) SetLifecycleCallback(string, LifecycleEvent, func()) {}
+func (p *fakeProvider) ToolDetailStore() ToolDetailStore                    { return nil }
+func (p *fakeProvider) AgentPreFlight(string) []string                      { return nil }
+func (p *fakeProvider) DefaultPlatformConfig() config.PlatformConfig {
+	return config.PlatformConfig{}
+}
+func (p *fakeProvider) ValidateConfig(config.PlatformConfig) []string { return nil }
+func (p *fakeProvider) Close() error                                  { return nil }
+func (p *fakeProvider) NeverDefaultChat() bool                        { return p.never }
+func (p *fakeProvider) ConfinesSessionReplies() bool                  { return p.confining }
 
 // TestForSessionOrPrimary_PlatformAwareRouting verifies that when ForSession
 // returns nil, the aggregating manager uses chatPlatformFn to route to the

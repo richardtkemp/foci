@@ -154,7 +154,7 @@ Fields:
 - `time` — current UTC timestamp
 - `gap` — time since the previous message in this session (human-readable: "3h12m", "2d4h", "38s")
 - `model` — current model name (so the agent knows its own capabilities)
-- `via` — transport that delivered the message (telegram, discord, app, voice, api, cron)
+- `via` — transport that delivered the message (telegram, discord, slack, app, voice, api, cron)
 
 **Why metadata on messages, not system prompt:** Dynamic values in the system prompt would bust the cache every turn. See [docs/CACHING.md](docs/CACHING.md).
 

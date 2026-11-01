@@ -162,6 +162,23 @@ func conventionSecretRefs(cfg *Config) []SecretRef {
 		}
 	}
 
+	// --- Slack tokens ---
+	// Convention: a global slack platform with no bot_token_secret /
+	// app_token_secret override needs "slack.bot_token" (xoxb-…) and
+	// "slack.app_token" (xapp-…). Explicit overrides are picked up by the
+	// reflection pass above; this covers the defaulted keys — including the
+	// block-less [[platforms]] id="slack" entry, whose default keys are all
+	// it has.
+	if s := cfg.slackBlock(); s != nil {
+		for _, key := range []string{s.BotTokenKey(), s.AppTokenKey()} {
+			refs = append(refs, SecretRef{
+				Key:      key,
+				Context:  "global slack platform",
+				Platform: true,
+			})
+		}
+	}
+
 	// --- Endpoint API keys ---
 	// Convention: endpoint "openrouter" with no api_key field needs "openrouter.api_key".
 	// Skip "anthropic" — it has its own credential resolution (api_key, CC creds).

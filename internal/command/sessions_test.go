@@ -222,6 +222,30 @@ func TestSessionsDefaultNoArg(t *testing.T) {
 	}
 }
 
+// TestSessionsDefaultNeverDefaultChatRefused verifies that "default <chatID>"
+// on a never-default chat (a Slack conversation, #2459) surfaces the refusal
+// error instead of reporting success and pinning agent-wide traffic onto a
+// conversation that belongs to someone else.
+func TestSessionsDefaultNeverDefaultChatRefused(t *testing.T) {
+	cc, store, ss := sessionsTestCC(t, "test-agent")
+	addChatSession(t, store, "test-agent", 777, 1)
+	if err := ss.SetChatMetadata("test-agent", "slack", 777, session.ChatMetaNeverDefault, "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := SessionsCommand()
+	_, err := cmd.Execute(context.Background(), Request{Args: "default 777"}, cc)
+	if err == nil {
+		t.Fatal("default 777 on a never-default chat reported success; want the refusal error")
+	}
+	if !strings.Contains(err.Error(), "never a default chat") {
+		t.Errorf("error = %v, want the never-default refusal", err)
+	}
+	if got := ss.DefaultChatForAgent("test-agent", "slack"); got != 0 {
+		t.Errorf("a default row landed for the never-default chat: %d", got)
+	}
+}
+
 // TestSessionsInfo verifies that "info" displays the current chat's details
 // including its numeric chat ID, whether it is the default ("Default: yes"),
 // total message count, and the associated @username from the state store.

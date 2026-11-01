@@ -17,12 +17,31 @@ import (
 	"foci/internal/question"
 )
 
+// PresentOutcome is what a PresentFn did with the question.
+type PresentOutcome int
+
+const (
+	// Presented: the question is visible to a human; the ask is live.
+	Presented PresentOutcome = iota
+	// PresentRefused: the session's platform cannot show approval prompts
+	// (platform.ApprovalRefuser — Slack until #2459 part C routes approvals
+	// to an operator). The ask must be DENIED at once: never shown, never
+	// left pending, and the requester answered with the dismissal frame
+	// (status dismissed — no answer, nothing approved).
+	PresentRefused
+	// PresentFailed: the question could not be shown (no connection for the
+	// session, a send error). The ask resolves unavailable.
+	PresentFailed
+)
+
 // PresentFn presents a question to the human. Returns the platform-native
 // message ID of the posted message (empty if unknown, e.g. a plain-text
-// fallback send) and whether presentation succeeded — the platformMsgID is
-// retained (see Registry.SetPresentedMsgID) so a later `notify` frame can
-// edit the same message in place once the ask is answered.
-type PresentFn func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (platformMsgID string, ok bool)
+// fallback send) and the outcome — the platformMsgID is retained (see
+// Registry.SetPresentedMsgID) so a later `notify` frame can edit the same
+// message in place once the ask is answered. PresentRefused vs PresentFailed
+// decides how the ask resolves (denied vs unavailable), so a platform that
+// refuses approvals must say so, not just fail.
+type PresentFn func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (platformMsgID string, outcome PresentOutcome)
 
 type CancelFn func(msgID, finalText string)
 
@@ -312,22 +331,33 @@ func (s *Server) handleAsk(connID uint64, client string, cw connWriter, id strin
 		return errFrame(id, "rejected", err.Error())
 	}
 
-	ok := s.presentQuestion(e, connID, id, firstIdx)
-	if !ok {
-		s.registry.Remove(connID, id)
-		s.registry.ResolveUnavailable(cw, id)
-		return nil
+	switch outcome := s.presentQuestion(e, connID, id, firstIdx); outcome {
+	case Presented:
+		_ = cw.WriteFrame(AckFrame{
+			Protocol: ProtocolVersion,
+			Type:     TypeAck,
+			ID:       id,
+		})
+	case PresentRefused, PresentFailed:
+		s.resolveUnpresented(e, connID, id, outcome)
 	}
-
-	_ = cw.WriteFrame(AckFrame{
-		Protocol: ProtocolVersion,
-		Type:     TypeAck,
-		ID:       id,
-	})
 	return nil
 }
 
-func (s *Server) presentQuestion(e *entry, connID uint64, askID string, idx int) bool {
+// resolveUnpresented resolves an ask whose question could not be shown: a
+// refusal DENIES it (the platform cannot show approval prompts, #2459 A1
+// req 7 — resolved as a dismissal: no answer, nothing approved, nothing
+// pending), a failure resolves unavailable. Neither leaves an entry behind.
+func (s *Server) resolveUnpresented(e *entry, connID uint64, askID string, outcome PresentOutcome) {
+	if outcome == PresentRefused {
+		s.registry.resolveRefused(connID, askID)
+		return
+	}
+	s.registry.Remove(connID, askID)
+	s.registry.ResolveUnavailable(e.w, askID)
+}
+
+func (s *Server) presentQuestion(e *entry, connID uint64, askID string, idx int) PresentOutcome {
 	q := &e.questions[idx]
 	choices := buildChoices(q)
 	msgID := askgwMsgID(askID, idx)
@@ -337,16 +367,20 @@ func (s *Server) presentQuestion(e *entry, connID uint64, askID string, idx int)
 		summary = "Question"
 	}
 
-	platformMsgID, ok := s.present(e.agentID, e.sessionKey, msgID, text, summary, choices, func(data string) {
+	platformMsgID, outcome := s.present(e.agentID, e.sessionKey, msgID, text, summary, choices, func(data string) {
 		s.onAnswer(connID, askID, data)
 	})
-	if !ok {
-		askgwLog.Warnf("ask present failed id=%s conn=%d agent=%s session=%s question=%d/%d", askID, connID, e.agentID, e.sessionKey, idx+1, len(e.questions))
-		return false
+	if outcome != Presented {
+		if outcome == PresentRefused {
+			askgwLog.Warnf("ask refused id=%s conn=%d agent=%s session=%s question=%d/%d: the session's platform cannot show approval prompts; denying", askID, connID, e.agentID, e.sessionKey, idx+1, len(e.questions))
+		} else {
+			askgwLog.Warnf("ask present failed id=%s conn=%d agent=%s session=%s question=%d/%d", askID, connID, e.agentID, e.sessionKey, idx+1, len(e.questions))
+		}
+		return outcome
 	}
 	s.registry.SetPresentedMsgID(connID, askID, platformMsgID)
 	askgwLog.Infof("ask posted id=%s conn=%d agent=%s session=%s question=%d/%d platform_msg=%q", askID, connID, e.agentID, e.sessionKey, idx+1, len(e.questions), platformMsgID)
-	return true
+	return Presented
 }
 
 func (s *Server) onAnswer(connID uint64, askID, data string) {
@@ -380,7 +414,13 @@ func (s *Server) onAnswer(connID uint64, askID, data string) {
 		return
 	}
 	nextIdx := e2.current
-	_ = s.presentQuestion(e2, connID, askID, nextIdx)
+	// A later question that cannot be shown resolves the whole ask at once
+	// (denied on refusal, unavailable on failure) instead of leaving it to
+	// time out: the human answered the earlier questions, but the ask can
+	// never complete.
+	if outcome := s.presentQuestion(e2, connID, askID, nextIdx); outcome != Presented {
+		s.resolveUnpresented(e2, connID, askID, outcome)
+	}
 }
 
 func (s *Server) handleCancel(connID uint64, id string, line []byte) error {

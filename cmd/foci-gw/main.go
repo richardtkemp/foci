@@ -17,6 +17,7 @@ import (
 
 	_ "foci/internal/delegator/all" // register every delegated backend
 	_ "foci/internal/discord"       // register discord messaging provider
+	_ "foci/internal/slack"         // register slack messaging provider
 	_ "foci/internal/telegram"      // register telegram messaging provider
 
 	"foci/internal/agent"
@@ -568,7 +569,7 @@ Subcommands:
 	go startup.RunHeartbeat(hbCtx, si.sessionIndex, startup.HeartbeatInterval)
 
 	// ========== HTTP server ==========
-	secretsPath := filepath.Join(filepath.Dir(configPath), "secrets.toml")
+	secretsPath := secretsPathFor(configPath)
 	var reloadCreds func() error
 	if resolver, ok := formatResolvers["anthropic"]; ok {
 		reloadCreds = resolver.GetReloadFunc(secretsPath)

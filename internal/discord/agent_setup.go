@@ -153,28 +153,16 @@ func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 }
 
 // resolveDiscordAllowedUsers merges per-agent and global allowed users for Discord.
-// Agent users are added to global users (deduplicated).
+// Agent users are added to global users (deduplicated). One line over the
+// shared cascade (config.ResolveAllowedAccess) — the single copy of the rule.
 func resolveDiscordAllowedUsers(acfg config.AgentConfig, cfg *config.Config) []string {
-	var agentUsers, globalUsers []string
-	if p := acfg.Platform("discord"); p != nil {
-		agentUsers = p.Access.AllowedUsers
-	}
-	if gp := cfg.Platform("discord"); gp != nil {
-		globalUsers = gp.Access.AllowedUsers
-	}
-	return config.SuperveneSlice(agentUsers, globalUsers, func(s string) string { return s })
+	return config.ResolveAllowedAccess(cfg, acfg, "discord").Users
 }
 
 // resolveDiscordAllowedUsersOnly resolves access.allowed_users_only for Discord:
 // per-agent platform flag, else global platform flag, else true (strict).
 func resolveDiscordAllowedUsersOnly(acfg config.AgentConfig, cfg *config.Config) bool {
-	if p := acfg.Platform("discord"); p != nil && p.Access.AllowedUsersOnly != nil {
-		return *p.Access.AllowedUsersOnly
-	}
-	if gp := cfg.Platform("discord"); gp != nil && gp.Access.AllowedUsersOnly != nil {
-		return *gp.Access.AllowedUsersOnly
-	}
-	return true
+	return config.ResolveAllowedAccess(cfg, acfg, "discord").Only
 }
 
 // setupDiscordBots creates and registers Discord bots for an agent.
@@ -207,8 +195,7 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 		discordgo.IntentsMessageContent |
 		discordgo.IntentsGuildMessageReactions
 
-	allowedUsers := resolveDiscordAllowedUsers(acfg, cfg)
-	primaryBot := NewBot(dg, allowedUsers, p.Agent, p.Commands, p.LastMsgStore, acfg.ID)
+	primaryBot := NewBot(dg, resolveDiscordAllowedUsers(acfg, cfg), p.Agent, p.Commands, p.LastMsgStore, acfg.ID)
 	primaryBot.SetAllowedUsersOnly(resolveDiscordAllowedUsersOnly(acfg, cfg))
 
 	// Apply Discord-specific settings from resolved platform config

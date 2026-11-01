@@ -553,6 +553,12 @@ type backendPromptDeps struct {
 	// decided as an unattended ask is (the rules already declined it: deny).
 	// nil = never closed.
 	chatClosed func(sessionKey string) bool
+
+	// respond delivers a permission decision for a prompt. Production leaves
+	// it nil (postBackendPrompt then uses ag.SendPermissionResponse); tests
+	// substitute a recorder so a fail-closed denial is observable without a
+	// live backend.
+	respond func(ctx context.Context, sessionKey, requestID, choice string) error
 }
 
 // backendPromptTargets is the chat list of a prompt from sessionKey: for a
@@ -574,6 +580,33 @@ func backendPromptTargets(d backendPromptDeps, sessionKey string) (targets []str
 func depthSessionLive(sessionKey string) bool {
 	m := tools.DepthManagerFor(sessionKey)
 	return m == nil || m.SessionLive(sessionKey)
+}
+
+// sendPermissionResponse is deps.respond with the nil fallback applied.
+func (d backendPromptDeps) sendPermissionResponse(ctx context.Context, sessionKey, requestID, choice string) error {
+	if d.respond != nil {
+		return d.respond(ctx, sessionKey, requestID, choice)
+	}
+	return d.ag.SendPermissionResponse(ctx, sessionKey, requestID, choice)
+}
+
+// refuseApproval fail-closes an approval prompt on a connection whose platform
+// cannot show one to a human who may approve it (platform.ApprovalRefuser —
+// Slack until #2459 part C routes approvals to an operator): the request is
+// denied at once, the denial logged, and the requesting conversation gets a
+// short notice. It returns true when the prompt was refused, so the caller
+// returns before anything is sent or registered — nothing is left pending.
+func refuseApproval(logger *log.ComponentLogger, conn platform.Connection, sessionKey, requestID, what string) bool {
+	if !platform.RefusesApprovals(conn) {
+		return false
+	}
+	if what == "" {
+		// A prompt can carry no summary; the notice still needs a subject.
+		what = "a tool use"
+	}
+	logger.Warnf("approval for session=%s reqID=%s denied: the %s platform cannot show approval prompts yet — auto-denied (#2459 C)", sessionKey, requestID, conn.PlatformName())
+	conn.SendNotification(fmt.Sprintf("🔒 %s needs an approval foci cannot show here yet — it was denied. Ask the operator to run it.", what))
+	return true
 }
 
 // postBackendPrompt is the one body behind the two gateway prompt closures
@@ -604,7 +637,7 @@ func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, 
 	}
 	onClick := func(choice platform.ButtonChoice) string {
 		logger.Debugf("prompt button pressed: sk=%s reqID=%s choice=%q", sessionKey, requestID, choice.Data)
-		if err := d.ag.SendPermissionResponse(context.Background(), sessionKey, requestID, choice.Data); err != nil {
+		if err := d.sendPermissionResponse(context.Background(), sessionKey, requestID, choice.Data); err != nil {
 			logger.Errorf("SendPermissionResponse failed: sk=%s reqID=%s choice=%q err=%v", sessionKey, requestID, choice.Data, err)
 		}
 		switch {
@@ -626,7 +659,7 @@ func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, 
 		// Expiry: deny the prompt so a turn blocked in WaitForPermission
 		// unblocks instead of orphaning. The message edit to an "expired"
 		// notice is handled by CleanupExpiredInteractive.
-		if err := d.ag.SendPermissionResponse(context.Background(), sessionKey, requestID, "deny"); err != nil {
+		if err := d.sendPermissionResponse(context.Background(), sessionKey, requestID, "deny"); err != nil {
 			logger.Warnf("expire prompt deny failed: sk=%s reqID=%s err=%v", sessionKey, requestID, err)
 		}
 	}
@@ -651,6 +684,16 @@ func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, 
 		if conn == nil {
 			failures = append(failures, target+": no connection")
 			continue
+		}
+		if kind == promptToDefaultChat && refuseApproval(logger, conn, sessionKey, requestID, summary) {
+			// Approval prompts fail closed on a platform that cannot show
+			// them (Slack, #2459 A1): deny, log, notify the requester, send
+			// nothing, register nothing, and try no further chat. Questions
+			// (promptToSessionChat) are not approvals and post normally.
+			if err := d.sendPermissionResponse(context.Background(), sessionKey, requestID, "deny"); err != nil {
+				logger.Errorf("approval refusal: deny failed: sk=%s reqID=%s err=%v", sessionKey, requestID, err)
+			}
+			return
 		}
 		logger.Debugf("backend prompt: sending via %s to %s for session=%s summary=%q reqID=%s", conn.PlatformName(), target, sessionKey, summary, requestID)
 		body := text
@@ -955,7 +998,12 @@ func firstLine(s string) string {
 //     primary connection when that session has none live.
 //   - "default": always the agent's primary connection (pre-#1857 behaviour).
 //   - "both": the session's chat AND the primary, when they are different
-//     connections.
+//     connections — EXCEPT when the session confines replies
+//     (platform.SessionConfinesReplies: its live connection, or its owning
+//     platform when none is live — Slack, #2459 req 5): one user's notice
+//     must not be copied into a conversation of a different audience, so it
+//     stays in the session's own conversation only, and with no live
+//     session connection it is dropped, never copied out.
 //
 // The throttle is per-agent (rate limits are account-wide), so under "session"
 // the notice reaches only the session that FIRST crossed the utilization bucket
@@ -968,6 +1016,14 @@ func deliverRateLimitNotice(connMgr platform.ConnectionManager, agentID, session
 			return false
 		}
 		conn.SendNotification(notice)
+		if platform.DropsAgentWideSends(conn) {
+			// The connection has no conversation of its own to address
+			// (Slack's unbound conn), so SendNotification has dropped the
+			// notice, with its own WARN — never log a delivery that did
+			// not happen.
+			logger.Debugf("rate limit notice dropped by %s (no conversation to address; target=%s outcome=%s session=%s)", conn.PlatformName(), target, outcome, sessionKey)
+			return false
+		}
 		logger.Debugf("rate limit notice delivered (target=%s outcome=%s session=%s)", target, outcome, sessionKey)
 		return true
 	}
@@ -979,10 +1035,16 @@ func deliverRateLimitNotice(connMgr platform.ConnectionManager, agentID, session
 		}
 	case config.RateLimitNotifyBoth:
 		sessionConn := connMgr.ForSession(sessionKey)
-		primary := connMgr.Primary(agentID)
 		delivered := send(sessionConn, route.DeliveredToSession)
-		if primary != sessionConn {
-			delivered = send(primary, route.DeliveredViaPrimary) || delivered
+		// A confining session — declared by its live connection OR by its
+		// owning platform, so a session with no live connection confines
+		// too — keeps the notice in its own conversation: copying it to
+		// the primary would hand one user's traffic to a different
+		// audience (#2459 req 5).
+		if !platform.SessionConfinesReplies(connMgr, sessionKey) {
+			if primary := connMgr.Primary(agentID); primary != sessionConn {
+				delivered = send(primary, route.DeliveredViaPrimary) || delivered
+			}
 		}
 		if !delivered {
 			logger.Debugf("rate limit notice undelivered (target=%s, no live connection): %s", target, notice)

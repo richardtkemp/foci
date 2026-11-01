@@ -282,7 +282,7 @@ type Connection interface {
 	Sender
 
 	// Identity
-	PlatformName() string // "telegram", "discord", etc.
+	PlatformName() string // "telegram", "discord", "slack", "app", …
 
 	// Session management
 	SessionKeyForChat(chatID int64) string
@@ -330,10 +330,13 @@ type ButtonToggle struct {
 // get interactive messages (buttons with callbacks that edit the message).
 //
 // The three methods address the connection's DEFAULT chat (falling back to
-// the last chat). A prompt that must reach a SPECIFIC session's chat — a
-// question the agent asks its own user, on a multi-user transport where the
-// default chat belongs to someone else — goes through SessionButtonSender
-// instead (see sessionChatResolver in cmd/foci-gw).
+// the last chat) on default-chat transports (Telegram, Discord); on a
+// session-bound transport (the app, Slack's bound views) they address the
+// session the view is pinned to. A prompt that must reach a SPECIFIC
+// session's chat on a default-chat transport — a question the agent asks
+// its own user, on a multi-user bot where the default chat belongs to
+// someone else — goes through SessionButtonSender instead (see
+// sessionChatResolver in cmd/foci-gw).
 type ButtonSender interface {
 	// SendTextWithButtons sends a message with inline buttons.
 	// Returns the platform message ID (as string) for later editing.
@@ -354,9 +357,9 @@ type ButtonSender interface {
 // user can answer it (#2275). The target chat is the chat ID embedded in
 // the session key, falling back to the default chat for chatless keys
 // (agent/i<name>) — the same rule as SessionNotifier. A connection that is
-// already session-bound (the app transport) does NOT implement this; it is
-// returned unchanged by the session-chat resolver so its other capabilities
-// keep working.
+// already session-bound (the app transport, Slack's bound views) does NOT
+// implement this; it is returned unchanged by the session-chat resolver so
+// its other capabilities keep working.
 type SessionButtonSender interface {
 	// SendTextWithButtonsToSession sends a message with inline buttons to
 	// the chat owning sessionKey. Returns the platform message ID (as
@@ -480,6 +483,145 @@ type BatchButtonRestorer interface {
 // the edit-to-expired behaviour. Idempotent: an unknown id is a no-op.
 type InteractiveRemover interface {
 	RemoveInteractive(msgID string) error
+}
+
+// ApprovalRefuser is implemented by connections on platforms that cannot show
+// a tool-approval prompt to a human who may approve it. Interim capability for
+// Slack (#2459 A1, to be replaced by operator routing in part C): an approval
+// raised by a session on such a platform must FAIL CLOSED — denied at once,
+// logged, with a short notice to the requester — instead of landing in the
+// requester's own conversation, where they could approve their own tool use.
+// Questions the agent asks its own user (ask, AskUserQuestion) are NOT
+// approvals and still post normally.
+type ApprovalRefuser interface {
+	// RefusesApprovals reports whether approval prompts must be denied
+	// rather than shown on this connection.
+	RefusesApprovals() bool
+}
+
+// capabilityOf resolves conn's optional capability interface T (nil-safe: a
+// nil connection implements nothing). The one reader every capability helper
+// below shares, so nil-handling and the assertion live in one place.
+func capabilityOf[T any](c Connection) (T, bool) {
+	var zero T
+	if c == nil {
+		return zero, false
+	}
+	t, ok := c.(T)
+	return t, ok
+}
+
+// RefusesApprovals reports whether conn's platform fails approval prompts
+// closed. Nil-safe: a nil connection or one without the capability never
+// refuses.
+func RefusesApprovals(c Connection) bool {
+	r, ok := capabilityOf[ApprovalRefuser](c)
+	return ok && r.RefusesApprovals()
+}
+
+// NeverDefaultProvider is optionally implemented by MessagingProviders whose
+// conversations must never become an agent's default chat or receive
+// agent-wide traffic (startup notices, cron, keepalive, approval prompts).
+// Slack implements it (#2459): a colleague's DM is a private conversation,
+// not the owner's console. The aggregating connection manager orders such
+// providers last in its Primary fallback, so agent-wide sends prefer every
+// other platform before they would hit (and drop on) a never-default one.
+type NeverDefaultProvider interface {
+	// NeverDefaultChat reports whether this provider's chats are excluded
+	// from default-chat resolution.
+	NeverDefaultChat() bool
+}
+
+// AgentWideDropper is implemented by connections that cannot receive
+// agent-wide (session-blind) sends at all: every one is a certain drop.
+// Slack's UNBOUND connection implements it (#2459 req 6: its conversations
+// are never default chats, so there is nothing to address). A platform whose
+// stored connection routes agent-wide sends to a default destination — the
+// app's unbound conn resolving its default conversation — does NOT: an empty
+// DefaultSessionKey alone says nothing about deliverability. Broadcast
+// fan-outs skip droppers instead of addressing them; a drop with an error
+// log is noise, not delivery.
+type AgentWideDropper interface {
+	// DropsAgentWideSends reports whether agent-wide sends on this
+	// connection can only be dropped.
+	DropsAgentWideSends() bool
+}
+
+// DropsAgentWideSends reports whether conn cannot receive agent-wide sends.
+// Nil-safe: a nil connection, or one without the capability, never drops.
+func DropsAgentWideSends(c Connection) bool {
+	d, ok := capabilityOf[AgentWideDropper](c)
+	return ok && d.DropsAgentWideSends()
+}
+
+// ReplyConfiner is implemented by connections whose sessions' reply text is
+// private to the session's own conversation: the platform carries many users'
+// conversations side by side with no agent-wide destination of its own (its
+// conversations are never default chats), so copying one session's reply into
+// any OTHER conversation — another platform's default chat included — would
+// hand one user's traffic to a different audience. Slack's connections
+// implement it (#2459 req 5): a PolicyBroadcast turn for a Slack session is
+// delivered to that session's conversation ONLY; the cross-platform fan-out
+// is skipped, not appended to. A platform without the capability keeps the
+// broadcast fan-out exactly as it was.
+type ReplyConfiner interface {
+	// ConfinesReplies reports whether reply text produced for turns of this
+	// connection's sessions is delivered to the session's own conversation
+	// only.
+	ConfinesReplies() bool
+}
+
+// ConfinesReplies reports whether conn's platform keeps a session's reply
+// text in the session's own conversation only (see ReplyConfiner). Nil-safe:
+// a nil connection, or one without the capability, never confines.
+func ConfinesReplies(c Connection) bool {
+	r, ok := capabilityOf[ReplyConfiner](c)
+	return ok && r.ConfinesReplies()
+}
+
+// ReplyConfiningProvider is implemented by providers whose sessions confine
+// replies platform-wide (Slack, #2459 req 5). The declaration sits on the
+// PROVIDER, not only on its connections, because the rule must hold even
+// when no live connection exists for a session: a fan-out decision that
+// reads only the session's live connection would treat a confining
+// session with no connection as ordinary and copy its reply to other
+// platforms' chats. The aggregating connection manager keeps every
+// provider's answer and serves it through SessionConfinementResolver.
+type ReplyConfiningProvider interface {
+	// ConfinesSessionReplies reports whether reply text for every session
+	// of this platform stays in that session's own conversation.
+	ConfinesSessionReplies() bool
+}
+
+// SessionConfinementResolver is implemented by connection managers that can
+// answer session-reply confinement from the session's OWNING platform —
+// chat_metadata, no live connection involved — so the answer survives a
+// missing or offline connection. The aggregating connection manager
+// implements it from its providers' ReplyConfiningProvider declarations.
+type SessionConfinementResolver interface {
+	// SessionPlatformConfinesReplies reports whether the platform that owns
+	// sessionKey's chat confines replies. False for a chat no platform
+	// claims and for a platform without the declaration.
+	SessionPlatformConfinesReplies(sessionKey string) bool
+}
+
+// SessionConfinesReplies reports whether reply text for sessionKey must
+// stay in that session's own conversation (#2459 req 5). One answer from
+// two inputs: a live session connection declaring ReplyConfiner confines;
+// when none is live, the session's OWNING platform decides through the
+// manager's SessionConfinementResolver — so a confining session is never
+// fanned out to other platforms' chats just because its connection is
+// missing. cm is nil-safe; a manager without the resolver is answered by
+// its connections alone.
+func SessionConfinesReplies(cm ConnectionManager, sessionKey string) bool {
+	if cm == nil {
+		return false
+	}
+	if ConfinesReplies(cm.ForSession(sessionKey)) {
+		return true
+	}
+	r, ok := cm.(SessionConfinementResolver)
+	return ok && r.SessionPlatformConfinesReplies(sessionKey)
 }
 
 // ConnectionManager manages platform connection instances and facet pools.
@@ -800,7 +942,7 @@ func InitMessaging(cfg *config.Config, deps ProviderDeps) (*Messaging, error) {
 		}
 		m.connMgr = newAggregatingConnMgr(active, chatPlatformFn, defaultSessionKeyFn, preferredPlatformFn)
 	} else {
-		m.connMgr = &noopConnMgr{}
+		m.connMgr = &NoopConnectionManager{}
 	}
 	return m, nil
 }
@@ -816,7 +958,7 @@ type Messaging struct {
 
 func (m *Messaging) ConnectionManager() ConnectionManager {
 	if m == nil {
-		return &noopConnMgr{}
+		return &NoopConnectionManager{}
 	}
 	return m.connMgr
 }
@@ -961,13 +1103,17 @@ func (m *Messaging) Close() error {
 
 // --- Noop ConnectionManager ---
 
-type noopConnMgr struct{}
+// NoopConnectionManager is the ConnectionManager of a provider that has no
+// connections to expose (no providers configured at all, or one that stayed
+// inert): every lookup is empty. Shared so a provider's inert surface reuses
+// it instead of growing a private copy.
+type NoopConnectionManager struct{}
 
-func (n *noopConnMgr) Primary(string) Connection                     { return nil }
-func (n *noopConnMgr) AllForAgent(string) []Connection               { return nil }
-func (n *noopConnMgr) ForSession(string) Connection                  { return nil }
-func (n *noopConnMgr) ForSessionOrPrimary(string, string) Connection { return nil }
-func (n *noopConnMgr) AcquireFacet(string) (Connection, bool)        { return nil, false }
-func (n *noopConnMgr) HasFacet(string) bool                          { return false }
-func (n *noopConnMgr) StartAll(context.Context)                      {}
-func (n *noopConnMgr) Wait()                                         {}
+func (n *NoopConnectionManager) Primary(string) Connection                     { return nil }
+func (n *NoopConnectionManager) AllForAgent(string) []Connection               { return nil }
+func (n *NoopConnectionManager) ForSession(string) Connection                  { return nil }
+func (n *NoopConnectionManager) ForSessionOrPrimary(string, string) Connection { return nil }
+func (n *NoopConnectionManager) AcquireFacet(string) (Connection, bool)        { return nil, false }
+func (n *NoopConnectionManager) HasFacet(string) bool                          { return false }
+func (n *NoopConnectionManager) StartAll(context.Context)                      {}
+func (n *NoopConnectionManager) Wait()                                         {}

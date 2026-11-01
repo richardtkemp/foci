@@ -1,14 +1,18 @@
 package main
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"foci/internal/agent"
+	"foci/internal/askgw"
 	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/platform"
+	"foci/internal/question"
 	"foci/internal/session"
 )
 
@@ -39,7 +43,9 @@ func (c *docRoutingConn) SendDocumentToChat(chatID int64, path, _ string) error 
 // question → session chat) against a fake connection manager: a bare agent
 // (nil DelegatedManager would panic on RegisterPromptCancelListener; a
 // zero-value manager accepts the registration as a no-op) and, when non-nil, a
-// real session index for the origin line.
+// real session index for the origin line. The refuserConn fake lives in
+// agents_delegated_refuser_test.go (a base-compilable file), shared with the
+// question-boundary characterisation there.
 func promptClosures(conn platform.Connection, sessionIdx *session.SessionIndex) (approval, question func(sessionKey, requestID, text, summary, attachmentPath string, choices []delegator.PromptChoice)) {
 	return backendPromptFuncs(backendPromptDeps{
 		ag:         &agent.Agent{DelegatedManager: &agent.DelegatedManager{}},
@@ -282,5 +288,255 @@ func TestBackendPrompt_NilConnectionRefused(t *testing.T) {
 		if !strings.Contains(l.Msg, "undeliverable, refused") || !strings.Contains(l.Msg, "sk="+session+" ") {
 			t.Errorf("refusal WARN %q, want it to name the session and the refusal", l.Msg)
 		}
+	}
+}
+
+// refuserConn is defined in agents_delegated_refuser_test.go; the
+// fail-closed tests below drive it through the respond seam.
+
+// promptClosuresWithRespond is promptClosures with a respond recorder, so a
+// fail-closed denial is asserted without a live backend.
+func promptClosuresWithRespond(conn platform.Connection, respond func(ctx context.Context, sessionKey, requestID, choice string) error) (approval, question func(sessionKey, requestID, text, summary, attachmentPath string, choices []delegator.PromptChoice)) {
+	return backendPromptFuncs(backendPromptDeps{
+		ag:      &agent.Agent{DelegatedManager: &agent.DelegatedManager{}},
+		connMgr: oneConnMgr{conn: conn},
+		agentID: "main",
+		respond: respond,
+	})
+}
+
+// TestPermissionPrompt_RefusedConnDeniesNotifiesAndPostsNothing proves the
+// interim approval rule (#2459 A1, req 7): an approval raised on a
+// connection whose platform cannot show one — the plain permission prompt
+// AND the ExitPlanMode plan attachment — is denied at once, the requesting
+// conversation gets a short notice, nothing is posted, nothing is attached,
+// and nothing is left registered in the interactive store.
+func TestPermissionPrompt_RefusedConnDeniesNotifiesAndPostsNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		attachment string
+	}{
+		{"permission prompt", ""},
+		{"ExitPlanMode plan attachment", "/tmp/plan.md"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := &refuserConn{buttonStubConn: buttonStubConn{stubConn{sessionKey: "main/c77"}}}
+			logs := captureLog(t, log.WARN)
+
+			var denials []string
+			approval, _ := promptClosuresWithRespond(conn, func(_ context.Context, _, requestID, choice string) error {
+				denials = append(denials, requestID+"="+choice)
+				return nil
+			})
+			approval("main/c77", "req-refusal", "Allow Bash?", "Bash", tc.attachment, promptChoices())
+
+			if len(denials) != 1 || denials[0] != "req-refusal=deny" {
+				t.Errorf("denials = %v, want exactly one deny for req-refusal", denials)
+			}
+			if conn.buttonSend != 0 {
+				t.Errorf("button sends = %d, want 0 (the prompt must never be shown)", conn.buttonSend)
+			}
+			if conn.documents != 0 {
+				t.Errorf("documents = %d, want 0 (the plan attachment is not sent)", conn.documents)
+			}
+			if len(conn.notices) != 1 || !strings.Contains(conn.notices[0], "Bash") {
+				t.Errorf("notices = %v, want one short notice naming the request", conn.notices)
+			}
+			if warns := logs.Lines("denied"); len(warns) != 1 {
+				t.Errorf("denial WARNs = %d, want 1 (%v)", len(warns), warns)
+			}
+			// Nothing left pending: the interactive store holds no entry.
+			if err := platform.CancelInteractiveMessage("req-refusal", "x"); err != nil {
+				t.Errorf("cancel: %v", err)
+			}
+		})
+	}
+}
+
+// TestPermissionPrompt_RefusalNoticeHasSubjectWithoutSummary proves the
+// denial notice keeps a subject when the prompt carried no summary: an empty
+// summary must not collapse the notice to "🔒  needs an approval" (no
+// subject, a double space).
+func TestPermissionPrompt_RefusalNoticeHasSubjectWithoutSummary(t *testing.T) {
+	conn := &refuserConn{buttonStubConn: buttonStubConn{stubConn{sessionKey: "main/c77"}}}
+	approval, _ := promptClosuresWithRespond(conn, func(_ context.Context, _, _, _ string) error { return nil })
+	approval("main/c77", "req-no-summary", "Allow Bash?", "", "", promptChoices())
+
+	if len(conn.notices) != 1 {
+		t.Fatalf("notices = %v, want one", conn.notices)
+	}
+	if strings.Contains(conn.notices[0], "  needs") {
+		t.Errorf("notice has no subject: %q", conn.notices[0])
+	}
+	if !strings.Contains(conn.notices[0], "needs an approval") {
+		t.Errorf("notice lost its sentence: %q", conn.notices[0])
+	}
+}
+
+// TestPermissionPrompt_ButtonPressDeliversChoiceToBackend proves the press
+// path of a posted permission prompt: the button callback resolves the
+// backend's permission waiter with the pressed choice through
+// backendPromptDeps' response seam — the same one a fail-closed denial uses —
+// and not only the ✅ UI edit. A press that edited the message but never
+// reached the backend would leave the turn blocked forever.
+func TestPermissionPrompt_ButtonPressDeliversChoiceToBackend(t *testing.T) {
+	t.Parallel()
+	conn := telegramLikeConn()
+
+	var decisions []string
+	approval, _ := promptClosuresWithRespond(conn, func(_ context.Context, _, requestID, choice string) error {
+		decisions = append(decisions, requestID+"="+choice)
+		return nil
+	})
+	approval("main/c999", "req-press", "Allow Bash?", "Bash", "", promptChoices())
+
+	edit, _, ok := platform.HandleInteractiveCallback("req-press:0") // the Allow button
+	if !ok {
+		t.Fatal("button press did not find the registered prompt")
+	}
+	if len(decisions) != 1 || decisions[0] != "req-press=allow" {
+		t.Errorf("backend decisions = %v, want [req-press=allow] (the press reaches the permission waiter)", decisions)
+	}
+	if edit != "✅ Bash" {
+		t.Errorf("press edit = %q, want %q", edit, "✅ Bash")
+	}
+}
+
+// TestPermissionPrompt_ExpiryDeniesToBackend proves the expiry path: when the
+// interactive sweep retires an unanswered permission prompt, the backend's
+// waiter is resolved as a denial through the same response seam as a press,
+// so a turn blocked in WaitForPermission unblocks instead of orphaning.
+// Not parallel: CleanupExpiredInteractive sweeps the process-global prompt store.
+func TestPermissionPrompt_ExpiryDeniesToBackend(t *testing.T) {
+	conn := telegramLikeConn()
+
+	var decisions []string
+	approval, _ := promptClosuresWithRespond(conn, func(_ context.Context, _, requestID, choice string) error {
+		decisions = append(decisions, requestID+"="+choice)
+		return nil
+	})
+	approval("main/c999", "req-expire", "Allow Bash?", "Bash", "", promptChoices())
+
+	platform.CleanupExpiredInteractive(-time.Hour) // every entry is older than a cutoff in the future
+
+	if len(decisions) != 1 || decisions[0] != "req-expire=deny" {
+		t.Errorf("backend decisions = %v, want [req-expire=deny] (expiry denies so the turn unblocks)", decisions)
+	}
+}
+
+// TestAskgwPresent_RefusedConnFailsClosed proves the askgw entry point of
+// the interim rule: an ask presented on a refusing connection posts nothing
+// and reports PresentRefused, so the askgw server DENIES the ask (the
+// requester receives the dismissal frame — no answer, nothing approved,
+// nothing pending; askgw server_test.go pins the frame). A connection that
+// merely has no session stays PresentFailed, and a capable connection
+// presents normally.
+func TestAskgwPresent_RefusedConnFailsClosed(t *testing.T) {
+	t.Parallel()
+	conn := &refuserConn{buttonStubConn: buttonStubConn{stubConn{sessionKey: "main/c77"}}}
+	logs := captureLog(t, log.WARN)
+
+	id, outcome := askgwPresentFn(oneConnMgr{conn: conn})("main", "main/c77", "ask-req", "Run sudo?", "Sudo",
+		[]question.Choice{{Label: "Yes", Data: "qa:0"}}, func(string) {})
+
+	if outcome != askgw.PresentRefused || id != "" {
+		t.Errorf("present = (%q, %v); want (\"\", PresentRefused) — denied, not merely failed", id, outcome)
+	}
+	if conn.buttonSend != 0 {
+		t.Errorf("button sends = %d, want 0", conn.buttonSend)
+	}
+	if warns := logs.Lines("denied"); len(warns) != 1 {
+		t.Errorf("denial WARNs = %d, want 1 (%v)", len(warns), warns)
+	}
+
+	// A connection with no session at all is a failure, not a refusal: the
+	// askgw server resolves it unavailable (the honest status for "no
+	// session"), so the two must stay distinguishable.
+	if _, outcome := askgwPresentFn(stubConnMgr{})("main", "main/c404", "ask-404", "Run sudo?", "Sudo",
+		[]question.Choice{{Label: "Yes", Data: "qa:0"}}, func(string) {}); outcome != askgw.PresentFailed {
+		t.Errorf("present with no connection = %v, want PresentFailed (unavailable, not denied)", outcome)
+	}
+
+	// Positive control: a capable connection presents and reports its
+	// platform message id.
+	capable := telegramLikeConn()
+	if id, outcome := askgwPresentFn(oneConnMgr{conn: capable})("main", "main/c999", "ask-ok", "Run sudo?", "Sudo",
+		[]question.Choice{{Label: "Yes", Data: "qa:0"}}, func(string) {}); outcome != askgw.Presented || id == "" {
+		t.Errorf("present on a capable conn = (%q, %v); want (id, Presented)", id, outcome)
+	}
+}
+
+// twoPlatformConnMgr routes like an agent with a Telegram primary and a
+// Slack connection: the Slack session resolves to a refusing connection,
+// everything else to the Telegram one — the shape of requirement 6.8.
+type twoPlatformConnMgr struct {
+	stubConnMgr
+	telegram platform.Connection
+	slack    platform.Connection
+	slackKey string
+}
+
+func (m twoPlatformConnMgr) Primary(string) platform.Connection { return m.telegram }
+func (m twoPlatformConnMgr) ForSessionOrPrimary(sessionKey, _ string) platform.Connection {
+	if sessionKey == m.slackKey {
+		return m.slack
+	}
+	return m.telegram
+}
+
+// TestOtherPlatformApprovalsUnaffectedBySlackSession proves requirement 6.8:
+// with a Slack session the agent's most recently active one, every approval
+// shape raised by a NON-Slack session — a Telegram session's permission
+// prompt, a chatless session's prompt, and an askgw ask — still reaches
+// Telegram with its buttons, and the Slack connection records zero sends of
+// any kind. (The Slack-side refusal itself is pinned by the H8 tests; this
+// one is about the routing around it.) The prompt closures carry a respond
+// recorder so a leak that fail-closes an approval surfaces as a recorded
+// denial and failed assertions here, not as a panic on the bare test agent.
+func TestOtherPlatformApprovalsUnaffectedBySlackSession(t *testing.T) {
+	t.Parallel()
+	telegram := telegramLikeConn() // default chat 999, records sends
+	slackConn := &refuserConn{buttonStubConn: buttonStubConn{stubConn{sessionKey: "main/c555"}}}
+	slackKey := "main/c555"
+	mgr := twoPlatformConnMgr{telegram: telegram, slack: slackConn, slackKey: slackKey}
+
+	// A backend permission prompt from the telegram session. The respond
+	// seam must stay silent: an approval that reached Telegram is waiting
+	// for a human, not denied.
+	var denials []string
+	approval, _ := promptClosuresWithRespond(telegram, func(_ context.Context, _, requestID, choice string) error {
+		denials = append(denials, requestID+"="+choice)
+		return nil
+	})
+	approval("main/c222", "req-6-8-tg", "Allow Bash?", "Bash", "", promptChoices())
+	if len(denials) != 0 {
+		t.Errorf("backend denials = %v, want none (a Telegram approval must wait for a human, not be denied)", denials)
+	}
+	if sends, _, _, dSends, _, _ := telegram.counts(); sends+dSends != 1 {
+		t.Errorf("telegram prompt sends = %d, want 1 (the prompt reaches telegram)", sends+dSends)
+	}
+	platform.CancelInteractiveMessage("req-6-8-tg", "done")
+
+	// A prompt from a chatless session resolves to the primary — telegram.
+	approval("main/iwork", "req-6-8-chatless", "Allow Bash?", "Bash", "", promptChoices())
+	if len(denials) != 0 {
+		t.Errorf("backend denials after chatless = %v, want none", denials)
+	}
+	if sends, _, _, dSends, _, _ := telegram.counts(); sends+dSends != 2 {
+		t.Errorf("telegram prompt sends after chatless = %d, want 2", sends+dSends)
+	}
+	platform.CancelInteractiveMessage("req-6-8-chatless", "done")
+
+	// An askgw ask resolves the same way.
+	if _, outcome := askgwPresentFn(mgr)("main", "main/c222", "ask-6-8", "Q?", "Q",
+		[]question.Choice{{Label: "Yes", Data: "qa:0"}}, func(string) {}); outcome != askgw.Presented {
+		t.Error("askgw ask failed on a telegram connection; only refusing connections fail closed")
+	}
+
+	// The slack connection — the most recently active session's platform —
+	// saw nothing of any of it.
+	if slackConn.buttonSend != 0 || len(slackConn.notices) != 0 || slackConn.documents != 0 {
+		t.Errorf("slack connection recorded sends: buttons=%d notices=%v docs=%d",
+			slackConn.buttonSend, slackConn.notices, slackConn.documents)
 	}
 }

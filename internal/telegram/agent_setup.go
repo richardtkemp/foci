@@ -122,28 +122,16 @@ func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 }
 
 // resolveAllowedUsers merges per-agent and global allowed users for Telegram.
-// Agent users are added to global users (deduplicated).
+// Agent users are added to global users (deduplicated). One line over the
+// shared cascade (config.ResolveAllowedAccess) — the single copy of the rule.
 func resolveAllowedUsers(acfg config.AgentConfig, cfg *config.Config) []string {
-	var agentUsers, globalUsers []string
-	if p := acfg.Platform("telegram"); p != nil {
-		agentUsers = p.Access.AllowedUsers
-	}
-	if gp := cfg.Platform("telegram"); gp != nil {
-		globalUsers = gp.Access.AllowedUsers
-	}
-	return config.SuperveneSlice(agentUsers, globalUsers, func(s string) string { return s })
+	return config.ResolveAllowedAccess(cfg, acfg, "telegram").Users
 }
 
 // resolveAllowedUsersOnly resolves access.allowed_users_only for Telegram:
 // per-agent platform flag, else global platform flag, else true (strict).
 func resolveAllowedUsersOnly(acfg config.AgentConfig, cfg *config.Config) bool {
-	if p := acfg.Platform("telegram"); p != nil && p.Access.AllowedUsersOnly != nil {
-		return *p.Access.AllowedUsersOnly
-	}
-	if gp := cfg.Platform("telegram"); gp != nil && gp.Access.AllowedUsersOnly != nil {
-		return *gp.Access.AllowedUsersOnly
-	}
-	return true
+	return config.ResolveAllowedAccess(cfg, acfg, "telegram").Only
 }
 
 // setupTelegramBots creates and registers Telegram bots for an agent.
@@ -164,10 +152,9 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	}
 
 	allowedUsers := resolveAllowedUsers(acfg, cfg)
-	allowedOnly := resolveAllowedUsersOnly(acfg, cfg)
 	primaryBot := NewBot(telegramToken, allowedUsers, p.Agent, p.Commands, p.LastMsgStore, acfg.ID,
 		telegramAPIBaseOf(tg))
-	primaryBot.SetAllowedUsersOnly(allowedOnly)
+	primaryBot.SetAllowedUsersOnly(resolveAllowedUsersOnly(acfg, cfg))
 
 	// Resolve require_mention: per-agent platform > global platform (default true).
 	reqMention := true
@@ -284,7 +271,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 		}
 		facetBot := NewBot(facetToken, allowedUsers, p.Agent, p.Commands, p.LastMsgStore, "",
 			telegramAPIBaseOf(tg))
-		facetBot.SetAllowedUsersOnly(allowedOnly)
+		facetBot.SetAllowedUsersOnly(resolveAllowedUsersOnly(acfg, cfg))
 		ConfigureFacetBot(facetBot, FacetBotConfig{
 			STTProvider:     p.ResolveSTT(p.STTMap, cfg.STT, config.DerefStr(acfg.Voice.STT), voice.MergeReplacements(cfg.Voice.STTReplacements, acfg.Voice.STTReplacements)),
 			TTSProvider:     p.ResolveTTS(p.TTSMap, cfg.TTS, config.DerefStr(acfg.Voice.TTS), config.DerefFloat(acfg.Voice.TTSRate), voice.MergeReplacements(cfg.Voice.TTSReplacements, acfg.Voice.TTSReplacements)),

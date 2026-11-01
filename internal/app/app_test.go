@@ -97,6 +97,29 @@ func types(ds []decoded) []string {
 	return out
 }
 
+// TestChatIDForConv_PinnedValues pins the exact int64 chat IDs the FNV-64a
+// derivation produces for fixed conversation ids. The literals were computed
+// by running chatIDForConv on these inputs, so any change to the hash (or its
+// move into chatmeta.StableChatID) that alters app session keys fails here.
+// conv-delta's hash has bit 62 set: the derivation masks with 0x7fff…, and
+// that pin fails if the mask is ever narrowed (e.g. to 0x3fff…), which would
+// silently rename every conversation whose hash has that bit set.
+func TestChatIDForConv_PinnedValues(t *testing.T) {
+	for _, tc := range []struct {
+		conv string
+		want int64
+	}{
+		{"conv-alpha", 720718529578504038},
+		{"conv-beta", 3836012143067692060},
+		{"conv-delta", 6838516087377924408},
+		{"singleton", 4486002201837802786},
+	} {
+		if got := chatIDForConv(tc.conv); got != tc.want {
+			t.Errorf("chatIDForConv(%q) = %d, want %d", tc.conv, got, tc.want)
+		}
+	}
+}
+
 func TestChatIDForConv_DeterministicAndPositive(t *testing.T) {
 	a := chatIDForConv("conv-abc")
 	b := chatIDForConv("conv-abc")

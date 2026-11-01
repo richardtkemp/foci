@@ -1,11 +1,13 @@
 package chatmeta
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"foci/internal/log"
+	"foci/internal/platform"
 	"foci/internal/session"
 )
 
@@ -22,6 +24,32 @@ func testResolver(t *testing.T) *Resolver {
 		AgentID:      "test-agent",
 		PlatformName: "test",
 		Logger:       func() *log.ComponentLogger { return testLogger },
+	}
+}
+
+// TestStableChatID_Pinned pins the exact int64 chat IDs the FNV-64a
+// derivation produces for fixed identities — the same literals as the app's
+// TestChatIDForConv_PinnedValues, so the shared function (the body was lifted
+// from the app's chatIDForConv) can never drift from what app conversations
+// already hash to, and Slack identities get the same stability guarantee.
+// conv-delta and the slack/thread identity have bit 62 set in their hashes:
+// the derivation masks with 0x7fff…, and those pins fail if the mask is ever
+// narrowed (e.g. to 0x3fff…), which would silently rename every conversation
+// whose hash has that bit set.
+func TestStableChatID_Pinned(t *testing.T) {
+	for _, tc := range []struct {
+		identity string
+		want     int64
+	}{
+		{"conv-alpha", 720718529578504038},
+		{"conv-beta", 3836012143067692060},
+		{"conv-delta", 6838516087377924408},
+		{"singleton", 4486002201837802786},
+		{"slack/thread/C200/1700000000.000200", 5736613814651099991},
+	} {
+		if got := StableChatID(tc.identity); got != tc.want {
+			t.Errorf("StableChatID(%q) = %d, want %d", tc.identity, got, tc.want)
+		}
 	}
 }
 
@@ -88,6 +116,148 @@ func TestRegisterChat_Idempotent(t *testing.T) {
 	}
 	if v != "true" {
 		t.Errorf("expected registered=true row after RegisterChat, got %q", v)
+	}
+}
+
+// TestResolverRegisterChat_OrdinaryChatWritesNoFlag lives in
+// resolver_ordinary_test.go (a base-compilable characterisation file).
+
+// TestResolverNeverDefaultWritesFlag proves a resolver with NeverDefault set
+// (the Slack transport's shape, #2459) stamps the never_default row on
+// registration, alongside the ordinary registered row, with no error.
+func TestResolverNeverDefaultWritesFlag(t *testing.T) {
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &Resolver{
+		Index:        idx,
+		AgentID:      "helen",
+		PlatformName: "slack",
+		Logger:       func() *log.ComponentLogger { return testLogger },
+		NeverDefault: true,
+	}
+	if err := r.RegisterChat(31); err != nil {
+		t.Fatalf("RegisterChat: %v", err)
+	}
+	for key, want := range map[string]string{
+		"registered":    "true",
+		"never_default": "true",
+	} {
+		if v, err := idx.GetChatMetadata("helen", "slack", 31, key); err != nil || v != want {
+			t.Errorf("row %s = %q (err %v), want %q", key, v, err, want)
+		}
+	}
+}
+
+// failingIndex wraps a real index and fails the SetChatMetadata keys listed
+// in fail, so a test can drive RegisterChat's two write-error paths.
+type failingIndex struct {
+	platform.SessionIndex
+	fail map[string]bool
+}
+
+func (f *failingIndex) SetChatMetadata(agentID, platformName string, chatID int64, key, value string) error {
+	if f.fail[key] {
+		return fmt.Errorf("injected failure for key %q", key)
+	}
+	return f.SessionIndex.SetChatMetadata(agentID, platformName, chatID, key, value)
+}
+
+// TestRegisterChat_NeverDefaultWriteFailureWritesNeitherRow proves the
+// fail-closed ordering (#2459 req 6): when the never_default row cannot be
+// written, NO row lands — a chat that could not be marked never-default must
+// not become a registered, default-eligible chat. The error is returned (the
+// Slack transport refuses the triggering message on it), logged as an ERROR
+// naming the chat, and not cached, so the next contact retries.
+func TestRegisterChat_NeverDefaultWriteFailureWritesNeitherRow(t *testing.T) {
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &failingIndex{SessionIndex: idx, fail: map[string]bool{session.ChatMetaNeverDefault: true}}
+	r := &Resolver{
+		Index:        fake,
+		AgentID:      "helen",
+		PlatformName: "slack",
+		Logger:       func() *log.ComponentLogger { return testLogger },
+		NeverDefault: true,
+	}
+
+	var logged []string
+	remove := log.AddTap(log.ERROR, func(level log.Level, component, msg string) {
+		if strings.Contains(msg, "never-default") {
+			logged = append(logged, msg)
+		}
+	})
+	t.Cleanup(remove)
+
+	if err := r.RegisterChat(31); err == nil {
+		t.Fatal("RegisterChat swallowed the never-default write failure; want it propagated so the caller refuses the message")
+	}
+	for _, key := range []string{"registered", session.ChatMetaNeverDefault} {
+		if v, err := idx.GetChatMetadata("helen", "slack", 31, key); err == nil && v != "" {
+			t.Errorf("row %s = %q despite the failed never-default write; want no row (fail closed)", key, v)
+		}
+	}
+	found := false
+	for _, msg := range logged {
+		if strings.Contains(msg, "chat 31") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no ERROR naming chat 31's failed never-default write; tapped: %q", logged)
+	}
+
+	// The failed registration is retried on the next contact, not cached.
+	fake.fail = nil
+	if err := r.RegisterChat(31); err != nil {
+		t.Fatalf("retry after the write recovered: %v", err)
+	}
+	for key, want := range map[string]string{
+		"registered":                 "true",
+		session.ChatMetaNeverDefault: "true",
+	} {
+		if v, err := idx.GetChatMetadata("helen", "slack", 31, key); err != nil || v != want {
+			t.Errorf("after retry, row %s = %q (err %v), want %q", key, v, err, want)
+		}
+	}
+}
+
+// TestRegisterChat_RegisteredWriteFailureKeepsFlagAndRetries proves the
+// registered-row failure path: the never_default mark (written first, and
+// only ever excluding) stays, no registered row lands, the error is returned
+// for the caller to refuse the message on, and the next contact retries.
+func TestRegisterChat_RegisteredWriteFailureKeepsFlagAndRetries(t *testing.T) {
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &failingIndex{SessionIndex: idx, fail: map[string]bool{"registered": true}}
+	r := &Resolver{
+		Index:        fake,
+		AgentID:      "helen",
+		PlatformName: "slack",
+		Logger:       func() *log.ComponentLogger { return testLogger },
+		NeverDefault: true,
+	}
+	if err := r.RegisterChat(31); err == nil {
+		t.Fatal("RegisterChat swallowed the registered write failure; want it propagated so the caller refuses the message")
+	}
+	if v, err := idx.GetChatMetadata("helen", "slack", 31, "registered"); err == nil && v != "" {
+		t.Errorf("registered row = %q despite the failed write; want no row", v)
+	}
+	if v, err := idx.GetChatMetadata("helen", "slack", 31, session.ChatMetaNeverDefault); err != nil || v != "true" {
+		t.Errorf("never_default row = %q (err %v); want it kept — it only ever excludes", v, err)
+	}
+
+	fake.fail = nil
+	if err := r.RegisterChat(31); err != nil {
+		t.Fatalf("retry after the write recovered: %v", err)
+	}
+	if v, err := idx.GetChatMetadata("helen", "slack", 31, "registered"); err != nil || v != "true" {
+		t.Errorf("after retry, registered row = %q (err %v), want true", v, err)
 	}
 }
 
@@ -192,4 +362,53 @@ func TestNilReceiver(t *testing.T) {
 	// These should not panic.
 	r.RegisterChat(42)
 	r.RecordUsername(42, "alice")
+}
+
+// TestSessionKeyForChat_NeverDefaultFailsClosed proves a NeverDefault
+// resolver never hands out a session key for a chat whose registration
+// failed (#2459 A1 review F3, req 6): a chat that could not be marked
+// never-default must not become an addressable — and so default-eligible —
+// session. Either write failing returns "" (RegisterChat logs the ERROR);
+// once the writes land, the next contact returns the key. An ordinary
+// resolver keeps its best-effort contract and returns the key regardless.
+func TestSessionKeyForChat_NeverDefaultFailsClosed(t *testing.T) {
+	for _, failKey := range []string{session.ChatMetaNeverDefault, "registered"} {
+		t.Run(failKey, func(t *testing.T) {
+			idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			fake := &failingIndex{SessionIndex: idx, fail: map[string]bool{failKey: true}}
+			r := &Resolver{
+				Index:        fake,
+				AgentID:      "helen",
+				PlatformName: "slack",
+				Logger:       func() *log.ComponentLogger { return testLogger },
+				NeverDefault: true,
+			}
+			if got := r.SessionKeyForChat(42); got != "" {
+				t.Errorf("SessionKeyForChat with a failed %s write = %q, want \"\" (fail closed)", failKey, got)
+			}
+			fake.fail = nil
+			if got, want := r.SessionKeyForChat(42), session.NewChatSessionKey("helen", 42); got != want {
+				t.Errorf("SessionKeyForChat after the write recovered = %q, want %q", got, want)
+			}
+		})
+	}
+
+	t.Run("ordinary resolver stays best-effort", func(t *testing.T) {
+		idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := &Resolver{
+			Index:        &failingIndex{SessionIndex: idx, fail: map[string]bool{"registered": true}},
+			AgentID:      "main",
+			PlatformName: "telegram",
+			Logger:       func() *log.ComponentLogger { return testLogger },
+		}
+		if got, want := r.SessionKeyForChat(7), session.NewChatSessionKey("main", 7); got != want {
+			t.Errorf("ordinary SessionKeyForChat with a failed write = %q, want %q", got, want)
+		}
+	})
 }

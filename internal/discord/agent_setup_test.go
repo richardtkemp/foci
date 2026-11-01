@@ -83,6 +83,34 @@ func TestResolveDiscordAllowedUsers(t *testing.T) {
 	}
 }
 
+// TestResolveAllowedUsersOnly_CascadeDiscord pins the
+// allowed_users_only cascade for Discord: the per-agent platform flag, else
+// the global platform flag, else true (strict) — the rule the shared
+// config.ResolveAllowedAccess cascade carries for every chat transport.
+func TestResolveAllowedUsersOnly_CascadeDiscord(t *testing.T) {
+	flag := func(v bool) *bool { return &v }
+	acfg := func(f *bool) config.AgentConfig {
+		return config.AgentConfig{Platforms: []config.PlatformConfig{{
+			ID: "discord", Access: config.AccessConfig{AllowedUsersOnly: f},
+		}}}
+	}
+	gcfg := func(f *bool) *config.Config {
+		return &config.Config{Platforms: []config.PlatformConfig{{
+			ID: "discord", Access: config.AccessConfig{AllowedUsersOnly: f},
+		}}}
+	}
+
+	if got := resolveDiscordAllowedUsersOnly(acfg(flag(true)), gcfg(flag(false))); !got {
+		t.Error("agent flag = true must win over the global false")
+	}
+	if got := resolveDiscordAllowedUsersOnly(acfg(nil), gcfg(flag(true))); !got {
+		t.Error("global flag = true must apply when the agent sets none")
+	}
+	if got := resolveDiscordAllowedUsersOnly(acfg(nil), gcfg(nil)); !got {
+		t.Error("no flag anywhere must default to strict (true)")
+	}
+}
+
 // TestSetupAgentNoPlatformConfigured verifies SetupAgent returns nil when the
 // agent has no discord platform (no bot is created).
 func TestSetupAgentNoPlatformConfigured(t *testing.T) {
