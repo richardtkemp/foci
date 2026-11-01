@@ -284,7 +284,8 @@ type gatingRig struct {
 func newGatingRig(t *testing.T) *gatingRig {
 	t.Helper()
 	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{command.ConfigCommand(), command.AgentsCommand(), command.AndroidCommand()}})
-	g := &gatingRig{mux: newTestMux(d), inst: d.agents[testAgentID], path: filepath.Join(t.TempDir(), "foci.toml")}
+	inst, _ := d.agents.Get(testAgentID)
+	g := &gatingRig{mux: newTestMux(d), inst: inst, path: filepath.Join(t.TempDir(), "foci.toml")}
 	if err := os.WriteFile(g.path, []byte(approveTestConfig), 0o600); err != nil {
 		t.Fatal(err)
 	}

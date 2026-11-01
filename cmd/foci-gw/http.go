@@ -192,7 +192,7 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 	mux.HandleFunc("/webhook/", handleWebhook(d, resolveAgent, gate))
 	mux.HandleFunc("/config/request", handleConfigRequest(
 		func() *configapprove.Service { return gwConfigApprove },
-		func(id string) bool { _, ok := d.agents[id]; return ok },
+		func(id string) bool { _, ok := d.agents.Get(id); return ok },
 	))
 
 	endpointList := "/send, /status, /command, /todo/done, /branch, /webhook/{agent}/{hookid}, /config/request"

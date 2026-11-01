@@ -31,7 +31,7 @@ var gwConfigApprove *configapprove.Service
 const configRequestPollMax = 20 * time.Second
 
 // newConfigApproveService builds the service for the gateway's config file.
-func newConfigApproveService(cfg *config.Config, configPath string, agents map[string]*agentInstance, connMgr platform.ConnectionManager) *configapprove.Service {
+func newConfigApproveService(cfg *config.Config, configPath string, agents *agentRegistry, connMgr platform.ConnectionManager) *configapprove.Service {
 	mode, err := config.ParseFileMode(cfg.FileMode)
 	if err != nil {
 		mode = 0o600
@@ -42,7 +42,7 @@ func newConfigApproveService(cfg *config.Config, configPath string, agents map[s
 		CheckProtected: gwConfigProtect,
 		CheckContent:   configcheck.CheckContent,
 		Present: func(p configapprove.Prompt) error {
-			inst := agents[p.AgentID]
+			inst, _ := agents.Get(p.AgentID)
 			if inst == nil {
 				return fmt.Errorf("unknown agent %q", p.AgentID)
 			}
