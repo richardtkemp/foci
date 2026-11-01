@@ -224,18 +224,25 @@ func TestDepthLeaf_AgentRulesStillApply(t *testing.T) {
 	}
 }
 
-// TestDepthLeaf_DisablesBackgroundTasks (#2625, requirement 2): a depth
-// leaf's CC process runs with CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1, so CC
-// never moves a foreground command to the background at its timeout (nor
-// accepts run_in_background); the per-agent env cannot switch it off. A
-// root session's process does not get it.
-func TestDepthLeaf_DisablesBackgroundTasks(t *testing.T) {
-	leaf := launchDepth(t, true, map[string]string{disableBackgroundTasksEnv: "0"}, nil)
-	if v, ok := lastEnv(leaf.env, disableBackgroundTasksEnv); !ok || v != "1" {
-		t.Errorf("leaf CC process: %s=%q (set %v), want \"1\"", disableBackgroundTasksEnv, v, ok)
+// disableBackgroundTasksEnv is CC's switch that turns off every background
+// task. A depth leaf must NOT get it (depthleaf.go).
+const disableBackgroundTasksEnv = "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"
+
+// TestDepthLeaf_KeepsBackgroundTasks (#2625, Dick 2026-11-01): a depth
+// leaf's CC process does NOT get CLAUDE_CODE_DISABLE_BACKGROUND_TASKS, so a
+// foreground command at its timeout is moved to the background, not killed.
+// A per-agent value passes through unchanged, and a root gets nothing.
+func TestDepthLeaf_KeepsBackgroundTasks(t *testing.T) {
+	leaf := launchDepth(t, true, nil, nil)
+	if v, ok := lastEnv(leaf.env, disableBackgroundTasksEnv); ok {
+		t.Errorf("leaf CC process got %s=%q; a leaf must not have its timed-out commands killed", disableBackgroundTasksEnv, v)
+	}
+	agentSet := launchDepth(t, true, map[string]string{disableBackgroundTasksEnv: "0"}, nil)
+	if v, ok := lastEnv(agentSet.env, disableBackgroundTasksEnv); !ok || v != "0" {
+		t.Errorf("leaf CC process: %s=%q (set %v), want the agent's own \"0\"", disableBackgroundTasksEnv, v, ok)
 	}
 	root := launchDepth(t, false, nil, nil)
 	if v, ok := lastEnv(root.env, disableBackgroundTasksEnv); ok {
-		t.Errorf("root CC process got %s=%q; background tasks must stay available outside a leaf", disableBackgroundTasksEnv, v)
+		t.Errorf("root CC process got %s=%q", disableBackgroundTasksEnv, v)
 	}
 }

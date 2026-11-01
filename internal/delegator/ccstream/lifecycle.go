@@ -135,16 +135,6 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	} else {
 		hookSettings = ""
 	}
-	if opts.DepthLeaf {
-		// A depth leaf never runs a shell in the background (#2625, see
-		// depthleaf.go), with or without the hooks. hookEnv goes on last.
-		if hookEnv == nil {
-			hookEnv = map[string]string{}
-		}
-		for k, v := range depthLeafEnv() {
-			hookEnv[k] = v
-		}
-	}
 	if opts.BatchAccess == delegator.BatchAccessReadOnly {
 		// A read-only batch's Bash calls must all reach foci (#2702): its
 		// ask rule travels in the same --settings as the hooks, and it is
