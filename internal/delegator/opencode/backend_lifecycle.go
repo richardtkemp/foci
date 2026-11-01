@@ -68,6 +68,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// command, batchAccessRules) are decided by the read-only rules, never
 	// prompted, whoever started it.
 	b.skipPermissions = delegator.SessionSkipsPrompts(delegator.SkipPermissions(b.cfg), opts.SkipPermissions, opts.BatchAccess)
+	b.depthLeaf = opts.DepthLeaf
 
 	// The foci workspace plugins (session-env routing, blank-system) are
 	// materialised inside acquireServer, right before it spawns the subprocess
@@ -189,6 +190,15 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	} else if rules := defaultPermissionRules(b.cfg); len(rules) > 0 {
 		if err := b.applySessionPermission(ctx, rules); err != nil {
 			log.NewComponentLogger(b.logComponent()).Warnf("default_permission apply failed: %v — using opencode defaults", err)
+		}
+	}
+	// A depth leaf's task rule (#2625) goes on in its own apply too, so a
+	// failed or absent default_permission cannot leave it off; a leaf that
+	// cannot refuse task calls does not start.
+	if b.depthLeaf {
+		if err := b.applySessionPermission(ctx, nil); err != nil {
+			b.server.unregisterSession(b.sessionID)
+			return fmt.Errorf("opencode: depth leaf: apply its task rule: %w", err)
 		}
 	}
 

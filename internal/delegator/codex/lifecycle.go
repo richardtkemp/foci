@@ -36,6 +36,14 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	b.itemCache = make(map[string]itemEnvelope)
 	b.subagents = newSubagentTracker()
 	b.autoApproveRules = autoapprove.Compile(opts.AutoApproveRules)
+	if opts.DepthLeaf {
+		// #2625 follow-up: codex's subagent launches (MultiAgent spawn_agent)
+		// are NOT refused in a depth leaf yet. No refusal path has been
+		// verified: codex has no PreToolUse rule engine wired (CapPreToolRules)
+		// and its multi-agent tools raise no approval foci could reject. Said
+		// once per leaf start, so the gap is never silent.
+		b.lg.Warnf("depth leaf %s on codex: subagent launches are not refused (only foci_spawn is safe in a leaf; #2625 follow-up)", opts.SessionKey)
+	}
 	// Obtaining a connection is the ONLY thing that legitimately differs
 	// between a facade attaching to a pooled app-server and the owner that
 	// launches one. Everything after it — resolve the model, record the

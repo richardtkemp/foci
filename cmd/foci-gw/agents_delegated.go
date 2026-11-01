@@ -286,6 +286,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		BackendType:  backendName,
 		Spec:         spec,
 		BatchModel:   config.DerefStr(bc.BatchModel),
+		// A depth leaf's backend refuses every subagent path but foci_spawn
+		// (#2625). Asked at each backend Start, so a resumed leaf keeps it.
+		DepthLeaf: tools.InDepthLeaf,
 		NewBackend: func() (delegator.Delegator, error) {
 			cfgMap := bc.ToMap()
 			cfgMap[delegator.FociVersionConfigKey] = version

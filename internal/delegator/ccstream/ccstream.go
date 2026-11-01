@@ -262,6 +262,9 @@ type Backend struct {
 	// stopRules yields the agent's stop rules (#2089) baked into the Stop
 	// hook command at each Start. Set via SetHostHooks.
 	stopRules func() []stoprule.Rule
+	// depthLeaf is StartOptions.DepthLeaf of the last Start (#2625): the
+	// session is a depth leaf, so prepareHooks adds depthLeafRules.
+	depthLeaf bool
 
 	// Agent tracking (shared tracker implementation: AgentTracker).
 	agents delegator.SubagentTracker

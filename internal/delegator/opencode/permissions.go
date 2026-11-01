@@ -64,6 +64,10 @@ func (b *Backend) onPermissionAsked(req PermissionRequest) {
 // permissions to handleQuestionPermission and everything else to the binary
 // Allow/Deny/Always keyboard. Shared by both opencode permission models.
 func (b *Backend) surfacePermission(pp pendingPermission) {
+	// A depth leaf's task call is refused before anything else (#2625).
+	if b.refuseDepthLeafTask(pp) {
+		return
+	}
 	// Nobody can answer this ask (a skip-permissions session, or an
 	// unattended turn): foci's rules decide it, never a prompt (see
 	// answerUnattended). Checked before dedup/auto-approve — nothing may be
@@ -356,7 +360,17 @@ func permDedupKey(pp pendingPermission) string {
 // POST /permission/{requestID}/reply { reply } endpoint (reply ∈ once|always|
 // reject). Verified against the live 1.2.18 OpenAPI.
 func (b *Backend) replyPermissionNext(requestID, reply string) error {
-	payload, _ := json.Marshal(map[string]any{"reply": reply})
+	return b.replyPermissionNextMessage(requestID, reply, "")
+}
+
+// replyPermissionNextMessage is replyPermissionNext with the optional message
+// opencode hands the model with a reject (live 1.17.15 /doc: {reply, message?}).
+func (b *Backend) replyPermissionNextMessage(requestID, reply, message string) error {
+	body := map[string]any{"reply": reply}
+	if message != "" {
+		body["message"] = message
+	}
+	payload, _ := json.Marshal(body)
 	url := fmt.Sprintf("%s/permission/%s/reply", b.server.baseURL, url.PathEscape(requestID))
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {

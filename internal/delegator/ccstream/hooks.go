@@ -321,6 +321,10 @@ func (b *Backend) prepareHooks() (string, map[string]string, bool) {
 	if b.preToolRules != nil {
 		rules = b.preToolRules()
 	}
+	if b.depthLeaf {
+		// First, so the size limit below never drops them (#2625).
+		rules = append(depthLeafRules(), rules...)
+	}
 	var stopRules []stoprule.Rule
 	if b.stopRules != nil {
 		stopRules = b.stopRules()

@@ -92,6 +92,11 @@ type DelegatedManager struct {
 	// don't exercise delivery.
 	AttachDelivery func(be delegator.Delegator, sessionKey string)
 
+	// DepthLeaf reports whether a session is a depth-tree leaf (#2625). Read
+	// at each backend Start into StartOptions.DepthLeaf, so a leaf's backend
+	// refuses every subagent path but foci_spawn. Nil: no session is a leaf.
+	DepthLeaf func(sessionKey string) bool
+
 	// StartOpts returns the StartOptions for a new Backend.
 	// Label and ResumeSessionID are set by the manager.
 	StartOpts delegator.StartOptions
@@ -531,6 +536,7 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 	opts.Label = strings.ReplaceAll(sessionKey, "/", "-")
 	opts.ResumeSessionID = resumeID
 	opts.SessionKey = sessionKey
+	opts.DepthLeaf = m.DepthLeaf != nil && m.DepthLeaf(sessionKey)
 
 	// A batch session (RunBatch) launches with the caller's system prompt
 	// (or the agent's own, for AgentPrompt), model and workdir, at the model's

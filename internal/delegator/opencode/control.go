@@ -103,7 +103,8 @@ func (b *Backend) applySessionPermission(ctx context.Context, rules []permission
 	if b.sessionID == "" {
 		return errors.New("opencode: no session (Start not called)")
 	}
-	payload, err := json.Marshal(sessionPermissionPatch{Permission: rules})
+	// Last in every batch, so a later mode change cannot shadow it (#2625).
+	payload, err := json.Marshal(sessionPermissionPatch{Permission: b.withDepthLeafRule(rules)})
 	if err != nil {
 		return err
 	}

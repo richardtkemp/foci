@@ -399,6 +399,7 @@ Generated from each backend's `Spec.ConfigKeys` / `Spec.StartFields` (`internal/
 | `BatchOnly` | ✗ | ✓ | ✗ |
 | `SkipPermissions` | ✓ | ✗ | ✓ |
 | `BatchAccess` | ✓ | ✓ | ✓ |
+| `DepthLeaf` | ✓ | ✓ | ✓ |
 | `ExecRegistry` | manager | manager | manager |
 | `Env` | ✓ | ✓ | ✓ |
 | `AutoApproveRules` | ✓ | ✓ | ✓ |

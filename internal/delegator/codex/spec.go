@@ -96,7 +96,7 @@ var spec = delegator.Spec{
 	ConfigKeys: []string{"binary", "model", "sandbox", "approvals_reviewer", "api_key", delegator.FociVersionConfigKey},
 	StartFields: []string{
 		"WorkDir", "SystemPrompt", "Model", "AgentID", "Label", "ResumeSessionID", "SessionKey",
-		"BatchOnly", "BatchAccess", "Env", "AutoApproveRules", "Effort", "CompactionPromptFunc",
+		"BatchOnly", "BatchAccess", "DepthLeaf", "Env", "AutoApproveRules", "Effort", "CompactionPromptFunc",
 	},
 }
 

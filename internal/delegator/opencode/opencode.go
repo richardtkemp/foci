@@ -294,6 +294,10 @@ type Backend struct {
 	// (see answerUnattended). Set at Start, read-only after.
 	skipPermissions bool
 
+	// depthLeaf: the session is a depth leaf (StartOptions.DepthLeaf, #2625),
+	// so its task calls are refused (depthleaf.go). Set at Start.
+	depthLeaf bool
+
 	// authFailureFired gates onAuthFailure so a flaky 401 loop doesn't
 	// spam repeated notifications. CAS'd to true on first fire; resets
 	// when the Backend is recreated (session restart).

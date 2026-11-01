@@ -90,7 +90,7 @@ var spec = delegator.Spec{
 	ConfigKeys:         []string{"allowed_tools", "binary", "skip_permissions"},
 	StartFields: []string{
 		"WorkDir", "SystemPrompt", "Model", "AgentID", "Label", "ResumeSessionID", "SessionKey",
-		"SkipPermissions", "BatchAccess", "Env", "AutoApproveRules", "SubagentMaxAge", "Effort",
+		"SkipPermissions", "BatchAccess", "DepthLeaf", "Env", "AutoApproveRules", "SubagentMaxAge", "Effort",
 	},
 
 	TranscriptChecker: InputInTranscript,

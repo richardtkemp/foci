@@ -796,7 +796,12 @@ type StartOptions struct {
 	// BatchAccess is a batch session's access (BatchRequest.Access); the zero
 	// value for every other session. A backend applies it whether or not
 	// SkipPermissions is set: an attended spawn is still restricted (#2684).
-	BatchAccess      BatchAccess
+	BatchAccess BatchAccess
+	// DepthLeaf marks a session that is a leaf of a depth tree (#2625), open
+	// or reported. A backend refuses every way to start subagent or
+	// background work in it except foci_spawn (DepthLeafRefusal). Resolved
+	// by the DelegatedManager at each Start; false for every other session.
+	DepthLeaf        bool
 	ExecRegistry     any               // *tools.Registry — if set, used by DelegatedManager to create exec bridges
 	Env              map[string]string // extra environment variables to inject (e.g. BASH_ENV, FOCI_SOCK from exec bridge)
 	AutoApproveRules []string          // foci-level auto-approve patterns (e.g. "Bash:git *", "Read")

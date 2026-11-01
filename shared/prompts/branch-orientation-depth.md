@@ -11,7 +11,7 @@ You are one leaf of a depth-mode fan-out. Key: {branch_key}, parent: {parent_key
 - One point per message: a finding or a question, not a bundle. If you have several findings, give them one at a time, or fan out. Several questions may go together only in a single `foci_ask`.
 
 ### Subagents
-- Inside a leaf, launch subagents ONLY with `foci_spawn`. The Agent tool, Task, background shells and every other way of starting background work are forbidden here: their results come back only to this thread, and are lost once you report.
+- Inside a leaf, launch subagents ONLY with `foci_spawn` (any mode, `--background` included). The Agent tool, Task, Monitor, Workflow, background shells (`run_in_background`, a command ended by `&`, `nohup`, `setsid --fork`, `disown`) and opencode's task tool are refused here: the call fails with a message and nothing starts. Their results would come back only to this thread, and be lost once you report. A foreground shell command that reaches its timeout is stopped, not moved to the background, so give long commands a long enough timeout or use `foci_spawn`.
 - You may report while your `foci_spawn` spawns are still running. Their results then pass to your parent once it has received your report, and on up the tree if it has reported too.
 
 ### Reporting

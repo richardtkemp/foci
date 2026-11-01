@@ -83,7 +83,7 @@ var spec = delegator.Spec{
 	ConfigKeys:   []string{"binary", "hostname", "server_auth", "log_level", "port", "default_permission", "skip_permissions"},
 	StartFields: []string{
 		"WorkDir", "SystemPrompt", "Model", "AgentID", "ResumeSessionID", "SessionKey",
-		"SkipPermissions", "BatchAccess", "Env", "AutoApproveRules", "CompactionPromptFunc",
+		"SkipPermissions", "BatchAccess", "DepthLeaf", "Env", "AutoApproveRules", "CompactionPromptFunc",
 	},
 
 	PlanDelivery: planDelivery,
