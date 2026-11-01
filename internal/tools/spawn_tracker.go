@@ -120,7 +120,9 @@ type trackedSpawn struct {
 	held bool
 	// kept holds the spawn's messages to its spawner (send_to_spawner) that
 	// could not go at once: its spawner's call is waiting on it, or a depth
-	// fan-in holds its owner. They head its result. In memory only.
+	// fan-in holds its owner. They head its result. Persisted with the
+	// spawn (#2677). A direct spawn is never persisted, nor are its kept
+	// messages.
 	kept []SpawnLogEntry
 }
 
@@ -721,18 +723,23 @@ func (t *SpawnTracker) keepMessage(parent, id, text string) bool {
 		return false
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	s := t.spawns[parent][id]
 	if s == nil || !s.running {
+		t.mu.Unlock()
 		return false
 	}
 	s.kept = append(s.kept, SpawnLogEntry{At: time.Now(), Kind: "to-spawner", Text: text})
 	s.appendLog("to-spawner", "(held for the result) "+text)
+	t.mu.Unlock()
+	// Saved with the spawn, so a restart resumes it with them (#2677).
+	t.persist(parent, id)
 	return true
 }
 
 // takeKept returns, and forgets, the messages kept for the head of the
-// spawn's result.
+// spawn's result. It does not persist: the result they head is persisted
+// next (pushResult), and that write drops them from the record, so a crash in
+// between still has them in the record that resumes the spawn.
 func (t *SpawnTracker) takeKept(parent, id string) []SpawnLogEntry {
 	if t == nil {
 		return nil

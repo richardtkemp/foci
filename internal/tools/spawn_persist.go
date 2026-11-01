@@ -51,6 +51,40 @@ type spawnRecord struct {
 	Agent string `json:"agent,omitempty"`
 	// SpawnerUnattended: see RunningSpawn (#2684).
 	SpawnerUnattended bool `json:"spawner_unattended,omitempty"`
+	// Kept: the messages to its spawner kept for the head of its result
+	// (send_to_spawner, #2662), in the order sent. A resumed run's result
+	// still carries them (#2677).
+	Kept []keptRecord `json:"kept,omitempty"`
+}
+
+// keptRecord is the persisted form of one kept message to the spawner.
+type keptRecord struct {
+	At   time.Time `json:"at"`
+	Text string    `json:"text"`
+}
+
+// keptRecords is kept's persisted form.
+func keptRecords(kept []SpawnLogEntry) []keptRecord {
+	if len(kept) == 0 {
+		return nil
+	}
+	out := make([]keptRecord, len(kept))
+	for i, m := range kept {
+		out[i] = keptRecord{At: m.At, Text: m.Text}
+	}
+	return out
+}
+
+// keptEntries is the in-memory form of a record's kept messages.
+func keptEntries(recs []keptRecord) []SpawnLogEntry {
+	if len(recs) == 0 {
+		return nil
+	}
+	out := make([]SpawnLogEntry, len(recs))
+	for i, m := range recs {
+		out[i] = SpawnLogEntry{At: m.At, Kind: "to-spawner", Text: m.Text}
+	}
+	return out
 }
 
 // SetStore makes the tracker persist its spawns to store. Call it once at
@@ -89,6 +123,7 @@ func (s *trackedSpawn) record(parent string) *spawnRecord {
 		Resumes: s.resumes, Running: s.running, Result: s.result,
 		Character: s.info.Character, SpawnModel: s.info.SpawnModel,
 		Agent: s.info.Agent, SpawnerUnattended: s.info.SpawnerUnattended,
+		Kept: keptRecords(s.kept),
 	}
 }
 
@@ -213,6 +248,7 @@ func (t *SpawnTracker) adopt(rec spawnRecord, running bool, outcome string, canc
 		info:   recInfo(rec),
 		cancel: cancel, running: running, timeout: rec.Timeout,
 		prompt: rec.Prompt, resumes: rec.Resumes, result: rec.Result,
+		kept: keptEntries(rec.Kept),
 	}
 	if running {
 		s.resumes++

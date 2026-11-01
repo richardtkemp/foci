@@ -104,7 +104,9 @@ func (s *Spawner) RestoreSpawns() {
 			if rec.Result != "" {
 				s.deliver(rec.Parent, rec.ID, rec.Result)
 			}
-			s.deliver(rec.Parent, rec.ID, fmt.Sprintf(
+			// The messages it kept for its spawner head the report, as
+			// they would have headed its result (#2677).
+			s.deliver(rec.Parent, rec.ID, keptMessagesHead(rec.ID, tr.takeKept(rec.Parent, rec.ID))+fmt.Sprintf(
 				"[SPAWN RESULT] Branch %s (spawn %s) was lost in a foci restart and could not be resumed: %s. Its task was:\n\n%s",
 				rec.BranchKey, rec.ID, reason, rec.Prompt))
 			report(rec.Parent).lost = append(report(rec.Parent).lost, label+": "+reason)
