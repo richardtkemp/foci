@@ -925,6 +925,15 @@ func (t *DelegatedTransport) RunCompaction(ts *TurnState) {
 	if a.Compactor == nil || ts.FinalUsage == nil {
 		return
 	}
+	// Compaction acts on the backend that ran this turn. If that backend is
+	// gone (an abandoned batch is reset while its turn finishes; a /reset; a
+	// crash), there is nothing to compact and no memory to form for it. The
+	// threshold is re-evaluated after the next turn of a live session, so
+	// this defers rather than loses a real compaction (#2705).
+	if a.DelegatedManager != nil && !a.DelegatedManager.IsLiveBackend(ts.SessionKey, ts.Backend) {
+		a.logger().Infof("session=%s post-turn compaction skipped: the turn's backend is closed", ts.SessionKey)
+		return
+	}
 
 	// Last-cycle context size, NOT turn-total: FinalUsage's input/cache are
 	// the final cycle's fill (latest-wins across every cycle of the turn,

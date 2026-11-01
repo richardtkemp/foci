@@ -677,15 +677,21 @@ var ErrModeUnsupported = fmt.Errorf("permission mode switching requires the ccst
 // refreshContextFromBackend queries the backend's context window and updates
 // the session's context limit and model name. No-op if the backend doesn't
 // implement ContextWindowQuerier.
+//
+// Non-creating: it asks only an already-running backend. It is a read, and a
+// read must not launch a process — post-turn compaction calls it, and for an
+// abandoned batch the backend is already reset by then, so the creating Get
+// used to start a fresh claude process for a dead session (#2705).
 func (a *Agent) refreshContextFromBackend(ctx context.Context, sessionKey string) {
 	if a.DelegatedManager == nil {
 		return
 	}
-	be, err := a.DelegatedManager.Get(ctx, sessionKey)
-	if err != nil {
+	mb, ok := a.DelegatedManager.getManaged(sessionKey)
+	if !ok || !mb.be.IsRunning() {
+		a.logger().Debugf("session=%s context-window refresh skipped: no live backend", sessionKey)
 		return
 	}
-	cwq, ok := delegator.As[delegator.ContextWindowQuerier](be)
+	cwq, ok := delegator.As[delegator.ContextWindowQuerier](mb.be)
 	if !ok {
 		return
 	}

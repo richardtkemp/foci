@@ -1888,7 +1888,9 @@ func TestDelegatedTransport_RunCompaction_DeferredWhileSubagentInFlight(t *testi
 
 	// 150k context is well over the ~60k threshold, so size alone would compact.
 	newTS := func(a *Agent, be *mockBackendDT) *TurnState {
-		ts := NewTurnState(context.Background(), "test/compact-gate", []string{"hi"}, nil)
+		// "test/s" is the key newMockDelegatedManager registers: compaction
+		// only acts on the session's live backend (#2705).
+		ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
 		ts.SessionMeta = a.getSessionMeta(ts.SessionKey)
 		ts.Backend = be
 		ts.FinalModel = model
@@ -2963,5 +2965,48 @@ func TestDelegatedTransport_RunInference_UndeclaredCapabilitiesArmNoMidTurnNudge
 	}
 	if preAnswer != nil {
 		t.Error("PreAnswerNudgeFunc armed for a backend that declares no capabilities")
+	}
+}
+
+// TestDelegatedTransport_RunCompaction_SkipsClosedBackend pins #2705: an
+// abandoned batch's backend is reset (closed and unmapped) while its turn is
+// still finishing, so post-turn compaction then runs for a session with no
+// backend. It must not launch a new one (the context-window refresh used to
+// go through the creating Get and start a fresh claude process for the dead
+// batch), and it must not compact or form memory for it either.
+func TestDelegatedTransport_RunCompaction_SkipsClosedBackend(t *testing.T) {
+	t.Parallel()
+	cmdSent := false
+	be := &mockBackendDT{sendCommandFn: func(_ context.Context, _ string) error { cmdSent = true; return nil }}
+	mgr := newMockDelegatedManager(t, be)
+	launches := 0
+	mgr.NewBackend = func() (delegator.Delegator, error) { launches++; return be, nil }
+
+	store := session.NewStore(t.TempDir())
+	comp := compaction.NewCompactor(store, 0.3)
+	memoryFired := false
+	a := &Agent{Model: "claude-sonnet-4-5", Compactor: comp, DelegatedManager: mgr}
+	a.CompactionMemoryFunc.Add(func(_ string) { memoryFired = true })
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+
+	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
+	ts.SessionMeta = a.getSessionMeta(ts.SessionKey)
+	ts.Backend = be
+	ts.FinalModel = "claude-sonnet-4-5"
+	// Well over the threshold, so only the closed-backend gate can stop it.
+	ts.FinalUsage = &provider.Usage{InputTokens: 2, OutputTokens: 150, CacheReadInputTokens: 150000}
+
+	mgr.ResetSession(ts.SessionKey) // RunBatch's abandon path
+
+	tr.RunCompaction(ts)
+
+	if launches != 0 {
+		t.Errorf("post-turn compaction launched %d new backend(s) for a closed session; want 0", launches)
+	}
+	if cmdSent {
+		t.Error("compaction sent /compact to a closed backend")
+	}
+	if memoryFired {
+		t.Error("compaction memory formation ran for a closed backend")
 	}
 }

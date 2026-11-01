@@ -410,6 +410,19 @@ func (m *DelegatedManager) BackendLiveModel(sessionKey string) string {
 	return lr.LiveModel()
 }
 
+// IsLiveBackend reports whether be is still sessionKey's mapped, running
+// backend. Non-creating. False once the backend has been reset or closed
+// (ResetSession unmaps it before the slow Close), or replaced by another
+// instance: post-turn work that belongs to the turn's own backend checks this
+// so it never acts on (or relaunches) a session that is gone (#2705).
+func (m *DelegatedManager) IsLiveBackend(sessionKey string, be delegator.Delegator) bool {
+	if be == nil {
+		return false
+	}
+	mb, ok := m.getManaged(sessionKey)
+	return ok && mb.be == be && mb.be.IsRunning()
+}
+
 // RunningSubagents returns what the session's live backend has running in the
 // background: Agent-tool subagents and background shell commands (#2127).
 // Non-creating; nil when there is no backend or it does not track them.
