@@ -1,3 +1,0 @@
-TestLiveCap_NoCapsChangesNothing: characterisation (#2280 req 9): with both caps 0 nothing waits, notifies, evicts or logs, exactly as before the change
-TestInboxEvict_NotWhileBusy: characterisation (#2283 req 3/9b): each busy condition leaves the inbox in place, as before the change (no eviction existed)
-TestInboxEvict_KeepsLiveStateMaps: characterisation (#2283 Decisions): meta, routers and lastTurnEndAt survive, as before the change
