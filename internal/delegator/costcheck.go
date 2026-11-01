@@ -1,9 +1,8 @@
 package delegator
 
 import (
+	"fmt"
 	"math"
-	"sync"
-	"time"
 )
 
 // Cost-divergence checking, shared by every delegated backend (#1674).
@@ -47,67 +46,41 @@ const (
 	// signal: 1% of a fraction of a cent is rounding, and warning on it would
 	// train everyone to ignore the warning.
 	costDivergenceFloorUSD = 0.01
-
-	// costWarnInterval rate-limits per model. A stale price or a genuinely new
-	// model diverges on EVERY turn, so an unthrottled warning floods the log and
-	// buries the first occurrence, which is the informative one.
-	costWarnInterval = 10 * time.Minute
 )
 
-// CostDivergenceChecker rate-limits the divergence warning per model. The zero
-// value is ready to use.
-type CostDivergenceChecker struct {
-	mu       sync.Mutex
-	lastWarn map[string]time.Time
-}
-
-// Check compares foci's calculated cost against the backend-provided one and
-// calls warnf when they disagree by more than CostDivergenceTolerance.
+// CostDivergence compares foci's calculated cost of one call against the
+// backend-provided one, and returns the report to raise and true when they
+// disagree by more than CostDivergenceTolerance. The caller raises it as a
+// ledger alarm (invCostDivergence), whose expectation guard rate-limits it:
+// a stale price diverges on EVERY call.
 //
-// warnf is passed in rather than a logger so this can sit in the delegator
-// package without depending on any backend's logging setup. Callers must not
-// hold a lock that warnf could contend on.
-// Check's details argument supplies the per-class token/price breakdown to
-// print WHEN THE WARNING FIRES. It is a closure, not a string, so the cost of
-// building it is paid only on the rare firing path rather than on every turn.
-// nil is allowed and prints nothing extra.
+// details supplies the per-class token/price breakdown to print WHEN IT
+// FIRES. It is a closure, not a string, so the cost of building it is paid
+// only on the rare firing path rather than on every call. nil is allowed and
+// prints nothing extra.
 //
-// The breakdown is the whole diagnostic value of this warning. Without it the
+// The breakdown is the whole diagnostic value of this report. Without it the
 // line reports two scalars, and identifying WHICH token class disagrees then
 // requires reconstructing the turn from CC's transcript against a database that
 // stores the final cycle's context fill rather than the tokens actually priced
 // — an exercise that on 2026-08-31 produced two confident wrong answers before
 // a correct one, because turn boundaries had to be inferred. Everything needed
 // is already in the caller's hand at this moment; it was simply discarded.
-func (c *CostDivergenceChecker) Check(model string, calculated, provided float64, details func() string, warnf func(string, ...any)) {
+func CostDivergence(model string, calculated, provided float64, details func() string) (string, bool) {
 	// A zero on either side is not a disagreement worth reporting. Calculated
 	// is 0 for CC's synthetic/no-op sentinel, which modelinfo prices at 0 by
 	// design; an unknown model does NOT land here (it falls back to a family or
 	// haiku rate) and is already reported by modelinfo's own unpriced warning.
 	// Provided is 0 when the backend simply reported nothing to compare with.
 	if calculated <= 0 || provided <= 0 {
-		return
+		return "", false
 	}
 	if provided < costDivergenceFloorUSD && calculated < costDivergenceFloorUSD {
-		return
+		return "", false
 	}
 	offBy := math.Abs(calculated-provided) / provided
 	if offBy <= CostDivergenceTolerance {
-		return
-	}
-
-	c.mu.Lock()
-	if c.lastWarn == nil {
-		c.lastWarn = make(map[string]time.Time)
-	}
-	last, seen := c.lastWarn[model]
-	throttled := seen && time.Since(last) < costWarnInterval
-	if !throttled {
-		c.lastWarn[model] = time.Now()
-	}
-	c.mu.Unlock()
-	if throttled || warnf == nil {
-		return
+		return "", false
 	}
 
 	extra := ""
@@ -120,7 +93,7 @@ func (c *CostDivergenceChecker) Check(model string, calculated, provided float64
 	// 1,827 opus-5 turns on 2026-08-31, ~95% priced correctly — a stale rate
 	// cannot do that, so the old wording sent every reader down the wrong path
 	// first. State the disagreement; let the breakdown name the cause.
-	warnf("cost divergence: foci priced this %s turn at $%.6f but the backend reported $%.6f "+
+	return fmt.Sprintf("foci priced this %s call at $%.6f but the backend reported $%.6f "+
 		"(%.1f%% off, tolerance %.0f%%)%s",
-		model, calculated, provided, 100*offBy, 100*CostDivergenceTolerance, extra)
+		model, calculated, provided, 100*offBy, 100*CostDivergenceTolerance, extra), true
 }

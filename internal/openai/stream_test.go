@@ -385,8 +385,8 @@ func TestStreamUsageNotInflatedByIntermediateChunks(t *testing.T) {
 	if resp.Usage.CacheReadInputTokens != 450 {
 		t.Errorf("CacheReadInputTokens = %d, want 450 (not 451 from accumulator sum)", resp.Usage.CacheReadInputTokens)
 	}
-	if resp.Usage.InputTokens != 500 {
-		t.Errorf("InputTokens = %d, want 500", resp.Usage.InputTokens)
+	if resp.Usage.InputTokens != 50 {
+		t.Errorf("InputTokens = %d, want 50 (500 prompt - 450 cached)", resp.Usage.InputTokens)
 	}
 	if resp.Usage.OutputTokens != 3 {
 		t.Errorf("OutputTokens = %d, want 3", resp.Usage.OutputTokens)

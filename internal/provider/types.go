@@ -348,12 +348,19 @@ type MessageRequest struct {
 	SessionKey string `json:"-"`
 }
 
-// Usage contains token usage information from a response.
+// Usage contains token usage information from a response, in disjoint
+// classes: each translator takes a format's overlapping counts apart (an
+// OpenAI prompt count that includes its cached tokens, a Gemini prompt count
+// that includes its cached content).
 type Usage struct {
 	InputTokens              int `json:"input_tokens"`
 	OutputTokens             int `json:"output_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	// WebSearchRequests and WebFetchRequests are Anthropic server-tool
+	// requests (usage.server_tool_use), billed per request.
+	WebSearchRequests int `json:"web_search_requests,omitempty"`
+	WebFetchRequests  int `json:"web_fetch_requests,omitempty"`
 }
 
 // Tokens normalises this usage into billed token classes the way the direct
@@ -365,6 +372,8 @@ func (u Usage) Tokens() modelinfo.Tokens {
 		modelinfo.ClassOutput:       u.OutputTokens,
 		modelinfo.ClassCacheRead:    u.CacheReadInputTokens,
 		modelinfo.ClassCacheWrite1h: u.CacheCreationInputTokens,
+		modelinfo.ClassWebSearch:    u.WebSearchRequests,
+		modelinfo.ClassWebFetch:     u.WebFetchRequests,
 	}
 }
 

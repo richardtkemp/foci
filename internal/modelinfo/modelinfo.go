@@ -1420,6 +1420,18 @@ func priceTokens(rates map[Class]float64, t Tokens) (usd float64, priced bool) {
 	return usd, priced
 }
 
+// NonZero is t without its zero counts: the stored form, where only non-zero
+// classes exist, and the form two counts are compared in.
+func (t Tokens) NonZero() Tokens {
+	out := Tokens{}
+	for c, n := range t {
+		if n != 0 {
+			out[c] = n
+		}
+	}
+	return out
+}
+
 // billed reports whether any class has a non-zero count.
 func (t Tokens) billed() bool {
 	for _, n := range t {

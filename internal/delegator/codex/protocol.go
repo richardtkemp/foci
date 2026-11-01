@@ -271,6 +271,27 @@ type tokenUsageParams struct {
 		Total              tokenUsageBreakdown `json:"total"`
 		ModelContextWindow int                 `json:"modelContextWindow,omitempty"`
 	} `json:"tokenUsage"`
+
+	// rawUsage is the tokenUsage object as codex sent it, for the
+	// unseen-key check (ledger.go, invUnseenField).
+	rawUsage json.RawMessage
+}
+
+// UnmarshalJSON decodes the notification and keeps its raw tokenUsage beside
+// it.
+func (p *tokenUsageParams) UnmarshalJSON(data []byte) error {
+	type plain tokenUsageParams
+	if err := json.Unmarshal(data, (*plain)(p)); err != nil {
+		return err
+	}
+	var raw struct {
+		TokenUsage json.RawMessage `json:"tokenUsage"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	p.rawUsage = raw.TokenUsage
+	return nil
 }
 
 // serverRequestResolvedParams confirms a pending approval was answered.

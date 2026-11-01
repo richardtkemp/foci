@@ -6,7 +6,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"strconv"
+	"strings"
 
+	"foci/internal/delegator/accounting"
 	"foci/internal/messages"
 	"foci/internal/provider"
 
@@ -253,6 +257,53 @@ func thinkingToGenai(tc *provider.ThinkingConfig) *genai.ThinkingConfig {
 	return cfg
 }
 
+// usageFromGenai normalises Gemini usage into disjoint classes. genai v1.48
+// documents totalTokenCount = prompt + candidates + toolUsePrompt + thoughts:
+// thoughts are billed as output and the tool-use prompt as input. Its
+// PromptTokenCount is the TOTAL prompt including cached content;
+// CachedContentTokenCount is a subset, not additive, so it is taken out of
+// input to match Anthropic's non-overlapping semantics.
+func usageFromGenai(md *genai.GenerateContentResponseUsageMetadata) provider.Usage {
+	cached := int(md.CachedContentTokenCount)
+	return provider.Usage{
+		InputTokens:          int(md.PromptTokenCount) - cached + int(md.ToolUsePromptTokenCount),
+		OutputTokens:         int(md.CandidatesTokenCount) + int(md.ThoughtsTokenCount),
+		CacheReadInputTokens: cached,
+	}
+}
+
+// geminiMappedCounts is every count field of genai's usage metadata that
+// usageFromGenai books (or, for the total, that is their sum).
+var geminiMappedCounts = map[string]bool{
+	"PromptTokenCount": true, "CachedContentTokenCount": true, "CandidatesTokenCount": true,
+	"ThoughtsTokenCount": true, "ToolUsePromptTokenCount": true, "TotalTokenCount": true,
+}
+
+// unmappedCounts is invUnseenField for Gemini (#2111 §8.6): the genai SDK drops
+// keys it does not know before foci sees them, so the check is on the SDK's
+// own struct instead — any non-zero integer count field of md not in mapped (a
+// count a newer SDK added) is reported under its JSON name. The per-modality
+// detail lists break down counts already mapped, and are not counts.
+func unmappedCounts(md any, mapped map[string]bool) []accounting.UnseenKey {
+	v := reflect.Indirect(reflect.ValueOf(md))
+	if v.Kind() != reflect.Struct {
+		return nil
+	}
+	var out []accounting.UnseenKey
+	for i := range v.NumField() {
+		f, fv := v.Type().Field(i), v.Field(i)
+		if !f.IsExported() || mapped[f.Name] || !fv.CanInt() || fv.Int() == 0 {
+			continue
+		}
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if name == "" {
+			name = f.Name
+		}
+		out = append(out, accounting.UnseenKey{Path: name, Value: strconv.FormatInt(fv.Int(), 10)})
+	}
+	return out
+}
+
 // responseFromGenai translates a Gemini response to provider format.
 func responseFromGenai(resp *genai.GenerateContentResponse, model string) (*provider.MessageResponse, error) {
 	if resp == nil {
@@ -266,16 +317,10 @@ func responseFromGenai(resp *genai.GenerateContentResponse, model string) (*prov
 		Model: model,
 	}
 
-	// Usage — Gemini's PromptTokenCount is the TOTAL input including cached tokens.
-	// CachedContentTokenCount is a subset, not additive. Subtract to match
-	// Anthropic's non-overlapping semantics (InputTokens + CacheRead = total).
-	if resp.UsageMetadata != nil {
-		cached := int(resp.UsageMetadata.CachedContentTokenCount)
-		result.Usage = provider.Usage{
-			InputTokens:          int(resp.UsageMetadata.PromptTokenCount) - cached,
-			OutputTokens:         int(resp.UsageMetadata.CandidatesTokenCount),
-			CacheReadInputTokens: cached,
-		}
+	if md := resp.UsageMetadata; md != nil {
+		result.Usage = usageFromGenai(md)
+		accounting.Live().AlarmUnseen(accounting.BackendAPI, "", "gemini",
+			fmt.Sprintf("response %s (%s)", resp.ResponseID, model), unmappedCounts(md, geminiMappedCounts))
 	}
 
 	// Extract content from candidates

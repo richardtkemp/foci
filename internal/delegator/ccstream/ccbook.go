@@ -77,13 +77,25 @@
 //     cost (invOverheadBounded): a WARN when every overhead model's spend has a
 //     known cause (output only, CC bug #84223; Haiku input/output in a window
 //     where WebFetch/WebSearch ran, their side calls, #2468), else an ERROR.
+//     On every transcript line (§8.6, invUnseenField): a usage key not in
+//     ccUsageKeys, or a speed or service_tier other than standard (foci has
+//     standard rates only), alarms once per process per key; the call books
+//     as usual. On a main line for a call already booked here (§8.7,
+//     invMainTranscriptFinal): identical counts or an all-zero usage (CC's
+//     re-appended copies) are a copy; other counts mean the booked line was
+//     not final — an alarm, and the first booking stands. Subagent calls are
+//     not checked.
 //   - A turn's ACTIVITY (R8) closes once it has ended and nothing of it is
 //     still spending — no subagent tail of it open, no named call of it
 //     unbooked; a subagent resumed on it reopens it.
 //   - A call books on its turn by the turn's id alone: the agent layer recorded
-//     a foci turn's facts when it began. A run no foci turn opened (an
-//     autonomous CC run) books on a turn of its own, recorded here as
-//     autonomous.
+//     a foci turn's facts when it began, and records its end. A run no foci
+//     turn opened (an autonomous CC run) books on a run turn of its own
+//     (runTurnFor), which this book records: as autonomous, started when
+//     minted, the moment it is minted (so its activity close always has a row
+//     to land on), and ended at its first end — its result, with the result's
+//     stop_reason, or the process exit for a run whose result never came. A
+//     later end (the exit after a result) does not move it.
 //
 // Scope is this CC process: lines billed before it launched are a previous
 // process's and are skipped, and the remainder baseline starts at what CC
@@ -120,6 +132,9 @@ type ccLine struct {
 	// webTool: the line holds a WebFetch or WebSearch tool_use. CC runs each
 	// on a side call to Haiku that no transcript records (#2468).
 	webTool bool
+	// unseen: what its usage carries that the ledger does not price — a key
+	// not in ccUsageKeys, or a non-standard rate tier (invUnseenField).
+	unseen []accounting.UnseenKey
 }
 
 // ccUsageJSON is a per-message usage object with the fields the ledger prices.
@@ -135,6 +150,31 @@ type ccUsageJSON struct {
 	} `json:"server_tool_use"`
 }
 
+// ccUsageKeys is every key of a CC transcript usage object foci knows
+// (invUnseenField, #2111 §8.6), as real CC 2.1.3xx transcripts carry them.
+// iterations repeats the call's counts per server-side iteration; the ledger
+// prices the top-level counts, so its content is not checked.
+var ccUsageKeys = accounting.UsageKeys{
+	"input_tokens":                nil,
+	"output_tokens":               nil,
+	"cache_read_input_tokens":     nil,
+	"cache_creation_input_tokens": nil,
+	"cache_creation": {
+		"ephemeral_5m_input_tokens": nil,
+		"ephemeral_1h_input_tokens": nil,
+	},
+	"server_tool_use": {
+		"web_search_requests": nil,
+		"web_fetch_requests":  nil,
+	},
+	"output_tokens_details": {"thinking_tokens": nil},
+	"service_tier":          nil,
+	"inference_geo":         nil,
+	"iterations":            accounting.AnyUsage,
+	"speed":                 nil,
+	"fallback_credit":       nil,
+}
+
 // ccRecord is one transcript record: an assistant message, or the cost-state
 // record CC appends at shutdown.
 type ccRecord struct {
@@ -146,7 +186,7 @@ type ccRecord struct {
 		ID         string          `json:"id"`
 		Model      string          `json:"model"`
 		StopReason *string         `json:"stop_reason"`
-		Usage      ccUsageJSON     `json:"usage"`
+		Usage      json.RawMessage `json:"usage"`
 		Content    json.RawMessage `json:"content"`
 	} `json:"message"`
 	ModelUsage map[string]ModelUsage `json:"modelUsage"`
@@ -169,12 +209,17 @@ func parseCCRecord(raw []byte) (line *ccLine, costState *ccRecord) {
 	case r.Type != "assistant" || r.Message.ID == "":
 		return nil, nil
 	}
+	var u ccUsageJSON
+	if len(r.Message.Usage) > 0 && json.Unmarshal(r.Message.Usage, &u) != nil {
+		return nil, nil // an undecodable usage drops the line, as an undecodable record does
+	}
 	at, _ := time.Parse(time.RFC3339Nano, r.Timestamp)
 	l := &ccLine{id: r.Message.ID, model: r.Message.Model, at: at.UTC(), complete: r.Message.StopReason != nil}
 	if r.Message.StopReason != nil {
 		l.stopReason = *r.Message.StopReason
 	}
-	l.tokens, l.method = ccTokens(r.Message.Usage)
+	l.tokens, l.method = ccTokens(u)
+	l.unseen = append(accounting.UnseenUsageKeys(r.Message.Usage, ccUsageKeys), accounting.StandardTierOnly(r.Message.Usage)...)
 	l.webTool = hasWebTool(r.Message.Content)
 	return l, nil
 }
@@ -427,6 +472,14 @@ type ccBook struct {
 	done    map[string]bool // ids booked, or dropped, in this process
 	agents  map[string]*ccAgent
 	runTurn map[int]string
+	// runStart is when each run turn was minted: its started_at, and the
+	// set of this adapter's own turns, whose end it records (a foci turn's
+	// end is the agent layer's to record).
+	runStart map[string]time.Time
+	// mainBooked is each main-thread call this process booked, at the counts
+	// it was booked with: a later main line for its id is checked against
+	// them (invMainTranscriptFinal).
+	mainBooked map[string]modelinfo.Tokens
 	// requests: the subagents whose transcript records each request it sends
 	// (an api-request record, CC 2.1.300+, #2584). Kept apart from agents,
 	// as the first record comes before the line that creates an agent.
@@ -536,6 +589,7 @@ func newCCBook(l *accounting.Ledger, lg *log.ComponentLogger, session, agentID s
 		scope: fmt.Sprintf("%s@%d", session, launch.UnixNano()), // ScopeLaunch parses it
 		named: map[string]*namedCall{}, held: map[string]*ccLine{}, done: map[string]bool{},
 		agents: map[string]*ccAgent{}, runTurn: map[int]string{}, requests: map[string]bool{},
+		runStart: map[string]time.Time{}, mainBooked: map[string]modelinfo.Tokens{},
 		counted: map[int]map[string]*countedSum{}, boundaries: map[int][]ccBoundary{}, refusals: map[int][]ccRefusal{},
 		webTools: map[int]bool{}, mainWin: map[string]int{},
 		baseline:   maps.Clone(baseline),
@@ -624,14 +678,46 @@ func (c *ccBook) retract(uuids []string) {
 }
 
 // runTurnFor is the turn a run no foci turn opened (an autonomous CC run) is
-// booked on: one per window.
+// booked on: one per window. Its row is recorded as it is minted, so it exists
+// before any call books on it and before its activity can close: an activity
+// close is an update of the row, which would be lost on a row not yet there.
 func (c *ccBook) runTurnFor(window int, at time.Time) string {
 	if t, ok := c.runTurn[window]; ok {
 		return t
 	}
+	if at.IsZero() {
+		at = c.now()
+	}
+	at = at.UTC()
 	t := accounting.MintTurnID(c.session, "run", at)
 	c.runTurn[window] = t
+	c.runStart[t] = at
+	c.recordRunTurn(accounting.Turn{TurnID: t})
 	return t
+}
+
+// recordRunTurn upserts run turn t.TurnID with its facts — this process's
+// session and agent, autonomous, started when it was minted — plus any end
+// t carries.
+func (c *ccBook) recordRunTurn(t accounting.Turn) {
+	if c.l == nil {
+		return
+	}
+	t.Session, t.AgentID, t.Backend = c.session, c.agentID, accounting.BackendCCStream
+	t.Source, t.StartedAt = accounting.SourceAutonomous, c.runStart[t.TurnID]
+	if err := c.l.Update(func(tx *accounting.Tx) error { return tx.RecordTurn(t) }); err != nil {
+		c.lg.Warnf("ledger: record run turn %s: %v", t.TurnID, err)
+	}
+}
+
+// runEnded ends run turn turn at at, with the result's stop reason when it has
+// one ("" for a run whose result never came). Only the first end is recorded:
+// exit ends every run turn again, and must not move an end its result set.
+func (c *ccBook) runEnded(turn string, at time.Time, stopReason string) {
+	if !c.ended[turn] {
+		c.recordRunTurn(accounting.Turn{TurnID: turn, EndedAt: at.UTC(), StopReason: stopReason})
+	}
+	c.turnEnded(turn, at)
 }
 
 // turnSource is the source a call's turn is recorded with if the ledger does
@@ -639,17 +725,47 @@ func (c *ccBook) runTurnFor(window int, at time.Time) string {
 // opened by foci, whose agent layer recorded it (with its real source) first,
 // so this value only stands when that record is missing.
 func (c *ccBook) turnSource(turn string) string {
-	for _, t := range c.runTurn {
-		if t == turn {
-			return accounting.SourceAutonomous
-		}
+	if _, ok := c.runStart[turn]; ok {
+		return accounting.SourceAutonomous
 	}
 	return accounting.SourceUser
 }
 
+// checkUsage raises invUnseenField for what l's usage carries that the ledger
+// does not price (#2111 §8.6). The ledger alarms on each key once per process,
+// so a history copy of the line is silent.
+func (c *ccBook) checkUsage(l *ccLine) {
+	if len(l.unseen) == 0 {
+		return
+	}
+	version := ""
+	if v := c.version.Load(); v != nil {
+		version = *v
+	}
+	c.l.AlarmUnseen(accounting.BackendCCStream, version, "claude-code transcript",
+		fmt.Sprintf("session %s call %s (%s)", c.session, l.id, l.model), l.unseen)
+}
+
+// checkFinal compares a main line for an already-booked call with the counts
+// it was booked at (invMainTranscriptFinal, #2111 §8.7). Identical counts are a
+// copy; so is a line whose usage is all zero, which CC re-appends with the
+// original's uuid and timestamp. Anything else means the line the call was
+// booked from was not final (F1). The first booking stands.
+func (c *ccBook) checkFinal(l *ccLine) {
+	booked, ok := c.mainBooked[l.id]
+	if !ok || !billed(l.tokens) || maps.Equal(booked.NonZero(), l.tokens.NonZero()) {
+		return
+	}
+	c.alarm(accounting.InvMainTranscriptFinal, fmt.Sprintf(
+		"session %s: call %s (%s) was booked with %s, and a later main-transcript line has %s — the first booking stands",
+		c.session, l.id, l.model, formatTokens(booked), formatTokens(l.tokens)))
+}
+
 // mainLine handles one assistant line of the main transcript.
 func (c *ccBook) mainLine(l *ccLine) {
+	c.checkUsage(l)
 	if c.done[l.id] {
+		c.checkFinal(l)
 		// A re-appended copy of a call this process already booked, or a
 		// later block of it (counted as a copy too: the two look alike). While
 		// the call's window is open its web tool still marks that window.
@@ -693,6 +809,7 @@ func (c *ccBook) subLine(agent, turn string, l *ccLine) {
 	if !l.at.IsZero() && l.at.Before(c.launch) {
 		return // billed by an earlier process: not this scope
 	}
+	c.checkUsage(l)
 	a := c.agent(agent, turn, l.at)
 	if l.webTool {
 		// Before the done check: a call's web tool can come on a line after
@@ -900,7 +1017,7 @@ func (c *ccBook) refusalFallback(r ccRefusal) {
 
 // result records one result: CC's cumulative modelUsage as reports, and the
 // window it closes, which settles once its calls are in.
-func (c *ccBook) result(mu map[string]ModelUsage, running int, at time.Time) {
+func (c *ccBook) result(mu map[string]ModelUsage, running int, stopReason string, at time.Time) {
 	at = at.UTC()
 	for _, m := range slices.Sorted(maps.Keys(mu)) {
 		c.report(m, mu[m], at)
@@ -909,7 +1026,7 @@ func (c *ccBook) result(mu map[string]ModelUsage, running int, at time.Time) {
 	c.results = append(c.results, ccResult{window: c.window, at: at, mu: maps.Clone(mu), quiet: running == 0})
 	// A run no foci turn opened ends with its result.
 	if t, ok := c.runTurn[c.window]; ok {
-		c.turnEnded(t, at)
+		c.runEnded(t, at, stopReason)
 	}
 	c.window++
 }
@@ -1065,6 +1182,9 @@ func (c *ccBook) bookCall(l *ccLine, turn, actor string, window int, finality st
 	}
 	if b.Duplicate {
 		return
+	}
+	if actor == "" {
+		c.mainBooked[l.id] = l.tokens
 	}
 	// Priced as the call_costs view prices it: its counts at its billing time.
 	usd, priced := modelinfo.CostAsOf(l.model, c.billedAt(l.at), l.tokens)
@@ -1584,8 +1704,8 @@ func (c *ccBook) exit() {
 	c.closeWindows(c.window)
 	// A run whose result never came ends with its process. A foci turn still
 	// open ends when the agent layer completes it (ccLedger.turnEnded).
-	for _, t := range c.runTurn {
-		c.turnEnded(t, c.now())
+	for _, w := range slices.Sorted(maps.Keys(c.runTurn)) {
+		c.runEnded(c.runTurn[w], c.now(), "")
 	}
 	final, label := c.costState, "exit"
 	if final == nil {

@@ -127,6 +127,26 @@ const (
 	// such as a subagent tail that never opened or an unreadable resume
 	// baseline.
 	InvOverheadBounded = "invOverheadBounded"
+	// InvUnseenField: a provider's usage object carries a key the adapter
+	// does not know, or a rate tier foci has no rates for (#2111 §8.6). The
+	// call is booked without it, so its cost may be short (unseen.go).
+	InvUnseenField = "invUnseenField"
+	// InvMainTranscriptFinal: CC wrote a second main-transcript line for a
+	// call already booked in this process with different, non-zero usage, so
+	// the line it was booked from was not final (F1, #2111 §8.7). The first
+	// booking stands.
+	InvMainTranscriptFinal = "invMainTranscriptFinal"
+	// InvCompletedHasTokens: an opencode message completed with no token
+	// counts, so nothing could be booked for it (#2111 §8.2).
+	InvCompletedHasTokens = "invCompletedHasTokens"
+	// InvTokenTotal: a backend's reported token total is not the sum of the
+	// classes it reported beside it (opencode's tokens.total), so a class is
+	// missing or counted twice. The call is booked from the classes.
+	InvTokenTotal = "invTokenTotal"
+	// InvCachedIsSubsetOfInput: an OpenAI-format usage reports more cached
+	// and cache-written tokens than prompt tokens, which should include them.
+	// Input is booked as 0, never negative.
+	InvCachedIsSubsetOfInput = "invCachedIsSubsetOfInput"
 )
 
 // Alarm raises an invariant violation an adapter found outside a booking.
@@ -250,6 +270,11 @@ type Ledger struct {
 	// shadow marks a shadow ledger (Options.Shadow): its bookings reach no
 	// observer.
 	shadow bool
+
+	// unseen is every usage key AlarmUnseen has alarmed on, per adapter, so
+	// one key alarms once per process.
+	unseenMu sync.Mutex
+	unseen   map[string]bool
 }
 
 // Close closes the ledger's database.
@@ -435,9 +460,9 @@ func (tx *Tx) duplicate(c Call) (Booked, error) {
 	if err != nil {
 		return Booked{}, err
 	}
-	if !maps.Equal(stored, nonZero(c.Tokens)) {
+	if !maps.Equal(stored, c.Tokens.NonZero()) {
 		tx.alarm(InvSameIDDifferentUsage, c.Backend,
-			"%s call %q booked with %v, seen again with %v — the first booking stands", c.Backend, c.Key, stored, nonZero(c.Tokens))
+			"%s call %q booked with %v, seen again with %v — the first booking stands", c.Backend, c.Key, stored, c.Tokens.NonZero())
 	}
 	return Booked{ID: id, Duplicate: true}, nil
 }
@@ -464,7 +489,7 @@ func (tx *Tx) tokens(id int64) (modelinfo.Tokens, error) {
 // checkPriced raises invModelNotInTable / invClassNoRate for a call the views
 // will show as unpriced.
 func (tx *Tx) checkPriced(c Call, rateModel sql.NullString) {
-	if len(nonZero(c.Tokens)) == 0 {
+	if len(c.Tokens.NonZero()) == 0 {
 		return
 	}
 	if !rateModel.Valid {
@@ -497,7 +522,7 @@ func (tx *Tx) Report(r Report) error {
 	if r.Grain != GrainCumulative && r.Grain != GrainPerCall {
 		return fmt.Errorf("ledger: report grain %q", r.Grain)
 	}
-	tokens, err := json.Marshal(nonZero(r.Tokens))
+	tokens, err := json.Marshal(r.Tokens.NonZero())
 	if err != nil {
 		return fmt.Errorf("ledger: report tokens: %w", err)
 	}
@@ -594,7 +619,7 @@ func (c Call) cost() *float64 {
 		return c.LegacyCalculatedCostUSD
 	}
 	if c.Model == "" {
-		if len(nonZero(c.Tokens)) == 0 {
+		if len(c.Tokens.NonZero()) == 0 {
 			return new(float64)
 		}
 		return nil // see Book: an unnamed model is unpriced, not unknown
@@ -636,18 +661,6 @@ func (c Call) basis() string {
 		return CostBasisCounts
 	}
 	return c.CostBasis
-}
-
-// nonZero drops zero counts — the stored form, where only non-zero classes
-// exist.
-func nonZero(t modelinfo.Tokens) modelinfo.Tokens {
-	out := modelinfo.Tokens{}
-	for c, n := range t {
-		if n != 0 {
-			out[c] = n
-		}
-	}
-	return out
 }
 
 // timeLayout is billed_at's stored form: UTC with fixed-width nanoseconds, so

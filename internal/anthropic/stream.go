@@ -62,6 +62,15 @@ func (c *Client) streamOnce(ctx context.Context, req *MessageRequest, handler *p
 		if err := msg.Accumulate(event); err != nil {
 			anthropicLog.Warnf("stream accumulate error: %v", err)
 		}
+		if event.Type == "message_delta" {
+			// The SDK's accumulator copies only output_tokens from a
+			// message_delta, whose server_tool_use is the final count of the
+			// server tools the response ran: take it, or they go unbilled.
+			if event.Usage.JSON.ServerToolUse.Valid() {
+				msg.Usage.ServerToolUse = event.Usage.ServerToolUse
+			}
+			checkUsage(msg.ID, string(msg.Model), event.Usage.RawJSON())
+		}
 
 		// Fire delta callbacks.
 		if event.Type == "content_block_delta" {

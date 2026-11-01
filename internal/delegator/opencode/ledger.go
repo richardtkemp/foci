@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"time"
 
+	"foci/internal/delegator"
 	"foci/internal/delegator/accounting"
 	"foci/internal/log"
 	"foci/internal/modelinfo"
@@ -20,8 +21,9 @@ import (
 
 // messageTokens normalises opencode's per-message counts into ledger classes.
 // They are already disjoint: tokens.total is input + output + reasoning +
-// cache read + cache write, so reasoning is billed ON TOP of output, at the
-// output rate (#2112 P0-d). Cache writes carry no TTL.
+// cache read + cache write (checked on every booking, checkTokenTotal), so
+// reasoning is billed ON TOP of output, at the output rate (#2112 P0-d).
+// Cache writes carry no TTL.
 func messageTokens(t *MessageTokens) modelinfo.Tokens {
 	return modelinfo.Tokens{
 		modelinfo.ClassInput:      t.Input,
@@ -32,13 +34,32 @@ func messageTokens(t *MessageTokens) modelinfo.Tokens {
 	}
 }
 
+// opencodeTokenKeys is every key of an opencode message's tokens object foci
+// knows (invUnseenField, #2111 §8.6).
+var opencodeTokenKeys = accounting.UsageKeys{
+	"input": nil, "output": nil, "reasoning": nil, "total": nil,
+	"cache": {"read": nil, "write": nil},
+}
+
 // bookMessage books one assistant message as a call once it has completed;
 // an earlier, streaming update of it is skipped. actor is "" for the
 // session's own messages, else the subagent (the task tool's callID). A
 // replay of a booked message is a no-op in the ledger (its id is the key),
 // and a replay with different counts alarms there.
+//
+// Checks (#2111 §8), each a ledger alarm: a completed message with no counts
+// (invCompletedHasTokens: nothing can be booked); counts whose own total is
+// not their sum (invTokenTotal); a tokens key foci does not know
+// (invUnseenField); and opencode's per-message cost against the ledger's
+// price of the call (invCostDivergence).
 func (b *Backend) bookMessage(msg Message, actor string) {
-	if msg.Tokens == nil || msg.Time.Completed == 0 || msg.ID == "" {
+	if msg.Time.Completed == 0 || msg.ID == "" {
+		return
+	}
+	if msg.Tokens == nil {
+		accounting.Live().Alarm(accounting.Alarm{Invariant: accounting.InvCompletedHasTokens, Backend: accounting.BackendOpencode,
+			Detail: fmt.Sprintf("message %s (%s/%s) completed with no tokens object — nothing is booked for it",
+				msg.ID, msg.ProviderID, msg.ModelID)})
 		return
 	}
 	billed := time.UnixMilli(msg.Time.Completed).UTC()
@@ -73,17 +94,42 @@ func (b *Backend) bookMessage(msg Message, actor string) {
 	if booked.Duplicate {
 		return
 	}
+	checkTokenTotal(msg)
+	accounting.Live().AlarmUnseen(accounting.BackendOpencode, "", "opencode",
+		fmt.Sprintf("message %s (%s/%s)", msg.ID, msg.ProviderID, msg.ModelID),
+		accounting.UnseenUsageKeys(msg.Tokens.raw, opencodeTokenKeys))
 	// opencode's own per-message figure checks our pricing table: the same
 	// shared rule as every backend (#1674), fed the price the ledger's views
 	// give this call.
 	calculated, _ := modelinfo.CostAsOf(msg.ModelID, billed, tokens)
-	b.costCheck.Check(msg.ModelID, calculated, cost,
-		func() string {
-			t := msg.Tokens
-			return fmt.Sprintf("in=%d out=%d reasoning=%d cache_read=%d cache_write=%d",
-				t.Input, t.Output, t.Reasoning, t.Cache.Read, t.Cache.Write)
-		},
-		log.NewComponentLogger(b.logComponent()).Warnf)
+	if report, off := delegator.CostDivergence(msg.ModelID, calculated, cost, func() string {
+		return "message " + msg.ID + ": " + formatTokens(msg.Tokens)
+	}); off {
+		accounting.Live().Alarm(accounting.Alarm{Invariant: accounting.InvCostDivergence, Backend: accounting.BackendOpencode, Detail: report})
+	}
+}
+
+// checkTokenTotal alarms when a message's tokens.total is not the sum of the
+// five classes booked from it: a class foci does not book, or one opencode
+// counted twice. The call is booked from the classes either way.
+func checkTokenTotal(msg Message) {
+	t := msg.Tokens
+	if t.Total == nil {
+		return
+	}
+	sum := t.Input + t.Output + t.Reasoning + t.Cache.Read + t.Cache.Write
+	if *t.Total == sum {
+		return
+	}
+	accounting.Live().Alarm(accounting.Alarm{Invariant: accounting.InvTokenTotal, Backend: accounting.BackendOpencode,
+		Detail: fmt.Sprintf("message %s (%s/%s): tokens.total %d is not input+output+reasoning+cache.read+cache.write = %d (%s) — booked from the classes",
+			msg.ID, msg.ProviderID, msg.ModelID, *t.Total, sum, formatTokens(t))})
+}
+
+// formatTokens renders a message's counts for an alarm.
+func formatTokens(t *MessageTokens) string {
+	return fmt.Sprintf("in=%d out=%d reasoning=%d cache_read=%d cache_write=%d",
+		t.Input, t.Output, t.Reasoning, t.Cache.Read, t.Cache.Write)
 }
 
 // ledgerTurn is the turn a message completing now is booked on: the foci turn

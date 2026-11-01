@@ -165,7 +165,7 @@ func TestResumedForkRemainderIsOnlyItsOwnWork(t *testing.T) {
 		"claude-opus-5":    {OutputTokens: 423858, CacheReadInputTokens: 142792050, CacheCreationInputTokens: 3416995, CostUSD: 57.940799},
 		"claude-sonnet-5":  {OutputTokens: 579266, CacheReadInputTokens: 135985860, CacheCreationInputTokens: 2303142, CostUSD: 38.751947},
 		"claude-haiku-4-5": {OutputTokens: 44782, CacheReadInputTokens: 1286741, CacheCreationInputTokens: 114227, CostUSD: 3.99408275},
-	}, 0, tb.clock)
+	}, 0, "", tb.clock)
 	tb.advance(ccLineBound + time.Millisecond)
 
 	calls := tb.calls(t)

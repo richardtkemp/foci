@@ -79,15 +79,31 @@ type MessageTime struct {
 }
 
 // MessageTokens is the per-message token accounting embedded in an
-// AssistantMessage. Cache is split into read/write.
+// AssistantMessage. Cache is split into read/write. Total is opencode's own
+// sum of the five, nil when it sends none.
 type MessageTokens struct {
-	Input     int `json:"input"`
-	Output    int `json:"output"`
-	Reasoning int `json:"reasoning"`
+	Input     int  `json:"input"`
+	Output    int  `json:"output"`
+	Reasoning int  `json:"reasoning"`
+	Total     *int `json:"total,omitempty"`
 	Cache     struct {
 		Read  int `json:"read"`
 		Write int `json:"write"`
 	} `json:"cache"`
+
+	// raw is the object as opencode sent it, for the unseen-key check
+	// (ledger.go, invUnseenField).
+	raw json.RawMessage
+}
+
+// UnmarshalJSON decodes the counts and keeps the raw object beside them.
+func (t *MessageTokens) UnmarshalJSON(data []byte) error {
+	type plain MessageTokens
+	if err := json.Unmarshal(data, (*plain)(t)); err != nil {
+		return err
+	}
+	t.raw = append(json.RawMessage(nil), data...)
+	return nil
 }
 
 // MessageError is the error payload on an AssistantMessage or in a

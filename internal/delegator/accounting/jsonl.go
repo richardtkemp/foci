@@ -48,7 +48,7 @@ func appendJSONL(b Booking) {
 		Backend: b.Backend, Provider: b.Provider, Model: b.Model,
 		Session: b.Session, AgentID: b.AgentID, TurnID: b.TurnID, Actor: b.Actor,
 		Kind: b.Kind, Finality: b.Finality, ClassMethod: b.ClassMethod, CostBasis: b.basis(),
-		Tokens: nonZero(b.Tokens), CostUSD: b.CostUSD, ContextFill: b.Fill, Purpose: b.Purpose,
+		Tokens: b.Tokens.NonZero(), CostUSD: b.CostUSD, ContextFill: b.Fill, Purpose: b.Purpose,
 		StopReason: b.StopReason, SessionFile: b.SessionFile, SessionLine: b.SessionLine,
 		Detail: b.Detail,
 	})

@@ -22,7 +22,7 @@ func TestForkCopyOfMainCallBooksOnMainThread(t *testing.T) {
 	tb.subLine("fork-a", "T1", line("msg_fork", opus, tb.clock, "end_turn", 5, 8, 0, 0, 0))
 	tb.tailClosed("fork-a")
 	tb.mainLine(line("msg_parent", opus, tb.clock, "tool_use", 10, 200, 0, 0, 0))
-	tb.result(map[string]ModelUsage{opus: {InputTokens: 15, OutputTokens: 208}}, 0, tb.clock)
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 15, OutputTokens: 208}}, 0, "", tb.clock)
 	tb.advance(time.Minute)
 
 	calls := tb.calls(t)
@@ -68,7 +68,7 @@ func TestTranscriptRetractionIsNotAwaited(t *testing.T) {
 		`"message":{"role":"user","content":[{"type":"text","text":"The previous response failed to produce a valid tool call. Please retry the tool call now."}]}}`))
 	tb.retract(retracted)
 	tb.mainLine(line("msg_good", opus, tb.clock, "end_turn", 1000, 50, 0, 0, 0))
-	tb.result(map[string]ModelUsage{opus: {InputTokens: 2000, OutputTokens: 100}}, 0, tb.clock)
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 2000, OutputTokens: 100}}, 0, "", tb.clock)
 	if named := tb.unseenNamed(); named != 0 {
 		t.Errorf("unseenNamed = %d, want 0: the retracted attempt's line never comes", named)
 	}

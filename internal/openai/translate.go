@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"foci/internal/config"
+	"foci/internal/delegator/accounting"
 	"foci/internal/messages"
 	"foci/internal/provider"
 
@@ -263,6 +264,66 @@ func toolsToOpenAI(defs []provider.ToolDef) []openai.ChatCompletionToolUnionPara
 	return tools
 }
 
+// openaiUsageKeys is every key of an OpenAI-format usage object foci knows
+// (invUnseenField, #2111 §8.6): CompletionUsage and its details objects, plus
+// OpenRouter's extensions — cost, is_byok, cost_details (not read) and
+// prompt_tokens_details.cache_write_tokens.
+var openaiUsageKeys = accounting.UsageKeys{
+	"prompt_tokens":     nil,
+	"completion_tokens": nil,
+	"total_tokens":      nil,
+	"completion_tokens_details": {
+		"accepted_prediction_tokens": nil,
+		"audio_tokens":               nil,
+		"reasoning_tokens":           nil,
+		"rejected_prediction_tokens": nil,
+	},
+	"prompt_tokens_details": {
+		"audio_tokens":       nil,
+		"cached_tokens":      nil,
+		"cache_write_tokens": nil,
+	},
+	"cost":         nil,
+	"is_byok":      nil,
+	"cost_details": accounting.AnyUsage,
+}
+
+// usageFromOpenAI normalises an OpenAI-format usage into disjoint classes.
+// prompt_tokens INCLUDES prompt_tokens_details.cached_tokens and OpenRouter's
+// cache_write_tokens, so both are taken out of input; reasoning tokens are
+// inside completion_tokens. A usage whose cache counts exceed its prompt count
+// breaks that rule: input is booked as 0 and invCachedIsSubsetOfInput raised,
+// never silently. Keys foci does not know raise invUnseenField.
+func usageFromOpenAI(u openai.CompletionUsage, id, model string) provider.Usage {
+	cached := int(u.PromptTokensDetails.CachedTokens)
+	written := 0
+	// OpenRouter returns cache_write_tokens as a non-standard extra field
+	// inside prompt_tokens_details.
+	if f, ok := u.PromptTokensDetails.JSON.ExtraFields["cache_write_tokens"]; ok && f.Raw() != "" {
+		var n int64
+		if json.Unmarshal([]byte(f.Raw()), &n) == nil {
+			written = int(n)
+		}
+	}
+	call := fmt.Sprintf("response %s (%s)", id, model)
+	input := int(u.PromptTokens) - cached - written
+	if input < 0 {
+		accounting.Live().Alarm(accounting.Alarm{Invariant: accounting.InvCachedIsSubsetOfInput, Backend: accounting.BackendAPI,
+			Detail: fmt.Sprintf("openai usage of %s: prompt_tokens %d is less than cached_tokens %d + cache_write_tokens %d, which it should include — input booked as 0",
+				call, u.PromptTokens, cached, written)})
+		input = 0
+	}
+	if raw := u.RawJSON(); raw != "" {
+		accounting.Live().AlarmUnseen(accounting.BackendAPI, "", "openai", call, accounting.UnseenUsageKeys([]byte(raw), openaiUsageKeys))
+	}
+	return provider.Usage{
+		InputTokens:              input,
+		OutputTokens:             int(u.CompletionTokens),
+		CacheReadInputTokens:     cached,
+		CacheCreationInputTokens: written,
+	}
+}
+
 // responseFromOpenAI translates an OpenAI response to provider format.
 func responseFromOpenAI(resp *openai.ChatCompletion, model string) (*provider.MessageResponse, error) {
 	if resp == nil {
@@ -276,20 +337,7 @@ func responseFromOpenAI(resp *openai.ChatCompletion, model string) (*provider.Me
 		Model: model,
 	}
 
-	// Usage
-	result.Usage = provider.Usage{
-		InputTokens:          int(resp.Usage.PromptTokens),
-		OutputTokens:         int(resp.Usage.CompletionTokens),
-		CacheReadInputTokens: int(resp.Usage.PromptTokensDetails.CachedTokens),
-	}
-	// OpenRouter returns cache_write_tokens as a non-standard extra field
-	// inside prompt_tokens_details.
-	if f, ok := resp.Usage.PromptTokensDetails.JSON.ExtraFields["cache_write_tokens"]; ok && f.Raw() != "" {
-		var n int64
-		if json.Unmarshal([]byte(f.Raw()), &n) == nil {
-			result.Usage.CacheCreationInputTokens = int(n)
-		}
-	}
+	result.Usage = usageFromOpenAI(resp.Usage, resp.ID, model)
 
 	// Extract content from first choice
 	if len(resp.Choices) == 0 {

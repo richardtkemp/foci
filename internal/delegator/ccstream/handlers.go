@@ -378,7 +378,11 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 func (b *Backend) OnResult(msg *ResultMessage) {
 	b.touchActivity()
 	b.dropUnregisteredShellCalls()
-	b.ledger.Load().enqueue(ccEvent{kind: ccResultEv, mu: msg.ModelUsage, running: b.agents.Pending()})
+	var stop string
+	if msg.StopReason != nil {
+		stop = *msg.StopReason
+	}
+	b.ledger.Load().enqueue(ccEvent{kind: ccResultEv, mu: msg.ModelUsage, running: b.agents.Pending(), stop: stop})
 	b.checkModelUsageMonotonic(msg.ModelUsage)
 
 	b.turnMu.Lock()

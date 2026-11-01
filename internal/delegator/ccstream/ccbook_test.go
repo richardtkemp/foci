@@ -182,7 +182,7 @@ func replay(t *testing.T, name string) (*testBook, map[string]ModelUsage, replay
 		case "named":
 			tb.streamNamed(e.ID, "", "", tb.clock)
 		case "result":
-			tb.result(e.MU, e.Running, tb.clock)
+			tb.result(e.MU, e.Running, "", tb.clock)
 			final = e.MU
 		case "boundary":
 			tb.compactBoundary("", tb.clock)
@@ -275,6 +275,11 @@ func TestReplayHistoryReappend(t *testing.T) {
 	if tb.copies == 0 {
 		t.Error("no copies dropped: the capture's 2nd compaction re-appends the history")
 	}
+	// The re-appended copies carry the originals' counts: neither they nor
+	// their usage keys alarm (#2273).
+	if n := tb.alarmsOf(accounting.InvMainTranscriptFinal) + tb.alarmsOf(accounting.InvUnseenField); n != 0 {
+		t.Errorf("alarms on the history copies: %+v", tb.alarms)
+	}
 	seen := map[string]bool{}
 	compactions := 0
 	for _, c := range tb.calls(t) {
@@ -320,7 +325,7 @@ func TestReplayInterruptedIsPriced(t *testing.T) {
 func TestMainCallBooksOnItsNamingTurn(t *testing.T) {
 	tb := newTestBook(t, nil)
 	tb.streamNamed("msg_1", "", "cap/c1@1", tb.clock)
-	tb.result(map[string]ModelUsage{opus: {InputTokens: 10, OutputTokens: 20, CacheCreationInputTokens: 300}}, 0, tb.clock)
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 10, OutputTokens: 20, CacheCreationInputTokens: 300}}, 0, "", tb.clock)
 	tb.advance(time.Millisecond)
 	tb.mainLine(line("msg_1", opus, tb.clock, "end_turn", 10, 20, 0, 0, 300))
 	tb.advance(time.Millisecond)
@@ -346,7 +351,7 @@ func TestHistoryCopiesAreDropped(t *testing.T) {
 	tb.mainLine(line("msg_old", opus, tb.clock, "end_turn", 1, 1, 0, 0, 0)) // pre-cutover history
 	tb.mainLine(line("msg_new", opus, tb.clock, "end_turn", 5, 5, 0, 0, 0))
 	tb.mainLine(line("msg_new", opus, tb.clock, "end_turn", 5, 5, 0, 0, 0)) // re-appended copy
-	tb.result(map[string]ModelUsage{opus: {InputTokens: 5, OutputTokens: 5}}, 0, tb.clock)
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 5, OutputTokens: 5}}, 0, "", tb.clock)
 	tb.advance(time.Second)
 
 	calls := tb.calls(t)
@@ -469,7 +474,7 @@ func TestRemainderOnlyAtQuietPoints(t *testing.T) {
 	tb := newTestBook(t, map[string]ModelUsage{opus: {InputTokens: 1000}})
 	tb.streamNamed("m1", "", "T1", tb.clock)
 	tb.mainLine(line("m1", opus, tb.clock, "end_turn", 10, 10, 0, 0, 0))
-	tb.result(map[string]ModelUsage{opus: {InputTokens: 1015, OutputTokens: 10}}, 1, tb.clock) // a subagent runs
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 1015, OutputTokens: 10}}, 1, "", tb.clock) // a subagent runs
 	tb.advance(time.Second)
 	for _, c := range tb.calls(t) {
 		if c.kind == accounting.KindOverhead {
@@ -478,7 +483,7 @@ func TestRemainderOnlyAtQuietPoints(t *testing.T) {
 	}
 	tb.streamNamed("m2", "", "T2", tb.clock)
 	tb.mainLine(line("m2", opus, tb.clock, "end_turn", 20, 5, 0, 0, 0))
-	tb.result(map[string]ModelUsage{opus: {InputTokens: 1040, OutputTokens: 15}}, 0, tb.clock)
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 1040, OutputTokens: 15}}, 0, "", tb.clock)
 	tb.advance(time.Second)
 	var over *bookedCall
 	calls := tb.calls(t)
@@ -493,7 +498,7 @@ func TestRemainderOnlyAtQuietPoints(t *testing.T) {
 
 	tb.streamNamed("m3", "", "T3", tb.clock)
 	tb.mainLine(line("m3", opus, tb.clock, "end_turn", 999, 0, 0, 0, 0))
-	tb.result(map[string]ModelUsage{opus: {InputTokens: 1041, OutputTokens: 15}}, 0, tb.clock)
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 1041, OutputTokens: 15}}, 0, "", tb.clock)
 	tb.advance(time.Second)
 	if tb.alarmsOf(accounting.InvNegativeRemainder) != 1 {
 		t.Errorf("alarms = %+v, want one invNegativeRemainder", tb.alarms)
@@ -518,7 +523,7 @@ func TestInterruptedVersusStopless(t *testing.T) {
 	tb.subLine("agent-a", "T1", line("s1", opus, tb.clock, "", 100, 1, 0, 0, 0))
 	tb.tailClosed("agent-a")
 	// CC counts the subagent's call with its true output (7) and nothing of m1.
-	tb.result(map[string]ModelUsage{opus: {InputTokens: 100, OutputTokens: 7}}, 0, tb.clock)
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 100, OutputTokens: 7}}, 0, "", tb.clock)
 	tb.advance(time.Second)
 
 	calls := tb.calls(t)
@@ -560,7 +565,7 @@ func TestSubagentAbortedMidStreamIsInterrupted(t *testing.T) {
 	tb.subSignal("agent-a", ccSignalInterrupt)
 	tb.tailClosed("agent-a")
 	// CC counts "ran" (true output 9) and nothing of "aborted".
-	tb.result(map[string]ModelUsage{opus: {InputTokens: 2, OutputTokens: 9, CacheReadInputTokens: 1000, CacheCreationInputTokens: 100}}, 0, tb.clock)
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 2, OutputTokens: 9, CacheReadInputTokens: 1000, CacheCreationInputTokens: 100}}, 0, "", tb.clock)
 	tb.advance(time.Second)
 
 	calls := tb.calls(t)
@@ -596,7 +601,7 @@ func TestSubagentStoppedAfterToolRanIsInterrupted(t *testing.T) {
 	tb.subSignal("agent-a", ccSignalInterrupt)  // stopped before the next request
 	tb.tailClosed("agent-a")
 	// CC counts "done" (true output 40) and nothing of "cut".
-	tb.result(map[string]ModelUsage{opus: {InputTokens: 2, OutputTokens: 40, CacheReadInputTokens: 47347, CacheCreationInputTokens: 4302}}, 0, tb.clock)
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 2, OutputTokens: 40, CacheReadInputTokens: 47347, CacheCreationInputTokens: 4302}}, 0, "", tb.clock)
 	tb.advance(time.Second)
 
 	calls := tb.calls(t)
@@ -625,7 +630,7 @@ func TestSubagentStoppedAfterNextRequestIsCounted(t *testing.T) {
 	tb.subSignal("agent-a", ccSignalRequest)
 	tb.subSignal("agent-a", ccSignalInterrupt)
 	tb.tailClosed("agent-a")
-	tb.result(map[string]ModelUsage{opus: {InputTokens: 2, OutputTokens: 51, CacheReadInputTokens: 27176, CacheCreationInputTokens: 59}}, 0, tb.clock)
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 2, OutputTokens: 51, CacheReadInputTokens: 27176, CacheCreationInputTokens: 59}}, 0, "", tb.clock)
 	tb.advance(time.Second)
 
 	if ran := find(tb.calls(t), "ran"); ran == nil || ran.finality != accounting.FinalityStopless {
@@ -669,10 +674,10 @@ func TestParseCCSignal(t *testing.T) {
 func TestIdleCompactionIsItsOwnTurn(t *testing.T) {
 	tb := newTestBook(t, nil)
 	tb.compactBoundary("", tb.clock)
-	tb.result(map[string]ModelUsage{opus: {InputTokens: 50000, OutputTokens: 2000}}, 0, tb.clock)
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 50000, OutputTokens: 2000}}, 0, "", tb.clock)
 	tb.advance(time.Second)
 	tb.compactBoundary("cap/c1@9", tb.clock)
-	tb.result(map[string]ModelUsage{opus: {InputTokens: 90000, OutputTokens: 3000}}, 0, tb.clock)
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 90000, OutputTokens: 3000}}, 0, "", tb.clock)
 	tb.advance(time.Second)
 
 	var comp []bookedCall
@@ -698,7 +703,7 @@ func TestExitFlush(t *testing.T) {
 	for _, graceful := range []bool{true, false} {
 		t.Run(fmt.Sprintf("graceful=%v", graceful), func(t *testing.T) {
 			tb := newTestBook(t, nil)
-			tb.result(map[string]ModelUsage{opus: {InputTokens: 100}}, 1, tb.clock) // not quiet
+			tb.result(map[string]ModelUsage{opus: {InputTokens: 100}}, 1, "", tb.clock) // not quiet
 			tb.advance(time.Second)
 			if graceful {
 				tb.costStateSeen(map[string]ModelUsage{opus: {InputTokens: 130}}, tb.clock)
@@ -761,7 +766,7 @@ func TestRemainderTTLSolvedFromReportedCost(t *testing.T) {
 				ccCost += usd
 			}
 			tb.result(map[string]ModelUsage{opus: {InputTokens: 17, OutputTokens: 20, CacheReadInputTokens: 500,
-				CacheCreationInputTokens: 4000 + tc.w5m + tc.w1h, CostUSD: ccCost}}, 0, tb.clock)
+				CacheCreationInputTokens: 4000 + tc.w5m + tc.w1h, CostUSD: ccCost}}, 0, "", tb.clock)
 			tb.advance(time.Second)
 
 			var over *bookedCall
@@ -804,7 +809,7 @@ func mustCost(t *testing.T, model string, tk modelinfo.Tokens) float64 {
 // the 1h rate as before — and the choice is alarmed, not silent.
 func TestRemainderTTLUnsolvedAlarms(t *testing.T) {
 	tb := newTestBook(t, nil)
-	tb.result(map[string]ModelUsage{opus: {InputTokens: 7, CacheCreationInputTokens: 300000, CostUSD: 50}}, 0, tb.clock)
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 7, CacheCreationInputTokens: 300000, CostUSD: 50}}, 0, "", tb.clock)
 	tb.advance(time.Second)
 	if tb.alarmsOf(accounting.InvRemainderTTLUnsolved) != 1 {
 		t.Errorf("alarms = %+v, want one invRemainderTTLUnsolved", tb.alarms)
@@ -824,7 +829,7 @@ func TestWorkflowUnderSubagentBooksOnItsTurn(t *testing.T) {
 	tb := newTestBook(t, nil)
 	tb.tailOpened("sub", "T1")
 	tb.tailOpenedUnder("wf", "sub", "T2")
-	tb.result(map[string]ModelUsage{opus: {InputTokens: 10, OutputTokens: 5}}, 0, tb.clock)
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 10, OutputTokens: 5}}, 0, "", tb.clock)
 	tb.tailOpenedUnder("wf/a1", "wf", "T3")
 	tb.subLine("wf/a1", "T3", line("w1", opus, tb.clock, "end_turn", 10, 5, 0, 0, 0))
 	tb.tailClosed("wf/a1")
@@ -873,7 +878,7 @@ func TestRemainderTTLSolveIsExact(t *testing.T) {
 			tb := newTestBook(t, nil)
 			rem := modelinfo.Tokens{modelinfo.ClassInput: 7, modelinfo.ClassCacheWrite5m: 100000, modelinfo.ClassCacheWrite1h: 200000}
 			ccCost := mustCost(t, opus, rem) + tc.offset
-			tb.result(map[string]ModelUsage{opus: {InputTokens: 7, CacheCreationInputTokens: 300000, CostUSD: ccCost}}, 0, tb.clock)
+			tb.result(map[string]ModelUsage{opus: {InputTokens: 7, CacheCreationInputTokens: 300000, CostUSD: ccCost}}, 0, "", tb.clock)
 			tb.advance(time.Second)
 			calls := tb.calls(t)
 			if len(calls) != 1 {
@@ -908,7 +913,7 @@ func TestResultWaitsForMainTailRead(t *testing.T) {
 		tb.mainRead(tb.clock)
 		tb.streamNamed("msg_1", "", "T1", tb.clock)
 		resultAt := tb.clock
-		tb.result(mu, 0, resultAt)
+		tb.result(mu, 0, "", resultAt)
 		tb.advance(ccLineBound + time.Second) // the tail is stalled: no read yet
 		// A read that began inside the bound proves nothing about the line.
 		tb.mainRead(resultAt.Add(ccLineBound / 2))
@@ -931,7 +936,7 @@ func TestResultWaitsForMainTailRead(t *testing.T) {
 		tb := newTestBook(t, nil)
 		tb.mainTailRunning(true)
 		tb.streamNamed("msg_1", "", "T1", tb.clock)
-		tb.result(mu, 0, tb.clock)
+		tb.result(mu, 0, "", tb.clock)
 		tb.advance(ccLineBound + time.Second)
 		tb.mainRead(tb.clock)
 		tb.settle(false)
@@ -944,7 +949,7 @@ func TestResultWaitsForMainTailRead(t *testing.T) {
 	t.Run("no tail settles on the bound", func(t *testing.T) {
 		tb := newTestBook(t, nil)
 		tb.streamNamed("msg_1", "", "T1", tb.clock)
-		tb.result(mu, 0, tb.clock)
+		tb.result(mu, 0, "", tb.clock)
 		tb.advance(ccLineBound + time.Second)
 		if len(tb.results) != 0 || tb.alarmsOf(accounting.InvStreamIdBooked) != 1 {
 			t.Fatalf("pending=%d alarms=%d, want the bound alone to settle when no tail runs",
@@ -960,7 +965,7 @@ func TestAlarmCarriesCCVersion(t *testing.T) {
 	tb.setVersion("2.1.286")
 	tb.streamNamed("m1", "", "T1", tb.clock)
 	tb.mainLine(line("m1", opus, tb.clock, "end_turn", 999, 0, 0, 0, 0))
-	tb.result(map[string]ModelUsage{opus: {InputTokens: 1001}}, 0, tb.clock)
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 1001}}, 0, "", tb.clock)
 	tb.advance(time.Second)
 	if tb.alarmsOf(accounting.InvNegativeRemainder) != 1 {
 		t.Fatalf("alarms = %+v, want one invNegativeRemainder", tb.alarms)

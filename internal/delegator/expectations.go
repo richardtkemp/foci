@@ -22,7 +22,7 @@ import (
 //
 // So each such fact that is cheap to check against data foci already holds
 // gets a live check, and a failed check is reported here. One implementation
-// for every backend, for the same reason CostDivergenceChecker is shared: a
+// for every backend, for the same reason CostDivergence is shared: a
 // report should mean exactly one thing wherever it fires.
 //
 // DELIVERY. A violation is logged at ERROR. That is not decoration: ERROR is

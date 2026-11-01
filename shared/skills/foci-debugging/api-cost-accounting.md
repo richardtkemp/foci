@@ -38,6 +38,18 @@ https://github.com/anthropics/claude-code/issues/84223, subagent transcripts mis
 record), or when it is Haiku input/output only in a window where WebFetch/WebSearch ran (CC's web
 tools' Haiku side calls, recorded in no transcript, #2468); at ERROR when any other spend is in it (#2175).
 
+**The other ledger alarms** (all `ledger <inv>`, ERROR, rate-limited per backend and invariant, #2273):
+`invUnseenField` — a provider's usage object carries a key the adapter does not know, or a `speed` /
+`service_tier` other than standard (foci prices standard rates only, so a fast-mode call reads
+underpriced): the call is booked WITHOUT that key, so its cost may be short; the detail names the
+adapter (claude-code transcript, opencode, codex, anthropic, openai, gemini), call, key path and
+value, once per key per gateway process. `invMainTranscriptFinal` — CC wrote a later main-transcript
+line for a booked call with different, non-zero counts (the first booking stands). opencode:
+`invCompletedHasTokens` (a completed message with no tokens, nothing booked), `invTokenTotal`
+(`tokens.total` is not the five classes' sum) and `invCostDivergence` (opencode's per-message cost vs
+the ledger's price, 3%). `invCachedIsSubsetOfInput` on backend `api`: an OpenAI-format usage
+reports more cached + cache-written tokens than prompt tokens (input booked 0).
+
 **A remainder row is CC's spend no call record holds** (`kind` overhead or compaction,
 `finality='derived'`): utility calls, a subagent's real output when its transcript has no final line,
 compactions. A turn-less remainder costing more than its process's largest call is flagged by the CLI:

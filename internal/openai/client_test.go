@@ -467,8 +467,8 @@ func TestResponseFromOpenAI_CacheMetrics(t *testing.T) {
 		t.Fatalf("responseFromOpenAI: %v", err)
 	}
 
-	if result.Usage.InputTokens != 130000 {
-		t.Errorf("InputTokens = %d, want 130000", result.Usage.InputTokens)
+	if result.Usage.InputTokens != 0 {
+		t.Errorf("InputTokens = %d, want 0 (130000 prompt - 125000 cached - 5000 written)", result.Usage.InputTokens)
 	}
 	if result.Usage.OutputTokens != 50 {
 		t.Errorf("OutputTokens = %d, want 50", result.Usage.OutputTokens)

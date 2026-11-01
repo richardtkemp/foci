@@ -43,6 +43,19 @@ func cycleTokens(u tokenUsageBreakdown) modelinfo.Tokens {
 	}
 }
 
+// codexBreakdownKeys is every key of a codex TokenUsageBreakdown foci knows,
+// and codexUsageKeys every key of the tokenUsage object around two of them
+// (invUnseenField, #2111 §8.6).
+var (
+	codexBreakdownKeys = accounting.UsageKeys{
+		"inputTokens": nil, "outputTokens": nil, "cachedInputTokens": nil,
+		"cacheWriteInputTokens": nil, "reasoningOutputTokens": nil, "totalTokens": nil,
+	}
+	codexUsageKeys = accounting.UsageKeys{
+		"last": codexBreakdownKeys, "total": codexBreakdownKeys, "modelContextWindow": nil,
+	}
+)
+
 // bookCycle books one API cycle as a call. actor is "" for the session's own
 // thread, else the subagent the child thread belongs to; spawnTurn is that
 // subagent's spawning turn ("" for the session's own thread).
@@ -71,6 +84,8 @@ func (b *Backend) bookCycle(p *tokenUsageParams, actor, spawnTurn string) {
 	if last.ReasoningOutputTokens > 0 {
 		detail["reasoning_output_tokens"] = last.ReasoningOutputTokens
 	}
+	accounting.Live().AlarmUnseen(accounting.BackendCodex, b.version(), "codex",
+		fmt.Sprintf("thread %s cycle %s", p.ThreadID, key), accounting.UnseenUsageKeys(p.rawUsage, codexUsageKeys))
 	if _, err := accounting.Live().RecordCall(turn, accounting.Call{
 		Key: key, Backend: accounting.BackendCodex, Provider: "openai", Model: model,
 		Session: turn.Session, AgentID: b.agentID, TurnID: turn.TurnID, Actor: actor,

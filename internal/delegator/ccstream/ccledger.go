@@ -58,6 +58,7 @@ type ccEvent struct {
 	signal  ccSignal // ccSubSignal
 	mu      map[string]ModelUsage
 	running int
+	stop    string        // ccResultEv: the result's stop_reason, "" when it has none
 	refusal *ccRefusal    // ccRefusalEv
 	uuids   []string      // ccRetractEv: frame uuids a main-transcript record retracted (#2492)
 	reply   chan struct{} // ccBarrier: closed once the barrier is passed
@@ -204,7 +205,7 @@ func (s *ccLedger) run() {
 			case ccRetractEv:
 				c.retract(e.uuids)
 			case ccResultEv:
-				c.result(e.mu, e.running, e.at)
+				c.result(e.mu, e.running, e.stop, e.at)
 			case ccCostState:
 				c.costStateSeen(e.mu, e.at)
 			case ccSessionFile:

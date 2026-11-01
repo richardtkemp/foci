@@ -611,8 +611,8 @@ func verifyMigration(tx *sql.Tx, v1 []*v1Row) error {
 		got[modelinfo.Class(c)] = n
 	}
 	_ = rows.Close()
-	if !maps.Equal(got, nonZero(want)) {
-		errs = append(errs, fmt.Errorf("token totals differ: v1 %v, ledger %v", nonZero(want), got))
+	if !maps.Equal(got, want.NonZero()) {
+		errs = append(errs, fmt.Errorf("token totals differ: v1 %v, ledger %v", want.NonZero(), got))
 	}
 	var gotCalc float64
 	if err := tx.QueryRow(`SELECT TOTAL(legacy_calculated_cost_usd) FROM api_calls`).Scan(&gotCalc); err != nil {

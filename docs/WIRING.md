@@ -353,9 +353,9 @@ main
  ├── platform      → clock, config, log, question, secrets, session, voice, warnings
  │                  (messaging types, interfaces, provider registry, Messaging facade,
  │                   MessageQueue thin filter+throttle helper + GroupThrottle for group chat batching)
- ├── anthropic     → config, fociroot, log, modelcaps, modelinfo, provider, secrets, github.com/anthropics/anthropic-sdk-go
- ├── gemini        → config, log, messages, provider, google.golang.org/genai
- ├── openai        → config, log, messages, provider, github.com/openai/openai-go/v3
+ ├── anthropic     → config, delegator/accounting, fociroot, log, modelcaps, modelinfo, provider, secrets, github.com/anthropics/anthropic-sdk-go
+ ├── gemini        → config, delegator/accounting, log, messages, provider, google.golang.org/genai
+ ├── openai        → config, delegator/accounting, log, messages, provider, github.com/openai/openai-go/v3
  ├── session       → provider, log, messages, sqlite, timeutil
  ├── memory        → convo, log, procinfo, session, sqlite, timeutil, fsnotify, blevesearch/bleve/v2 (FTS5 + bleve backends)
  ├── voice         → config, log, procx, ratelimit, session, tempdir, gorilla/websocket
@@ -395,7 +395,7 @@ main
  ├── timeutil      (no deps — centralised timestamp formatting with configurable timezone; UniqueNano, a strictly increasing wall-clock nanosecond for IDs — the macOS clock steps in microseconds)
  ├── relogin       → log, procx (automated CC re-login on 401 — see Backend Session Lifecycle)
  ├── delegator     → clock, delegator/pretool, delegator/stoprule, log, ratelimit (Delegator interface, registry, StartOptions, SessionEvents/TurnEvents; capabilities.go: the Capability enum, Spec, Register/SpecFor/Supports/As — every backend difference is declared there, #2154; config_schema.go: the config keys and StartOptions fields each backend reads, #2178)
-  │   ├── delegator/accounting → log, modelinfo, sqlite (the per-call cost ledger in api.db, #2111 — schema, SQL cost views, rate render, Book/Report/RecordTurn and their observers (api.jsonl, BookedHook), the direct-API adapter, the legacy-row writer the readers' tests seed history with, the readers, the startup migration; see "Cost ledger")
+  │   ├── delegator/accounting → log, modelinfo, sqlite (the per-call cost ledger in api.db, #2111 — schema, SQL cost views, rate render, Book/Report/RecordTurn and their observers (api.jsonl, BookedHook), the unseen-usage-key check every adapter runs, the direct-API adapter, the legacy-row writer the readers' tests seed history with, the readers, the startup migration; see "Cost ledger")
   │   ├── delegator/all      → delegator/ccstream, delegator/codex, delegator/opencode (blank-imports every backend so each registers its Spec; imported by foci-gw and foci; its tests validate every Spec, the behavioural-capability proofs, the config schema, and the generated tables in BACKENDS.md)
   │   ├── delegator/autoapprove → execguard, secrets (shared by ccstream/codex/opencode — auto-approve rule compilation/matching)
   │   ├── delegator/ccstream   → clock, delegator, delegator/accounting, delegator/autoapprove, delegator/hookbin, delegator/pretool, delegator/stoprule, fociroot, linkwalk, log, modelcaps, modelinfo, procx, question, ratelimit, tempdir, timeutil, toolformat (stream-json Claude Code; registers "claude-code" via init())
@@ -1721,6 +1721,18 @@ invariant (#2013) — or, for an alarm marked `Alarm.Warn` (a known benign cause
 `Expectations.ViolatedWarn` at WARN, rate-limited apart (#2175). An adapter alarm carries the backend's version (`Alarm.Version`; CC's
 ccBook takes it from `system/init` via `setVersion`), so it names the release (#2149); an
 alarm found inside a booking (`Tx.alarm`) carries none and reads "version unknown".
+**Unseen usage keys (#2111 §8.6, #2273).** Every adapter decodes a provider's usage object
+into a fixed struct, so each also compares the raw object with an `accounting.UsageKeys`
+schema of the keys it knows (`accounting.UnseenUsageKeys`; nested paths, `AnyUsage` for
+content not read): CC `ccUsageKeys` (transcript, `parseCCRecord`), opencode
+`opencodeTokenKeys`, codex `codexUsageKeys`, anthropic `anthropicUsageKeys`, openai
+`openaiUsageKeys` (OpenRouter's `cost`, `is_byok`, `cost_details`, `cache_write_tokens`
+included); gemini, whose SDK drops unknown keys, reflects over genai's usage struct for a
+non-zero count field it does not map (`gemini.unmappedCounts`). In Anthropic usage (CC
+transcript and direct) a `speed` or `service_tier` other than `standard` (absent/null is
+standard) is reported too (`accounting.StandardTierOnly`): foci has standard rates only.
+`Ledger.AlarmUnseen` raises `invUnseenField` naming the adapter, call, key path and value,
+once per key per ledger (process), and the call is booked as usual.
 A live-applied `[[modelinfo]]` change re-renders `token_rates` (`Ledger.RenderRates`, from
 `liveapply.go`), so SQL keeps pricing like Go. `foci-gw ledger-migrate` still dry-runs the
 migration on a COPY of an api.db.
@@ -1825,6 +1837,18 @@ upserts the turn and books the call in one transaction. Writers:
 - `compaction.Compactor` — `kind='compaction'`;
 - `tools` summary (`APISummariser`) and one-shot spawn — `kind='summary'` / `'spawn'`.
 
+The usage each call books is normalised into disjoint classes by its format's translator,
+the one place each response passes: `anthropic.responseFromSDK` records
+`usage.server_tool_use` (`provider.Usage.WebSearchRequests`/`WebFetchRequests` → classes
+`web_search`/`web_fetch`; server tools pass through, so the API bills them), and
+`StreamMessage` takes them from `message_delta`, whose usage the SDK's accumulator copies
+only output from; `openai.usageFromOpenAI` books input = `prompt_tokens − cached_tokens −
+cache_write_tokens` (prompt includes both), and a usage whose cache counts exceed its
+prompt books input 0 and alarms `invCachedIsSubsetOfInput` (backend `api`);
+`gemini.usageFromGenai` books input = prompt − cached + tool-use prompt and output =
+candidates + thoughts (genai: total = prompt + candidates + toolUsePrompt + thoughts). Each
+translator also runs the unseen-key check above (backend `api`, version unknown).
+
 **A helper call is booked on the turn that invoked it** (Dick, 2026-09-29: "subagent turns
 should be tied to their parent"): its own call row, the invoking turn's `turn_id`.
 `OrchestrateFullTurn` attaches the direct-API turn to `ts.Ctx` (`accounting.WithTurn`),
@@ -1845,9 +1869,13 @@ turn open on the backend (subagent messages and an in-turn automatic compaction 
 `finality='completed'`. Classes: `input`, `output`, `reasoning` (billed ON TOP of output at
 the output rate, #2112 P0-d — foci dropped it before, so reasoning models were
 under-priced), `cache_read`, and `cache_write` (TTL not reported, `class_method='unknown'`);
-they are disjoint — `tokens.total` is their sum. opencode's own `cost` is a per-call
-`backend_reports` row, booked with the call in one transaction (`Ledger.RecordCall`), and
-still feeds the shared `CostDivergenceChecker` against the ledger's price. A compaction's
+they are disjoint — `tokens.total` is their sum, checked on every booking (a mismatch alarms
+`invTokenTotal`; booked from the classes). A completed message with no `tokens` books nothing
+and alarms `invCompletedHasTokens`; a tokens key not in `opencodeTokenKeys` alarms
+`invUnseenField`. opencode's own `cost` is a per-call `backend_reports` row, booked with the
+call in one transaction (`Ledger.RecordCall`), and is compared with the ledger's price by
+`delegator.CostDivergence` (3% tolerance, $0.01 floor, per-class breakdown): beyond it, the
+ledger alarm `invCostDivergence` (an ERROR through the expectation guard, as CC's). A compaction's
 summary message (`mode:"compaction"`, `summary:true`) is `kind='compaction'`: on the open
 turn when opencode compacts inside one, else (an operator's `/compact`, between turns) on a
 `source='compaction'` turn of its own, closed at once. A subagent's messages: the subscriber
@@ -1867,7 +1895,9 @@ cacheWriteInputTokens (TTL not reported), `output`; `reasoningOutputTokens` is i
 and goes to detail only. Model `codex/<model>`, provider `openai`. The thread's running
 `total` is a `grain='cumulative'` backend report with no cost. Conservation — total grows by
 exactly last (`invTotalIsSumOfLast`, `checkTokenUsage`) — runs on every notification, a
-child thread's included. The call is booked on the open foci turn; a cycle with no foci turn
+child thread's included, and so does the unseen-key check on the raw `tokenUsage`
+(`tokenUsageParams.rawUsage`, `codexUsageKeys`: the breakdown fields, `totalTokens`,
+`modelContextWindow`). The call is booked on the open foci turn; a cycle with no foci turn
 open gets an autonomous turn of its own. A child thread's cycles (subAgentActivity, routed to
 `handleSubagentNotification`) are its subagent's calls: actor = the subagent's group key,
 booked on the turn that SPAWNED it (`subagentTracker` records it at first sight, #1880) —
@@ -1927,8 +1957,13 @@ TTL-unknown at the 1h rate and alarms `invRemainderTTLUnsolved`; a negative clas
 `invNegativeRemainder` and books nothing; a named call whose line never came alarms
 `invStreamIdBooked` (a call a refusal fallback retracted is not waited for — below). At exit
 the last remainder comes from the `cost-state` record, else the
-last result. A call on a run no foci turn opened books on a minted `run` turn, recorded as
-`autonomous`. Every process writes its baseline (the totals CC restored on --resume,
+last result. A call on a run no foci turn opened books on a minted `run` turn
+(`runTurnFor`), whose row the book records as it mints it — `autonomous`, `started_at` = the
+mint, so its `activity_closed_at` always has a row to land on — and ends once
+(`runEnded`, #2273): `ended_at` at the run's result with the result's `stop_reason`
+(`ccEvent.stop`, from `OnResult`), or at exit for a run whose result never came (no stop
+reason); the exit after a result does not move it. A foci turn's end is the agent layer's to
+write; the book closes only its activity. Every process writes its baseline (the totals CC restored on --resume,
 `resumeBaselineFor`, #2012) and each result as cumulative `backend_reports` for the scope
 `<session>@<launch nanos>`, so CC's own cost per process is a difference of two reports.
 **Live checks (#2111 P3, §8).** At each quiet point's remainder (and at exit) the windows
@@ -1947,7 +1982,12 @@ missing its final record), so that alarm is `Warn` and names the bug (#2175). A 
 remainder of input/output (and web_search) only, in a window where a WebFetch or WebSearch
 tool_use ran on any thread (`ccLine.webTool` -> `ccBook.webTools`, per window), is CC's web
 tools' side calls, which no transcript records: also `Warn` (#2468). The alarm is `Warn` only
-when every overhead model has one of those two causes.
+when every overhead model has one of those two causes. On every transcript line
+(`ccBook.checkUsage`) the unseen-key check runs (`invUnseenField`, above). A main line for a
+call already booked in the process (`ccBook.checkFinal`, §8.7) is a copy when its counts are
+identical or its usage all zero (CC re-appends such copies); other counts alarm
+`invMainTranscriptFinal` — the booked line was not final (F1) — and the first booking
+stands. Subagent calls (`mainBooked` holds main-thread bookings only) are not checked.
 **A model refusal fallback (#2200)** is enqueued by `OnSystem("model_refusal_fallback")` as
 `ccRefusalEv` (`ccBook.refusalFallback`, on the window and turn open then). The refused attempt
 is in no transcript, so its spend is in the remainder on the refused model; `remainder` hands
@@ -1982,7 +2022,7 @@ no subagent tail of it is open and no call the stream named on it is unbooked, e
 the last of those clears (`closeIfIdle`, from `tailClosed`, `mainLine`, `closeWindows`); a
 tail reopening on a closed turn (a SendMessage resume) sets it running again
 (`Ledger.SetTurnActivity` with zero), and a compaction booked on a closed turn moves its
-close forward. A run turn ends at its result, or at exit. A turn end arriving after the
+close forward. A run turn ends at its result, or at exit (and records its `ended_at`, above). A turn end arriving after the
 adapter's exit flush is applied directly (`markExited`).
 **A turn's completion waits for its calls** (`ccLedger.flush`, from `completeTurn` before
 `OnTurnComplete`): until every main-thread call the stream named has its line read (the

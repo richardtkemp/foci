@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"foci/internal/config"
+	"foci/internal/delegator/accounting"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -123,14 +124,52 @@ func responseFromSDK(msg *sdk.Message) *MessageResponse {
 			OutputTokens:             int(msg.Usage.OutputTokens),
 			CacheCreationInputTokens: int(msg.Usage.CacheCreationInputTokens),
 			CacheReadInputTokens:     int(msg.Usage.CacheReadInputTokens),
+			// Server tools (web search, web fetch) pass through to the API
+			// (contentBlockFromSDK), which bills each request.
+			WebSearchRequests: int(msg.Usage.ServerToolUse.WebSearchRequests),
+			WebFetchRequests:  int(msg.Usage.ServerToolUse.WebFetchRequests),
 		},
 	}
+	checkUsage(msg.ID, string(msg.Model), msg.Usage.RawJSON())
 
 	for _, block := range msg.Content {
 		resp.Content = append(resp.Content, contentBlockFromSDK(block))
 	}
 
 	return resp
+}
+
+// anthropicUsageKeys is every key of a Messages API usage object foci knows
+// (invUnseenField, #2111 §8.6): the SDK's Usage fields, plus speed, which the
+// API returns for fast mode (sdkRequestOptions sends it). A streamed
+// message_delta's usage holds a subset of them.
+var anthropicUsageKeys = accounting.UsageKeys{
+	"input_tokens":                nil,
+	"output_tokens":               nil,
+	"cache_read_input_tokens":     nil,
+	"cache_creation_input_tokens": nil,
+	"cache_creation": {
+		"ephemeral_5m_input_tokens": nil,
+		"ephemeral_1h_input_tokens": nil,
+	},
+	"server_tool_use": {
+		"web_search_requests": nil,
+		"web_fetch_requests":  nil,
+	},
+	"service_tier":  nil,
+	"inference_geo": nil,
+	"speed":         nil,
+}
+
+// checkUsage raises invUnseenField for what one response's usage object (raw,
+// as the API sent it) carries that foci does not price: a key it does not
+// know, or a speed or service tier other than standard.
+func checkUsage(id, model, raw string) {
+	if raw == "" {
+		return
+	}
+	keys := append(accounting.UnseenUsageKeys([]byte(raw), anthropicUsageKeys), accounting.StandardTierOnly([]byte(raw))...)
+	accounting.Live().AlarmUnseen(accounting.BackendAPI, "", "anthropic", fmt.Sprintf("message %s (%s)", id, model), keys)
 }
 
 // contentBlockFromSDK translates an SDK ContentBlockUnion into a provider.ContentBlock.
