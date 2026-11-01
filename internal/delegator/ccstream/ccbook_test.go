@@ -423,8 +423,8 @@ func TestSubagentAcrossMidnightBooksEachCallToItsDay(t *testing.T) {
 		}
 		got = append(got, d)
 	}
-	wantBefore := mustCost(t, modelinfo.Tokens{modelinfo.ClassInput: 10, modelinfo.ClassOutput: 100})
-	wantAfter := mustCost(t, modelinfo.Tokens{modelinfo.ClassInput: 10, modelinfo.ClassOutput: 300})
+	wantBefore := mustCost(t, opus, modelinfo.Tokens{modelinfo.ClassInput: 10, modelinfo.ClassOutput: 100})
+	wantAfter := mustCost(t, opus, modelinfo.Tokens{modelinfo.ClassInput: 10, modelinfo.ClassOutput: 300})
 	if len(got) != 2 || got[0].day != "2026-09-30" || got[1].day != "2026-10-01" ||
 		got[0].calls != 1 || got[1].calls != 1 ||
 		math.Abs(got[0].cost-wantBefore) > 1e-12 || math.Abs(got[1].cost-wantAfter) > 1e-12 {
@@ -780,18 +780,20 @@ func TestRemainderTTLSolvedFromReportedCost(t *testing.T) {
 					over.tokens[modelinfo.ClassCacheWrite5m], over.tokens[modelinfo.ClassCacheWrite1h],
 					over.tokens[modelinfo.ClassCacheWrite], tc.w5m, tc.w1h)
 			}
-			if got := over.cost.Float64 + mustCost(t, main.tokens); math.Abs(got-ccCost) > 1e-9 {
+			if got := over.cost.Float64 + mustCost(t, opus, main.tokens); math.Abs(got-ccCost) > 1e-9 {
 				t.Errorf("booked cost %.6f, want CC's %.6f", got, ccCost)
 			}
 		})
 	}
 }
 
-func mustCost(t *testing.T, tk modelinfo.Tokens) float64 {
+// mustCost prices tk on model at bookStart. The model is required: a line on
+// another model priced at Opus rates is off by up to 50x (#2697).
+func mustCost(t *testing.T, model string, tk modelinfo.Tokens) float64 {
 	t.Helper()
-	usd, ok := modelinfo.CostAsOf(opus, bookStart, tk)
+	usd, ok := modelinfo.CostAsOf(model, bookStart, tk)
 	if !ok {
-		t.Fatal("opus unpriced")
+		t.Fatalf("%s unpriced", model)
 	}
 	return usd
 }
@@ -870,7 +872,7 @@ func TestRemainderTTLSolveIsExact(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tb := newTestBook(t, nil)
 			rem := modelinfo.Tokens{modelinfo.ClassInput: 7, modelinfo.ClassCacheWrite5m: 100000, modelinfo.ClassCacheWrite1h: 200000}
-			ccCost := mustCost(t, rem) + tc.offset
+			ccCost := mustCost(t, opus, rem) + tc.offset
 			tb.result(map[string]ModelUsage{opus: {InputTokens: 7, CacheCreationInputTokens: 300000, CostUSD: ccCost}}, 0, tb.clock)
 			tb.advance(time.Second)
 			calls := tb.calls(t)

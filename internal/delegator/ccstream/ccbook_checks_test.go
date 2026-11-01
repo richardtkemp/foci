@@ -103,11 +103,7 @@ func TestCostDivergenceAlarm(t *testing.T) {
 			tb.streamNamed("m1", "", "T1", tb.clock)
 			main := line("m1", tc.model, tb.clock, "end_turn", 10, 20, tc.read, 0, 4000)
 			tb.mainLine(main)
-			// Priced at the case's own model: mustCost is Opus-only.
-			price, ok := modelinfo.CostAsOf(tc.model, bookStart, main.tokens)
-			if !ok {
-				t.Fatalf("premise: %s unpriced", tc.model)
-			}
+			price := mustCost(t, tc.model, main.tokens)
 			tb.result(map[string]ModelUsage{tc.model: {InputTokens: 5010, OutputTokens: 20, CacheReadInputTokens: tc.read, CacheCreationInputTokens: 4000,
 				CostUSD: 3 + tc.factor*price}}, 0, tb.clock)
 			// The next window's call is booked before the result settles.
@@ -131,12 +127,12 @@ func TestCostDivergenceAlarm(t *testing.T) {
 // overhead) is not bounded.
 func TestOverheadBounded(t *testing.T) {
 	big := modelinfo.Tokens{modelinfo.ClassOutput: 200000}
-	if mustCost(t, big) <= ccOverheadBoundUSD {
+	if mustCost(t, opus, big) <= ccOverheadBoundUSD {
 		t.Fatal("premise: the missing spend must exceed the $ bound")
 	}
 	t.Run("missing source alarms", func(t *testing.T) {
 		tb := newTestBook(t, nil)
-		tb.result(map[string]ModelUsage{opus: {OutputTokens: 200000, CostUSD: mustCost(t, big)}}, 0, tb.clock)
+		tb.result(map[string]ModelUsage{opus: {OutputTokens: 200000, CostUSD: mustCost(t, opus, big)}}, 0, tb.clock)
 		tb.advance(time.Second)
 		if n := tb.alarmsOf(accounting.InvOverheadBounded); n != 1 {
 			t.Errorf("alarms = %+v, want one invOverheadBounded", tb.alarms)
@@ -145,7 +141,7 @@ func TestOverheadBounded(t *testing.T) {
 	t.Run("small overhead is silent", func(t *testing.T) {
 		tb := newTestBook(t, nil)
 		small := modelinfo.Tokens{modelinfo.ClassOutput: 300}
-		tb.result(map[string]ModelUsage{opus: {OutputTokens: 300, CostUSD: mustCost(t, small)}}, 0, tb.clock)
+		tb.result(map[string]ModelUsage{opus: {OutputTokens: 300, CostUSD: mustCost(t, opus, small)}}, 0, tb.clock)
 		tb.advance(time.Second)
 		if n := tb.alarmsOf(accounting.InvOverheadBounded); n != 0 {
 			t.Errorf("alarms = %+v, want none", tb.alarms)
@@ -157,8 +153,8 @@ func TestOverheadBounded(t *testing.T) {
 		main := line("m1", opus, tb.clock, "end_turn", 0, 0, 0, 0, 20_000_000)
 		tb.mainLine(main)
 		over := modelinfo.Tokens{modelinfo.ClassOutput: 60000}
-		window := mustCost(t, main.tokens) + mustCost(t, over)
-		if o := mustCost(t, over); o <= ccOverheadBoundUSD || o > ccOverheadBoundShare*window {
+		window := mustCost(t, opus, main.tokens) + mustCost(t, opus, over)
+		if o := mustCost(t, opus, over); o <= ccOverheadBoundUSD || o > ccOverheadBoundShare*window {
 			t.Fatalf("premise: overhead $%.2f must be over $%.2f and within 2%% of $%.2f", o, ccOverheadBoundUSD, window)
 		}
 		tb.result(map[string]ModelUsage{opus: {OutputTokens: 60000, CacheCreationInputTokens: 20_000_000, CostUSD: window}}, 0, tb.clock)
@@ -170,7 +166,7 @@ func TestOverheadBounded(t *testing.T) {
 	t.Run("a compaction is not overhead", func(t *testing.T) {
 		tb := newTestBook(t, nil)
 		tb.compactBoundary("", tb.clock)
-		tb.result(map[string]ModelUsage{opus: {OutputTokens: 200000, CostUSD: mustCost(t, big)}}, 0, tb.clock)
+		tb.result(map[string]ModelUsage{opus: {OutputTokens: 200000, CostUSD: mustCost(t, opus, big)}}, 0, tb.clock)
 		tb.advance(time.Second)
 		if n := tb.alarmsOf(accounting.InvOverheadBounded); n != 0 {
 			t.Errorf("alarms = %+v, want none", tb.alarms)
@@ -199,7 +195,7 @@ func TestOverheadBoundedSeverity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tb := newTestBook(t, nil)
 			u := tc.usage
-			u.CostUSD = mustCost(t, tc.tokens)
+			u.CostUSD = mustCost(t, opus, tc.tokens)
 			tb.result(map[string]ModelUsage{opus: u}, 0, tb.clock)
 			tb.advance(time.Second)
 			var got []accounting.Alarm
@@ -234,7 +230,7 @@ func TestOverheadBoundedSeverity(t *testing.T) {
 func TestOverheadWebSideCallsWarn(t *testing.T) {
 	const haiku = "claude-haiku-5-5"
 	big := modelinfo.Tokens{modelinfo.ClassOutput: 200000}
-	if mustCost(t, big) <= ccOverheadBoundUSD {
+	if mustCost(t, opus, big) <= ccOverheadBoundUSD {
 		t.Fatal("premise: the Opus output-only part must exceed the $ bound")
 	}
 	webLine := func(l *ccLine) *ccLine { l.webTool = true; return l }
@@ -281,14 +277,14 @@ func TestOverheadWebSideCallsWarn(t *testing.T) {
 			counted := modelinfo.Tokens{modelinfo.ClassInput: 10, modelinfo.ClassOutput: 10}
 			tc.feed(tb)
 			if tc.settle {
-				tb.result(map[string]ModelUsage{opus: {InputTokens: 10, OutputTokens: 10, CostUSD: mustCost(t, counted)}}, 0, tb.clock)
+				tb.result(map[string]ModelUsage{opus: {InputTokens: 10, OutputTokens: 10, CostUSD: mustCost(t, opus, counted)}}, 0, tb.clock)
 				tb.advance(time.Second)
 			}
 			hu := tc.haikuMU
 			hu.CostUSD = 0.0187
 			total := modelinfo.Tokens{modelinfo.ClassInput: 10, modelinfo.ClassOutput: 200010}
 			tb.result(map[string]ModelUsage{
-				opus:  {InputTokens: 10, OutputTokens: 200010, CostUSD: mustCost(t, total)},
+				opus:  {InputTokens: 10, OutputTokens: 200010, CostUSD: mustCost(t, opus, total)},
 				haiku: hu,
 			}, 0, tb.clock)
 			tb.advance(time.Second)
@@ -456,7 +452,7 @@ func TestRefusedAttemptBookedByCategory(t *testing.T) {
 	const fallback = "claude-opus-4-8"
 	// The 2026-10-06 incident's refused attempt: no output, 1h cache writes.
 	refused := modelinfo.Tokens{modelinfo.ClassInput: 4, modelinfo.ClassCacheRead: 22380, modelinfo.ClassCacheWrite1h: 79451}
-	if mustCost(t, refused) <= ccOverheadBoundUSD {
+	if mustCost(t, opus, refused) <= ccOverheadBoundUSD {
 		t.Fatal("premise: the refused attempt must exceed the overhead bound")
 	}
 	for _, tc := range []struct {
@@ -499,7 +495,7 @@ func TestRefusedAttemptBookedByCategory(t *testing.T) {
 			}
 			tb.result(map[string]ModelUsage{
 				opus: {InputTokens: 4, OutputTokens: tc.output, CacheReadInputTokens: 22380,
-					CacheCreationInputTokens: 79451, CostUSD: mustCost(t, tok)},
+					CacheCreationInputTokens: 79451, CostUSD: mustCost(t, opus, tok)},
 				fallback: {InputTokens: 4, OutputTokens: 300, CacheCreationInputTokens: 100000, CostUSD: ansCost},
 			}, 0, tb.clock)
 			tb.advance(time.Second)
@@ -515,7 +511,7 @@ func TestRefusedAttemptBookedByCategory(t *testing.T) {
 			}
 			want := 0.0
 			if tc.billed {
-				want = mustCost(t, tok)
+				want = mustCost(t, opus, tok)
 			}
 			if !c.cost.Valid || math.Abs(c.cost.Float64-want) > 1e-9 {
 				t.Errorf("refusal cost = %v, want $%.6f (billed=%v)", c.cost, want, tc.billed)
@@ -570,7 +566,7 @@ func retractedRefusalTurn(t *testing.T, m0Line *ccLine, frames, retracted []stri
 	}
 	return tb, map[string]ModelUsage{
 		opus: {InputTokens: 4, OutputTokens: 8, CacheReadInputTokens: 147710,
-			CacheCreationInputTokens: 742, CostUSD: mustCost(t, incidentRefused)},
+			CacheCreationInputTokens: 742, CostUSD: mustCost(t, opus, incidentRefused)},
 		refusalFallbackModel: {InputTokens: 4, OutputTokens: 300, CacheCreationInputTokens: 100000, CostUSD: ansCost},
 	}
 }
@@ -624,8 +620,8 @@ func TestRetractedRefusalSettlesAndBooksTheRefusal(t *testing.T) {
 	if c.model != opus {
 		t.Errorf("refusal row model = %q, want the refused %s", c.model, opus)
 	}
-	if !c.cost.Valid || math.Abs(c.cost.Float64-mustCost(t, refused)) > 1e-9 {
-		t.Errorf("refusal row cost = %v, want the billed price of the refused attempt $%.6f", c.cost, mustCost(t, refused))
+	if !c.cost.Valid || math.Abs(c.cost.Float64-mustCost(t, opus, refused)) > 1e-9 {
+		t.Errorf("refusal row cost = %v, want the billed price of the refused attempt $%.6f", c.cost, mustCost(t, opus, refused))
 	}
 	if len(tb.alarms) != 0 {
 		t.Errorf("alarms = %+v, want none: a retraction is a known cause", tb.alarms)
