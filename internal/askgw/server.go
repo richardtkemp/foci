@@ -472,7 +472,10 @@ func formatNotifyText(nf *NotifyFrame) string {
 		}
 		status = fmt.Sprintf("%s completed, exit %d", icon, *nf.ExitCode)
 	case nf.Status != "":
-		status = "✅ " + nf.Status
+		// The sender owns its status icon (#2745): ai-sudo reports
+		// "❌ NOT run" and "⚠️ did not finish" here, which a fixed ✅
+		// prefix turned into "✅ ❌ NOT run".
+		status = nf.Status
 	default:
 		status = "✅ completed"
 	}
