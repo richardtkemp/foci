@@ -190,3 +190,40 @@ func TestUnattendedTurn_ApprovalAfterTurnEndStillPrompts(t *testing.T) {
 		t.Errorf("no wire output expected while prompting, got %q", buf.String())
 	}
 }
+
+// TestReadOnlyBatch_DeclinesEveryApproval is #2702 on codex: a read-only batch
+// (spawn explore) declines every escalation out of its read-only sandbox and
+// every file change — even a command a rule would permit, even during an
+// attended turn. Nothing is prompted or left pending.
+func TestReadOnlyBatch_DeclinesEveryApproval(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	b := newPermTestBackend(&buf)
+	b.startOpts.BatchAccess = delegator.BatchAccessReadOnly
+	b.autoApproveRules = autoapprove.Compile(autoapprove.CommonReadonlyRules)
+	prompted := ""
+	b.permPromptFn = func(itemID, _, _, _ string, _ []delegator.PromptChoice) { prompted = itemID }
+
+	openTurn(b, &delegator.TurnEvents{Trigger: "telegram"})
+	b.onCommandApproval([]byte(`{"itemId":"item_ro","threadId":"th_1","turnId":"tn_1","command":"ls -la","cwd":"/tmp"}`), 71)
+	if id, decision := parseApprovalResponse(t, buf.String()); id != 71 || decision != "decline" {
+		t.Errorf("command approval response = (%d, %q), want (71, decline)", id, decision)
+	}
+	buf.Reset()
+	b.onFileChangeApproval([]byte(`{"itemId":"item_rf","threadId":"th_1","turnId":"tn_1","reason":"edit"}`), 72)
+	if id, decision := parseApprovalResponse(t, buf.String()); id != 72 || decision != "decline" {
+		t.Errorf("file change approval response = (%d, %q), want (72, decline)", id, decision)
+	}
+	if prompted != "" {
+		t.Errorf("read-only batch prompted (%q); want no prompt", prompted)
+	}
+	assertNothingPending(t, b)
+
+	// No queued /mode override can turn asking back on.
+	b.pendingApproval = "on-request"
+	var p turnStartParams
+	b.applyPendingControls(&p)
+	if p.ApprovalPolicy != "never" {
+		t.Errorf("turn approvalPolicy = %q, want never", p.ApprovalPolicy)
+	}
+}

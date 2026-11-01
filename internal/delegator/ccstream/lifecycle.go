@@ -105,7 +105,9 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// (answerUnattended; a batch must never put one in a chat, #1962). The
 	// launch flag differs — see unattendedPermissionArgs.
 	cfgSkip := delegator.SkipPermissions(b.cfg)
-	b.skipPermissions = cfgSkip || opts.SkipPermissions
+	// A read-only batch is always unattended (#2702): its asks are decided
+	// by the read-only rules, never prompted, whoever started it.
+	b.skipPermissions = delegator.SessionSkipsPrompts(cfgSkip, opts.SkipPermissions, opts.BatchAccess)
 	permArgs := unattendedPermissionArgs(cfgSkip, opts.SkipPermissions, opts.BatchAccess)
 	args = append(args, permArgs...)
 	b.requestedPermMode = requestedPermissionMode(permArgs)
@@ -126,9 +128,24 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// binary can't be located — Warn logged, ccstream runs without
 	// OnToolEnd events. See hooks.go for the full flow.
 	var hookEnv map[string]string
-	if hookSettings, env, ok := b.prepareHooks(); ok {
-		args = append(args, "--settings", hookSettings)
+	hookSettings, env, hooked := b.prepareHooks()
+	if hooked {
 		hookEnv = env
+	} else {
+		hookSettings = ""
+	}
+	if opts.BatchAccess == delegator.BatchAccessReadOnly {
+		// A read-only batch's Bash calls must all reach foci (#2702): its
+		// ask rule travels in the same --settings as the hooks, and it is
+		// launched even when the hooks are not.
+		s, err := readOnlyBatchSettings(hookSettings)
+		if err != nil {
+			return err
+		}
+		hookSettings = s
+	}
+	if hookSettings != "" {
+		args = append(args, "--settings", hookSettings)
 	}
 
 	// Production runs use "claude" (resolved via $PATH); integration tests

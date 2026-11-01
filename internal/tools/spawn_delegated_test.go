@@ -181,7 +181,7 @@ func TestDelegatedSpawn_OneShotsRunAsBatches(t *testing.T) {
 	if char.Model != "" {
 		t.Errorf("character batch model = %q, want empty (the agent's own)", char.Model)
 	}
-	if explore.Access != delegator.BatchAccessReadOnly || explore.SystemPrompt != exploreRolePrompt || explore.Purpose != delegator.BatchPurposeSpawnExplore {
+	if explore.Access != delegator.BatchAccessReadOnly || !strings.HasPrefix(explore.SystemPrompt, exploreRolePrompt) || !strings.Contains(explore.SystemPrompt, "read-only whitelist") || explore.Purpose != delegator.BatchPurposeSpawnExplore {
 		t.Errorf("explore batch = %+v, want read-only with the explorer prompt", explore)
 	}
 	for _, r := range runner.reqs {

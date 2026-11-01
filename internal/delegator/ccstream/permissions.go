@@ -151,7 +151,7 @@ func (b *Backend) answerUnattended(msg *PermissionRequest, label string) {
 		action += " (CC: " + msg.Request.DecisionReason + ")"
 	}
 	b.logger().Warnf("%s req_id=%s", delegator.UnattendedDeniedLog(sessionKey, label, action, vetoReason), msg.RequestID)
-	b.denyUnattended(msg, delegator.UnattendedDenyMessage)
+	b.denyUnattended(msg, delegator.DenyMessage(b.startOpts.BatchAccess))
 }
 
 // denyUnattended refuses a permission request at once. message is what the

@@ -92,8 +92,8 @@ var spawnCharacterBlacklist = parentBatchExcluded
 
 // exploreRolePrompt is the backend-neutral part of the explore system prompt:
 // the read-only role and how to shape the answer. A delegated explore batch
-// gets it alone (its tools are the backend's own); the API explore spawn adds
-// exploreAPIToolsPrompt for foci's tools.
+// adds its shell whitelist (delegatedExplorePrompt); the API explore spawn
+// adds exploreAPIToolsPrompt for foci's tools.
 const exploreRolePrompt = `You are a read-only code explorer. You have access to tools but must NOT write, edit, create, or delete anything.
 
 Match your response to the question type:
@@ -105,8 +105,13 @@ Match your response to the question type:
 
 Keep responses concise. Quote code when it clarifies; don't dump entire files. If the codebase is large, start with directory structure before diving in.`
 
+// exploreMissingToolPrompt invites an API explore spawn to name a tool it
+// lacked (#2702). A delegated explore spawn gets the same invitation at the
+// end of ExploreShellPrompt.
+const exploreMissingToolPrompt = `If a tool you needed is missing and you believe you and other explore agents would benefit from it, say so at the end of your answer: name the tool and what you would have used it for.`
+
 // exploreAPIToolsPrompt names the foci tools an API explore spawn has.
-const exploreAPIToolsPrompt = `Use grep for searching file contents. Use find for locating files. Use read for examining files. Use git for commit history, diffs, and blame. Use todo to read and update the todo list.
+const exploreAPIToolsPrompt = `Use grep for searching file contents. Use find for locating files. Use read for examining files. Use git for commit history, diffs, and blame. Use todo to read the todo list (list, search and get).
 Use stat, file, wc, head, tail, tree, du for filesystem inspection. Use jq/yq/mdq for structured data queries. Use sqlite for read-only database queries. Use docker, systemctl, crontab, id for system inspection. Not all tools are available in every environment.`
 
 // exploreSystemPrompt is the system prompt for an API explore spawn.
@@ -114,7 +119,15 @@ Use stat, file, wc, head, tail, tree, du for filesystem inspection. Use jq/yq/md
 // the system prompt (#2643), so the turn needs only a go-ahead.
 const spawnRawUserMessage = "Go."
 
-const exploreSystemPrompt = exploreRolePrompt + "\n\n" + exploreAPIToolsPrompt
+const exploreSystemPrompt = exploreRolePrompt + "\n\n" + exploreAPIToolsPrompt + "\n\n" + exploreMissingToolPrompt
+
+// delegatedExplorePrompt is a delegated explore batch's system prompt: the
+// role, then the shell whitelist its commands are decided by, generated from
+// the same rules (ExploreShellPrompt; the foci functions are those of the
+// read-only exec bridge reg yields, RegistryForAccess).
+func delegatedExplorePrompt(reg *Registry) string {
+	return exploreRolePrompt + "\n\n" + ExploreShellPrompt(readOnlyFociFuncs(reg))
+}
 
 // spawnExploreAllowed is the explicit allowlist of registry tools for explore mode.
 // New tools do NOT leak into this mode — they must be explicitly opted in.
@@ -396,7 +409,7 @@ var spawnModeDocs = map[string]string{
 	spawnModeCharacter: "'character' (default): your prompt plus your full system prompt, with your own tools and permission rules. It cannot use ask. Runs in the background with background=true; otherwise it returns its result directly.",
 	spawnModeClone:     "'clone': a fork of this session that starts from a copy of your conversation. Always runs in the background. The result arrives as [SPAWN RESULT]; steer it with spawn_send and check on it with spawn_status. Use it only when the context can't be written down.",
 	spawnModeRaw:       "'raw': just your prompt, with no other context or prompt provided.",
-	spawnModeExplore:   "'explore': read-only. Reads and searches files and the web, and changes nothing. Returns directly.",
+	spawnModeExplore:   "'explore': read-only. Reads and searches files and the web, and queries them with read-only commands (jq, sqlite3 -readonly, find, …), and changes nothing. Returns directly.",
 }
 
 // spawnModeOrder is the order the context parameter describes the modes in:
@@ -676,7 +689,8 @@ func inSpawnTempDir(run func(dir string) (string, error)) (ToolResult, error) {
 //     SDK." before it, and an account-context system-reminder.
 //   - character: AccessParent with the agent's own composed system prompt:
 //     the agent's tools and rules; what would prompt is refused.
-//   - explore: AccessReadOnly with the read-only explorer prompt.
+//   - explore: AccessReadOnly with the read-only explorer prompt and the
+//     shell whitelist its every command is decided by (#2702).
 //
 // owner is the session the batch runs for: the caller's, or for a spawn as
 // this agent from another one, this agent's cross-agent root (#2662).
@@ -741,7 +755,7 @@ func (s *Spawner) runBatchOneShot(ctx context.Context, mode, prompt, model strin
 		req.Purpose = delegator.BatchPurposeSpawnCharacter
 	case spawnModeExplore:
 		req.Access = delegator.BatchAccessReadOnly
-		req.SystemPrompt = exploreRolePrompt
+		req.SystemPrompt = delegatedExplorePrompt(s.deps.Registry)
 		req.Purpose = delegator.BatchPurposeSpawnExplore
 	default:
 		return ToolResult{}, fmt.Errorf("spawn: %q is not a one-shot mode", mode)
@@ -999,6 +1013,7 @@ func spawnExploreToolSet(reg *Registry) ([]provider.ToolDef, map[string]*Tool) {
 	if reg != nil {
 		for _, t := range reg.All() {
 			if spawnExploreAllowed[t.Name] {
+				t = readOnlyTool(t)
 				defs = append(defs, provider.NewCustomTool(t.Name, t.Description, t.Parameters))
 				tools[t.Name] = t
 			}

@@ -71,4 +71,9 @@ func (b *Backend) applyPendingControls(params *turnStartParams) {
 	if approval != "" {
 		params.ApprovalPolicy = approval
 	}
+	// A read-only batch never asks to leave its sandbox (#2702): no queued
+	// override may turn that back on.
+	if b.startOpts.BatchAccess == delegator.BatchAccessReadOnly {
+		params.ApprovalPolicy = readOnlyApprovalPolicy
+	}
 }

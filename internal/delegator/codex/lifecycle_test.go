@@ -47,7 +47,7 @@ func newStartableBackend(t *testing.T, handler func(method string, params json.R
 // sandbox plus on-request approvals routed through the automatic reviewer.
 func TestAppServerArgs_DefaultSandbox(t *testing.T) {
 	want := []string{"app-server", "-c", "sandbox_mode=workspace-write", "-c", "approval_policy=on-request", "-c", "approvals_reviewer=auto_review"}
-	if got := appServerArgs("", "", ""); !reflect.DeepEqual(got, want) {
+	if got := appServerArgs("", "", "", ""); !reflect.DeepEqual(got, want) {
 		t.Fatalf("appServerArgs(\"\") = %v, want %v", got, want)
 	}
 }
@@ -57,7 +57,7 @@ func TestAppServerArgs_DefaultSandbox(t *testing.T) {
 // it never reaches the shared ~/.codex/config.toml. The value must be a valid
 // TOML basic string (escaped), matching the `-c instructions=` batch recipe.
 func TestAppServerArgs_CompactPrompt(t *testing.T) {
-	got := appServerArgs("summarise\tthe \"session\"", "", "")
+	got := appServerArgs("summarise\tthe \"session\"", "", "", "")
 	want := []string{
 		"app-server", "-c", "sandbox_mode=workspace-write",
 		"-c", "approval_policy=on-request", "-c", "approvals_reviewer=auto_review",
@@ -104,8 +104,13 @@ func TestThreadLifecycle_PassesResolvedSandbox(t *testing.T) {
 			if tc.readOnly {
 				b.startOpts.BatchAccess = delegator.BatchAccessReadOnly
 			}
-			if got := appServerArgs("", b.sandboxMode(), b.approvalsReviewer()); !reflect.DeepEqual(got, []string{"app-server", "-c", "sandbox_mode=" + tc.want, "-c", "approval_policy=on-request", "-c", "approvals_reviewer=auto_review"}) {
-				t.Fatalf("server args=%v, want sandbox %q", got, tc.want)
+			// A read-only batch also never asks to leave its sandbox (#2702).
+			wantApproval := "on-request"
+			if tc.readOnly {
+				wantApproval = "never"
+			}
+			if got := appServerArgs("", b.sandboxMode(), b.approvalsReviewer(), b.approvalPolicy()); !reflect.DeepEqual(got, []string{"app-server", "-c", "sandbox_mode=" + tc.want, "-c", "approval_policy=" + wantApproval, "-c", "approvals_reviewer=auto_review"}) {
+				t.Fatalf("server args=%v, want sandbox %q approval %q", got, tc.want, wantApproval)
 			}
 			if _, err := b.startThread(); err != nil {
 				t.Fatal(err)

@@ -2,6 +2,7 @@ package ccstream
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -101,8 +102,10 @@ func TestStart_AccessLaunchArgs(t *testing.T) {
 		{"parent batch", false, true, delegator.BatchAccessParent, false, false, "", "", agentRules},
 		{"parent batch, operator skip", true, true, delegator.BatchAccessParent, true, false, "", "", agentRules},
 		{"isolated batch", false, true, delegator.BatchAccessIsolated, false, true, "dontAsk", "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch", "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch"},
-		{"read-only batch", false, true, delegator.BatchAccessReadOnly, false, false, "dontAsk", "Read,Glob,Grep,WebSearch,WebFetch", "Read,Glob,Grep,WebSearch,WebFetch"},
-		{"read-only batch, operator skip", true, true, delegator.BatchAccessReadOnly, false, false, "dontAsk", "Read,Glob,Grep,WebSearch,WebFetch", "Read,Glob,Grep,WebSearch,WebFetch"},
+		{"read-only batch", false, true, delegator.BatchAccessReadOnly, false, false, "default", "Read,Glob,Grep,WebSearch,WebFetch,Bash", "Read,Glob,Grep,WebSearch,WebFetch"},
+		{"read-only batch, operator skip", true, true, delegator.BatchAccessReadOnly, false, false, "default", "Read,Glob,Grep,WebSearch,WebFetch,Bash", "Read,Glob,Grep,WebSearch,WebFetch"},
+		// A read-only spawn whose spawner is attended (#2684) launches the same.
+		{"read-only spawn, attended", false, false, delegator.BatchAccessReadOnly, false, false, "default", "Read,Glob,Grep,WebSearch,WebFetch,Bash", "Read,Glob,Grep,WebSearch,WebFetch"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -132,20 +135,46 @@ func TestStart_AccessLaunchArgs(t *testing.T) {
 			if got := slices.Contains(args, "--strict-mcp-config"); got != (c.tools != "") {
 				t.Errorf("--strict-mcp-config = %v, want %v", got, c.tools != "")
 			}
+			// A read-only batch asks foci about every Bash call (#2702):
+			// its --settings carries the ask rule; no other session's does.
+			var settings struct {
+				Permissions struct {
+					Ask []string `json:"ask"`
+				} `json:"permissions"`
+			}
+			if raw := flagValue(args, "--settings"); raw != "" {
+				if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+					t.Fatalf("--settings %q: %v", raw, err)
+				}
+			}
+			wantAsk := []string(nil)
+			if c.access == delegator.BatchAccessReadOnly {
+				wantAsk = []string{"Bash"}
+			}
+			if !slices.Equal(settings.Permissions.Ask, wantAsk) {
+				t.Errorf("--settings permissions.ask = %q, want %q", settings.Permissions.Ask, wantAsk)
+			}
 		})
 	}
 }
 
 // TestReadOnlyBatchTools_NothingWritesOrRuns proves the read-only tool list
-// holds no Claude Code tool that writes a file or runs code, and the isolated
-// list no tool that runs code (its writes are confined by --restricted).
+// holds no Claude Code tool that writes a file, and no tool that runs code
+// but Bash, which is never pre-approved (foci decides each call, #2702); and
+// the isolated list no tool that runs code (its writes are confined by
+// --restricted).
 func TestReadOnlyBatchTools_NothingWritesOrRuns(t *testing.T) {
 	t.Parallel()
 	writes := []string{"Write", "Edit", "MultiEdit", "NotebookEdit"}
 	runs := []string{"Bash", "PowerShell", "Agent", "Task", "Skill", "BashOutput", "KillShell", "Monitor"}
 	for _, tool := range readOnlyBatchTools {
-		if slices.Contains(writes, tool) || slices.Contains(runs, tool) {
+		if slices.Contains(writes, tool) || (slices.Contains(runs, tool) && tool != "Bash") {
 			t.Errorf("read-only batch tools include %s", tool)
+		}
+	}
+	for _, tool := range readOnlyPreapproved {
+		if slices.Contains(writes, tool) || slices.Contains(runs, tool) {
+			t.Errorf("read-only batch pre-approves %s", tool)
 		}
 	}
 	for _, tool := range isolatedBatchTools {
@@ -182,7 +211,15 @@ func TestLive_RestrictedBatchRefusesWritesAndCommands(t *testing.T) {
 				"3) run the shell command: touch " + ran
 			// The prompt goes on stdin: accessArgs ends in variadic flags
 			// (--allowedTools), which would swallow a trailing argument.
-			args := append([]string{"-p", "--model", "haiku"}, unattendedPermissionArgs(true, true, access)...)
+			args := []string{"-p", "--model", "haiku"}
+			if access == delegator.BatchAccessReadOnly {
+				settings, err := readOnlyBatchSettings("")
+				if err != nil {
+					t.Fatal(err)
+				}
+				args = append(args, "--settings", settings)
+			}
+			args = append(args, unattendedPermissionArgs(true, true, access)...)
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer cancel()
 			cmd := procx.Spawn(ctx, procx.Operator, bin, args...)

@@ -8,10 +8,13 @@ const PermList = "list"
 // readOnlyBatchActions is a read-only batch session's ruleset, as
 // mapPermissionMode-style category actions: everything denied, then the
 // reading and searching tools allowed, anywhere on disk (external_directory)
-// and on the web. bash is denied with the rest, so foci's exec-bridge shell
-// functions are out of reach.
+// and on the web. bash asks (#2702): every command reaches foci, which
+// decides it from the read-only rules alone (answerUnattended; the session
+// is unattended), so the shell runs only foci's read-only set, foci's
+// read-only exec-bridge functions included.
 var readOnlyBatchActions = map[string]any{
 	"*":                   "deny",
+	PermBash:              "ask",
 	PermRead:              "allow",
 	PermGlob:              "allow",
 	PermGrep:              "allow",

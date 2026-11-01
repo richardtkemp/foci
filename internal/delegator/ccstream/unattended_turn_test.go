@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/autoapprove"
 )
 
 // unattendedCCBackend is newTestBackend with an unattended turn in flight
@@ -129,5 +130,60 @@ func TestUnattendedTurn_UserTurnStillPrompts(t *testing.T) {
 	}
 	if buf.Len() != 0 {
 		t.Errorf("answered behind the user's back: %s", buf.String())
+	}
+}
+
+// TestReadOnlyBatch_BashDecidedByReadOnlyRulesOnly is #2702 on Claude Code: a
+// read-only batch's every Bash call reaches foci (readOnlyBashAsk) and is
+// decided by the read-only rules alone — a whitelisted read is allowed, a
+// write is denied with ReadOnlyDenyMessage — never prompted, even when the
+// spawn was started attended (Start: SessionSkipsPrompts).
+func TestReadOnlyBatch_BashDecidedByReadOnlyRulesOnly(t *testing.T) {
+	t.Parallel()
+	if !delegator.SessionSkipsPrompts(false, false, delegator.BatchAccessReadOnly) {
+		t.Fatal("an attended read-only batch would prompt; want its asks decided by the rules")
+	}
+	if delegator.SessionSkipsPrompts(false, false, delegator.BatchAccessParent) {
+		t.Fatal("an attended parent-access spawn would no longer prompt its spawner")
+	}
+	for _, tc := range []struct {
+		name, command, want string
+	}{
+		{"whitelisted read", "jq .a /tmp/f.json", "allow"},
+		{"pipe of whitelisted reads", "grep -rn foo /tmp | sort | head -5", "allow"},
+		{"write command", "touch /tmp/pwned", "deny"},
+		{"write flag of a listed command", "find /tmp -name x -delete", "deny"},
+		{"redirect to a file", "cat /etc/hosts > /tmp/out", "deny"},
+		{"sqlite dot-command", "sqlite3 -readonly :memory: '.shell touch /tmp/pwned'", "deny"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			prompted := ""
+			b := newTestBackend(&buf)
+			b.startOpts.BatchAccess = delegator.BatchAccessReadOnly
+			b.autoApproveRules = parseAutoApproveRules(autoapprove.CommonReadonlyRules)
+			b.skipPermissions = delegator.SessionSkipsPrompts(false, false, delegator.BatchAccessReadOnly)
+			b.turnEvents = &delegator.TurnEvents{Trigger: "app"} // an attended turn
+			b.permPromptFn = func(reqID, _, _, _ string, _ []delegator.PromptChoice) { prompted = reqID }
+			input, _ := json.Marshal(map[string]string{"command": tc.command})
+			b.handleToolRequest(&PermissionRequest{
+				RequestID: "req-ro",
+				Request:   PermissionRequestPayload{ToolName: "Bash", ToolUseID: "toolu_RO", Input: input},
+			})
+			if prompted != "" {
+				t.Errorf("read-only batch prompted (%q); want no prompt", prompted)
+			}
+			if b.PendingPermissions() != 0 || b.outstanding.Has("req-ro") {
+				t.Error("ask left pending/outstanding")
+			}
+			inner := parseControlResponse(t, buf.String())["response"].(map[string]any)
+			if inner["behavior"] != tc.want {
+				t.Errorf("behavior = %v, want %s", inner["behavior"], tc.want)
+			}
+			if tc.want == "deny" && inner["message"] != delegator.ReadOnlyDenyMessage {
+				t.Errorf("deny message = %v, want ReadOnlyDenyMessage", inner["message"])
+			}
+		})
 	}
 }

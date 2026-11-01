@@ -94,6 +94,15 @@ func (b *Backend) onCommandApproval(line []byte, rpcID int64) {
 	// unwrap is the only thing keeping the two in sync.
 	command := sessionenv.UnwrapDisplayCommand(params.Command)
 
+	// A read-only batch's escalation is declined unconditionally (#2702):
+	// the command would run outside its read-only sandbox, and nobody may
+	// approve that (readOnlyApprovalPolicy should stop codex asking at all).
+	if b.startOpts.BatchAccess == delegator.BatchAccessReadOnly {
+		b.logWarnf("read-only batch %s asked to run outside its sandbox; declined: %s item=%s", b.startOpts.SessionKey, command, params.ItemID)
+		b.respondApproval(rpcID, "decline")
+		return
+	}
+
 	approved, vetoReason := b.tryAutoApprove(rpcID, params.ItemID, command)
 	if approved {
 		return
@@ -143,6 +152,13 @@ func (b *Backend) onFileChangeApproval(line []byte, rpcID int64) {
 	var params fileChangeApprovalParams
 	if err := json.Unmarshal(line, &params); err != nil {
 		b.logWarnf("dropping malformed file approval: %v", err)
+		return
+	}
+
+	// A read-only batch writes nothing (#2702): declined, never prompted.
+	if b.startOpts.BatchAccess == delegator.BatchAccessReadOnly {
+		b.logWarnf("read-only batch %s asked to change files; declined item=%s", b.startOpts.SessionKey, params.ItemID)
+		b.respondApproval(rpcID, "decline")
 		return
 	}
 

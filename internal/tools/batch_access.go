@@ -51,7 +51,8 @@ func (r *Registry) Subset(keep func(name string) bool) *Registry {
 //     reach a bridge from, and the bridge's tools are not confined to its
 //     directory;
 //   - read-only: the explore allowlist (spawnExploreAllowed), the same tools
-//     an API explore spawn gets from the registry.
+//     an API explore spawn gets from the registry, with todo narrowed to its
+//     read actions (readOnlyRegistry, #2702).
 func RegistryForAccess(reg *Registry, access delegator.BatchAccess) *Registry {
 	if reg == nil {
 		return nil
@@ -62,7 +63,7 @@ func RegistryForAccess(reg *Registry, access delegator.BatchAccess) *Registry {
 	case delegator.BatchAccessParent:
 		return reg.Subset(func(name string) bool { return !spawnToolNames[name] && !parentBatchExcluded[name] })
 	case delegator.BatchAccessReadOnly:
-		return reg.Subset(func(name string) bool { return spawnExploreAllowed[name] })
+		return readOnlyRegistry(reg)
 	}
 	return nil
 }

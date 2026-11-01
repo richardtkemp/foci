@@ -158,7 +158,7 @@ func (b *Backend) launchAppServer(ctx context.Context, opts delegator.StartOptio
 		compactPrompt = opts.CompactionPromptFunc("")
 	}
 
-	args := appServerArgs(compactPrompt, b.sandboxMode(), b.approvalsReviewer())
+	args := appServerArgs(compactPrompt, b.sandboxMode(), b.approvalsReviewer(), b.approvalPolicy())
 	// The session-env hook must be configured at spawn: hook config and its
 	// trust state are session flags on this argv, and there is no way to add
 	// either to a running app-server. See hooks.go.
@@ -238,16 +238,19 @@ func (b *Backend) launchAppServer(ctx context.Context, opts delegator.StartOptio
 // override scoped to THIS app-server process; it never touches the shared
 // ~/.codex/config.toml, so foci's compaction prompt can't leak into the user's
 // own codex CLI or race a concurrent codex agent (#1327 sub-issue 2).
-func appServerArgs(compactPrompt, sandbox, reviewer string) []string {
+func appServerArgs(compactPrompt, sandbox, reviewer, approval string) []string {
 	if sandbox == "" {
 		sandbox = defaultSandboxMode
+	}
+	if approval == "" {
+		approval = defaultApprovalPolicy
 	}
 	if reviewer == "" {
 		reviewer = defaultApprovalsReviewer
 	}
 	args := []string{
 		"app-server", "-c", "sandbox_mode=" + sandbox,
-		"-c", "approval_policy=on-request",
+		"-c", "approval_policy=" + approval,
 		"-c", "approvals_reviewer=" + reviewer,
 	}
 	if compactPrompt != "" {

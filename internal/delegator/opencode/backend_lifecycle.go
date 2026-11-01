@@ -64,7 +64,10 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	b.autoApproveRules = autoapprove.Compile(opts.AutoApproveRules)
 	// skip_permissions or a batch session (opts.SkipPermissions): never
 	// prompt; answerUnattended decides each ask from the rules (#2153).
-	b.skipPermissions = delegator.SkipPermissions(b.cfg) || opts.SkipPermissions
+	// A read-only batch is always unattended (#2702): its asks (every bash
+	// command, batchAccessRules) are decided by the read-only rules, never
+	// prompted, whoever started it.
+	b.skipPermissions = delegator.SessionSkipsPrompts(delegator.SkipPermissions(b.cfg), opts.SkipPermissions, opts.BatchAccess)
 
 	// The foci workspace plugins (session-env routing, blank-system) are
 	// materialised inside acquireServer, right before it spawns the subprocess

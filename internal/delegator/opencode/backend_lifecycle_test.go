@@ -747,8 +747,9 @@ func TestBackend_Start_SkipPermissions_NoDefaultPermission(t *testing.T) {
 
 // TestBackend_Start_ReadOnlyBatch_RulesetEnforced proves a read-only batch
 // session (spawn explore) gets its own enforced ruleset at Start, in place of
-// default_permission: reading and searching allowed anywhere, editing, bash
-// (and with it every foci shell function) and everything else denied.
+// default_permission: reading and searching allowed anywhere, bash asked (so
+// foci's read-only rules decide every command, #2702), editing and everything
+// else denied.
 func TestBackend_Start_ReadOnlyBatch_RulesetEnforced(t *testing.T) {
 	rec := &controlRecorder{rules: map[string][]rule{}}
 	_, b := newTestBackendServer(t, rec.serveHTTP)
@@ -766,7 +767,7 @@ func TestBackend_Start_ReadOnlyBatch_RulesetEnforced(t *testing.T) {
 		{PermExternalDirectory, "/elsewhere", "allow"},
 		{PermEdit, "main.go", "deny"},
 		{"write", "main.go", "deny"},
-		{PermBash, "foci_send_to_chat hi", "deny"},
+		{PermBash, "foci_send_to_chat hi", "ask"},
 		{PermTask, "general", "deny"},
 		{PermRead, "prod.env", "ask"},
 	} {

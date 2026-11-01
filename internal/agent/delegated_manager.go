@@ -556,6 +556,15 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 			m.logger().Infof("spawn session %s runs unattended: %s", sessionKey, unattendedSpawnReason(sessionKey))
 		}
 		opts.BatchAccess = spec.access
+		if spec.access == delegator.BatchAccessReadOnly {
+			// A read-only batch (spawn explore, #2702) is decided by foci's
+			// read-only set alone: no rule of the agent's own applies, and an
+			// ask those rules do not settle is denied at once, never sent up
+			// to the spawner (Dick 2026-11-01).
+			reg, _ := opts.ExecRegistry.(*tools.Registry)
+			opts.AutoApproveRules = tools.ReadOnlyBatchRules(reg)
+			opts.SkipPermissions = true
+		}
 		if spec.workDir != "" {
 			opts.WorkDir = spec.workDir
 		}

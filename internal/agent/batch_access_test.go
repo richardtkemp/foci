@@ -235,3 +235,66 @@ func TestCharacterSpawnBranch_LaunchesAsCharacter(t *testing.T) {
 		t.Error("a nil manager (API agent) reports a batch session")
 	}
 }
+
+// TestRunBatch_ReadOnlyLaunchesWithReadOnlyRulesOnly is #2702: a read-only
+// batch launches with foci's read-only rule set and a rule for each function
+// of its read-only bridge — none of the agent's own rules — and unattended,
+// so what those rules do not permit is denied, never prompted. Other accesses
+// keep the agent's rules.
+func TestRunBatch_ReadOnlyLaunchesWithReadOnlyRulesOnly(t *testing.T) {
+	t.Parallel()
+	agentRules := []string{"Bash:git *", "Write:/home/agent/**"}
+	for _, access := range []delegator.BatchAccess{delegator.BatchAccessReadOnly, delegator.BatchAccessParent} {
+		t.Run(access.String(), func(t *testing.T) {
+			be := &batchTurnBackend{}
+			be.completeTurns()
+			a := newAccessTestAgent(t, be, bothBatchCaps)
+			a.DelegatedManager.StartOpts.AutoApproveRules = agentRules
+			if _, err := a.DelegatedManager.RunBatch(context.Background(), delegator.BatchRequest{
+				Prompt: "p", Access: access, OwnerSessionKey: "helen/c1", Purpose: delegator.BatchPurposeSpawnExplore,
+			}); err != nil {
+				t.Fatalf("RunBatch: %v", err)
+			}
+			opts := be.startedOpts()
+			if len(opts) != 1 {
+				t.Fatalf("started %d times, want 1", len(opts))
+			}
+			got := opts[0].AutoApproveRules
+			if access != delegator.BatchAccessReadOnly {
+				if strings.Join(got, "|") != strings.Join(agentRules, "|") {
+					t.Errorf("%s batch rules = %q, want the agent's %q", access, got, agentRules)
+				}
+				return
+			}
+			want := tools.ReadOnlyBatchRules(accessTestRegistry())
+			if strings.Join(got, "|") != strings.Join(want, "|") {
+				t.Errorf("read-only batch rules = %q, want %q", got, want)
+			}
+			for _, r := range got {
+				for _, ar := range agentRules {
+					if r == ar {
+						t.Errorf("read-only batch carries the agent's rule %q", r)
+					}
+				}
+				if r == "Bash:foci_send_to_chat" || r == "Bash:foci_spawn" {
+					t.Errorf("read-only batch approves %q, outside its bridge", r)
+				}
+			}
+			if !slicesContains(got, "Bash:foci_memory_search") || !slicesContains(got, "Bash:jq") {
+				t.Errorf("read-only batch rules %q lack foci_memory_search or jq", got)
+			}
+			if !opts[0].SkipPermissions {
+				t.Error("read-only batch launched attended; its asks could reach the spawner")
+			}
+		})
+	}
+}
+
+func slicesContains(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}

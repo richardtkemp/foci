@@ -493,12 +493,15 @@ Notes:
     an unattended trigger (`ag/context.go:unattendedTriggers`), which codex honours per turn
     (`cx/permissions.go:unattended`) — hence ✓ per turn, ✗ for the session-wide flag.
     Spawn batches (`foci_spawn` raw/character/explore) are batches like any other: unattended,
-    decided by the rules, never prompted. Their `StartOptions.BatchAccess` changes only the
+    decided by the rules, never prompted. Their `StartOptions.BatchAccess` changes the
     launch: a parent-access (character) batch launches as the agent's sessions do (no auto
     mode); a read-only or isolated batch is restricted by the backend itself
     (`cc/access.go:restrictedBatchArgs`, `cx/codex.go:sandboxMode`,
     `oc/access.go:batchAccessRules`), so CC and opencode refuse the excluded tools without
-    an ask, and codex's read-only sandbox blocks writes whatever the rules approve.
+    an ask, and codex's read-only sandbox blocks writes whatever the rules approve. A
+    read-only (explore) batch also has a shell on CC and opencode whose every command is an
+    ask, decided by foci's read-only rules only (`tools.ReadOnlyBatchRules`, never the
+    agent's own), unattended whoever started it (#2702).
 16. `control_permission_mode`, not live on codex: it queues the approval policy for the next `turn/start` (`cx/control.go:applyPendingControls`);
     `plan` maps to `on-request`, so there is no plan mode.
 17. `cx/callbacks.go:RegisterPromptCancelListener` is a TODO no-op. `serverRequest/resolved` clears
@@ -582,7 +585,7 @@ Notes:
     `grep -i reap|orphan` found no equivalent for `claude` or `codex app-server` processes.
     Whether those children survive a gateway crash was not checked.
 48. Codex reads `backend_config.sandbox` (default `workspace-write`) on both thread creation
-    and resume; read-only batches always use `read-only`. `cx/lifecycle.go:buildEnv` still reads
+    and resume; read-only batches always use `read-only`, with `approval_policy=never` (#2702). `cx/lifecycle.go:buildEnv` still reads
     `cfg["api_key"]`, which `config.BackendConfig` does not supply; `CODEX_API_KEY` can come
     only from `backend_config.env`.
 

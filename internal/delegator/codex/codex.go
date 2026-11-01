@@ -536,6 +536,28 @@ func (b *Backend) approvalsReviewer() string {
 	return defaultApprovalsReviewer
 }
 
+// defaultApprovalPolicy is codex's approval_policy for every session but a
+// read-only batch: a command that needs to leave the sandbox asks.
+const defaultApprovalPolicy = "on-request"
+
+// readOnlyApprovalPolicy is a read-only batch's approval_policy (#2702,
+// Dick 2026-11-01: explore escalations are declined): codex never asks to
+// leave the read-only sandbox, so neither its own auto-review nor foci's
+// rules can let a command out of it; a command the sandbox stops fails
+// back to the model. NOT probed live (codex disabled at the time):
+// "never" is codex's documented non-interactive policy. onCommandApproval
+// and onFileChangeApproval decline anything that still arrives.
+const readOnlyApprovalPolicy = "never"
+
+// approvalPolicy is the approval_policy this session launches and runs every
+// turn with.
+func (b *Backend) approvalPolicy() string {
+	if b.startOpts.BatchAccess == delegator.BatchAccessReadOnly {
+		return readOnlyApprovalPolicy
+	}
+	return defaultApprovalPolicy
+}
+
 func (b *Backend) sandboxMode() string {
 	// A read-only batch (spawn explore) runs in codex's read-only sandbox,
 	// whatever the agent's own sandbox is: its commands can read but never

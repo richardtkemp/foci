@@ -19,6 +19,31 @@ const UnattendedSkipLabel = "skip_permissions"
 // unattended ask, so it says how to proceed.
 const UnattendedDenyMessage = "Unattended: nobody is here to answer a permission prompt, and foci's auto-approve rules do not permit this call, so it was denied. Do it another way the rules allow (for rm, name the target path literally), or leave it for an attended turn."
 
+// ReadOnlyDenyMessage is the tool result the model sees for a call a
+// read-only batch (spawn explore, #2702) made that foci's read-only rules do
+// not permit. Nobody is ever asked about it.
+const ReadOnlyDenyMessage = "Denied: this read-only session may run only the commands on its whitelist (see your system prompt), and this call is not one of them. Nobody can approve it. Use the whitelisted tools another way; if a missing tool blocked you, say so in your answer."
+
+// DenyMessage is the tool result for a denied unattended ask in a session
+// with this batch access: ReadOnlyDenyMessage for a read-only batch,
+// UnattendedDenyMessage otherwise.
+func DenyMessage(access BatchAccess) string {
+	if access == BatchAccessReadOnly {
+		return ReadOnlyDenyMessage
+	}
+	return UnattendedDenyMessage
+}
+
+// SessionSkipsPrompts reports whether a session never prompts, so every ask
+// is decided by foci's rules (Unattended's skipPermissions): the operator's
+// backend_config.skip_permissions (cfgSkip), a batch launched unattended
+// (optSkip, StartOptions.SkipPermissions), or a read-only batch, whoever
+// started it (#2702, Dick 2026-11-01: what its read-only rules do not
+// permit is denied, never sent up to the spawner).
+func SessionSkipsPrompts(cfgSkip, optSkip bool, access BatchAccess) bool {
+	return cfgSkip || optSkip || access == BatchAccessReadOnly
+}
+
 // UnattendedQuestionMessage is the tool result the model sees for a declined
 // unattended question.
 const UnattendedQuestionMessage = "Unattended: nobody is here to answer a question. Decide for yourself, or leave it for an attended turn."
