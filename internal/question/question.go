@@ -171,19 +171,7 @@ func Parse(raw json.RawMessage) ([]Question, error) {
 // total is the number of questions in the sequence.
 func FormatText(q *Question, index, total int) string {
 	var b strings.Builder
-
-	// Header line: bold header or "Question N/M" for multi-question.
-	if total > 1 {
-		if q.Header != "" {
-			b.WriteString(fmt.Sprintf("**%s** (%d/%d)\n\n", q.Header, index+1, total))
-		} else {
-			b.WriteString(fmt.Sprintf("**Question %d/%d**\n\n", index+1, total))
-		}
-	} else if q.Header != "" {
-		b.WriteString(fmt.Sprintf("**%s**\n\n", q.Header))
-	}
-
-	b.WriteString(q.Question)
+	writeHeaderAndQuestion(&b, q, index, total)
 
 	// List options with descriptions. With no options the question is
 	// typed-answer-only, so hint that the user should reply by typing.
@@ -207,6 +195,34 @@ func FormatText(q *Question, index, total int) string {
 	}
 
 	return b.String()
+}
+
+// FormatButtonText is FormatText for a surface that always shows one button
+// per option (askgw, #2740): the header and question only, with no numbered
+// option list, because the buttons already carry the labels. With no options
+// there are no buttons, so the typed-answer hint stays.
+func FormatButtonText(q *Question, index, total int) string {
+	var b strings.Builder
+	writeHeaderAndQuestion(&b, q, index, total)
+	if len(q.Options) == 0 {
+		b.WriteString("\n\n_Reply with your answer._")
+	}
+	return b.String()
+}
+
+// writeHeaderAndQuestion writes the bold header (or "Question N/M" for a
+// multi-question sequence) and the question text.
+func writeHeaderAndQuestion(b *strings.Builder, q *Question, index, total int) {
+	if total > 1 {
+		if q.Header != "" {
+			b.WriteString(fmt.Sprintf("**%s** (%d/%d)\n\n", q.Header, index+1, total))
+		} else {
+			b.WriteString(fmt.Sprintf("**Question %d/%d**\n\n", index+1, total))
+		}
+	} else if q.Header != "" {
+		b.WriteString(fmt.Sprintf("**%s**\n\n", q.Header))
+	}
+	b.WriteString(q.Question)
 }
 
 // OptionData returns the button-data token for the option at index i ("qa:<i>").

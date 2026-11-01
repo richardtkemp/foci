@@ -331,7 +331,7 @@ func (s *Server) presentQuestion(e *entry, connID uint64, askID string, idx int)
 	q := &e.questions[idx]
 	choices := buildChoices(q)
 	msgID := askgwMsgID(askID, idx)
-	text := question.FormatText(questionFromAsk(q), idx, len(e.questions))
+	text := askgwQuestionText(q, idx, len(e.questions))
 	summary := q.Header
 	if summary == "" {
 		summary = "Question"
@@ -560,6 +560,13 @@ func (s *Server) setGroup(name string) error {
 
 func askgwMsgID(askID string, idx int) string {
 	return "askgw-" + askID + "-q" + strconv.Itoa(idx)
+}
+
+// askgwQuestionText is the prompt text shown for question idx of total. Every
+// askgw surface (the app dialog, the chat fallback) shows one button per
+// option, so the text leaves the options out (#2740).
+func askgwQuestionText(q *AskQuestion, idx, total int) string {
+	return question.FormatButtonText(questionFromAsk(q), idx, total)
 }
 
 func askFrameToQuestions(ask *AskFrame) []AskQuestion {
