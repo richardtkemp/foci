@@ -80,24 +80,15 @@ var spawnRawBlacklist = map[string]bool{
 	"close_session":   true,
 }
 
-// spawnCharacterBlacklist lists tools excluded from "character" mode spawns.
-// A character spawn is an ephemeral one-shot sub-call with no persistent session
-// identity of its own — it returns its result straight to the caller. So it has
-// no need to inject into other sessions, and giving a throwaway spawn that reach
-// is surface it doesn't need (the real agent can still use send_to_session).
-// raw/explore already exclude it; this brings character into line for that tool.
-// whoami is excluded for the same reason as raw (#2226): a one-shot's tool
-// calls run on the parent's context, so it would report the parent's
-// session key, chat and model. close_session likewise (#2573): it would
-// close the parent's chat.
-// ask is excluded because nobody is there to answer a character spawn
-// (#2643).
-var spawnCharacterBlacklist = map[string]bool{
-	"send_to_session": true,
-	"whoami":          true,
-	"close_session":   true,
-	"ask":             true,
-}
+// spawnCharacterBlacklist lists tools excluded from an API agent's "character"
+// mode one-shot: the same as a delegated character batch leaves out
+// (parentBatchExcluded), so the two paths match (#2676). close_session is
+// excluded because its tool calls run on the parent's context, so it would
+// close the parent's chat (#2573). ask is excluded because nobody is there to
+// answer a character spawn (#2643). whoami and send_to_session stay: they
+// report and send from the spawn's own identity, not the parent's
+// (spawnSelf).
+var spawnCharacterBlacklist = parentBatchExcluded
 
 // exploreRolePrompt is the backend-neutral part of the explore system prompt:
 // the read-only role and how to shape the answer. A delegated explore batch
@@ -400,7 +391,9 @@ func resolveSpawnTimeout(seconds int, background bool) time.Duration {
 // and delegated agents; each sentence must stay true of what the mode does
 // on both. A per-transport detail goes in the parameter docs, not here.
 var spawnModeDocs = map[string]string{
-	spawnModeCharacter: "'character' (default): your prompt plus your full system prompt, with your own tools and permission rules. Anything that would need the user is refused. Runs in the background with background=true; otherwise it returns its result directly.",
+	// #2684 sends a character spawn's permission requests up to its spawner
+	// (#2686: say so, and when they stay unattended).
+	spawnModeCharacter: "'character' (default): your prompt plus your full system prompt, with your own tools and permission rules. It cannot use ask. Runs in the background with background=true; otherwise it returns its result directly.",
 	spawnModeClone:     "'clone': a fork of this session that starts from a copy of your conversation. Always runs in the background. The result arrives as [SPAWN RESULT]; steer it with spawn_send and check on it with spawn_status. Use it only when the context can't be written down.",
 	spawnModeRaw:       "'raw': just your prompt, with no other context or prompt provided.",
 	spawnModeExplore:   "'explore': read-only. Reads and searches files and the web, and changes nothing. Returns directly.",
@@ -832,7 +825,9 @@ func (s *Spawner) runAPIOneShot(ctx context.Context, mode, prompt, modelGroup st
 			system = deps.Bootstrap.SystemBlocks()
 		}
 		toolDefs, tools := spawnToolSet(deps.Registry, spawnCharacterBlacklist)
-		result, err := spawnOneShot(WithSpawnCharacter(ctx), oneShotParams{
+		// Its own identity, minted as a delegated batch's key is (#2676).
+		self, _ := session.NewBatchKey(SessionKeyFromContext(ctx), deps.AgentID)
+		result, err := spawnOneShot(withSpawnSelf(WithSpawnCharacter(ctx), self, model), oneShotParams{
 			client:         client,
 			model:          model,
 			format:         format,

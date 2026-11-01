@@ -23,7 +23,8 @@ var spawnToolNames = map[string]bool{
 // family (above); close_session, which on a batch session (keyed under its
 // owner's root) would close the OWNER's chat on a throwaway session's say-so
 // (#2573); and ask, since nobody is there to answer a character spawn
-// (#2643: "anything that would need the user is refused").
+// (#2643). (Its permission requests go up to its spawner instead, #2684.)
+// An API character one-shot leaves out the same (spawnCharacterBlacklist).
 var parentBatchExcluded = map[string]bool{
 	"close_session": true,
 	"ask":           true,

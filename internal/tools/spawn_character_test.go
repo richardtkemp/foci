@@ -388,7 +388,7 @@ func TestSpawnToolTextIsApproved(t *testing.T) {
 		}
 		ctxDoc := schema.Properties["context"].Description
 		for _, want := range []string{
-			"- 'character' (default): your prompt plus your full system prompt, with your own tools and permission rules. Anything that would need the user is refused. Runs in the background with background=true; otherwise it returns its result directly.",
+			"- 'character' (default): your prompt plus your full system prompt, with your own tools and permission rules. It cannot use ask. Runs in the background with background=true; otherwise it returns its result directly.",
 			"- 'clone': a fork of this session that starts from a copy of your conversation. Always runs in the background. The result arrives as [SPAWN RESULT]; steer it with spawn_send and check on it with spawn_status. Use it only when the context can't be written down.",
 			"- 'raw': just your prompt, with no other context or prompt provided.",
 			"- 'explore': read-only. Reads and searches files and the web, and changes nothing. Returns directly.",

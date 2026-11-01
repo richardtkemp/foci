@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/delegator"
 	"foci/internal/delegator/accounting"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
@@ -196,12 +197,14 @@ func TestSpawnRawToolAllowlist(t *testing.T) {
 	}
 }
 
-// TestSpawnOneShotToolSetsExcludeWhoami proves whoami is excluded from both
-// one-shot spawn tool sets: a one-shot spawn has no session of its own and
-// its tool calls run on the parent's context, so whoami would report the
-// parent's session key, chat and model as if they were the spawn's (#2226).
-// It must be absent from both the defs and the tools map of each set, while
-// an ordinary tool (read) still passes both filters.
+// TestSpawnOneShotToolSetsExcludeWhoami proves which identity tools each API
+// one-shot keeps. raw: neither whoami nor close_session — its tool calls run
+// on the parent's context, so whoami would report the parent's session key,
+// chat and model as if they were the spawn's (#2226), and close_session would
+// close the parent's chat (#2573). character: whoami stays (it reports the
+// spawn's own identity, #2676, TestAPICharacterSpawnOwnIdentity), and
+// close_session is still out. Each check covers both the defs and the tools
+// map, with an ordinary tool (read) as the control.
 func TestSpawnOneShotToolSetsExcludeWhoami(t *testing.T) {
 	t.Parallel()
 
@@ -215,20 +218,23 @@ func TestSpawnOneShotToolSetsExcludeWhoami(t *testing.T) {
 	})
 
 	type toolSet struct {
-		mode  string
-		defs  []provider.ToolDef
-		tools map[string]*Tool
+		mode     string
+		defs     []provider.ToolDef
+		tools    map[string]*Tool
+		excluded []string
+		kept     []string
 	}
 	rawDefs, rawTools := spawnIsolatedToolSet(reg, spawnRawBlacklist, nil, t.TempDir(), 0o640)
 	charDefs, charTools := spawnToolSet(reg, spawnCharacterBlacklist)
-	for _, s := range []toolSet{{"raw", rawDefs, rawTools}, {"character", charDefs, charTools}} {
+	for _, s := range []toolSet{
+		{"raw", rawDefs, rawTools, []string{"whoami", "close_session"}, []string{"read"}},
+		{"character", charDefs, charTools, []string{"close_session"}, []string{"read", "whoami"}},
+	} {
 		defNames := make(map[string]bool, len(s.defs))
 		for _, d := range s.defs {
 			defNames[d.Name()] = true
 		}
-		// close_session (#2573) shares the cause: on the parent's context it
-		// would close the parent's chat.
-		for _, name := range []string{"whoami", "close_session"} {
+		for _, name := range s.excluded {
 			if _, ok := s.tools[name]; ok {
 				t.Errorf("%s mode: %s is in the tools map — a one-shot would act as the parent's session", s.mode, name)
 			}
@@ -236,20 +242,46 @@ func TestSpawnOneShotToolSetsExcludeWhoami(t *testing.T) {
 				t.Errorf("%s mode: %s is in the defs — the spawned model could call it", s.mode, name)
 			}
 		}
-		if _, ok := s.tools["read"]; !ok {
-			t.Errorf("%s mode: read (control) missing from tools map — the exclusion is over-broad", s.mode)
+		for _, name := range s.kept {
+			if _, ok := s.tools[name]; !ok {
+				t.Errorf("%s mode: %s missing from tools map — the exclusion is over-broad", s.mode, name)
+			}
+			if !defNames[name] {
+				t.Errorf("%s mode: %s missing from defs — the exclusion is over-broad", s.mode, name)
+			}
 		}
-		if !defNames["read"] {
-			t.Errorf("%s mode: read (control) missing from defs — the exclusion is over-broad", s.mode)
+	}
+}
+
+// TestAPICharacterSpawnToolsMatchDelegated proves an API character one-shot
+// gets exactly the tools a delegated character batch's exec bridge reaches
+// (RegistryForAccess, BatchAccessParent), so the two paths match (#2676).
+func TestAPICharacterSpawnToolsMatchDelegated(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry()
+	for _, n := range []string{"read", "send_to_chat", "send_to_session", "send_to_spawner", "whoami", "ask", "close_session", "remind", "spawn", "spawn_send", "spawn_status", "spawn_stop"} {
+		reg.Register(&Tool{Name: n, Parameters: json.RawMessage(`{"type":"object","properties":{}}`)})
+	}
+	_, api := spawnToolSet(reg, spawnCharacterBlacklist)
+	deleg := RegistryForAccess(reg, delegator.BatchAccessParent)
+	for _, tool := range reg.All() {
+		n := tool.Name
+		if (api[n] != nil) != (deleg.Get(n) != nil) {
+			t.Errorf("%s: API character spawn has it = %v, delegated character batch = %v", n, api[n] != nil, deleg.Get(n) != nil)
+		}
+	}
+	for _, n := range []string{"whoami", "send_to_session"} {
+		if api[n] == nil {
+			t.Errorf("API character spawn lacks %s", n)
 		}
 	}
 }
 
 func TestSpawnCharacterTools(t *testing.T) {
-	// Proves character context mode sends registered tools to the model and
-	// keeps send_to_chat, but excludes send_to_session: a one-shot character
-	// spawn has no persistent session of its own, so it must not be able to
-	// inject into other sessions (raw/explore already exclude it).
+	// Proves character context mode sends registered tools to the model,
+	// send_to_chat and send_to_session included (#2676: as a delegated
+	// character batch has them; it sends from its own identity), and still
+	// leaves out what a delegated one does (close_session).
 	t.Parallel()
 	var receivedReq *provider.MessageRequest
 	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -263,7 +295,7 @@ func TestSpawnCharacterTools(t *testing.T) {
 	defer server.Close()
 
 	reg := NewRegistry()
-	for _, name := range []string{"web_search", "send_to_chat", "send_to_session", "shell"} {
+	for _, name := range []string{"web_search", "send_to_chat", "send_to_session", "shell", "close_session"} {
 		reg.Register(&Tool{
 			Name:       name,
 			Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
@@ -292,8 +324,11 @@ func TestSpawnCharacterTools(t *testing.T) {
 	if !toolNames["send_to_chat"] {
 		t.Error("send_to_chat should be included in character mode")
 	}
-	if toolNames["send_to_session"] {
-		t.Error("send_to_session should be excluded from character mode (ephemeral one-shot spawn)")
+	if !toolNames["send_to_session"] {
+		t.Error("send_to_session should be included in character mode (#2676)")
+	}
+	if toolNames["close_session"] {
+		t.Error("close_session should be excluded from character mode (#2573)")
 	}
 }
 

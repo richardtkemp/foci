@@ -66,6 +66,11 @@ func resolveWhoami(ctx context.Context, d WhoamiDeps) whoamiReport {
 	// agent (used for the platform lookup below) is the same agent in
 	// production wiring — the distinction only exists for odd test fixtures.
 	rep.sessionKey = SessionKeyFromContext(ctx)
+	self, isSpawn := spawnSelfFrom(ctx)
+	if isSpawn {
+		// An API character spawn: its own key, not its spawner's (#2676).
+		rep.sessionKey = self.key
+	}
 	if key, err := session.ParseSessionKey(rep.sessionKey); err == nil {
 		// ChatID returns the root chat id for branch/spawn children of a chat
 		// (c<chat>/b*, c<chat>/i*) and 0 for independent sessions, so branch
@@ -77,7 +82,11 @@ func resolveWhoami(ctx context.Context, d WhoamiDeps) whoamiReport {
 			}
 		}
 	}
-	if rep.sessionKey != "" && d.SessionModel != nil {
+	switch {
+	case isSpawn:
+		// No session runs the spawn, so none to ask: the model it runs on.
+		rep.model = self.model
+	case rep.sessionKey != "" && d.SessionModel != nil:
 		rep.model = d.SessionModel(rep.sessionKey)
 	}
 	return rep

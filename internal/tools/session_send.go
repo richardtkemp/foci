@@ -148,6 +148,17 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 					"leave it somewhere durable that gets read — whatever channel your task instructions name, or failing that a file on disk")
 			}
 
+			// An API character spawn sends from its own identity, not its
+			// spawner's session that its tool calls run on (#2676), and as
+			// the one-shot it is: the reply goes to the target's own chat, as
+			// a delegated character batch's does (its batch session is a
+			// background task). The bar above is still checked on the
+			// spawner's session.
+			spawnCaller := false
+			if self, ok := spawnSelfFrom(ctx); ok {
+				originSession, spawnCaller = self.key, true
+			}
+
 			// Resolve every target — bare agent names, session names, chat
 			// aliases, and full keys — through the shared route ladder. Even a
 			// target that parses as a session key goes through it (#2158): the
@@ -190,7 +201,7 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 			// Note 'unknown' (legacy) is deliberately NOT oneshot, so it
 			// keeps the pre-existing relay behaviour.
 			oneshotCaller := p.ReplyTo == "caller" && originSession != "" &&
-				callerSessionTypeFn != nil && callerSessionTypeFn(originSession).IsOneshot()
+				(spawnCaller || callerSessionTypeFn != nil && callerSessionTypeFn(originSession).IsOneshot())
 
 			// Tag the message with its origin, timestamp, and delivery context.
 			// The note tells the receiving agent where its reply will go so it

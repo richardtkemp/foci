@@ -14,7 +14,6 @@ import (
 	"foci/internal/log"
 	"foci/internal/session"
 	"foci/internal/telemetry"
-	"foci/internal/timeutil"
 	"foci/internal/tools"
 
 	"golang.org/x/sync/singleflight"
@@ -1808,18 +1807,9 @@ func (m *DelegatedManager) RunBatch(ctx context.Context, req delegator.BatchRequ
 	if ownerKey == "" {
 		ownerKey = tools.SessionKeyFromContext(ctx)
 	}
-	// The batch key must be a well-formed <agent>/<c|i><id>/b<ts>: a key
-	// ParseSessionKey can't read indexes with chat_id=0/is_root=0, which no
-	// family query can reach. With no parseable owner, the batch hangs off a
-	// synthetic independent root so it is still a non-root (ephemeral,
-	// GC-eligible) session.
-	root := session.SessionKey{AgentID: agentID, Type: 'i', ID: "batch"}.String()
-	parent := root
-	if sk, err := session.ParseSessionKey(ownerKey); err == nil {
-		root = sk.Root().String()
-		parent = ownerKey
-	}
-	batchKey := fmt.Sprintf("%s/b%d", root, timeutil.UniqueNano()) // UniqueNano: concurrent batches must not share a key on a microsecond clock (macOS)
+	// A well-formed <agent>/<c|i><id>/b<ts>, so it is a non-root (ephemeral,
+	// GC-eligible) session even with no parseable owner (NewBatchKey).
+	batchKey, parent := session.NewBatchKey(ownerKey, agentID)
 	if req.OnSession != nil {
 		req.OnSession(batchKey)
 	}
