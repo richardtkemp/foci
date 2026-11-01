@@ -103,6 +103,17 @@ var Defaults = []Rule{
 			"For SINGLE (one-shot) events use the foci_remind shell function.",
 	},
 	{
+		// #2743: CC's /loop dynamic-mode scheduler. Its wakeups live only in
+		// the CC session, unlike foci_remind --wake rows, which foci restores
+		// at startup.
+		Name:   "schedule_wakeup",
+		Tool:   "ScheduleWakeup",
+		Action: ActionDeny,
+		Reason: "ScheduleWakeup is disabled in foci: its wakeups live only in this Claude Code session and are " +
+			"lost on restart, reload or compaction. For a SINGLE (one-shot) wakeup use foci_remind --wake, which " +
+			"foci keeps across restarts. For REPEATING events use crontab (see the crontab-edit skill).",
+	},
+	{
 		// #2441: the Bash tool runs the call as `bash -c '<script>'`, so a
 		// pattern written in the script is in that shell's own command line,
 		// and a full-command-line match finds the shell too and kills it

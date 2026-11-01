@@ -56,6 +56,22 @@ func TestDefaults_CronReasonRedirects(t *testing.T) {
 	t.Fatal("no CronCreate default")
 }
 
+// TestDefaults_ScheduleWakeupDenied (#2743): CC's ScheduleWakeup wakeups live
+// only in the CC session, so foci denies the tool and points one-shots at
+// foci_remind --wake (which survives restarts) and repeats at crontab.
+func TestDefaults_ScheduleWakeupDenied(t *testing.T) {
+	rules, _ := Resolve(Defaults)
+	got := Match(rules, Call{Tool: "ScheduleWakeup", Input: json.RawMessage(`{"delaySeconds":60}`)}).Rule
+	if got == nil || got.Name != "schedule_wakeup" {
+		t.Fatalf("Match(ScheduleWakeup) = %v, want schedule_wakeup", got)
+	}
+	for _, want := range []string{"foci_remind --wake", "crontab", "restart"} {
+		if !strings.Contains(got.Reason, want) {
+			t.Errorf("ScheduleWakeup reason missing %q: %s", want, got.Reason)
+		}
+	}
+}
+
 func TestResolve_DisableDefault(t *testing.T) {
 	rules, _ := Resolve(Defaults, []Rule{{Name: "ask_user_question", Enabled: boolp(false)}})
 	if got := names(rules); len(got) != len(Defaults)-1 || got[0] != "cron_create" {
