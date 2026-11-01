@@ -101,8 +101,8 @@ func TestMatchAutoApproveSymlinkEscape(t *testing.T) {
 // to dangerous variables (LD_PRELOAD=x cmd) — and the bare-assignment form
 // (LD_PRELOAD=x; cmd) — are no longer auto-approved (P1-7), closing the gap
 // where callExprCmdString stripped the assignment and matched only "cmd".
-// Benign inline assignments and the underlying safe command still approve, and
-// the export-clause form stays rejected.
+// The underlying safe command still approves, the export-clause form stays
+// rejected, and since #2326 a benign inline assignment asks too.
 func TestInlineEnvVarPrefixRejected(t *testing.T) {
 	rules := parseAutoApproveRules([]string{"Bash:cat", "Bash:echo", "Bash:ls"})
 	tests := []struct {
@@ -111,7 +111,8 @@ func TestInlineEnvVarPrefixRejected(t *testing.T) {
 		want bool
 	}{
 		{"plain cat approved", "cat README", true},
-		{"benign inline var approved", "FOO=bar cat README", true},
+		// #2326: every environment prefix asks, a benign-looking one too.
+		{"benign inline var asks", "FOO=bar cat README", false},
 		{"inline LD_PRELOAD rejected", "LD_PRELOAD=/tmp/evil.so cat README", false},
 		{"inline PATH rejected", "PATH=/tmp/evil cat README", false},
 		{"inline BASH_ENV rejected", "BASH_ENV=/tmp/x cat README", false},
@@ -1437,8 +1438,9 @@ func TestShellInterceptorBypassGuard(t *testing.T) {
 		// Export with dangerous literal — symbol table resolves to the
 		// actual inline value, which fails rule matching.
 		{"export dangerous", `{"command":"export X='rm file'; bash -c \"$X\""}`, false},
-		// Export with safe literal — resolved and approved.
-		{"export safe", `{"command":"export X='ls'; bash -c \"$X\""}`, true},
+		// Export with safe literal: #2326 — an exported change before a
+		// later command (the bash) asks, whatever the value.
+		{"export safe", `{"command":"export X='ls'; bash -c \"$X\""}`, false},
 		// Conditional assignment makes the value ambiguous — rejected
 		// even though the unconditional value is safe.
 		{"conditional makes ambiguous", `{"command":"SAFE_CMD=ls; false || SAFE_CMD='rm file'; bash -c \"$SAFE_CMD\""}`, false},

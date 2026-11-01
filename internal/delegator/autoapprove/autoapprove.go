@@ -308,6 +308,11 @@ var varSettingCommands = map[string]bool{
 //   - Commands with known unsafe flags (sed -i, find -exec, sort -o, etc.) are rejected
 //   - sed script arguments are scanned for dangerous commands (w, e)
 //   - Commands that set variables opaquely (eval, source, read, etc.) are rejected
+//   - A command with any environment-variable prefix (X=v cmd) is rejected,
+//     and so is a request that changes an exported variable before a later
+//     command runs (exportedChangeBeforeCommand) — #2326
+//   - A git subcommand that runs a program named in its arguments
+//     (rebase --exec, bisect run, …) is rejected (gitRunsNamedProgram) — #2326
 func matchBashAutoApprove(rules []Rule, input json.RawMessage, env map[string]string) (bool, string) {
 	command := extractMatchString("Bash", input)
 	if command == "" {
@@ -363,6 +368,13 @@ const maxCmdSubstDepth = 3
 // nesting to prevent infinite recursion. vc provides variable resolution
 // context for shell interceptor (-c) argument resolution.
 func validateParsedCommand(rules []Rule, stmts []*syntax.Stmt, depth int, vc *varCtx) bool {
+	// A change to an exported variable reaches every later command's
+	// environment, exactly like a prefix assignment (#2326). Checked per
+	// statement list so a -c script, parsed from a string, is covered by
+	// its own recursive call.
+	if exportedChangeBeforeCommand(stmts, vc.environment) {
+		return false
+	}
 	for _, stmt := range stmts {
 		// A compound statement can change variables in ways that are not
 		// statically modelled (notably loop iterator variables). Do not use
@@ -412,10 +424,22 @@ func validateParsedStmt(rules []Rule, stmt *syntax.Stmt, depth int, vc *varCtx) 
 			cmdSubsts = append(cmdSubsts, n)
 			return false // don't descend — we'll validate separately
 		case *syntax.CallExpr:
-			// Inline command-prefix assignments (LD_PRELOAD=x cmd) and bare
-			// assignments (LD_PRELOAD=x) are CallExpr.Assigns — not a
-			// DeclClause — so they bypass declHasDangerousVar. Scan them
-			// here (P1-7).
+			// A command-prefix assignment (X=v cmd) changes the
+			// environment of the program it runs, and many programs read
+			// a variable that names a program to run or a config file to
+			// load (GOFLAGS=-toolexec=…, RIPGREP_CONFIG_PATH, HOME), while
+			// the rule only ever matches the prefix-stripped command
+			// (callExprCmdString). So EVERY prefix asks, whatever the name
+			// or value (#2326, Dick's ruling 2026-10-13). This runs before
+			// the interceptor unwrap so `X=1 bash -c …` asks too.
+			if len(n.Assigns) > 0 && len(n.Args) > 0 {
+				safe = false
+				return false
+			}
+			// A bare assignment (LD_PRELOAD=x) is CallExpr.Assigns — not a
+			// DeclClause — so it bypasses declHasDangerousVar. Scan it here
+			// (P1-7). An assignment to an exported name before a later
+			// command is exportedChangeBeforeCommand's business.
 			for _, a := range n.Assigns {
 				if a.Name != nil && isDangerousVarName(a.Name.Value) {
 					safe = false
@@ -633,8 +657,13 @@ func callExprFlagChecked(pr *syntax.Printer, ce *syntax.CallExpr) bool {
 }
 
 // dangerousVars lists environment variables whose modification can lead to
-// arbitrary code execution or security bypass. Assignments to these via
-// export/declare/readonly/typeset are rejected by the auto-approve walker.
+// arbitrary code execution or security bypass. A declaration
+// (export/declare/readonly/typeset) or a bare assignment to one of these is
+// rejected by the auto-approve walker even with no later command. A
+// command-prefix assignment no longer needs this list: since #2326 every
+// prefix asks, and so does any exported change before a later command
+// (exportedChangeBeforeCommand) — this list is what still refuses the
+// change on its own.
 var dangerousVars = map[string]bool{
 	"PATH":            true, // redirects command lookups
 	"LD_PRELOAD":      true, // injects shared library into every process
@@ -647,9 +676,9 @@ var dangerousVars = map[string]bool{
 
 // isDangerousVarName reports whether assigning to the named variable can lead to
 // arbitrary code execution or a security bypass. Shared by the export/declare
-// path (declHasDangerousVar) and the inline command-prefix / bare-assignment
-// path (CallExpr.Assigns). Exported-function names (BASH_FUNC_*, ShellShock
-// style) are matched by prefix.
+// path (declHasDangerousVar) and the bare-assignment path (CallExpr.Assigns
+// with no command). Exported-function names (BASH_FUNC_*, ShellShock style)
+// are matched by prefix.
 func isDangerousVarName(name string) bool {
 	return dangerousVars[name] || strings.HasPrefix(name, "BASH_FUNC_")
 }
@@ -1486,7 +1515,10 @@ var unsafeFlags = map[string]unsafeCmdFlags{
 	// core.pager, alias.*) — a direct arbitrary-exec vector; --config-env is the
 	// env-backed form; the `config` subcommand writes those same values. -C
 	// (run-in-dir) is deliberately NOT flagged: it is not itself an exec vector
-	// and is a very common safe pattern. (P2-8.)
+	// and is a very common safe pattern. (P2-8.) A subcommand that runs a
+	// program named in its arguments (rebase --exec, bisect run, submodule
+	// foreach, fetch --upload-pack, …) is refused by gitRunsNamedProgram
+	// (#2326), and git grep's pager flag by gitGrepPagerUnsafe.
 	"git": {
 		shortFlags: "c",
 		longFlags:  []string{"--config-env"},
@@ -1691,7 +1723,9 @@ func containsUnsafeFlags(segment string) bool {
 //     flag out of quoted parts — see braceArgUnsafe;
 //   - a live substitution argument (#2216) — see substArgUnsafe;
 //   - a command-specific whole-vector finding: sqlite3 dot-commands
-//     (sqliteCommandUnsafe) or a git grep pager flag (gitGrepPagerUnsafe).
+//     (sqliteCommandUnsafe), a git grep pager flag (gitGrepPagerUnsafe) or a
+//     git subcommand that runs a program named in its arguments
+//     (gitRunsNamedProgram, #2326).
 //
 // Every check compares the words' shell-visible text — quoting a flag
 // (`sed '-i'`) or assembling it from quoted parts does not change what the
@@ -1710,7 +1744,7 @@ func containsUnsafeFlagWords(words []shellWord) bool {
 	if cmdBase == "sqlite3" && sqliteCommandUnsafe(visibleTexts(words)) {
 		return true
 	}
-	if cmdBase == "git" && gitGrepPagerUnsafe(words) {
+	if cmdBase == "git" && (gitGrepPagerUnsafe(words) || gitRunsNamedProgram(words)) {
 		return true
 	}
 	if !flagCheckedCommand(cmdBase) {

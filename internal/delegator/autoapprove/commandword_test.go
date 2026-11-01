@@ -211,16 +211,18 @@ func TestBraceScopeOutRowsStayApproved(t *testing.T) {
 	for _, cmd := range []string{
 		`cat {"a",b}`,
 		`cat {"a",b}.txt`,
-		`export P=/srv; rg foo "$P"`,
 		// The exact declaration-shaped value, as a PLAIN assignment: bash
 		// stores the brace text verbatim, and "$P" hands rg a quoted
 		// literal argument — not a flag, not an expansion.
 		`P={"",--pre=./x.sh}; rg foo "$P"`,
 		`P={"",x}; rg foo`,
-		`P={"",x} rg foo`,
 	} {
 		assertApproval(t, readonly, cmd, true)
 	}
+	// #2326: an exported change before a later command, and any prefix
+	// assignment, now ask.
+	assertApproval(t, readonly, `export P=/srv; rg foo "$P"`, false)
+	assertApproval(t, readonly, `P={"",x} rg foo`, false)
 }
 
 // TestMutationGateSurvivorsPinned is a characterisation test (requirement 3):

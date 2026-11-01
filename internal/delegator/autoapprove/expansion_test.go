@@ -206,10 +206,9 @@ func TestQuotedBracesFollowBashOnFlagCheckedCommands(t *testing.T) {
 	assertApproval(t, rules, `cat "{a,b}"`, false) // not flag-checked
 	assertApproval(t, rules, `rg foo; for x in {a,b}; do true; done`, false)
 	assertApproval(t, rules, `X={a,b}; rg foo`, false) // bare assignment: no flag-checked command word
-	// An assignment PREFIX of a flag-checked command rides its exemption:
-	// bash never brace-expands an assignment word, so the value stays
-	// literal whatever the braces look like.
-	assertApproval(t, rules, `X={a,b} rg foo`, true)
+	// An assignment PREFIX of a flag-checked command: bash never
+	// brace-expands an assignment word, but since #2326 every prefix asks.
+	assertApproval(t, rules, `X={a,b} rg foo`, false)
 }
 
 // TestCommandSubstitutionArgsNotAutoApproved proves requirement 4's first
