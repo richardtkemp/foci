@@ -453,7 +453,7 @@ func TestLiveApply_WebhookSessionForm(t *testing.T) {
 	}
 	inst := &agentInstance{id: "a", ag: &agent.Agent{}, resolved: config.NewLiveValue(config.Resolve(base, base.Agents[0]))}
 	la := newLiveApply("")
-	registerLiveAppliers(la, map[string]*agentInstance{"a": inst})
+	registerLiveAppliers(la, registryOf(t, inst))
 
 	configPath := filepath.Join(t.TempDir(), "foci.toml")
 	fresh := "[groups]\npowerful = \"anthropic/claude-opus-4-6\"\n\n[system.webhooks]\ndeploy = { prompt = \"deploy.md\", session = \"new-per-call\" }\n\n[[agents]]\nid = \"a\"\n"

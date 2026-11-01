@@ -215,7 +215,7 @@ func enqueueDeferred(w http.ResponseWriter, d httpHandlerDeps, rec defersend.Rec
 // errBranchBadModel text). Delivery checks again: the registry or config can
 // change during the wait.
 func refuseDeferred(d httpHandlerDeps, rec defersend.Record) (int, string) {
-	inst, ok := d.agents[rec.AgentID]
+	inst, ok := d.agents.Get(rec.AgentID)
 	if !ok {
 		return 0, ""
 	}
