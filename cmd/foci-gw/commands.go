@@ -118,6 +118,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 			}
 			return old, err
 		},
+		RequestApprovalFn: requestConfigApproval,
 		UnsetInFileFn: func(path string, target config.SetTarget) (string, error) {
 			fm, _ := config.ParseFileMode(p.cfg.FileMode)
 			old, err := config.UnsetInFile(path, target, fm)

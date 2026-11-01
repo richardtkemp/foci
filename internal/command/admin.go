@@ -95,6 +95,12 @@ func ConfigCommand() *Command {
 					if cc.ConfigSetDeps == nil {
 						return Response{Text: "Config set is not available."}, nil
 					}
+					if fromHTTP(req) {
+						if !isDirectSetArgs(req.Args) {
+							return Response{Text: httpWizardRefusal("The /config set wizard")}, nil
+						}
+						return configWriteReply(configSet(httpConfigDeps(cc.ConfigSetDeps, req.SessionKey), req.SessionKey, req.Args))
+					}
 					text, err := configSet(cc.ConfigSetDeps, req.SessionKey, req.Args)
 					return Response{Text: text}, err
 				},
@@ -105,6 +111,9 @@ func ConfigCommand() *Command {
 				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
 					if cc.ConfigSetDeps == nil {
 						return Response{Text: "Config unset is not available."}, nil
+					}
+					if fromHTTP(req) {
+						return configWriteReply(configUnset(httpConfigDeps(cc.ConfigSetDeps, req.SessionKey), req.Args))
 					}
 					text, err := configUnset(cc.ConfigSetDeps, req.Args)
 					return Response{Text: text}, err

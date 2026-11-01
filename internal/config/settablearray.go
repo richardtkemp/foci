@@ -26,7 +26,7 @@ func SetTableArray(path, section string, entries []map[string]any, mode os.FileM
 	if err != nil {
 		return 0, err
 	}
-	if err := WriteFileAtomic(path, next, mode); err != nil {
+	if err := WriteConfigFile(path, next, mode); err != nil {
 		return 0, err
 	}
 	return len(entries), nil

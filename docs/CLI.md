@@ -547,6 +547,33 @@ foci check nudge --agent clutch --file /tmp/draft-rules.json
 
 ---
 
+### `config` — Read the config, or ask the user to approve a change
+
+`foci.toml` is read-only to agents (`root:foci-secrets 0664`, see SECRETS.md). A change is a request: the user sees the session asking, the setting, its current value and the new value in chat, and taps Approve or Deny. Nothing changes unless they approve. The skill `foci-config` is the agent's guide.
+
+**Usage:**
+```
+foci config show
+foci config get <path> [--config <file>]
+foci config set <path> <value> [--wait <duration>] [--session <key>]
+foci config unset <path> [--wait <duration>] [--session <key>]
+foci config wait <request-id> [--wait <duration>]
+```
+
+`show` prints the running config with secrets redacted (`/config toml`). `get` reads the config file and prints `<path> = <value>`, or that the path is unset. `set` and `unset` send the request (`POST /config/request`), wait for the answer (long-polling `GET /config/request?id=`), and print one outcome: `applied`, `denied`, `timed out`, or `failed: <reason>`; the exit code is 0 only for `applied`. `wait` follows a request made earlier — `/config set k=v` sent over the HTTP API (`foci command`, `foci send`) creates one and replies with its id instead of writing. `--wait` is how long the user has to answer (default 10m, at most 1h). The session defaults to `$FOCI_SESSION_KEY`; the agent is its first segment.
+
+Paths are TOML dotted keys, with `agents[<id>]` selecting one agent's block: `agent_loop.max_tool_loops`, `agents[main].nudge.enable`, `models."claude.fast".id`, `blocked_paths`. Values are TOML values; a value for an array of tables (`[{path = "/x"}]`) replaces the whole array. Before the prompt is shown, the request must change the file only at the path and the result must pass `foci check config`; otherwise it fails at once. On Approve the gateway re-reads the file and refuses if the value at the path changed in the meantime. After a gateway restart a waiting command reports `failed`.
+
+**Examples:**
+```bash
+foci config get agent_loop.max_tool_loops
+foci config set agent_loop.max_tool_loops 20
+foci config set 'agents[main].model' '"opus"' --wait 30m
+foci config unset 'agents[main].nudge.enable'
+```
+
+---
+
 ### `pair` — Mint Android pairing key
 
 Mints a single-use Android pairing key for registering a new device with the gateway. The key can be used once to complete the `/android` onboarding flow.

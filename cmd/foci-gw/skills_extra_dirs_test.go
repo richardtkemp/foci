@@ -73,7 +73,7 @@ func TestSkillExtraDirsStartupAndLiveApply(t *testing.T) {
 		t.Fatalf("pre-edit reload block wrong:\n%s", b)
 	}
 
-	la := newLiveApply("")
+	la := newLiveApply("", nil)
 	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{"a": {id: "a", skillsDirs: br.skillsDirs}}))
 
 	// Global edit: g-extra → new-extra; the [skills] dir is also changed in

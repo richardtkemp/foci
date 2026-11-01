@@ -661,6 +661,11 @@ func writeSetupFiles(f setupFlags, configOpts config.SetupOptions, store *secret
 		return fmt.Errorf("write foci.toml: %w", err)
 	}
 	fmt.Printf("  → %s\n", configPath)
+	if config.ConfigProtectionEnforced() && os.Geteuid() != 0 {
+		// The gateway refuses a config file agents could rewrite (#479):
+		// it must be root:foci-secrets 0664, which only root can set.
+		fmt.Printf("  ! protect it before starting foci (make wizard does this for you):\n      %s\n", config.ProtectConfigCommand(configPath))
+	}
 
 	// Store provider-contributed secrets
 	// Sort keys for deterministic output.

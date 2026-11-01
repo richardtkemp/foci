@@ -39,6 +39,11 @@ type ConfigSetDeps struct {
 	// SetInFileFn: config.UnsetInFile, then the live applier. nil → unset
 	// is unavailable.
 	UnsetInFileFn func(path string, target config.SetTarget) (string, error)
+
+	// RequestApprovalFn submits a config change for the user's approval
+	// (#479). A /config set or unset arriving over HTTP calls it instead of
+	// the writers above (config_http.go). nil → such a request is refused.
+	RequestApprovalFn ConfigApprovalFn
 }
 
 // configSetWizard implements WizardHandler for interactive config editing.

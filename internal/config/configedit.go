@@ -70,7 +70,7 @@ func UnsetInFile(path string, target SetTarget, mode os.FileMode) (string, error
 	if err != nil {
 		return "", err
 	}
-	if err := WriteFileAtomic(path, next, mode); err != nil {
+	if err := WriteConfigFile(path, next, mode); err != nil {
 		return "", err
 	}
 	return old, nil

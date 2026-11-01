@@ -945,7 +945,7 @@ WIZARD_ARGS += --api-key $(FOCI_API_KEY)
 endif
 endif
 
-.PHONY: deploy-build sync-main install-bin install-lib install-unit install-polkit provision install-shared install-docs install-scripts wizard check-config check-config-built stage-changelog reload restart enable setup update deploy-from-snapshot
+.PHONY: deploy-build sync-main install-bin install-lib install-unit install-polkit provision install-shared install-docs install-scripts wizard protect-config check-config check-config-built stage-changelog reload restart enable setup update deploy-from-snapshot
 
 # sync-main (#1448 piece 4): deploy exactly origin/main, never a dirty or stale
 # local working tree. `make update` builds the working tree, so without this a
@@ -1064,6 +1064,23 @@ install-shared:
 wizard:
 	@runuser -u $(FOCI_USER) -- $(INSTALL_DIR)/foci first-run $(WIZARD_ARGS)
 	@[ -f $(SECRETS_FILE) ] && chown root:$(SECRETS_GROUP) $(SECRETS_FILE) && chmod 0660 $(SECRETS_FILE) || true
+	@$(MAKE) --no-print-directory protect-config
+
+# protect-config makes each installed foci*.service's -config file (found as
+# check-config finds it) root:$(SECRETS_GROUP) 0664 (#479): readable by
+# everyone, writable only by root and the gateway — the one process holding
+# $(SECRETS_GROUP). Agents run as the gateway's user, so a file that user owns
+# is a file every agent can rewrite; the gateway refuses to load any other
+# shape. Idempotent; deploys run it before the restart, or an upgraded
+# gateway would refuse an old install's file.
+protect-config:
+	@for svcfile in /etc/systemd/system/foci*.service; do \
+	  [ -f "$$svcfile" ] || continue; \
+	  cfg=$$(grep '^ExecStart=' "$$svcfile" | grep -oP '(?<=-config )\S+'); \
+	  [ -n "$$cfg" ] && [ -f "$$cfg" ] || continue; \
+	  chown root:$(SECRETS_GROUP) "$$cfg" && chmod 0664 "$$cfg" || { echo "ABORT: could not protect $$cfg"; exit 1; }; \
+	  echo "  $$(basename $$svcfile .service): $$cfg is root:$(SECRETS_GROUP) 0664"; \
+	done
 
 # check-config validates each installed foci*.service's config with a foci-gw
 # built from THIS tree (#2680). It builds first: bin/foci-gw is never rebuilt
@@ -1288,4 +1305,5 @@ deploy-from-snapshot:
 	$(MAKE) install-scripts
 	$(MAKE) install-unit
 	$(MAKE) stage-changelog
+	$(MAKE) protect-config
 	$(MAKE) restart

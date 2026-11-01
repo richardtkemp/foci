@@ -60,6 +60,11 @@ fociroot.EnsureCCConfigEnv()                             ← internal/fociroot (
   → log.Init, accounting.Open (the cost ledger in api.db: migrates a pre-ledger
     api.db once, then accounting.SetLive), log.InitConversation, log rotation
   → returns cleanup func
+→ configProtection(cfg) + checkConfigLoad              ← config_protect.go (#479): foci.toml must be
+                                                            root:foci-secrets 0664 (config.CheckConfigProtected)
+                                                            or startup exits (fail closed). Off on non-Linux and
+                                                            under skip_security_checks; the chosen check is kept in
+                                                            gwConfigProtect for liveApply and the rule reloads
 
 → app.MigrateLegacyBlobDir(cfg.DataDir)                  ← internal/app/blob.go; one-time move of blobs from the
                                                             pre-#1556 <temp root>/app-blobs into <data_dir>/app-blobs.
@@ -371,8 +376,9 @@ Callers of `fociroot.Dir()`: `config.ResolvePath` / `DefaultConfigPath`, the `da
 
 ```
 main
+ ├── configapprove → config, log (agent-requested config changes, #479: validate → Approve/Deny prompt → re-check → in-place write → live apply; requests are in-memory, keyed by id, polled over /config/request)
  ├── configcheck   → config, delegator, delegator/autoapprove, delegator/pretool, execguard, procx, shellenv (the one config validity check, #2223: `Run` backs both `foci-gw -check-config` and `foci check config`, same lines and exit codes; also the config-derived auto-approve helpers the gateway's startup reports share with the preview — `AgentConsultsAllowlist`, `SubstitutableBuiltinsFor`, `ApplySubstitutabilityMode`, `IgnoredBackendConfig`)
- ├── config        → delegator/pretool, delegator/stoprule, display, execguard, fociroot, log, modelinfo, provider
+ ├── config        → delegator/pretool, delegator/stoprule, display, execguard, fociroot, log, modelinfo, procx, provider
  ├── sqlite        → modernc.org/sqlite (shared Open, AgentPath, MigrateFile utilities)
  ├── log           → timeutil (the event, API-call JSONL and payload files; api.db belongs to delegator/accounting, conversation storage to convo)
  ├── convo         → log, session, sqlite, timeutil (per-agent conversation SQLite store + memory-index Hook; extracted from log so log stays lean)
@@ -421,7 +427,7 @@ main
  ├── linkwalk      (no deps — stdlib-only leaf: Up/Down walks over parent/child links that stop at the first repeated key, so a cycle in session_index rows or subagent ancestry ends the walk; used by command `sessionFamily` (/cost) and ccstream `topLevelAncestor`, #1581)
  ├── provision     → config, modelinfo, procx (agent creation; config for the one agent-id format rule, config.IsValidAgentID; modelinfo so a bare model alias — "opus", "fable" — resolves to the newest member of that family instead of a literal that goes stale)
  ├── agentrename   → config, fociroot, procx, session, BurntSushi/toml, modernc.org/sqlite (the offline `foci rename-agent` command, #1281 — see "Renaming an agent" under CLI Tool)
- ├── command       → agent, config, delegator, delegator/accounting, display, linkwalk, log, memory, modelinfo, platform, procx, prompts, provider, provision, question, session, tempdir, timeutil, tools, workspace
+ ├── command       → agent, config, configapprove, delegator, delegator/accounting, display, linkwalk, log, memory, modelinfo, platform, procx, prompts, provider, provision, question, session, tempdir, timeutil, tools, workspace
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
  ├── messages      → provider (shared message-inspection utilities: HasToolUse, ToolUseIDs)
  ├── timeutil      (no deps — centralised timestamp formatting with configurable timezone; UniqueNano, a strictly increasing wall-clock nanosecond for IDs — the macOS clock steps in microseconds)
@@ -3295,6 +3301,36 @@ Endpoints for external integration. All endpoints accept an optional `agent` par
 - `GET /voice` — WebSocket upgrade for real-time voice conversation. Enabled when `[http] ws_enabled = true`.
 - `POST /-/reload-credentials` — hot-reload API credentials from `secrets.toml`. Called by `foci auth` after saving a new token. Only registered when using static token auth (setup-token or API key), not OAuth fallback.
 - `POST /askgw/ask`, `GET /askgw/ask/{id}`, `POST /askgw/ask/{id}/cancel`, `POST /askgw/notify` — HTTP transport onto the ask-gateway (see Ask Gateway section below). Registered only when `[askgw] enabled = true` **and** `[askgw] http_enabled = true` (separate opt-in — this endpoint is gated by `http.api_key` alone, a materially weaker gate than the Unix socket's UID allow-list).
+
+## Agent config tool (`internal/configapprove/`, `cmd/foci-gw/config_approve.go`, #479)
+
+foci.toml is `root:foci-secrets 0664`: agents can read it, only root and foci-gw (the one process holding `foci-secrets`) can write it. **Every gateway load checks that shape** (`config.CheckConfigProtected`, chosen once in main as `gwConfigProtect`; nil under `skip_security_checks` or off Linux): startup exits, `liveApply.Apply` applies nothing and returns an error, and `liveRules` (the delegated pretool/stop rule sources) keeps the previous rules. **Every gateway write is in place** (`config.WriteConfigFile`, used by SetInFile, UnsetInFile, SetTableArray, the app editor's `checkedFileEdit` and the approval write), so the inode, owner, group and mode survive; a rename would hand the file to the gateway's user.
+
+An agent changes a setting through the approval flow:
+
+```
+foci config set <path> <value>        (cmd/foci/cmd_config.go)
+  → POST /config/request {session, op, path, value, timeout_secs}   (same auth as /command)
+      → configapprove.Service.Submit
+          → config.ParseKeyPath → read file → config.LookupPath (old value)
+          → config.PlanSetPath / PlanUnsetPath     ← any TOML key path; candidates tried in order,
+                                                      each verified by config.VerifyPathEdit (the decoded
+                                                      file differs ONLY at the path, holds the value)
+          → configcheck.CheckContent(next)          ← the -check-config verdict, no auto-approve preview
+          → fail: {outcome: failed, reason}, no prompt
+          → Present: platform.SendInteractiveMessageWithID to defaultSessionKeyFor(agent) with
+            Approve/Deny; a timer (DefaultTimeout, clamped to [MinTimeout, MaxTimeout]) → timed_out
+            + CancelInteractiveMessage
+  ← {id, outcome: pending, old, new}
+  → GET /config/request?id=…&wait=20  (long-poll, capped below the 30s WriteTimeout; repeated)
+      ← pending | applied | denied | timed_out | failed;  404 = unknown id (gateway restarted)
+
+Approve press → Service.approve (under writeMu, so a timeout cannot land between write and outcome):
+  CheckProtected → re-read → value at path still the old value? → re-plan → CheckContent
+  → WriteConfigFile → resolve(applied) → liveApply.Apply(KeyPath.LiveApplyAddress())
+```
+
+**/config over HTTP.** `runAgentCommand` (/command, the deferred sweep, the suggestion press) and `handleSend`'s slash branch stamp `Source = SourceHTTP`. There `/config set` with a full value and `/config unset` run with `httpConfigDeps` (internal/command/config_http.go): the writers are replaced by `ConfigSetDeps.RequestApprovalFn` (gateway: `requestConfigApproval` → the same `Submit`, same key path via `setTargetPath`), and the reply carries the request id for `foci config wait <id>`. The /config set wizard, `/agents new` and `/android` refuse over HTTP. Chat, app and the app config editor write directly, as before.
 
 ## Ask Gateway (`internal/askgw/`, `cmd/foci-gw/askgw_setup.go`)
 

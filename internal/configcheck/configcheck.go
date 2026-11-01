@@ -184,7 +184,43 @@ func runConfigCheckWith(path string, stdout, stderr io.Writer, d checkDeps) int 
 		_, _ = fmt.Fprintf(stderr, "config check FAILED: %v\n", err)
 		return 1
 	}
+	return checkLoaded(cfg, path, stdout, stderr, &d)
+}
 
+// CheckContent runs the verdict half of the check on candidate file content
+// at path: the same decode and Validate as Load, the same strict unknown-key
+// rule and the same pretool examples. It skips the auto-approve preview,
+// which only warns and installs process-wide state, so it is safe inside the
+// running gateway (the approved config edit, #479). nil means Run would exit
+// 0 for this content; the error carries the failure lines.
+func CheckContent(content, path string) error {
+	cfg, err := config.LoadContent([]byte(content), path, delegator.RegisteredNames())
+	if err != nil {
+		return fmt.Errorf("config check FAILED: %w", err)
+	}
+	var out strings.Builder
+	if checkLoaded(cfg, path, io.Discard, &out, nil) != 0 {
+		// Keep the failure lines; drop warnings and their "  - " items.
+		var failed []string
+		inWarning := false
+		for _, l := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+			switch {
+			case strings.HasPrefix(l, "config check warning"):
+				inWarning = true
+			case inWarning && strings.HasPrefix(l, "  - "):
+			default:
+				inWarning = false
+				failed = append(failed, l)
+			}
+		}
+		return errors.New(strings.Join(failed, "\n"))
+	}
+	return nil
+}
+
+// checkLoaded is the check after a successful load. d nil skips the
+// auto-approve preview (CheckContent).
+func checkLoaded(cfg *config.Config, path string, stdout, stderr io.Writer, d *checkDeps) int {
 	if len(cfg.UndefinedKeys) > 0 {
 		_, _ = fmt.Fprintf(stderr, "config check FAILED: %d unknown/deprecated key(s) in %s:\n", len(cfg.UndefinedKeys), path)
 		for _, k := range cfg.UndefinedKeys {
@@ -201,6 +237,21 @@ func runConfigCheckWith(path string, stdout, stderr io.Writer, d checkDeps) int 
 		}
 	}
 
+	if d != nil {
+		previewAutoApprove(cfg, stderr, *d)
+	}
+
+	if failures := checkPretoolExamples(cfg, stderr); failures > 0 {
+		_, _ = fmt.Fprintf(stderr, "config check FAILED: %d pretool example failure(s)\n", failures)
+		return 1
+	}
+
+	_, _ = fmt.Fprintln(stdout, "config check OK: "+path+" loads cleanly with no unknown keys")
+	return 0
+}
+
+// previewAutoApprove writes the auto-approve preview (file header).
+func previewAutoApprove(cfg *config.Config, stderr io.Writer, d checkDeps) {
 	if d.applyMode != nil {
 		d.applyMode(cfg, func(format string, args ...any) {
 			_, _ = fmt.Fprintf(stderr, "config check: "+format+"\n", args...)
@@ -216,14 +267,6 @@ func runConfigCheckWith(path string, stdout, stderr io.Writer, d checkDeps) int 
 		}
 		reportAutoApproveWarnings(stderr, cfg, plan.env)
 	}
-
-	if failures := checkPretoolExamples(cfg, stderr); failures > 0 {
-		_, _ = fmt.Fprintf(stderr, "config check FAILED: %d pretool example failure(s)\n", failures)
-		return 1
-	}
-
-	_, _ = fmt.Fprintln(stdout, "config check OK: "+path+" loads cleanly with no unknown keys")
-	return 0
 }
 
 // autoApproveCheckPlan is the outcome of deriving the view the preview will

@@ -8,6 +8,8 @@ foci-gw --config /home/foci/config/foci.toml
 
 Secrets are loaded from `secrets.toml` in the same directory as the config file. Values in `secrets.toml` override matching fields in `foci.toml`.
 
+**`foci.toml` is read-only to agents (#479).** It is `root:foci-secrets 0664`, and foci-gw refuses to load it in any other shape (see [SECRETS.md → Config file protection](SECRETS.md#config-file-protection-focitoml-479)). Editing it by hand therefore needs `sudo` (`sudoedit` keeps the file's ownership). An agent changes a setting with `foci config set <path> <value>`, which asks you to approve the change in chat (skill `foci-config`); `/config set` from chat and the app's config editor keep working without approval.
+
 ---
 
 ## Scope and Conventions
@@ -38,7 +40,7 @@ Fields that exist only at the top level or in dedicated global sections. These c
 |-----|------|---------|-------------|
 | `data_dir` | string | `$HOME/data` | Directory for shared databases (api.db, state.db), sessions, state files, and the app blob store (`app-blobs/`). Per-agent databases (reminders, scratchpad, todo, tasklist, conversation, memory indices) are stored in each agent's `workspace/.data/` directory. Relative paths resolve against `$HOME`. Absolute paths used as-is. |
 | `welcome_file` | string | `"data/WELCOME.md"` | Path to a changelog/welcome file. If this file exists on startup, its contents are injected into the first agent's main session and the file is deleted. Relative paths resolve against `$HOME`. |
-| `skip_security_checks` | bool | `false` | Skip startup security checks for `secrets.toml` (ownership, permissions, group membership). Useful for development environments. See [SECRETS.md](SECRETS.md). |
+| `skip_security_checks` | bool | `false` | Skip the security checks on `secrets.toml` (ownership, permissions, group membership) and on `foci.toml` (the `root:foci-secrets 0664` shape the gateway otherwise requires at every load). Useful for development environments. See [SECRETS.md](SECRETS.md). |
 | `file_mode` | string | `"0640"` | Octal file permissions for workspace and content files (character files, prompts, skills, tool-written files, media saves, config edits). Session files have their own `[sessions] file_mode`. |
 | `timezone` | string | `""` | IANA timezone for timestamps (e.g. `"Europe/Athens"`, `"UTC"`, `"Local"`). Empty defaults to machine local time. |
 | `master_agent` | string | `""` | Agent that receives system injections not addressed to a specific agent: the post-restart context turn and the update welcome/changelog. Must name a configured agent. Empty = legacy behavior (restart injection to every agent, changelog to the first agent). |

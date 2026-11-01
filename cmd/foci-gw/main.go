@@ -248,6 +248,12 @@ Subcommands:
 	if len(cfg.UndefinedKeys) > 0 {
 		configLog.Warnf("unknown config keys in %s: %v", configPath, cfg.UndefinedKeys)
 	}
+	// Fail closed on a config file agents could rewrite (#479). Checked
+	// here, after logging is up, so the refusal reaches the log.
+	gwConfigProtect = configProtection(cfg)
+	if err := checkConfigLoad(gwConfigProtect, configPath); err != nil {
+		log.Fatalf("security", "%v", err)
+	}
 	if ignored := configcheck.IgnoredBackendConfig(cfg); len(ignored) > 0 {
 		configLog.Warnf("backend_config keys in %s that the agent's backend ignores: %s", configPath, strings.Join(ignored, "; "))
 	}
@@ -322,7 +328,7 @@ Subcommands:
 	// Routes config edits to hot fields into the running process; appliers are
 	// registered after agent setup (registerLiveAppliers), edits before that
 	// are file-only like any restart-required field.
-	gwLiveApply = newLiveApply(configPath)
+	gwLiveApply = newLiveApply(configPath, gwConfigProtect)
 
 	// ========== Platform messaging ==========
 	plat, err := platform.InitMessaging(cfg, platform.ProviderDeps{
@@ -640,6 +646,8 @@ Subcommands:
 		sweeper := &deferSweeper{store: deferStore, deps: deps, isUserActive: isUserActive, isSessionActive: isSessionActive}
 		go sweeper.run(ctx)
 	}
+
+	gwConfigApprove = newConfigApproveService(cfg, configPath, agents, connMgr)
 
 	mux := http.NewServeMux()
 	pprofGate.Store(config.DerefBool(cfg.Debug.EnablePprof))

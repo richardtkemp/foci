@@ -53,6 +53,9 @@ func AndroidCommand() *Command {
 		Description: "Onboard the native Android app (pairing wizard)",
 		Category:    "session",
 		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+			if fromHTTP(req) {
+				return Response{Text: httpWizardRefusal("The /android wizard")}, nil
+			}
 			reg := androidRegistry(cc)
 			if reg == nil || cc.SecretsStore == nil {
 				return Response{Text: "Android onboarding wizard is not available."}, nil

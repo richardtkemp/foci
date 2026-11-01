@@ -60,7 +60,7 @@ func TestLiveApplyResolvedActuallySwaps(t *testing.T) {
 		t.Fatalf("initial LiveConfig().Voice.TTS = %q, want %q", got, oldTTS)
 	}
 
-	la := newLiveApply("")
+	la := newLiveApply("", nil)
 	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{"a": inst}))
 
 	fresh := &config.Config{Agents: []config.AgentConfig{{ID: "a", Voice: config.VoiceConfig{TTS: &newTTS}}}}
@@ -91,7 +91,7 @@ func TestLiveApplyPeriodicRefreshesSnapshot(t *testing.T) {
 		t.Fatal("initial LiveConfig().Reflection.NotifyOnSkillCreation = false, want true")
 	}
 
-	la := newLiveApply("")
+	la := newLiveApply("", nil)
 	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{"a": inst}))
 
 	fresh := &config.Config{Agents: []config.AgentConfig{{ID: "a", Reflection: config.ReflectionConfig{NotifyOnSkillCreation: &off}}}}
@@ -121,7 +121,7 @@ func TestLiveApplyForceInSessionOverridesGoLive(t *testing.T) {
 		t.Fatal("initial LiveConfig().Keepalive.ForceInSession = true, want false")
 	}
 
-	la := newLiveApply("")
+	la := newLiveApply("", nil)
 	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{"a": inst}))
 
 	on := true
@@ -161,7 +161,7 @@ func TestLiveApply_MapSection(t *testing.T) {
 		resolved: config.NewLiveValue(resolved),
 	}
 
-	la := newLiveApply("")
+	la := newLiveApply("", nil)
 	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{"a": inst}))
 
 	if r := inst.ag.GroupResolver.ResolveGroup(config.GroupPowerful); r == nil || r.ModelID != "claude-opus-4-6" {
@@ -234,7 +234,7 @@ func TestLiveApply_AgentMapSection(t *testing.T) {
 		resolved: config.NewLiveValue(resolved),
 	}
 
-	la := newLiveApply("")
+	la := newLiveApply("", nil)
 	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{"a": inst}))
 
 	if r := inst.ag.GroupResolver.ResolveGroup("myteam"); r != nil {
@@ -291,7 +291,7 @@ func TestLiveApply_WarningQueuesFlipOnLive(t *testing.T) {
 	}
 
 	inst := &agentInstance{id: "a", ag: ag, resolved: config.NewLiveValue(rc)}
-	la := newLiveApply("")
+	la := newLiveApply("", nil)
 	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{"a": inst}))
 
 	applier := la.appliers["notify.inject_agent_warnings"]
@@ -340,7 +340,7 @@ func TestLiveApplyNudgeReconfigures(t *testing.T) {
 	}
 	inst := &agentInstance{id: "a", ag: &agent.Agent{Nudger: sched}}
 
-	la := newLiveApply("")
+	la := newLiveApply("", nil)
 	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{"a": inst}))
 
 	fresh := &config.Config{Agents: []config.AgentConfig{{ID: "a", Nudge: config.NudgeConfig{NudgePreAnswerGate: &on}}}}
@@ -382,7 +382,7 @@ id = "a"
 	if err := os.WriteFile(configPath, []byte(freshTOML), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	la := newLiveApply(configPath)
+	la := newLiveApply(configPath, nil)
 	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{}))
 
 	applied, err := la.Apply("modelinfo", "")
@@ -408,7 +408,7 @@ func TestLiveApply_RestartRequiredWarns(t *testing.T) {
 	flog.SetOutput(&buf)
 	t.Cleanup(func() { flog.SetOutput(os.Stderr) })
 
-	la := newLiveApply("")
+	la := newLiveApply("", nil)
 	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{}))
 
 	if applied, err := la.Apply("message_transforms", ""); applied || err != nil {
@@ -430,7 +430,7 @@ func TestLiveApply_RestartRequiredWarns(t *testing.T) {
 // "no restart needed", so it must have an applier at its bare section address,
 // and a restart-required one must not.
 func TestLiveApplyCoversLiveObjectSections(t *testing.T) {
-	la := newLiveApply("")
+	la := newLiveApply("", nil)
 	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{}))
 	for _, spec := range config.ObjectFields() {
 		has := la.appliers[spec.Section] != nil

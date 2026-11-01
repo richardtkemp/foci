@@ -1304,18 +1304,19 @@ func warnSkippedRules(agentID, kind string, skipped []string) {
 // load or validate (e.g. saved mid-edit), or no longer has the agent, keeps
 // the last good rules, starting from the startup ones.
 func livePreToolRules(agentID, configPath string, startup []pretool.Rule) func() []pretool.Rule {
-	return liveRules(agentID, configPath, "pretool", startup, (*config.Config).PreToolRules)
+	return liveRules(agentID, configPath, gwConfigProtect, "pretool", startup, (*config.Config).PreToolRules)
 }
 
 // liveStopRules is livePreToolRules for the agent's stop rules (#2089).
 func liveStopRules(agentID, configPath string, startup []stoprule.Rule) func() []stoprule.Rule {
-	return liveRules(agentID, configPath, "stop", startup, (*config.Config).StopRules)
+	return liveRules(agentID, configPath, gwConfigProtect, "stop", startup, (*config.Config).StopRules)
 }
 
 // liveRules is the shared body of the live rule sources: re-read the file on
 // every call, resolve this agent's rules with resolve, and keep the last good
-// set when the file doesn't load or has lost the agent.
-func liveRules[R any](agentID, configPath, kind string, startup []R,
+// set when the file doesn't load, fails the protection check (protect, #479;
+// nil skips it) or has lost the agent.
+func liveRules[R any](agentID, configPath string, protect func(string) error, kind string, startup []R,
 	resolve func(*config.Config, string) ([]R, []string, bool)) func() []R {
 	var mu sync.Mutex
 	last := startup
@@ -1324,6 +1325,10 @@ func liveRules[R any](agentID, configPath, kind string, startup []R,
 		mu.Lock()
 		defer mu.Unlock()
 		if configPath == "" {
+			return last
+		}
+		if err := checkConfigLoad(protect, configPath); err != nil {
+			lg.Warnf("%s rules: keeping the previous rules: %v", kind, err)
 			return last
 		}
 		fresh, err := config.Load(configPath, delegator.RegisteredNames())

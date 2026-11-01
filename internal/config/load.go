@@ -163,6 +163,13 @@ func Load(path string, knownBackends []string) (*Config, error) {
 	return decodeConfig(data, path, knownBackends)
 }
 
+// LoadContent is Load on candidate file CONTENT: the same decode and
+// Validate pipeline, touching no file and no process-global state. path is
+// used only for relative-path resolution and error text.
+func LoadContent(data []byte, path string, knownBackends []string) (*Config, error) {
+	return decodeConfig(data, path, knownBackends)
+}
+
 // CheckFileContent runs the exact decode + Validate pipeline Load runs (via
 // decodeConfig) on candidate file CONTENT, reporting whether the next restart
 // would accept it. It is the config editor's whole-file check: an edit is

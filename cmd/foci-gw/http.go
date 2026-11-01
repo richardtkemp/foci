@@ -14,6 +14,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/app"
 	"foci/internal/config"
+	"foci/internal/configapprove"
 	"foci/internal/defersend"
 	"foci/internal/evals"
 	"foci/internal/log"
@@ -189,8 +190,12 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 	mux.HandleFunc("/todo/done", handleTodoDone(resolveAgent))
 	mux.HandleFunc("/branch", handleBranch(d, resolveAgent, gate))
 	mux.HandleFunc("/webhook/", handleWebhook(d, resolveAgent, gate))
+	mux.HandleFunc("/config/request", handleConfigRequest(
+		func() *configapprove.Service { return gwConfigApprove },
+		func(id string) bool { _, ok := d.agents[id]; return ok },
+	))
 
-	endpointList := "/send, /status, /command, /todo/done, /branch, /webhook/{agent}/{hookid}"
+	endpointList := "/send, /status, /command, /todo/done, /branch, /webhook/{agent}/{hookid}, /config/request"
 	if d.cfg.HTTP.WSEnabled && len(d.sttMap) > 0 {
 		mux.HandleFunc("/voice", voice.Handler(buildVoiceConfig(d)))
 		endpointList += ", /voice (ws)"

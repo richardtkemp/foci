@@ -366,6 +366,9 @@ func AgentsCommand() *Command {
 				if cc.AgentNewDeps == nil {
 					return Response{Text: "Agent creation wizard is not available."}, nil
 				}
+				if fromHTTP(req) {
+					return Response{Text: httpWizardRefusal("The /agents new wizard")}, nil
+				}
 				w := newAgentWizard(*cc.AgentNewDeps)
 				// Need registry reference — pass via AgentNewDeps.Registry
 				if cc.AgentNewDeps.Registry != nil {

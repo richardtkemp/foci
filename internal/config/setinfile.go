@@ -36,7 +36,7 @@ func SetInFile(path string, target SetTarget, value string, mode os.FileMode) (s
 	if err != nil {
 		return "", err
 	}
-	if err := WriteFileAtomic(path, next, mode); err != nil {
+	if err := WriteConfigFile(path, next, mode); err != nil {
 		return "", err
 	}
 	return old, nil
@@ -61,19 +61,38 @@ func PlanSetInFile(content string, target SetTarget, value string) (next, old st
 	return strings.Join(lines, "\n"), old, nil
 }
 
-// WriteFileAtomic replaces the file at path with content in one atomic step:
-// write a temp file beside it, then rename over the target. No reader ever
-// sees a half-written file. This is the ONE atomic-write primitive for every
-// foci.toml writer (SetInFile, UnsetInFile, SetTableArray and the app config
-// editor's funnel).
-func WriteFileAtomic(path, content string, mode os.FileMode) error {
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(content), mode); err != nil {
-		return fmt.Errorf("write temp: %w", err)
+// WriteConfigFile writes content to the config file at path IN PLACE: an
+// existing file keeps its inode, owner, group and mode (#479). The config
+// file is root:foci-secrets 0664 and the gateway is not root, so a
+// temp-file-and-rename write would replace it with a gateway-owned file the
+// gateway can never give back to root — and the next load would refuse it.
+// mode applies only when the file does not exist yet. This is the ONE write
+// primitive for every foci.toml writer (SetInFile, UnsetInFile,
+// SetTableArray, the app config editor's funnel and the approved-edit path).
+//
+// The write truncates then writes, so a crash mid-write can leave a partial
+// file; secrets.toml has the same trade-off for the same reason.
+func WriteConfigFile(path, content string, mode os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+	if os.IsNotExist(err) {
+		if err := os.WriteFile(path, []byte(content), mode); err != nil {
+			return fmt.Errorf("write config: %w", err)
+		}
+		return nil
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath) // best effort cleanup
-		return fmt.Errorf("rename: %w", err)
+	if err != nil {
+		return fmt.Errorf("open config for writing: %w", err)
+	}
+	if _, err := f.WriteString(content); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write config: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("sync config: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close config: %w", err)
 	}
 	return nil
 }

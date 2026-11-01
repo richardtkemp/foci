@@ -647,6 +647,11 @@ func runGatewayCommand(base string, allArgs []string) error {
 		err = cmdCommand(base, args)
 	case "todo":
 		err = cmdTodo(base, args)
+	case "config":
+		// cmdConfig printed its outcome; a non-zero code exits 1 unprinted.
+		if code := cmdConfig(base, args, os.Stdout, os.Stderr); code != 0 {
+			err = errAlreadyReported
+		}
 	case "ping":
 		if wantsHelp(args) {
 			pingUsage()
@@ -703,6 +708,8 @@ Commands:
   pretool list|test    Check PreToolUse rules against the config (see foci pretool -h)
   rename-agent OLD NEW Rename an agent id everywhere, gateway stopped (see foci rename-agent -h)
   check config|nudge   Check the config file or an agent's nudge-rules.json, read-only (see foci check -h)
+  config show|get|set|unset|wait
+                       Read the config, or ask the user to approve a change to it (see foci config -h)
   version              Print version information
 
 Flags:

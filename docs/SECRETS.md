@@ -239,6 +239,24 @@ Secrets are protected at the operating system level using Unix groups:
 
 This means even if an AI agent constructs a command to read `secrets.toml` using encoding tricks, glob patterns, interpreter string construction, or any other bypass technique, the OS kernel denies access from a spawned subprocess. The two historical escapes from this boundary — ambient `CAP_SETGID` surviving `execve`, and the foci user being a permanent `foci-secrets` member (re-acquirable via `sg`/`newgrp`) — are both closed (see items 3 and 5). Note this protects *subprocesses*; in-process tools are covered separately below.
 
+### Config file protection (`foci.toml`, #479)
+
+The same group keeps agents from rewriting the config. `foci.toml` is `root:foci-secrets` with mode **`0664`**: every process can read it, and only root and foci-gw (the one process holding `foci-secrets`) can write it. An agent changes a setting by asking: `foci config set <path> <value>` (skill `foci-config`) sends the owner an Approve/Deny prompt, and the gateway writes the file only on Approve.
+
+- **Fail closed.** foci-gw refuses a config file in any other shape: at startup it exits naming the fault and the fix; a live apply after an edit applies nothing; a reload of the delegated pretool/stop rules keeps the previous rules. `foci-gw -check-config`, `foci pretool` and `foci debug` still read any readable file.
+- **Writes keep the shape.** Every gateway write edits the file in place (`config.WriteConfigFile`), so the inode, owner, group and mode survive. The gateway is not root, so it could never give a replaced file back to root.
+- **The directory stays `foci`-owned.** An agent could rename `foci.toml` and put its own file in its place; the load-time check refuses that file, which is why the check, not the directory, is the boundary.
+- **Off Linux** (macOS) there is no such group model, so the check is not applied (see [macOS](#macos)).
+- `skip_security_checks = true` turns the check off, with a security warning (the test harness uses it).
+
+`make install` and `make update` do it for you (`make protect-config`, run by `wizard` and by every deploy before the restart); the Docker entrypoint does it at each start. For a manual install, run once — and after any hand edit that replaced the file:
+
+```bash
+sudo chown root:foci-secrets /home/foci/config/foci.toml && sudo chmod 0664 /home/foci/config/foci.toml
+```
+
+A hand edit of `foci.toml` now needs `sudo` (for example `sudoedit`); editors that write a new file and rename it over the old one leave it unprotected, and the next load refuses it until you run the command above.
+
 ### In-process file tools
 
 Some tools run **inside** foci-gw (the main agent's `read`/`write`/`edit`, and the `ExecExport` tools `summary`/`http_request` invoked over the exec bridge), so the OS group-drop does not apply to them — they hold the gateway's credentials. These tools must therefore enforce the boundary themselves: every file-touching path goes through `fileScope.resolveFileArg` (`internal/tools/files.go`), which canonicalises the path (resolving symlinks), enforces isolated-directory containment for sandboxed spawns, and rejects blocked paths via `Store.IsBlockedPath`. This covers `read`/`write`/`edit`, `summary`, and `http_request`'s `body_file` / `files[]` / `save_to`, so none of them can read `secrets.toml` or `/proc/self/environ` even though they execute at gateway privilege.
@@ -288,7 +306,7 @@ At startup, foci verifies:
 - `secrets.toml` permissions are `0660`
 - The process has `foci-secrets` in its supplementary groups
 
-If any check fails, a WARN message is logged with the specific issue and a suggested fix command. Checks never prevent startup.
+If any check fails, a WARN message is logged with the specific issue and a suggested fix command. These checks never prevent startup. The `foci.toml` check does: see [Config file protection](#config-file-protection-focitoml-479).
 
 ### Suppressing checks
 

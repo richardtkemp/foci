@@ -1464,7 +1464,7 @@ type Config struct {
 	Timezone           string                    `toml:"timezone"                                       desc:"IANA timezone for timestamps (e.g. Europe/London, UTC); empty = machine local"`
 	MasterAgent        string                    `toml:"master_agent"                                   desc:"Agent that receives system injections not addressed to a specific agent (restart notices, changelogs); empty = legacy behavior"`
 	DefaultPlatform    string                    `toml:"default_platform"                               desc:"Platform preferred when resolving default sessions and delivery fallbacks (e.g. telegram); empty = most-recently-active"`
-	SkipSecurityChecks bool                      `toml:"skip_security_checks"                           desc:"Skip startup security checks for secrets.toml file permissions"`
+	SkipSecurityChecks bool                      `toml:"skip_security_checks"                           desc:"Skip the security checks on secrets.toml and foci.toml ownership and permissions"`
 	ShellEnvFile       *string                   `toml:"shell_env_file"                                 desc:"Shell rc/env file sourced at startup so tool shells inherit the operator's env; nil = auto-detect (~/.bashrc etc); empty = load nothing"`
 	DefinedKeys        map[string]bool           `toml:"-"` // keys explicitly set in TOML file (populated by Load)
 	SourcePath         string                    `toml:"-"` // absolute-ish path the config was loaded from (populated by Load; used by config editing)

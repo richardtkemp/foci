@@ -158,9 +158,9 @@ func (h *Hub) applyConfigEdit(scope, section, key string, value *string) error {
 // through: it serialises concurrent editor frames (configEditMu), reads the
 // file once, runs the caller's pure plan to compute the post-edit content,
 // refuses the edit when the whole-file load check fails (checkFileEdit — the
-// next restart's verdict on the result), and only then writes atomically
-// (config.WriteFileAtomic: temp file + rename, so no reader ever sees a
-// half-written file). Nothing is written unless every check passes.
+// next restart's verdict on the result), and only then writes the file in
+// place (config.WriteConfigFile, so it keeps its root:foci-secrets ownership,
+// #479). Nothing is written unless every check passes.
 func (h *Hub) checkedFileEdit(plan func(cur string) (string, error)) error {
 	h.configEditMu.Lock()
 	defer h.configEditMu.Unlock()
@@ -181,7 +181,7 @@ func (h *Hub) checkedFileEdit(plan func(cur string) (string, error)) error {
 	if err != nil {
 		mode = 0o600
 	}
-	return config.WriteFileAtomic(cfg.SourcePath, next, mode)
+	return config.WriteConfigFile(cfg.SourcePath, next, mode)
 }
 
 // checkFileEdit is the editor's whole-file check: an edit is refused when its

@@ -23,6 +23,9 @@ import (
 // through their own thread-safe update paths.
 type liveApply struct {
 	configPath string
+	// protect is the load-time protection check (#479): an unprotected file
+	// applies nothing. nil skips it.
+	protect func(path string) error
 
 	mu       sync.RWMutex
 	appliers map[string]func(fresh *config.Config) error // registry address "section.key" → applier
@@ -41,9 +44,10 @@ type liveApply struct {
 // as pprofGate) so command wiring can reach it without threading params.
 var gwLiveApply *liveApply
 
-func newLiveApply(configPath string) *liveApply {
+func newLiveApply(configPath string, protect func(string) error) *liveApply {
 	return &liveApply{
 		configPath:         configPath,
+		protect:            protect,
 		appliers:           map[string]func(*config.Config) error{},
 		mapSectionAppliers: map[string]func(*config.Config) error{},
 	}
@@ -92,6 +96,9 @@ func (la *liveApply) Apply(section, key string) (bool, error) {
 	if fn == nil {
 		configLog.Warnf("%s written but not live-appliable: takes effect on restart", addr)
 		return false, nil
+	}
+	if err := checkConfigLoad(la.protect, la.configPath); err != nil {
+		return true, fmt.Errorf("live apply %s: %w", addr, err)
 	}
 	fresh, err := config.Load(la.configPath, delegator.RegisteredNames())
 	if err != nil {

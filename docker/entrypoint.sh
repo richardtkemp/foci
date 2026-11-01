@@ -128,6 +128,15 @@ if [ -f "$SECRETS_FILE" ]; then
 	chmod 0660 "$SECRETS_FILE"
 fi
 
+# ── Protect foci.toml (#479) ──
+# root:foci-secrets 0664: every process can read it, only root and foci-gw
+# (the one process holding foci-secrets) can write it, so an agent cannot
+# rewrite the config. foci-gw refuses to start on any other shape.
+if [ -f "$CONFIG_FILE" ]; then
+	chown root:foci-secrets "$CONFIG_FILE"
+	chmod 0664 "$CONFIG_FILE"
+fi
+
 # ── Launch foci-gw ──
 # Drop to foci user with:
 #   --groups foci-secrets: grant the secrets group to THIS process only

@@ -101,7 +101,7 @@ func writeEnvironmentCore(b *strings.Builder, acfg config.AgentConfig, configPat
 
 	// Paths
 	b.WriteString("\n## Paths\n")
-	fmt.Fprintf(b, "- Config: %s\n", configPath)
+	fmt.Fprintf(b, "- Config: %s (read-only to you: a direct edit fails by design. To change a setting, run `foci config set <path> <value>`, which asks the user to approve the change; see the foci-config skill)\n", configPath)
 	fmt.Fprintf(b, "- Logs: %s\n", logDir)
 
 	// Message Metadata
