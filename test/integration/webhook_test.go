@@ -11,12 +11,12 @@ package integration
 // and session layer; these prove the wiring end to end (foci_todo #1229).
 
 import (
-	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"foci/internal/testharness"
 )
@@ -186,21 +186,11 @@ func TestL2_Webhook_ConfigSetAddsHookLive(t *testing.T) {
 		t.Fatalf("before /config set: status %d, want 404; body %q", code, body)
 	}
 
-	cmdBody, _ := json.Marshal(map[string]string{"agent": "alpha", "command": "/config set system.webhooks.late=late.md"})
-	resp, err := c.Post("http://foci-gw/command", "application/json", bytes.NewReader(cmdBody))
-	if err != nil {
-		t.Fatalf("POST /command /config set: %v", err)
-	}
-	var cmdOut struct {
-		Response string `json:"response"`
-	}
-	err = json.NewDecoder(resp.Body).Decode(&cmdOut)
-	_ = resp.Body.Close()
-	if err != nil || resp.StatusCode != http.StatusOK {
-		t.Fatalf("/config set: status %d, decode err %v", resp.StatusCode, err)
-	}
-	if !strings.Contains(cmdOut.Response, "Applied live") {
-		t.Fatalf("/config set did not apply live: %q\nstderr:\n%s", cmdOut.Response, stderrTail(h.Stderr()))
+	// The user's own /config set (Telegram), not POST /command: since #479 an
+	// HTTP /config set only files an approval request and changes nothing.
+	pushTelegramText(t, h, "alpha", 12294, "/config set system.webhooks.late=late.md")
+	if waitForSendMessageText(t, h, h.AgentBotToken("alpha"), 15*time.Second, "Applied live") == "" {
+		t.Fatalf("/config set did not apply live\nstderr:\n%s", stderrTail(h.Stderr()))
 	}
 
 	code, body := postWebhook(t, c, "alpha", "late", "?sync=true", "")
