@@ -1518,9 +1518,11 @@ var unsafeFlags = map[string]unsafeCmdFlags{
 	"rg": {
 		longFlags: []string{"--pre"},
 	},
-	"go": {
-		wordFlags: []string{"-vettool"},
-	},
+	// go: the flags that run a program or write state (-toolexec, -vettool,
+	// env -w, …) are judged by goRunsProgram (#2736), which knows go's flag
+	// spellings and subcommands. The entry stays so go remains flag-checked
+	// (the #2213 glob and #2216 brace/substitution/variable rules).
+	"go": {},
 	"yq": {
 		shortFlags: "i",
 		longFlags:  []string{"--inplace"},
@@ -1759,6 +1761,9 @@ func containsUnsafeFlagWords(words []shellWord) bool {
 		return true
 	}
 	if cmdBase == "git" && (gitGrepPagerUnsafe(words) || gitRunsNamedProgram(words)) {
+		return true
+	}
+	if cmdBase == "go" && goRunsProgram(words) {
 		return true
 	}
 	if !flagCheckedCommand(cmdBase) {

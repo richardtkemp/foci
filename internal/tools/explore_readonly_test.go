@@ -136,6 +136,10 @@ func TestReadOnlyBatchRules_DecideCommands(t *testing.T) {
 		{"git log --output=/tmp/x", false},
 		{"git branch newname", false},
 		{"git commit -m x", false},
+		{"go list -f {{.Dir}} ./...", true},
+		{"go list -export -toolexec=/tmp/x ./...", false}, // #2736
+		{"go vet --vettool=/tmp/x ./...", false},
+		{"go env -w CC=/tmp/x", false},
 	} {
 		input, _ := json.Marshal(map[string]string{"command": c.cmd})
 		if got, _ := autoapprove.MatchWithEnv(rules, "Bash", input, nil); got != c.want {

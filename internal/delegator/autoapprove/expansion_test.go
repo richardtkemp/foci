@@ -156,7 +156,7 @@ func TestContainsUnsafeFlagsBraceRule(t *testing.T) {
 // TestBracesBashDoesNotExpandStayApproved is the characterisation half of
 // requirement 3: a word whose braces are quoted, or with no unquoted `,`/`..`
 // between them, is not brace-expanded by bash and keeps approval. `go` is
-// flag-checked (wordFlags -vettool), so its `-f {{.Dir}}` template row proves
+// flag-checked (goRunsProgram, #2736), so its `-f {{.Dir}}` template row proves
 // the separator rule rather than the gate.
 func TestBracesBashDoesNotExpandStayApproved(t *testing.T) {
 	rules := parseAutoApproveRules(CommonReadonlyRules)
