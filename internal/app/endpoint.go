@@ -77,6 +77,35 @@ func ExpireBatchPrompts(maxAge time.Duration) {
 	h.expireBatchPrompts(time.Now().Add(-maxAge))
 }
 
+// PresentAskgwPrompt shows an ask-gateway question on every app device as an
+// app-wide prompt, tied to no agent or conversation (#2707). onChoice receives
+// the tapped button's Data, once, from whichever device answers first. Reports
+// false — nothing shown — when the app provider is not running or no paired
+// device has a build that can show it (none connected with the feature, none
+// push-wakeable with it); the caller then posts to the agent chat. A device
+// that is offline sees the prompt on its next connect.
+func PresentAskgwPrompt(id, header, text string, buttons []platform.ButtonChoice, onChoice func(data string)) bool {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return false
+	}
+	return h.presentAskgw(id, header, platform.StripEmbeddedHeader(header, text), buttons, onChoice)
+}
+
+// CloseAskgwPrompt withdraws an app-wide askgw prompt (cancelled or timed out)
+// from every device. Reports whether it was pending; a no-op otherwise.
+func CloseAskgwPrompt(id string) bool {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return false
+	}
+	return h.closeAskgw(id)
+}
+
 // MintActivePairKey mints a single-use, short-TTL pairing key on the live app
 // hub (#862) and returns it with its expiry. A device exchanges this key at
 // POST /app/pair for its own revocable token. The key lives only in memory and

@@ -172,6 +172,13 @@ func stripEmbeddedHeader(header, text string) string {
 	return rest[nl+2:]
 }
 
+// StripEmbeddedHeader is stripEmbeddedHeader for a surface outside this
+// package that also shows header separately from text (the app's askgw
+// dialog, #2707).
+func StripEmbeddedHeader(header, text string) string {
+	return stripEmbeddedHeader(header, text)
+}
+
 // isCounterSuffix reports whether s is a FormatText sequential-question
 // counter suffix of the form " (<digits>/<digits>)".
 func isCounterSuffix(s string) bool {

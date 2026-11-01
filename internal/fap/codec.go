@@ -154,6 +154,8 @@ func decodeClient(t string, d json.RawMessage) (any, error) {
 		dst = &DepthAck{}
 	case TypeDepthDismiss:
 		dst = &DepthDismiss{}
+	case TypeAskgwResponse:
+		dst = &AskgwResponse{}
 	default:
 		return nil, nil // unknown inbound frame — ignored upstream
 	}
@@ -181,6 +183,8 @@ func derefClient(dst any) any {
 	case *DepthAck:
 		return *v
 	case *DepthDismiss:
+		return *v
+	case *AskgwResponse:
 		return *v
 	case *Command:
 		return *v

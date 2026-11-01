@@ -3,6 +3,7 @@ package main
 import (
 	"time"
 
+	"foci/internal/app"
 	"foci/internal/askgw"
 	"foci/internal/config"
 	"foci/internal/platform"
@@ -44,15 +45,12 @@ func setupAskgw(cfg *config.Config, agents map[string]*agentInstance, agentOrder
 		return agentID, sk
 	}
 
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+	chatPresent := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+		buttons := askgwButtons(choices)
 		resolve := connResolver(connMgr, sessionKey, agentID)
 		conn := resolve()
 		if conn == nil {
 			return "", false
-		}
-		buttons := make([]platform.ButtonChoice, len(choices))
-		for i, c := range choices {
-			buttons[i] = platform.ButtonChoice{Label: c.Label, Data: c.Data}
 		}
 		platformMsgID, err := platform.SendInteractiveMessageWithID(resolve, msgID, summary, text, buttons, func(choice platform.ButtonChoice) string {
 			onResponse(choice.Data)
@@ -69,7 +67,12 @@ func setupAskgw(cfg *config.Config, agents map[string]*agentInstance, agentOrder
 		return platformMsgID, true
 	}
 
+	present := askgwPresenter(app.PresentAskgwPrompt, chatPresent)
+
 	cancelPrompt := func(msgID, finalText string) {
+		if app.CloseAskgwPrompt(msgID) {
+			return
+		}
 		if err := platform.CancelInteractiveMessage(msgID, finalText); err != nil {
 			askgwLog.Warnf("cancel prompt %s: %v", msgID, err)
 		}
@@ -123,4 +126,33 @@ func setupAskgw(cfg *config.Config, agents map[string]*agentInstance, agentOrder
 		return nil
 	}
 	return srv
+}
+
+// appPromptFn shows an askgw question app-wide (app.PresentAskgwPrompt);
+// false means it was not shown.
+type appPromptFn func(id, header, text string, buttons []platform.ButtonChoice, onChoice func(data string)) bool
+
+// askgwPresenter is askgw's PresentFn (#2707): the question is shown app-wide,
+// as a dialog over whatever is on screen on every app device, not posted into
+// an agent's chat. When appPresent refuses — no app provider, or no paired
+// device with a build that can show it — it goes to the agent chat (chat), as
+// before: a sudo approval must never be invisible. An app-wide prompt returns
+// an empty platform msgID, so a later `notify` goes to notifyFallback: there
+// is no chat message to edit.
+func askgwPresenter(appPresent appPromptFn, chat askgw.PresentFn) askgw.PresentFn {
+	return func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+		if appPresent(msgID, summary, text, askgwButtons(choices), onResponse) {
+			return "", true
+		}
+		return chat(agentID, sessionKey, msgID, text, summary, choices, onResponse)
+	}
+}
+
+// askgwButtons maps askgw's question choices onto platform buttons.
+func askgwButtons(choices []question.Choice) []platform.ButtonChoice {
+	buttons := make([]platform.ButtonChoice, len(choices))
+	for i, c := range choices {
+		buttons[i] = platform.ButtonChoice{Label: c.Label, Data: c.Data}
+	}
+	return buttons
 }

@@ -34,6 +34,10 @@ const (
 const (
 	pushTypeMessage = "message"
 	pushTypeRead    = "read"
+	// pushTypeAskgw wakes a device for a pending ask-gateway prompt (#2707).
+	// It names no conversation; the client shows a notification that opens
+	// the app, whose reconnect brings the askgw.prompts dialog.
+	pushTypeAskgw = "askgw"
 )
 
 // featureReadWake is the ClientHello feature a client advertises when it
@@ -50,10 +54,43 @@ type pushTokens struct {
 	mu       sync.RWMutex
 	tokens   map[string]string // deviceId → FCM registration token
 	readWake map[string]bool   // deviceId → its latest hello advertised featureReadWake
+	askgw    map[string]bool   // deviceId → its latest hello advertised featureAskgwPrompts (#2707)
 }
 
 func newPushTokens() *pushTokens {
-	return &pushTokens{tokens: make(map[string]string), readWake: make(map[string]bool)}
+	return &pushTokens{tokens: make(map[string]string), readWake: make(map[string]bool), askgw: make(map[string]bool)}
+}
+
+// setAskgw records whether deviceID's latest hello advertised
+// featureAskgwPrompts. Set on every hello, so a device downgraded to an older
+// build stops counting as able to show askgw prompts at its next connect.
+// In memory like the tokens: after a restart no device counts until it
+// reconnects, so askgw prompts fall back to the agent chat — the visible side.
+func (p *pushTokens) setAskgw(deviceID string, ok bool) {
+	if deviceID == "" {
+		return
+	}
+	p.mu.Lock()
+	if ok {
+		p.askgw[deviceID] = true
+	} else {
+		delete(p.askgw, deviceID)
+	}
+	p.mu.Unlock()
+}
+
+// askgwTargetsExcluding is targetsExcluding limited to devices that can show
+// askgw prompts (featureAskgwPrompts).
+func (p *pushTokens) askgwTargetsExcluding(exclude map[string]bool) map[string]string {
+	out := p.targetsExcluding(exclude)
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	for id := range out {
+		if !p.askgw[id] {
+			delete(out, id)
+		}
+	}
+	return out
 }
 
 // setReadWake records whether deviceID's latest hello advertised
@@ -425,6 +462,27 @@ func (p *fcmPusher) flushRead(convID string, connected func() map[string]bool) {
 	}
 	for _, tok := range p.tokens.readWakeTargetsExcluding(exclude) {
 		safeGo("fcm-read-wake", func() { p.sendData(tok, readWakeData(convID, messageID), readWakeAndroid(convID)) })
+	}
+}
+
+// notifyAskgw wakes every askgw-capable device without a live socket for a new
+// askgw prompt (#2707). Not coalesced: each prompt is a distinct decision. An
+// older build could not show the prompt, so it is not woken.
+func (p *fcmPusher) notifyAskgw(promptID, preview string, exclude map[string]bool) {
+	if p == nil {
+		return
+	}
+	for _, tok := range p.tokens.askgwTargetsExcluding(exclude) {
+		safeGo("fcm-askgw", func() { p.sendData(tok, askgwWakeData(promptID, preview), map[string]any{"priority": "high"}) })
+	}
+}
+
+// askgwWakeData is an askgw wake's FCM data payload.
+func askgwWakeData(promptID, preview string) map[string]string {
+	return map[string]string{
+		"type":     pushTypeAskgw,
+		"promptId": promptID,
+		"preview":  preview,
 	}
 }
 

@@ -75,6 +75,9 @@ type Hub struct {
 	devices  *deviceStore
 	authLim  *authLimiter
 
+	// askgw holds the pending ask-gateway prompts, shown app-wide (#2707).
+	askgw askgwPromptSet
+
 	// helloMu guards helloByDevice/helloWarns only — deliberately not h.mu,
 	// which is held across conversation fan-out; a disconnect must never queue
 	// behind that.

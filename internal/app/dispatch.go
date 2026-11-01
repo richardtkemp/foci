@@ -108,6 +108,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		// Register the device's FCM token for offline wake pushes.
 		h.tokens.set(f.Client.DeviceID, f.PushToken)
 		h.tokens.setReadWake(f.Client.DeviceID, slices.Contains(f.Features, featureReadWake))
+		h.tokens.setAskgw(f.Client.DeviceID, slices.Contains(f.Features, featureAskgwPrompts))
 		// The replay below catches this device up, consuming any wake it was
 		// sent: reopen its coalescing windows so the next offline message wakes it.
 		h.pusher.deviceConnected(f.Client.DeviceID)
@@ -121,6 +122,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.pushCheckboxes(client)
 		h.pushOpenSet(client)
 		h.pushViewing(client)
+		h.pushAskgw(client)
 		// Reconnect resume: re-attach (which recomputes the capability union across
 		// attached clients) + replay each conversation the client still has
 		// unrendered frames for.
@@ -199,6 +201,9 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 
 	case fap.InteractiveProgress:
 		h.handleInteractiveProgress(f)
+
+	case fap.AskgwResponse:
+		h.handleAskgwResponse(client, f)
 
 	case fap.WizardResponse:
 		// Off the socket goroutine: HandleMessage runs wizard logic that may

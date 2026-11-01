@@ -1,6 +1,6 @@
 # Ask Gateway (askgw)
 
-A local Unix-socket server that lets any application on the host forward questions to the foci user's chat — presenting them as interactive multiple-choice prompts the human can answer inline (buttons on Telegram, selection UI on the Android app). The app blocks on the socket until the human responds (or the question times out).
+A local Unix-socket server that lets any application on the host forward questions to the foci user's chat — presenting them as interactive multiple-choice prompts the human can answer. When the foci app provider is running and at least one paired device runs an app build that supports it (connected, or offline but push-wakeable), a question is shown app-wide on every app device (Android and desktop) as a blocking dialog over whatever is on screen, tied to no agent or conversation; the first device to answer wins and the dialog closes on the others (#2707). Otherwise (no app provider, or only old-build devices, or none) it is posted into the routed agent's chat as inline buttons (Telegram/Discord). The calling application blocks on the socket until the human responds (or the question times out).
 
 ## Why
 
@@ -63,4 +63,5 @@ Connect to the Unix socket, send an `ask` frame as a single line of JSON, and re
 
 - **No persistence across restarts.** Socket connections die on foci restart. Answers can only reach the original connection — there's no way to deliver a response after a reconnect.
 - **No streaming or long-polling (Unix socket only).** One `ask` → one `answer` (or timeout/error). The app blocks on the socket read. The HTTP transport (`http_enabled = true`) supports long-polling via `GET /askgw/ask/{id}?wait=<seconds>`.
-- **Agent routing is session-based.** Questions route to the agent's default (most recently active) session. If the agent has no active session, the question returns `unavailable`.
+- **Agent routing is session-based.** Questions route to the agent's default (most recently active) session. If the agent has no active session, the question returns `unavailable` — even when the app provider would show it app-wide without one.
+- **`notify` on an app-wide prompt** has no chat message to edit, so it is posted as a standalone message in the routed agent's chat.

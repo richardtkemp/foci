@@ -430,6 +430,7 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		MessageConsumed{ConversationID: "c", MessageID: "m"},
 		MessageEdit{ConversationID: "c", MessageID: "m", Text: "t"},
 		Reminders{ConversationID: "c", Reminders: []PendingReminder{{ID: 1, Text: "x", DueAtMs: 1, State: "pending"}}},
+		AskgwPrompts{Prompts: []AskgwPrompt{{PromptID: "p", Text: "t", Choices: []Choice{{Label: "Yes", Data: "y"}}}}},
 	}
 	for _, f := range frames {
 		wire, err := Encode(f, 0, 0, "id", "ts")
@@ -469,6 +470,42 @@ func TestEncode_RemindersWire(t *testing.T) {
 	}
 	if !strings.Contains(empty, `"reminders":[]`) {
 		t.Errorf("empty list wire %s, want reminders:[]", empty)
+	}
+}
+
+// TestEncode_AskgwPromptsWire pins the askgw.prompts field names, which the
+// Kotlin client decodes by name (#2707), and that an empty list encodes as []
+// (the "none pending, close any dialog" signal), never null.
+func TestEncode_AskgwPromptsWire(t *testing.T) {
+	wire, err := Encode(AskgwPrompts{Prompts: []AskgwPrompt{
+		{PromptID: "askgw-a1-q0", Header: "Sudo", Text: "Run `ls`?", Choices: []Choice{{Label: "Approve", Data: "opt:0"}}},
+	}}, 0, 0, "id", "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"t":"askgw.prompts"`, `"promptId":"askgw-a1-q0"`, `"header":"Sudo"`, `"text":"Run ` + "`ls`" + `?"`, `"label":"Approve"`, `"data":"opt:0"`} {
+		if !strings.Contains(wire, want) {
+			t.Errorf("wire %s missing %s", wire, want)
+		}
+	}
+	empty, err := Encode(AskgwPrompts{Prompts: []AskgwPrompt{}}, 0, 0, "id", "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(empty, `"prompts":[]`) {
+		t.Errorf("empty list wire %s, want prompts:[]", empty)
+	}
+}
+
+// TestDecode_AskgwResponse pins the app->server askgw answer's field names (#2707).
+func TestDecode_AskgwResponse(t *testing.T) {
+	in, err := Decode(`{"t":"askgw.response","id":"i1","d":{"promptId":"askgw-a1-q0","data":"opt:1"}}`)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	f, ok := in.Frame.(AskgwResponse)
+	if !ok || f.PromptID != "askgw-a1-q0" || f.Data != "opt:1" {
+		t.Fatalf("frame = %#v, want AskgwResponse{askgw-a1-q0, opt:1}", in.Frame)
 	}
 }
 

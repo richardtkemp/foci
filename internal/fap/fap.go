@@ -99,6 +99,13 @@ const (
 	// pending wake reminders (#2600), re-sent on every change; an empty list
 	// clears the indicator. Snapshot half: ConversationInfo.Reminders.
 	TypeReminders = "reminders"
+	// TypeAskgwPrompts (server->app) carries the WHOLE list of pending askgw
+	// prompts (#2707): questions an external App (e.g. aisudo) asks the human
+	// through foci's ask-gateway. Not tied to any agent or conversation; the
+	// app shows the first as a blocking dialog over whatever is on screen.
+	// Re-sent to every socket on each change and after each hello, so an empty
+	// list clears a device's stale dialog.
+	TypeAskgwPrompts = "askgw.prompts"
 
 	// app -> server
 	TypeCommand                = "command"
@@ -176,6 +183,10 @@ const (
 	// report. Both are idempotent; the server answers with the next depth.feed.
 	TypeDepthAck     = "depth.ack"
 	TypeDepthDismiss = "depth.dismiss"
+	// TypeAskgwResponse (app->server) answers one askgw prompt (#2707): the
+	// tapped choice's Data, echoed verbatim. Socket-level (no conversation),
+	// fire-and-forget; the server answers with the next askgw.prompts.
+	TypeAskgwResponse = "askgw.response"
 )
 
 // ActivityKind enumerates the server->app agent activity states carried by the
@@ -646,6 +657,27 @@ type Reminders struct {
 }
 
 func (Reminders) Type() string { return TypeReminders }
+
+// AskgwPrompt is one pending ask-gateway question (#2707). PromptID is the
+// server's routing key, echoed in AskgwResponse. Header is a short title
+// (e.g. "Sudo"), Text the markdown body, Choices the buttons; each choice's
+// Data is opaque to the app and echoed verbatim.
+type AskgwPrompt struct {
+	PromptID string   `json:"promptId"`
+	Header   string   `json:"header,omitempty"`
+	Text     string   `json:"text"`
+	Choices  []Choice `json:"choices"`
+}
+
+// AskgwPrompts carries the WHOLE list of pending askgw prompts, oldest first
+// (#2707). Never conversation-scoped: the questions come from outside every
+// agent. An empty list means none pending — a device showing a dialog for a
+// prompt no longer listed closes it (answered elsewhere, cancelled, timed out).
+type AskgwPrompts struct {
+	Prompts []AskgwPrompt `json:"prompts"`
+}
+
+func (AskgwPrompts) Type() string { return TypeAskgwPrompts }
 
 // Media references an out-of-band blob the app fetches via GET /app/blob/<id>.
 // The bytes never travel over the WebSocket — only this reference does.
@@ -1233,6 +1265,14 @@ func (CheckboxSync) Type() string { return TypeCheckboxSync }
 // closes. Fire-and-forget, not conversation-reliability-scoped.
 type ViewingPut struct {
 	ConversationID string `json:"conversationId,omitempty"`
+}
+
+// AskgwResponse answers one askgw prompt (app->server, #2707). Data is the
+// tapped AskgwPrompt choice's Data, verbatim. An answer for a prompt the
+// server no longer holds is ignored; the next AskgwPrompts corrects the app.
+type AskgwResponse struct {
+	PromptID string `json:"promptId"`
+	Data     string `json:"data"`
 }
 
 // ViewingSync lists the conversations the user's OTHER devices are viewing
