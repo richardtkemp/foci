@@ -314,9 +314,9 @@ func FormatSubagentDetail(descriptions []string) string {
 	return fmt.Sprintf("%d subagent(s) running", len(descriptions))
 }
 
-// ExtractAgentDescription parses the "description" field from an Agent
-// tool_use input JSON payload.
-func ExtractAgentDescription(raw json.RawMessage) string {
+// ExtractToolDescription parses the "description" field from a tool_use input
+// JSON payload (an Agent call's or a Bash call's).
+func ExtractToolDescription(raw json.RawMessage) string {
 	var input struct {
 		Description string `json:"description"`
 	}

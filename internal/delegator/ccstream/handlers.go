@@ -291,7 +291,7 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 			// completion, so both must count toward Pending(). A synchronous Bash
 			// completes inside the turn and is not tracked.
 			if block.Name == "Agent" {
-				desc := delegator.ExtractAgentDescription(block.Input)
+				desc := delegator.ExtractToolDescription(block.Input)
 				model, subagentType := delegator.ExtractAgentModel(block.Input)
 				b.agents.AddEntry(delegator.TrackedSubagent{ID: block.ID, Description: desc,
 					Kind: delegator.SubagentKindAgent, Model: model, SubagentType: subagentType})
@@ -315,7 +315,13 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 					b.subagentTails().expectForeground(block.ID)
 				}
 			} else if block.Name == "Bash" && delegator.ExtractBashBackground(block.Input) {
-				b.agents.AddEntry(delegator.TrackedSubagent{ID: block.ID, Description: "background command",
+				// Label it with the call's own description, as the foreground
+				// tool line is (#2735); the generic label only when it has none.
+				desc := delegator.ExtractToolDescription(block.Input)
+				if desc == "" {
+					desc = "background command"
+				}
+				b.agents.AddEntry(delegator.TrackedSubagent{ID: block.ID, Description: desc,
 					Kind: delegator.SubagentKindCommand, Command: toolformat.FullCommand(block.Name, block.Input)})
 			} else if block.Name == "Bash" {
 				b.noteMainShellCall(block.ID)

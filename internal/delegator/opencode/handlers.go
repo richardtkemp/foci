@@ -337,7 +337,7 @@ func (b *Backend) handleToolPart(part Part) {
 			se.OnToolStart(part.CallID, part.Tool, inputJSON)
 		}
 		if part.Tool == taskTool {
-			desc := delegator.ExtractAgentDescription(json.RawMessage(inputJSON))
+			desc := delegator.ExtractToolDescription(json.RawMessage(inputJSON))
 			b.agents.Add(part.CallID, desc)
 			if se := b.sessionEvents.Load(); se != nil && se.OnSubagentStart != nil {
 				se.OnSubagentStart(part.CallID, desc, "", 1)

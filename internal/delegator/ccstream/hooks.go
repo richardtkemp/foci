@@ -553,7 +553,7 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 					prompt = delegator.ExtractAgentPrompt(input)
 				}
 				b.logger().Infof("subagent_start signal=agent_pre_tool_use group=%s", parsed.ToolUseID)
-				se.OnSubagentStart(parsed.ToolUseID, delegator.ExtractAgentDescription(input), prompt, 1)
+				se.OnSubagentStart(parsed.ToolUseID, delegator.ExtractToolDescription(input), prompt, 1)
 				// Foreground transcript tailing is armed earlier, at the Agent
 				// tool_use detection in OnAssistant (race-free vs task_started).
 			}

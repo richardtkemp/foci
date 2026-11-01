@@ -282,11 +282,11 @@ func TestSubagentTracker_NilCallback(t *testing.T) {
 	// Should not panic.
 }
 
-// --- ExtractAgentDescription tests ---
+// --- ExtractToolDescription tests ---
 
-// TestExtractAgentDescription verifies extraction of the description
+// TestExtractToolDescription verifies extraction of the description
 // field from Agent tool_use input JSON.
-func TestExtractAgentDescription(t *testing.T) {
+func TestExtractToolDescription(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name  string
@@ -323,9 +323,9 @@ func TestExtractAgentDescription(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := ExtractAgentDescription(tt.input)
+			got := ExtractToolDescription(tt.input)
 			if got != tt.want {
-				t.Errorf("ExtractAgentDescription = %q, want %q", got, tt.want)
+				t.Errorf("ExtractToolDescription = %q, want %q", got, tt.want)
 			}
 		})
 	}

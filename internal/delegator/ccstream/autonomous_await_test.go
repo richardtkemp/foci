@@ -122,6 +122,38 @@ func TestBashBackgroundTracked(t *testing.T) {
 	}
 }
 
+// TestBashBackgroundEntryCarriesDescription pins #2735: a run_in_background
+// Bash's running entry is labelled with the call's own description (as the
+// foreground tool line is), keeps its full command, and falls back to the
+// generic "background command" label only when the call has no description.
+func TestBashBackgroundEntryCarriesDescription(t *testing.T) {
+	t.Parallel()
+
+	mkTool := func(id, name, input string) *AssistantMessage {
+		return &AssistantMessage{Message: BetaMessage{
+			Content: []ContentBlock{{Type: "tool_use", ID: id, Name: name, Input: json.RawMessage(input)}},
+		}}
+	}
+	b := &Backend{}
+	applyHandler(b, &testHandler{})
+
+	b.OnAssistant(mkTool("with", "Bash", `{"command":"sleep 60","description":"Wait a minute","run_in_background":true}`))
+	b.OnAssistant(mkTool("without", "Bash", `{"command":"sleep 61","run_in_background":true}`))
+
+	got := map[string]delegator.RunningSubagent{}
+	for _, r := range b.agents.Running() {
+		got[r.ID] = r
+	}
+	if r := got["with"]; r.Description != "Wait a minute" || r.Command != "sleep 60" || r.Kind != delegator.SubagentKindCommand {
+		t.Errorf("described background Bash entry = %+v, want description %q, command %q, kind %q",
+			r, "Wait a minute", "sleep 60", delegator.SubagentKindCommand)
+	}
+	if r := got["without"]; r.Description != "background command" || r.Command != "sleep 61" {
+		t.Errorf("undescribed background Bash entry = %+v, want description %q, command %q",
+			r, "background command", "sleep 61")
+	}
+}
+
 // TestTaskStopClearsViaNotification: a TaskStop'd task leaves the tracker on the
 // task_notification status "stopped" that CC sends for it (verified live on CC
 // 2.1.280, #2022), and ONLY there. The TaskStop tool_use used to RemoveOne itself,
