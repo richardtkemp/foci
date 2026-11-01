@@ -1436,36 +1436,45 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 		ThresholdSecs: 0, // always async
 		Done:          signal,
 		NotifyMessage: func() string {
-			var msg string
-			switch {
-			case interrupted:
+			if interrupted {
 				return ""
-			case stopped:
-				msg = fmt.Sprintf("[SPAWN RESULT] Branch %s (spawn %s) was stopped by %s.", branchKey, id, tr.stopper(parent, id))
-			case runErr != nil:
-				msg = fmt.Sprintf("[SPAWN RESULT] Branch %s (spawn %s) failed:\n\n%v", branchKey, id, runErr)
-			default:
-				if result == "" {
-					result = "(empty response)"
-				}
-				msg = fmt.Sprintf("[SPAWN RESULT] Branch %s (spawn %s) completed:\n\n%s", branchKey, id, result)
 			}
-			// Messages to its spawner that had to wait (#2662) head it.
-			if head := keptMessagesHead(id, tr.takeKept(parent, id)); head != "" {
-				msg = head + msg
-			}
-			if dropped > 0 {
-				msg += fmt.Sprintf("\n\n(%d message(s) sent with spawn_send arrived too late and were not delivered.)", dropped)
-			}
-			if n := tr.resumeCount(parent, id); n > 0 {
-				msg += fmt.Sprintf("\n\n(This spawn was resumed %d time(s) after a foci restart.)", n)
-			}
-			return msg
+			return s.resultMessage(parent, id, branchKey, stopped, runErr, result, dropped)
 		},
 		Deliver:       func(msg string) { s.deliver(parent, id, msg) },
 		Cleanup:       s.slots.release,
 		PendingResult: TextResult(pendingResult),
 	})
+}
+
+// resultMessage is the [SPAWN RESULT] for one run of a background spawn that
+// ended (not cut short by a shutdown): stopped, failed (runErr) or completed
+// with result. The messages it kept for its spawner head it.
+func (s *Spawner) resultMessage(parent, id, branchKey string, stopped bool, runErr error, result string, dropped int) string {
+	tr := s.deps.Tracker
+	var msg string
+	switch {
+	case stopped:
+		msg = fmt.Sprintf("[SPAWN RESULT] Branch %s (spawn %s) was stopped by %s.", branchKey, id, tr.stopper(parent, id))
+	case runErr != nil:
+		msg = fmt.Sprintf("[SPAWN RESULT] Branch %s (spawn %s) failed:\n\n%v", branchKey, id, runErr)
+	default:
+		if result == "" {
+			result = "(empty response)"
+		}
+		msg = fmt.Sprintf("[SPAWN RESULT] Branch %s (spawn %s) completed:\n\n%s", branchKey, id, result)
+	}
+	// Messages to its spawner that had to wait (#2662) head it.
+	if head := keptMessagesHead(id, tr.takeKept(parent, id)); head != "" {
+		msg = head + msg
+	}
+	if dropped > 0 {
+		msg += fmt.Sprintf("\n\n(%d message(s) sent with spawn_send arrived too late and were not delivered.)", dropped)
+	}
+	if n := tr.resumeCount(parent, id); n > 0 {
+		msg += fmt.Sprintf("\n\n(This spawn was resumed %d time(s) after a foci restart.)", n)
+	}
+	return msg
 }
 
 // resolveSpawnGroup resolves a spawn call to (client, model, format) using the group resolver.

@@ -306,6 +306,12 @@ type Agent struct {
 	// at all (e.g. a pure-API session with no chat identity). Nil (tests /
 	// not wired) → autonomousTurnSink falls all the way to NopSink, as today.
 	DurableTurnSink func(sk string) turnevent.Sink
+	// SpawnBranchTurn claims an autonomous run on a background spawn's branch
+	// (#2729): ok means sk is one, and the run's events go to sink, which
+	// reports it to the spawn's spawner and never to a chat. stop interrupts
+	// the run. Wired from cmd/foci-gw to tools.SpawnBranchTurn; nil (tests)
+	// → no session is a spawn's.
+	SpawnBranchTurn func(sk string, stop func()) (sink turnevent.Sink, ok bool)
 }
 
 func (a *Agent) streaming() bool {

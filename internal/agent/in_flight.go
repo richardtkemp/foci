@@ -270,7 +270,22 @@ func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator, tr
 	var sink turnevent.Sink
 	var cleanup func()
 	recordOnly := false
-	if kind := a.takeBgOriginKind(sessionKey, triggers); kind != "" {
+	kind := a.takeBgOriginKind(sessionKey, triggers)
+	var spawnSink turnevent.Sink
+	if a.SpawnBranchTurn != nil {
+		spawnSink, _ = a.SpawnBranchTurn(sessionKey, func() {
+			if err := be.Interrupt(context.Background()); err != nil {
+				a.logger().Infof("autonomous run sk=%s: interrupt for a spawn stop: %v", sessionKey, err)
+			}
+		})
+	}
+	if spawnSink != nil {
+		// A background spawn's branch (#2729): the run reports to the spawn's
+		// spawner, like the spawn's own turns, and reaches no chat.
+		recordOnly = true
+		a.logger().Infof("autonomous run sk=%s on a background spawn's branch (triggers=%v): reported to its spawner, not delivered", sessionKey, triggers)
+		sink = newLoggingSink(spawnSink, a, chatID, autoMeta, sessionKey)
+	} else if kind != "" {
 		recordOnly = true
 		a.logger().Infof("autonomous run sk=%s reacts to background work of a %s turn (triggers=%v): recorded, not delivered", sessionKey, kind, triggers)
 		// Record-only, and stamped like its originating turn, so background

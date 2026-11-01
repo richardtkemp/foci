@@ -128,6 +128,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		}
 		return turn.NewSessionSink(conn, sessionKey, "autonomous")
 	}
+	// A run Claude Code starts by itself on a background spawn's branch
+	// reports to the spawn's spawner, never to a chat (#2729).
+	ag.SpawnBranchTurn = tools.SpawnBranchTurn
 	// Resolve a session's messaging platform (telegram/app/discord) for the
 	// per-session ## Platform block from the durable chat claim, so the prompt
 	// (and its compaction-time fingerprint) never depends on connection
