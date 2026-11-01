@@ -262,7 +262,8 @@ func matchToolAutoApprove(rules []Rule, toolName string, input json.RawMessage) 
 // could be used to execute any arbitrary command.
 //
 // Bare invocations (e.g. "env" alone to show environment) are not affected —
-// only wrapper + arguments triggers rejection.
+// only wrapper + arguments triggers rejection. command, exec, builtin and
+// xargs are not here: they are unwrapped instead (runnerWrappers, #2241).
 var wrapperCommands = map[string]bool{
 	"env":     true,
 	"nice":    true,
@@ -275,6 +276,25 @@ var wrapperCommands = map[string]bool{
 	"ionice":  true,
 	"strace":  true,
 	"watch":   true,
+	// Other exec wrappers (#2241): each runs its arguments as a command.
+	"stdbuf":      true,
+	"busybox":     true,
+	"chroot":      true,
+	"unshare":     true,
+	"nsenter":     true,
+	"prlimit":     true,
+	"chrt":        true,
+	"setpriv":     true,
+	"runuser":     true,
+	"su":          true,
+	"sudo":        true,
+	"doas":        true,
+	"systemd-run": true,
+	"unbuffer":    true,
+	"parallel":    true,
+	"ltrace":      true,
+	"valgrind":    true,
+	"firejail":    true,
 }
 
 // varSettingCommands are commands that can set shell variables opaquely —
@@ -305,11 +325,14 @@ var varSettingCommands = map[string]bool{
 //     rule applies in every quoting shape, so braces bash would not expand
 //     (double-quoted, separator-free) keep approval (#2216)
 //   - Function declarations and coprocesses are rejected
-//   - Command wrappers (env, nice, timeout, etc.) with arguments are rejected
+//   - Command wrappers (env, nice, timeout, sudo, etc.) with arguments are
+//     rejected; command, exec, builtin and xargs are unwrapped and their
+//     inner command checked as if typed (#2241)
 //   - Shell interceptors (bash -c, sh -c, etc.) are unwrapped: the inner
 //     script is extracted, statically resolved (literals, inline variable
 //     assignments, and environment variables), and validated recursively
-//     against the same rules
+//     against the same rules. Common options before or after -c are
+//     accepted; every other interceptor form is rejected (#2241)
 //
 // Command-level checks (reusing existing infrastructure):
 //   - Each simple command must match at least one Bash auto-approve rule
@@ -351,14 +374,15 @@ func parseShellScript(command string) ([]*syntax.Stmt, bool) {
 }
 
 // shellInterceptors are shell interpreters that execute a script passed via -c.
-// When such a command is encountered, the -c argument is extracted, statically
-// resolved (literal strings only — no variable references or substitutions),
-// and validated recursively against the same rules. This allows safe commands
-// wrapped in e.g. "bash -c 'ls'" to be auto-approved, while dangerous inner
-// commands (bash -c 'rm file') are still rejected.
-//
-// Non-literal -c arguments (variables, command substitutions, etc.) cannot be
-// resolved statically and cause the command to be rejected (prompts user).
+// When such a command is encountered in a form extractShellScript understands
+// (-c with common options before or after it, #2241), the script word is
+// extracted, statically resolved (literals, inline assignments and the
+// environment snapshot), and validated recursively against the same rules.
+// This allows safe commands wrapped in e.g. "bash -c 'ls'" to be
+// auto-approved, while dangerous inner commands (bash -c 'rm file') are still
+// rejected. Every other interceptor form is rejected (prompts user), and so
+// is a script word that cannot be resolved statically (a command
+// substitution, an unset variable).
 var shellInterceptors = map[string]bool{
 	"bash": true,
 	"sh":   true,
@@ -457,7 +481,15 @@ func validateParsedStmt(rules []Rule, stmt *syntax.Stmt, depth int, vc *varCtx) 
 			// inner script, statically resolve it, and validate
 			// recursively. The interceptor CallExpr itself is not added
 			// to commands — its inner commands are validated instead.
-			if scriptWord, ok := extractShellScript(n); ok {
+			// Every interceptor form extractShellScript does not unwrap
+			// (a startup-file option, a script from stdin or a file, an
+			// unknown option) refuses (#2241).
+			if interceptorWord(n) {
+				scriptWord, ok := extractShellScript(n)
+				if !ok || scriptWordUnsafe(scriptWord, vc) {
+					safe = false
+					return false
+				}
 				if printedWordHasLiveBrace(pr, scriptWord) {
 					// bash brace-expands the -c script word itself, so
 					// one of the expanded scripts is a command the agent
@@ -488,10 +520,13 @@ func validateParsedStmt(rules []Rule, stmt *syntax.Stmt, depth int, vc *varCtx) 
 			// invisible to the symbol table, and wrappers carrying
 			// arguments that hide the real command
 			// (commandNameUnsafe). commandBaseName yields a name only
-			// for a wholly-literal command word; every other word
+			// for a wholly-literal command word, quotes removed
+			// (`"eval"` is eval, #2241); every other word
 			// (`bash$X -c …`, `$C`) falls through to
 			// matchBashSegment, whose #2228 resolution applies the
-			// same gate to the name it resolves to.
+			// same gate to the name it resolves to. Runner wrappers
+			// (command, exec, builtin, xargs) pass here and are
+			// unwrapped by matchBashSegment (wrappedCommandUnsafe).
 			if commandNameUnsafe(commandBaseName(n), len(n.Args) > 1, true) {
 				safe = false
 				return false
@@ -633,8 +668,8 @@ func stmtHasBraceLiteral(pr *syntax.Printer, stmt *syntax.Stmt) bool {
 		}
 		switch n := node.(type) {
 		case *syntax.CallExpr:
-			if _, ok := extractShellScript(n); ok {
-				return false // the -c script is validated recursively
+			if interceptorWord(n) {
+				return false // the -c script is validated recursively (other forms were refused)
 			}
 			return !callExprFlagChecked(pr, n) // the scanner owns a flag-checked command's words
 		case *syntax.CmdSubst:
@@ -776,50 +811,28 @@ func callExprCmdString(pr *syntax.Printer, ce *syntax.CallExpr) string {
 }
 
 // commandBaseName extracts the base name of the command from a CallExpr, but
-// only when the whole command word is literal text (wordIsLiteralText) with
-// an unquoted literal first part — like "env" or "/usr/bin/env", returning
-// that literal's base name ("env"). Any other command word yields "": the
-// word does not name, on its own, the command bash will run (`bash$X` is not
-// bash — its value word-splits into words that can even become a -c script),
-// so the walker's name-based paths (interceptor unwrapping, the
-// commandNameUnsafe gate) must let it fall through to matchBashSegment,
-// whose #2228 commandWordUnsafe resolves it and judges the resolved name.
+// only when the whole command word is literal text (wordIsLiteralText). The
+// name is the word's shell-visible text (literalWordText), so "env",
+// "/usr/bin/env", `"env"`, `'env'` and `e"nv"` all return "env" — a quoted
+// name is the same command as the unquoted one (#2241). Any other command
+// word yields "": the word does not name, on its own, the command bash will
+// run (`bash$X` is not bash — its value word-splits into words that can even
+// become a -c script), so the walker's name-based paths (interceptor
+// unwrapping, the commandNameUnsafe gate) must let it fall through to
+// matchBashSegment, whose #2228 commandWordUnsafe resolves it and judges the
+// resolved name.
 func commandBaseName(ce *syntax.CallExpr) string {
-	if len(ce.Args) == 0 || len(ce.Args[0].Parts) == 0 || !wordIsLiteralText(ce.Args[0]) {
+	if len(ce.Args) == 0 {
 		return ""
 	}
-	lit, ok := ce.Args[0].Parts[0].(*syntax.Lit)
+	text, ok := literalWordText(ce.Args[0])
 	if !ok {
 		return ""
 	}
-	return filepath.Base(lit.Value)
+	return filepath.Base(text)
 }
 
-// ---------- Shell interceptor unwrapping ----------
-
-// extractShellScript checks whether ce is a shell interceptor (bash, sh, etc.)
-// invoked in the strict form "shell -c SCRIPT [ARG...]". Returns the script
-// word and true if so. Options before -c are rejected: flags such as bash -i
-// and --rcfile can execute startup files before the inspected script runs.
-func extractShellScript(ce *syntax.CallExpr) (*syntax.Word, bool) {
-	name := commandBaseName(ce)
-	if !shellInterceptors[name] {
-		return nil, false
-	}
-	if len(ce.Args) >= 3 && isLitEqual(ce.Args[1], "-c") {
-		return ce.Args[2], true
-	}
-	return nil, false
-}
-
-// isLitEqual reports whether w is a single literal word equal to val.
-func isLitEqual(w *syntax.Word, val string) bool {
-	if len(w.Parts) != 1 {
-		return false
-	}
-	lit, ok := w.Parts[0].(*syntax.Lit)
-	return ok && lit.Value == val
-}
+// Shell interceptor unwrapping (extractShellScript) lives in wrappers.go.
 
 // resolveStaticWord attempts to statically resolve a shell Word to its
 // string value — the shell-visible text of the word with variables
@@ -1295,16 +1308,20 @@ func commandWordUnsafe(ce *syntax.CallExpr, segment string, vc *varCtx) bool {
 // (resolvedNameUnsafe). A var-setting command never auto-approves — its
 // effects are invisible to the symbol table — and a wrapper refuses when it
 // carries arguments, because they hide the real command. Shell interceptors
-// are the caller's business, marked by interceptorsHandled: the walker has
-// already unwrapped the typed `bash -c script` forms (extractShellScript)
-// and keeps today's verdict on every other typed interceptor form, while a
-// RESOLVED interceptor name refuses outright — fail-closed rather than
-// re-unwrapping a -c script that arrived through a variable (#2228).
-func commandNameUnsafe(base string, hasArgs bool, interceptorsHandled bool) bool {
+// and runner wrappers (command, exec, builtin, xargs) are the caller's
+// business when unwrapsHandled is set: for a TYPED name the walker unwraps
+// the interceptor forms it understands and refuses the rest
+// (extractShellScript), and matchBashSegment unwraps the runner wrapper
+// (wrappedCommandUnsafe). A RESOLVED name (#2228) or a command already inside
+// a runner wrapper (#2241) passes unwrapsHandled=false: an interceptor
+// refuses outright and a runner wrapper refuses when it carries arguments —
+// fail-closed rather than re-unwrapping a command that arrived through a
+// variable or a second wrapper.
+func commandNameUnsafe(base string, hasArgs bool, unwrapsHandled bool) bool {
 	if varSettingCommands[base] {
 		return true
 	}
-	if shellInterceptors[base] && !interceptorsHandled {
+	if !unwrapsHandled && (shellInterceptors[base] || runnerWrappers[base] && hasArgs) {
 		return true
 	}
 	return wrapperCommands[base] && hasArgs
@@ -1313,8 +1330,9 @@ func commandNameUnsafe(base string, hasArgs bool, interceptorsHandled bool) bool
 // resolvedNameUnsafe judges a command segment under a RESOLVED command name,
 // exactly as if that name had been typed: the shared name-policy gate
 // refuses var-setting commands, shell interceptors (fail-closed rather than
-// re-unwrapping a -c script that arrived through a variable) and wrappers
-// carrying arguments, the flag/argument battery runs on the resolved name
+// re-unwrapping a -c script that arrived through a variable) and wrappers —
+// runner wrappers included (`C=command; $C sed -i …`, #2241) — carrying
+// arguments, the flag/argument battery runs on the resolved name
 // plus the arguments, and the substitutability veto judges the resolved name
 // and records its reason on the printed segment — what the user is asked
 // about.
@@ -1405,8 +1423,12 @@ func commandIsSubstitutable(segment string) (bool, string, string) {
 // process. A command word that is not plain literal text is resolved with the
 // same resolver and the segment judged on the resolved name — or refused
 // outright (#2228); rule patterns still match the printed segment, so
-// resolution can only take an approval away, never add one. ce is the
-// CallExpr the segment was printed from, for the variable resolution.
+// resolution can only take an approval away, never add one. A runner wrapper
+// (command, exec, builtin, xargs) is unwrapped and its inner command checked
+// the same way (wrappedCommandUnsafe, #2241); a wholly-literal command word
+// is vetoed on its visible text, quotes removed (commandWordSubstitutable).
+// ce is the CallExpr the segment was printed from, for the variable
+// resolution.
 func matchBashSegment(rules []Rule, segment string, ce *syntax.CallExpr, vc *varCtx) bool {
 	if commandWordUnsafe(ce, segment, vc) {
 		return false
@@ -1417,7 +1439,10 @@ func matchBashSegment(rules []Rule, segment string, ce *syntax.CallExpr, vc *var
 	if expandedArgsUnsafe(ce, segment, vc) {
 		return false
 	}
-	if sub, path, reason := commandIsSubstitutable(segment); sub {
+	if wrappedCommandUnsafe(ce, segment, vc) {
+		return false
+	}
+	if sub, path, reason := commandWordSubstitutable(ce, segment); sub {
 		vc.noteVeto(segment, path, reason)
 		return false
 	}
@@ -1507,7 +1532,7 @@ var unsafeFlags = map[string]unsafeCmdFlags{
 		argCheck:        sedArgUnsafe,
 	},
 	"find": {
-		wordFlags: []string{"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fls", "-fprintf"},
+		wordFlags: []string{"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fls", "-fprintf"},
 	},
 	"sort": {
 		shortFlags: "o",
@@ -1516,16 +1541,35 @@ var unsafeFlags = map[string]unsafeCmdFlags{
 		abbrevLongFlags: true,
 	},
 	"rg": {
-		longFlags: []string{"--pre"},
+		// --hostname-bin runs the named program to learn the host name
+		// (verified with ripgrep 14.1.0, even without --hyperlink-format).
+		longFlags: []string{"--pre", "--hostname-bin"},
 	},
 	// go: the flags that run a program or write state (-toolexec, -vettool,
 	// env -w, …) are judged by goRunsProgram (#2736), which knows go's flag
 	// spellings and subcommands. The entry stays so go remains flag-checked
 	// (the #2213 glob and #2216 brace/substitution/variable rules).
 	"go": {},
+	// yq -s / --split-exp / --split-exp-file write one file per result
+	// (yq v4.52.4 help).
 	"yq": {
-		shortFlags: "i",
-		longFlags:  []string{"--inplace"},
+		shortFlags: "is",
+		longFlags:  []string{"--inplace", "--split-exp", "--split-exp-file"},
+	},
+	// ss -D / --diag writes raw diagnostics to a file; -K / --kill closes
+	// sockets. GNU getopt_long accepts abbreviated long options (--di).
+	"ss": {
+		shortFlags:      "DK",
+		longFlags:       []string{"--diag", "--kill"},
+		abbrevLongFlags: true,
+	},
+	// file -C / --compile writes a compiled magic file (magic.mgc). GNU
+	// getopt_long, so --comp is --compile. Being flag-checked also makes
+	// `file *` ask: a planted file named -C would arrive as the flag.
+	"file": {
+		shortFlags:      "C",
+		longFlags:       []string{"--compile"},
+		abbrevLongFlags: true,
 	},
 	// git -c sets an arbitrary config value for one command (core.sshCommand,
 	// core.pager, alias.*) — a direct arbitrary-exec vector; --config-env is the
