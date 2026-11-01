@@ -2,8 +2,9 @@
 #
 # seal-test-test.sh — assertions for scripts/seal-test.sh:
 #  - the diagnostic re-run (#2132): a sealed failure that passes on re-run both
-#    unsealed and sealed is a flake, and only one that fails sealed again is
-#    blamed on the sandbox;
+#    unsealed and sealed is "not a sandbox write, cause unknown" (never "a
+#    flake", #2723), with the original run's failing tests and panic; only one
+#    that fails sealed again is blamed on the sandbox;
 #  - FGW_HEAVY_LOCK=external (#2396): the diagnostic re-runs take the heavy
 #    lock and pass HEAVY_LOCK_HELD;
 #  - heavy-lock lines (#2412): go's `>>> waiting for/acquired heavy lock` lines
@@ -74,7 +75,16 @@ flake) [ "$n" -eq 1 ] && fail=1 ;;
 sandbox) [ -n "${SEALED:-}" ] && fail=1 ;;
 real) fail=1 ;;
 esac
-if [ "$fail" = 1 ]; then printf 'FAIL\t%s\t0.01s\n' "$pkg"; exit 1; fi
+# A failure prints what go test -v prints: a failing test with its message, a
+# passing test, then a test that panics (a panic ends the binary, so it comes
+# last) with its stack, then the summary line.
+if [ "$fail" = 1 ]; then
+  printf '=== RUN   TestZZShared\n--- FAIL: TestZZShared (0.00s)\n    zz_test.go:7: zz-msg call %s\n' "$n"
+  printf '=== RUN   TestZZOther\n--- PASS: TestZZOther (0.00s)\n'
+  printf '=== RUN   TestZZPanics\n--- FAIL: TestZZPanics (0.00s)\npanic: zz-panic call %s [recovered]\n\ngoroutine 7 [running]:\nzz.TestZZPanics()\n' "$n"
+  printf 'FAIL\t%s\t0.01s\n' "$pkg"
+  exit 1
+fi
 printf 'ok  \t%s\t0.01s\n' "$pkg"
 EOF
 chmod +x "$TMP/work/bin/llbox" "$TMP/goroot/bin/go"
@@ -116,8 +126,18 @@ out=$(run pass)
 reject "pass: no diagnostic" "DIAGNOSTIC" "$out"
 
 out=$(run flake)
-expect "flake: reported as a flake" "the failure is a FLAKE, not a sandbox write" "$out"
+# #2723: a pass on re-run proves only "not a sandbox write", not a flake.
+expect "flake: says what the re-run proved" "passes on re-run (unsealed and sealed): not a sandbox write" "$out"
+expect "flake: says the cause is unknown" "Cause unknown: timing, or state leaked between tests" "$out"
+reject "flake: not called a FLAKE" "FLAKE" "$out"
 reject "flake: not blamed on the sandbox" "writing outside the sandbox" "$out"
+expect "flake: names the failing test" ">>>   --- FAIL: TestZZShared (0.00s)" "$out"
+expect "flake: names the panicking test" ">>>   --- FAIL: TestZZPanics (0.00s)" "$out"
+expect "flake: keeps the test's message" ">>>       zz_test.go:7: zz-msg call 1" "$out"
+expect "flake: keeps the panic" ">>>   panic: zz-panic call 1 [recovered]" "$out"
+expect "flake: keeps the stack" ">>>   zz.TestZZPanics()" "$out"
+reject "flake: no passing test in the excerpt" ">>>   --- PASS" "$out"
+expect "flake: the excerpt is in the log too" ">>>   --- FAIL: TestZZShared (0.00s)" "$(cat "$TMP/log")"
 expect "flake: the log has the sealed re-run" "--- sealed re-run: ./internal/zz2132/" "$(cat "$TMP/log")"
 
 out=$(run sandbox)

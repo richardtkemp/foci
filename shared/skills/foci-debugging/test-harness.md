@@ -83,7 +83,9 @@ The spinner arm is **weak**: `nice -19` under-loads compared with real test bina
 ## Reading the result
 
 `seal-test.sh` re-runs a failing package unsealed, then (if that passed) sealed. Passing both prints
-`DIAGNOSTIC: ... FLAKE`; failing sealed again prints `DIAGNOSTIC: ... writing outside the sandbox`.
+`DIAGNOSTIC: ... not a sandbox write. Cause unknown`, with the original run's `--- FAIL:` lines and
+panic under it. That rules out the sandbox only; it does not make the failure a flake (timing or state
+leaked between tests are both open). Failing sealed again prints `DIAGNOSTIC: ... writing outside the sandbox`.
 That is real evidence, but it identifies *a* blocked write, not necessarily the cause. Confirm the
 seal alone is sufficient before concluding it, or you will chase an irrelevant whitelist gap.
 

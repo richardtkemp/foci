@@ -77,8 +77,10 @@
 # Landlock REFER bit is missing; llbox sets it, but a future regression or a
 # genuinely-new whitelist gap could reproduce the same shape of confusion).
 # So: whenever a package fails under seal, re-run THAT package unsealed. If
-# it then passes, re-run it sealed once more: a flake passes that too, and is
-# reported as a flake (#2132); if it fails sealed again, print a loud,
+# it then passes, re-run it sealed once more: a pass there too rules out the
+# sandbox and is reported as "not a sandbox write, cause unknown", with the
+# failing tests and any panic from the original run (#2132, #2723); if it
+# fails sealed again, print a loud,
 # unmissable message — the failure was the sandbox, not the code — converting the worst failure mode (a misleading
 # error that reads like a real bug) into the most informative one. This is
 # purely diagnostic: it never changes the run's exit status, because "passes
@@ -269,16 +271,43 @@ go_test_logged() {
   return "${PIPESTATUS[0]}"
 }
 
+# failure_excerpt <pkg> <nlines>
+# From the first <nlines> lines of $LOGFILE (the run BEFORE any re-run), the
+# last output block of <pkg> that ended in `FAIL\t<pkg>`: its `--- FAIL:` lines
+# (each with up to 3 indented message lines after it) and its first `panic:`
+# line with up to 12 lines of stack. At most 40 lines. go test prints each
+# package's output as one unbroken block, ended by its ok/FAIL summary line.
+failure_excerpt() {
+  head -n "$2" "$LOGFILE" 2>/dev/null | awk -v pkg="$1" '
+    /^(ok|FAIL|\?)[ \t]/ { if ($1 == "FAIL" && $2 == pkg) { blk = buf; nb = n } buf = ""; n = 0; next }
+    { buf = buf $0 "\n"; n++ }
+    END {
+      if (nb == 0) exit
+      split(blk, L, "\n"); out = 0; follow = 0; pan = 0; seenp = 0
+      for (i = 1; i <= nb && out < 40; i++) {
+        l = L[i]
+        if (!seenp && l ~ /^panic: /) { seenp = 1; pan = 13 }
+        if (pan > 0) { print l; out++; pan--; continue }
+        if (l ~ /^[ \t]*--- FAIL: /) { print l; out++; follow = 3; continue }
+        if (follow > 0 && l ~ /^[ \t]/ && l !~ /^[ \t]*(=== |--- )/) { print l; out++; follow--; continue }
+        follow = 0
+      }
+    }'
+}
+
 # diagnostic_rerun <extra go-test flags...>
 # Scans $LOGFILE (built up so far) for go test's own `FAIL <pkg>` summary
 # lines and re-runs each one unsealed (then, if that passes, sealed again) to
-# tell a real failure from a sealing artifact or a flake. Never touches the
+# tell a real failure from a sealing artifact. Never touches the
 # caller's exit status — purely explanatory.
 diagnostic_rerun() {
   local extra_flags=("$@")
   local failed
   failed=$(grep -oP '^FAIL\t\K\S+' "$LOGFILE" 2>/dev/null | sort -u || true)
   [ -z "$failed" ] && return 0
+  # The re-runs append to LOGFILE: excerpts read only the lines before them.
+  local orig_lines
+  orig_lines=$(wc -l <"$LOGFILE")
   # A package that failed by TIMING OUT is a hang (deadlock, missed wakeup),
   # not a sandbox write: re-running it unsealed only holds the /tmp/heavy lock
   # for another full timeout (foci_todo #2290). go test prints the panic inside
@@ -321,7 +350,19 @@ diagnostic_rerun() {
       # failure pins it on the sandbox (#2132).
       echo "--- sealed re-run: $pkg ---" >> "$LOGFILE"
       if go_test_logged "${SEAL[@]}" "${env[@]}" nice -n 19 go test -trimpath "-ldflags=-s -w" -count=1 "${EXEC[@]}" "${extra_flags[@]}" "$pkg" 8<&-; then
-        echo ">>> DIAGNOSTIC: $pkg passes on re-run both UNSEALED and SEALED — the failure is a FLAKE, not a sandbox write." | tee -a "$LOGFILE" >&2
+        # A pass on re-run proves only "not a sandbox write". It does not
+        # prove a flake: the cause can be timing, or state that another test
+        # left behind (a shared global, t.Parallel) (#2723).
+        {
+          echo ">>> DIAGNOSTIC: $pkg passes on re-run (unsealed and sealed): not a sandbox write. Cause unknown: timing, or state leaked between tests (shared globals, t.Parallel). Find the cause before you retry. The original failure:"
+          local excerpt
+          excerpt=$(failure_excerpt "$pkg" "$orig_lines")
+          if [ -n "$excerpt" ]; then
+            sed 's/^/>>>   /' <<<"$excerpt"
+          else
+            echo ">>>   (no '--- FAIL:' or 'panic:' lines for $pkg in $LOGFILE)"
+          fi
+        } | tee -a "$LOGFILE" >&2
       else
         echo ">>> DIAGNOSTIC: $pkg fails SEALED again but passes UNSEALED — it is writing outside the sandbox. Add the path to the whitelist in scripts/seal-test.sh, or stop writing there." | tee -a "$LOGFILE" >&2
       fi
