@@ -8,6 +8,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/execguard"
+	"foci/internal/execguard/execguardtest"
 	"foci/internal/log"
 )
 
@@ -122,7 +123,7 @@ func TestReportOperatorEnv_BuiltinVetoRidesTheStartupReport(t *testing.T) {
 	// population-split lines of the same report.
 	c := captureLog(t, log.INFO)
 	dir := t.TempDir()
-	env := guardEnvFor([]string{dir}, []string{dir + "/yq"}, []string{dir + "/yq"})
+	env := execguardtest.Env([]string{dir}, []string{dir + "/yq"}, []string{dir + "/yq"})
 	// One live agent is enough: read-only defaults on, safe-write defaults
 	// off. Delegated, because the built-in groups reach a match-time veto
 	// only through buildAutoApproveRules (delegated agents only).

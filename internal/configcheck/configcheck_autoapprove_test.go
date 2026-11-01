@@ -1,4 +1,4 @@
-package main
+package configcheck
 
 import (
 	"errors"
@@ -9,34 +9,14 @@ import (
 	"testing"
 
 	"foci/internal/execguard"
+	"foci/internal/execguard/execguardtest"
 	"foci/internal/shellenv"
 )
-
-// guardEnvFor builds a map-backed execguard.Env: PATH directories, writable
-// paths, executable files. No test touches the host's real filesystem or
-// PATH, and the fake probe below hands this view to runConfigCheckWith, so
-// the preview's findings never depend on the host either.
-func guardEnvFor(pathDirs, writable, executables []string) execguard.Env {
-	w := make(map[string]bool, len(writable))
-	for _, p := range writable {
-		w[p] = true
-	}
-	x := make(map[string]bool, len(executables))
-	for _, p := range executables {
-		x[p] = true
-	}
-	return execguard.Env{
-		CanWrite:     func(p string) bool { return w[p] },
-		PathDirs:     pathDirs,
-		IsExecutable: func(p string) bool { return x[p] },
-		HomeDir:      "/home/foci",
-	}
-}
 
 // mdsMdqEnv is the ticket's repro in miniature: mds and mdq are executable
 // and writable in /home/foci/bin, so the veto refuses them every time.
 func mdsMdqEnv() execguard.Env {
-	return guardEnvFor(
+	return execguardtest.Env(
 		[]string{"/home/foci/bin"},
 		[]string{"/home/foci/bin/mds", "/home/foci/bin/mdq"},
 		[]string{"/home/foci/bin/mds", "/home/foci/bin/mdq"},
@@ -46,7 +26,7 @@ func mdsMdqEnv() execguard.Env {
 // delegatedConfigTOML is validConfigTOML with the agent on a delegated
 // backend. The built-in groups reach a match-time veto only through
 // buildAutoApproveRules, which runs for delegated agents alone
-// (agentConsultsAllowlist), so every fixture that expects — or must be seen
+// (AgentConsultsAllowlist), so every fixture that expects — or must be seen
 // not to suppress — built-in lines needs one.
 const delegatedConfigTOML = `
 [groups]
@@ -128,7 +108,7 @@ func TestRunConfigCheck_WritableEntryWarnedAndSummarised(t *testing.T) {
 	t.Parallel()
 	// PATH carries no executables, so the built-in groups stay silent and
 	// the test judges the entries alone.
-	d, _ := fakeCheckDeps(guardEnvFor([]string{"/usr/bin"}, []string{"/bad/x.sh", "/bad/a.sh"}, nil))
+	d, _ := fakeCheckDeps(execguardtest.Env([]string{"/usr/bin"}, []string{"/bad/x.sh", "/bad/a.sh"}, nil))
 
 	code, out := runConfigCheckDeps(t, validConfigTOML+`
 [permissions]
@@ -171,7 +151,7 @@ auto_approve = ["Bash:/bad/a.sh *"]
 // that nothing stops auto-approving for it (no summary line).
 func TestRunConfigCheck_UnlocatableEntryApprovedUnchecked(t *testing.T) {
 	t.Parallel()
-	d, _ := fakeCheckDeps(guardEnvFor([]string{"/usr/bin"}, nil, []string{"/usr/bin/git"}))
+	d, _ := fakeCheckDeps(execguardtest.Env([]string{"/usr/bin"}, nil, []string{"/usr/bin/git"}))
 
 	code, out := runConfigCheckDeps(t, validConfigTOML+`
 [permissions]
@@ -195,7 +175,7 @@ auto_approve = ["Bash:mds *"]
 // its own findings (the 1 here comes from the pretool failure fixture).
 func TestRunConfigCheck_AutoApproveWarningsAfterBackendConfigBeforePretool(t *testing.T) {
 	t.Parallel()
-	d, _ := fakeCheckDeps(guardEnvFor([]string{"/usr/bin"}, []string{"/bad/x.sh"}, nil))
+	d, _ := fakeCheckDeps(execguardtest.Env([]string{"/usr/bin"}, []string{"/bad/x.sh"}, nil))
 
 	code, out := runConfigCheckDeps(t, validConfigTOML+`
 [permissions]
@@ -309,7 +289,7 @@ func TestRunConfigCheck_SharedCommandNamedOncePerGroup(t *testing.T) {
 	t.Parallel()
 	// Only go is executable-and-writable on the fake PATH: mds/mdq stay
 	// silent, so the count is about go alone.
-	env := guardEnvFor(
+	env := execguardtest.Env(
 		[]string{"/home/foci/bin"},
 		[]string{"/home/foci/bin/go"},
 		[]string{"/home/foci/bin/go"},
@@ -333,7 +313,7 @@ func TestRunConfigCheck_SharedCommandNamedOncePerGroup(t *testing.T) {
 // substitutable.
 func TestRunConfigCheck_SafeWriteEnabled_WritableCurlNamed(t *testing.T) {
 	t.Parallel()
-	env := guardEnvFor(
+	env := execguardtest.Env(
 		[]string{"/home/foci/bin", "/usr/bin"},
 		[]string{"/home/foci/bin/curl"},
 		[]string{"/home/foci/bin/curl"},
@@ -361,7 +341,7 @@ auto_approve_common_safe_write = true
 // and the global block is still labelled global — the two never collide.
 func TestRunConfigCheck_AgentNamedGlobalLabeledAsAgent(t *testing.T) {
 	t.Parallel()
-	d, _ := fakeCheckDeps(guardEnvFor([]string{"/usr/bin"}, []string{"/bad/g.sh", "/bad/a.sh"}, nil))
+	d, _ := fakeCheckDeps(execguardtest.Env([]string{"/usr/bin"}, []string{"/bad/g.sh", "/bad/a.sh"}, nil))
 
 	_, out := runConfigCheckDeps(t, `[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
@@ -840,7 +820,7 @@ auto_approve_common_readonly = false
 // change.
 func TestRunConfigCheck_SafeWriteDisabledByDefault_NoSafeWriteLine(t *testing.T) {
 	t.Parallel()
-	env := guardEnvFor(
+	env := execguardtest.Env(
 		[]string{"/home/foci/bin"},
 		[]string{"/home/foci/bin/curl"},
 		[]string{"/home/foci/bin/curl"},
@@ -1062,4 +1042,23 @@ func TestEnvFileGate_AllArmsHermetic(t *testing.T) {
 			t.Errorf("check(%q) = %v, want the \"..\" refusal", dd, err)
 		}
 	}
+}
+
+// validConfigTOML is a minimal config that loads and validates cleanly.
+const validConfigTOML = `
+[groups]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
+[[agents]]
+id = "main"
+`
+
+// writeTempConfig writes body to a fresh foci.toml and returns its path.
+func writeTempConfig(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "foci.toml")
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+	return path
 }

@@ -3,6 +3,7 @@ package nudge
 import (
 	"foci/internal/log"
 	"regexp"
+	"strings"
 	"sync"
 )
 
@@ -142,11 +143,20 @@ func NewSchedulerOpts(rs *RuleSet, opts SchedulerOpts) *Scheduler {
 	}
 
 	var activeRules []Rule
+	charIndex := 0 // the rule's index in nudge-rules.json: char rules arrive contiguous and in file order
 	for _, r := range rs.Rules {
 		// Only warn for user-controllable (character) rules — a skipped built-in
 		// (braindead/default/scratchpad) is expected on backends without the
 		// capability and the user can't act on it, so warning is just noise.
 		warn := r.Category == CategoryChar
+		if warn {
+			// A rule the validator rejects never fires; say so once (#2223).
+			// The rule is still kept or skipped exactly as below.
+			if problems := RuleProblems(r); len(problems) > 0 {
+				lg.Warnf("agent %s: nudge-rules.json %s will never fire: %s", opts.AgentID, ruleLabel(charIndex, r.Text), strings.Join(problems, "; "))
+			}
+			charIndex++
+		}
 		if TriggerRequiresPostTool(r.Trigger.Type) && !canPostTool {
 			if warn {
 				lg.Warnf("rule %q uses trigger %q which requires post-tool injection — not supported by this backend. Rule will be skipped.", truncate(r.Text, 60), r.Trigger.Type)

@@ -435,7 +435,7 @@ Notes:
 5. `pre_answer_nudge` / `post_tool_nudge`: codex declares both No; opencode declares
    `pre_answer_nudge` Yes and `post_tool_nudge` No. Both the turn
    (`ag/turn_delegated.go`, which arms the nudge funcs) and the nudge scheduler
-   (`gw/agents_setup.go:nudgeCapabilities`, which skips unsupported rules with a warning) read
+   (`nudge.CapabilitiesFor`, which skips unsupported rules with a warning; `foci check nudge` warns from the same function) read
    that one declaration. opencode re-dispatches at `session.idle`
    (`oc/handlers.go:tryPreAnswerRedispatch`): the follow-up is a fresh `prompt_async` inside the
    same turn, and a failed send completes the turn with the first-round answer. With no post-tool

@@ -24,6 +24,7 @@ import (
 	"foci/internal/app" // registers the app (FAP WebSocket) messaging provider via init; also SetCacheExpiry
 	"foci/internal/command"
 	"foci/internal/config"
+	"foci/internal/configcheck"
 	"foci/internal/defersend"
 	"foci/internal/delegator"
 	"foci/internal/execguard"
@@ -201,7 +202,7 @@ Subcommands:
 	// which is a hand-maintained copy of what the dotfiles build and was
 	// measurably out of sync with it (#1900). Keep this call adjacent to
 	// shellenv.Apply — separating them is how the defect comes back.
-	applySubstitutabilityMode(cfg, startupLog.Infof)
+	configcheck.ApplySubstitutabilityMode(cfg, startupLog.Infof)
 	cfg.DropSubstitutableAutoApproveRules(execguard.Live())
 
 	// One startup report of what the captured operator environment means
@@ -247,7 +248,7 @@ Subcommands:
 	if len(cfg.UndefinedKeys) > 0 {
 		configLog.Warnf("unknown config keys in %s: %v", configPath, cfg.UndefinedKeys)
 	}
-	if ignored := ignoredBackendConfig(cfg); len(ignored) > 0 {
+	if ignored := configcheck.IgnoredBackendConfig(cfg); len(ignored) > 0 {
 		configLog.Warnf("backend_config keys in %s that the agent's backend ignores: %s", configPath, strings.Join(ignored, "; "))
 	}
 

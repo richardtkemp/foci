@@ -231,11 +231,10 @@ type BatchRunner interface {
 // NeedsExtraction checks if character files have changed since the last extraction.
 // Returns the current content hash and true if extraction is needed.
 func (e *Extractor) NeedsExtraction() (string, bool) {
-	contents := e.readCharacterFiles()
-	if len(contents) == 0 {
+	hash, ok := CharacterHash(e.workspaceDir, e.fileOrder)
+	if !ok {
 		return "", false
 	}
-	hash := ContentHash(contents)
 
 	rulesPath := RulesPath(e.workspaceDir)
 	existing, err := LoadRules(rulesPath)
@@ -419,11 +418,12 @@ func (e *Extractor) characterSystemPrompt() string {
 	return workspace.CharacterSystemPrompt(e.workspaceDir, e.fileOrder)
 }
 
-// readCharacterFiles reads the workspace character files in order.
-func (e *Extractor) readCharacterFiles() []string {
+// readCharacterFiles reads the non-empty character files in fileOrder under
+// workspaceDir, skipping missing ones.
+func readCharacterFiles(workspaceDir string, fileOrder []string) []string {
 	var contents []string
-	for _, name := range e.fileOrder {
-		data, err := os.ReadFile(filepath.Join(e.workspaceDir, name))
+	for _, name := range fileOrder {
+		data, err := os.ReadFile(filepath.Join(workspaceDir, name))
 		if err != nil {
 			continue // skip missing files
 		}
@@ -434,4 +434,16 @@ func (e *Extractor) readCharacterFiles() []string {
 		contents = append(contents, content)
 	}
 	return contents
+}
+
+// CharacterHash is the content hash a rules file must carry to be current:
+// the hash of the non-empty character files in fileOrder. ok is false when
+// there are none, in which case nothing is ever extracted. NeedsExtraction
+// and ValidateFile both judge content_hash by it.
+func CharacterHash(workspaceDir string, fileOrder []string) (hash string, ok bool) {
+	contents := readCharacterFiles(workspaceDir, fileOrder)
+	if len(contents) == 0 {
+		return "", false
+	}
+	return ContentHash(contents), true
 }

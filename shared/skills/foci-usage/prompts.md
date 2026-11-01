@@ -51,7 +51,7 @@ Host-initiated events arrive as a **user-role message** wrapped with `[SYSTEM IN
 
 Behavioural reminders extracted automatically from your character files and prepended to the user message. Trigger types: `every_n_tools`, `pre_answer`, `after_error`, `regex`, `tool_pattern`. They fire on patterns, not on whether the guidance applies: if a nudge does not fit, ignore it (respond `[[NO_RESPONSE]]` when it is the whole turn) rather than bend your reply to it. Nudges are suppressed on system-internal turns (reflection, consolidation, session-end memory).
 
-Auto-extraction is controlled by `nudge_auto_extract` (default on, in the `[nudge]` config). `false` stops re-deriving rules from your character files; you then manage them by hand in `nudge-rules.json` (character/workspace dir). `nudge_enable` is the master on/off for the whole system.
+Auto-extraction is controlled by `nudge_auto_extract` (default on, in the `[nudge]` config). `false` stops re-deriving rules from your character files; you then manage them by hand in `nudge-rules.json` (character/workspace dir). After a hand edit, run `foci check nudge` to find any rule that would never fire (a bad regex, an unknown trigger type, a typo'd key). `nudge_enable` is the master on/off for the whole system.
 
 ## `[[NO_RESPONSE]]`
 

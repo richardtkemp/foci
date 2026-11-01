@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"foci/internal/config"
+	_ "foci/internal/delegator/all" // register every backend for TestCapabilitiesFor
 	"foci/internal/log"
 )
 
@@ -67,7 +69,7 @@ func TestNewSchedulerOpts_SkipWarningNamesAgent(t *testing.T) {
 	defer log.SetWarnHook(nil)
 
 	rs := &RuleSet{Rules: []Rule{
-		{Text: "user rule", Trigger: Trigger{Type: "every_n_tools", N: 3}, Category: CategoryChar},
+		{Text: "user rule", Priority: "high", Trigger: Trigger{Type: "every_n_tools", N: 3}, Category: CategoryChar},
 		{Text: "builtin braindead", Trigger: Trigger{Type: "every_n_tools", N: 3}, Category: CategoryBraindead},
 	}}
 	NewSchedulerOpts(rs, SchedulerOpts{CanPostTool: false, CanPreAnswer: false, AgentID: "clutch"})
@@ -131,5 +133,31 @@ func TestTriggerRequiresPreAnswer(t *testing.T) {
 				t.Errorf("TriggerRequiresPreAnswer(%q) = %v, want %v", tt.trigger, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestCapabilitiesFor pins the scheduler's mid-turn capability gates to the
+// backend's declared capabilities (#2154). The scheduler used to decide by name
+// (opencode only), so codex agents kept mid-turn rules that their
+// turns never armed: the rules silently never fired, with no skip warning.
+func TestCapabilitiesFor(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		backend                     string
+		wantPostTool, wantPreAnswer bool
+	}{
+		{"", true, true},    // API transport
+		{"api", true, true}, // API transport
+		{"claude-code", true, true},
+		{"opencode", false, true},
+		{"codex", false, false},
+		{"some-future-backend", false, false},
+	}
+	for _, tt := range tests {
+		gotPostTool, gotPreAnswer := CapabilitiesFor(config.AgentConfig{ID: "a", Backend: tt.backend})
+		if gotPostTool != tt.wantPostTool || gotPreAnswer != tt.wantPreAnswer {
+			t.Errorf("CapabilitiesFor(%q) = (%v, %v), want (%v, %v)",
+				tt.backend, gotPostTool, gotPreAnswer, tt.wantPostTool, tt.wantPreAnswer)
+		}
 	}
 }

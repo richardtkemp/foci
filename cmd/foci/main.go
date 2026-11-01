@@ -541,6 +541,9 @@ func main() {
 		}
 		return
 	}
+	if os.Args[1] == "check" {
+		os.Exit(cmdCheck(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	if os.Args[1] == "debug" {
 		if err := cmdDebug(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "debug: %v\n", err)
@@ -699,6 +702,7 @@ Commands:
   debug session <key>  Tail a session file with formatted output
   pretool list|test    Check PreToolUse rules against the config (see foci pretool -h)
   rename-agent OLD NEW Rename an agent id everywhere, gateway stopped (see foci rename-agent -h)
+  check config|nudge   Check the config file or an agent's nudge-rules.json, read-only (see foci check -h)
   version              Print version information
 
 Flags:

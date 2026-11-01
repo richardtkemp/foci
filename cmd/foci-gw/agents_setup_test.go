@@ -73,32 +73,6 @@ func TestNudgeSettingsMapsMaxPerTurn(t *testing.T) {
 	}
 }
 
-// TestNudgeCapabilities pins the scheduler's mid-turn capability gates to the
-// backend's declared capabilities (#2154). The scheduler used to decide by name
-// (opencode only), so codex agents kept mid-turn rules that their
-// turns never armed: the rules silently never fired, with no skip warning.
-func TestNudgeCapabilities(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		backend                     string
-		wantPostTool, wantPreAnswer bool
-	}{
-		{"", true, true},    // API transport
-		{"api", true, true}, // API transport
-		{"claude-code", true, true},
-		{"opencode", false, true},
-		{"codex", false, false},
-		{"some-future-backend", false, false},
-	}
-	for _, tt := range tests {
-		gotPostTool, gotPreAnswer := nudgeCapabilities(config.AgentConfig{ID: "a", Backend: tt.backend})
-		if gotPostTool != tt.wantPostTool || gotPreAnswer != tt.wantPreAnswer {
-			t.Errorf("nudgeCapabilities(%q) = (%v, %v), want (%v, %v)",
-				tt.backend, gotPostTool, gotPreAnswer, tt.wantPostTool, tt.wantPreAnswer)
-		}
-	}
-}
-
 // TestSetupRedactionFollowsFileWhileSecretsListStays pins both halves of the
 // #1269 prompt-cache contract: the Redact function setupRedaction binds to the
 // agent follows later secrets.toml edits (a value added after startup is

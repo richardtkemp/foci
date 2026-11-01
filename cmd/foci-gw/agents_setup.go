@@ -11,7 +11,6 @@ import (
 	"foci/internal/command"
 	"foci/internal/compaction"
 	"foci/internal/config"
-	"foci/internal/delegator"
 	"foci/internal/modelcaps"
 	"foci/internal/nudge"
 	"foci/internal/platform"
@@ -135,23 +134,9 @@ func nudgeSettings(nc config.ResolvedNudge) nudge.Settings {
 	}
 }
 
-// nudgeCapabilities reports which mid-turn nudge triggers an agent's transport
-// can deliver. Turn-start triggers (every_n_turns, regex) work everywhere;
-// mid-turn triggers (every_n_tools, after_error, tool_pattern, pre_answer)
-// need the transport to call back mid-turn. The API loop does both; a
-// delegated backend does what it declares — the same declaration the turn
-// reads when it arms the nudge funcs, so a rule the scheduler keeps can fire.
-func nudgeCapabilities(acfg config.AgentConfig) (canPostTool, canPreAnswer bool) {
-	if !acfg.IsDelegated() {
-		return true, true
-	}
-	s, _ := delegator.SpecFor(acfg.Backend)
-	return s.Supports(delegator.CapPostToolNudge), s.Supports(delegator.CapPreAnswerNudge)
-}
-
 // setupNudgeSystem configures the nudge scheduler and reload logic on the agent.
 func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.ResolvedNudge, sessions *session.Store, toolRegistry *tools.Registry, skillRegistry *skills.Registry, fileMode os.FileMode) {
-	canPostTool, canPreAnswer := nudgeCapabilities(acfg)
+	canPostTool, canPreAnswer := nudge.CapabilitiesFor(acfg)
 	schedOpts := nudge.SchedulerOpts{
 		Cooldown:     nc.NudgeCooldown,
 		MaxPerBatch:  nc.NudgeMaxPerBatch,

@@ -691,6 +691,8 @@ lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-cap
 	# production and stay covered). internal/testmarker is the same shape
 	# again (#1562): Err/ID are called only from other packages' _test.go
 	# files to mark injected fake values that reach WARN/ERROR log lines.
+	# internal/execguard/execguardtest too (#2223): the map-backed
+	# execguard.Env shared by the configcheck and foci-gw tests.
 	# internal/mermaid/mermaidtest too (#2195): the fake mmdc shared by the
 	# mermaid, app and tools tests.
 	# config's UnsetInFile/SetTableArray are the same shape since #1476: the
@@ -705,7 +707,7 @@ lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-cap
 	# store's real schema for the agent-rename fixture (internal/agentrename
 	# tests), which must use the production DDL rather than a copy of it.
 	@raw=$$($(LINT_ENV) $(GOBIN)/deadcode ./...) || { echo "deadcode failed or was killed (exit $$?) — reachability gate did NOT run"; exit 1; }; \
-	output=$$(printf '%s' "$$raw" | grep -v -e '/testharness/' -e '/testtemp/' -e '/clock/fake.go:' -e '/testmarker/' -e '/mermaidtest/' -e 'config/settablearray.go:.*SetTableArray' -e 'config/configedit.go:.*UnsetInFile' -e 'config/configedit.go:.*MapObjectEntries' -e 'app/framestore.go:.*InitReplayStore' || true); \
+	output=$$(printf '%s' "$$raw" | grep -v -e '/testharness/' -e '/testtemp/' -e '/clock/fake.go:' -e '/testmarker/' -e '/mermaidtest/' -e '/execguardtest/' -e 'config/settablearray.go:.*SetTableArray' -e 'config/configedit.go:.*UnsetInFile' -e 'config/configedit.go:.*MapObjectEntries' -e 'app/framestore.go:.*InitReplayStore' || true); \
 	if [ -n "$$output" ]; then echo "$$output"; exit 1; fi
 	@echo "=== find-disconnected-tests (Test* functions that don't touch prod) ==="
 	@$(LINT_ENV) ./bin/find-disconnected-tests ./...
