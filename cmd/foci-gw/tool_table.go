@@ -580,16 +580,16 @@ func (d *toolDeps) setAPICharacterModel(ag *agent.Agent, branchKey, group string
 	ag.SetSessionModel(branchKey, r.Developer+"/"+r.ModelID, r.Endpoint, r.Format, client)
 }
 
-// getSpawner builds the path's Spawner once. MaxConcurrentSpawns stays baked:
-// it sizes the semaphore at construction, which can't be live-resized without
-// a redesign. MaxToolLoops/ExploreMaxDepth are read fresh per spawn call.
+// getSpawner builds the path's Spawner once. MaxConcurrentSpawns seeds its slot
+// limit and a config edit resizes it live (#2722, the OnChange below).
+// MaxToolLoops/ExploreMaxDepth are read fresh per spawn call.
 func (d *toolDeps) getSpawner() *tools.Spawner {
 	if d.spawner != nil {
 		return d.spawner
 	}
 	acfg := d.p.acfg
 	fileMode, _ := config.ParseFileMode(d.p.cfg.FileMode)
-	tc := d.p.resolved.Tools // static-cfg:ignore: MaxConcurrentSpawns sizes a semaphore channel at construction, can't be live-resized without a redesign
+	tc := d.p.resolved.Tools // static-cfg:ignore: the initial slot limit; live edits flow through the OnChange below (#2722)
 	live := d.p.resolvedLive
 	orientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, d.p.cfg.Sessions.BranchOrientationHeadlessPrompt))
 	spawnDeps := tools.SpawnDeps{
@@ -737,6 +737,16 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 		}
 		return nil
 	})
+	if live != nil {
+		// #2722: a max_concurrent_spawns edit applies to the next slot
+		// acquisitions; a raise starts queued spawns, a lower stops none.
+		sp := d.spawner
+		live.OnChange(func(old, fresh *config.ResolvedAgentConfig) {
+			if old.Tools.MaxConcurrentSpawns != fresh.Tools.MaxConcurrentSpawns {
+				sp.SetMaxConcurrent(fresh.Tools.MaxConcurrentSpawns)
+			}
+		})
+	}
 	tools.RegisterSpawner(acfg.ID, d.spawner) // #2632: backend prompts route a spawn's to its owner
 	if d.out != nil {
 		d.out.spawner = d.spawner

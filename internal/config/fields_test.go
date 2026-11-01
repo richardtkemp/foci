@@ -552,7 +552,7 @@ func TestBehaviorTurnLimitRegistryRows(t *testing.T) {
 	// Proves the #2281 turn-limit keys emit registry rows, that the
 	// all-agents key has NO agent row (scope:"global" — it is read from
 	// [behavior] only), and that both keys are restart-required (no hot tag:
-	// they size semaphores at start-up, like max_concurrent_spawns).
+	// they size semaphores at start-up).
 	present := []string{
 		"behavior.max_concurrent_turns",
 		"agent.behavior.max_concurrent_turns",

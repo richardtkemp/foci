@@ -153,7 +153,7 @@ type SpawnDeps struct {
 	// every request of a one-shot's tool loop (and its fallback hops) with
 	// the model's own routing. Nil = no routing, today's behaviour.
 	ProviderRoutingFor  func(model string) *provider.ProviderRouting
-	MaxInherit          int                                 // semaphore size (from config) — fixed at construction, can't be live-resized
+	MaxInherit          int                                 // initial slot count (from config); SetMaxConcurrent changes it live (#2722)
 	MaxToolLoops        func() int                          // max tool loops for raw/character spawns, read fresh per call
 	ExploreMaxDepth     func() int                          // max tool loops for explore spawns, read fresh per call
 	Notifier            *AsyncNotifier                      // async result delivery for inherit mode
@@ -281,7 +281,7 @@ func (d SpawnDeps) exploreMaxDepth() int {
 type Spawner struct {
 	deps    SpawnDeps
 	agentFn func() SpawnAgent
-	sem     chan struct{}
+	slots   *spawnSlots
 }
 
 // NewSpawner builds the shared state of spawn, spawn_send and spawn_status.
@@ -297,8 +297,20 @@ func NewSpawner(deps SpawnDeps, agentFn func() SpawnAgent) *Spawner {
 			panic("tools.NewSpawner: a delegated agent's spawn deps set " + f + ", an API one-shot field")
 		}
 	}
-	// MaxInherit sizes the semaphore once, at construction.
-	return &Spawner{deps: deps, agentFn: agentFn, sem: make(chan struct{}, deps.MaxInherit)}
+	return &Spawner{deps: deps, agentFn: agentFn, slots: newSpawnSlots(deps.MaxInherit)}
+}
+
+// SetMaxConcurrent changes how many spawn runs may go at once, effective for
+// the next slot acquisitions (#2722): a raise starts queued runs at once; a
+// lower limit stops none that run, it only holds new ones back.
+func (s *Spawner) SetMaxConcurrent(n int) {
+	s.slots.setLimit(n)
+}
+
+// MaxConcurrent reports the current limit on concurrent spawn runs.
+func (s *Spawner) MaxConcurrent() int {
+	_, _, limit := s.slots.counts()
+	return limit
 }
 
 // DelegatedSpawn is what a delegated agent's spawn needs beyond the common
@@ -1248,12 +1260,10 @@ func (s *Spawner) startClone(ctx context.Context, prompt string, timeout time.Du
 	}
 
 	// Synchronous fallback (nil notifier — for tests).
-	select {
-	case s.sem <- struct{}{}:
-		defer func() { <-s.sem }()
-	case <-ctx.Done():
-		return ToolResult{}, ctx.Err()
+	if err := s.slots.acquire(ctx); err != nil {
+		return ToolResult{}, err
 	}
+	defer s.slots.release()
 
 	spawnCtx, cancel := buildSpawnContext(ctx, timeout, branchKey, false)
 	defer cancel()
@@ -1274,10 +1284,8 @@ func (s *Spawner) startClone(ctx context.Context, prompt string, timeout time.Du
 // starts its first run; the tool returns at once with where it runs.
 func (s *Spawner) launchBackground(ctx context.Context, agent SpawnAgent, parent string, running RunningSpawn, prompt string, timeout time.Duration) (ToolResult, error) {
 	deps := s.deps
-	select {
-	case s.sem <- struct{}{}:
-	case <-ctx.Done():
-		return ToolResult{}, ctx.Err()
+	if err := s.slots.acquire(ctx); err != nil {
+		return ToolResult{}, err
 	}
 	// Registered before the goroutine starts, so a /stop that lands at
 	// once still finds it (#2139).
@@ -1460,7 +1468,7 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 			return msg
 		},
 		Deliver:       func(msg string) { s.deliver(parent, id, msg) },
-		Cleanup:       func() { <-s.sem },
+		Cleanup:       s.slots.release,
 		PendingResult: TextResult(pendingResult),
 	})
 }

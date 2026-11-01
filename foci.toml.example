@@ -225,7 +225,7 @@ system_files = [
 # Per-agent tool overrides (from [tools]):
 # [agents.tools]
 # exec_auto_background = 10
-# max_concurrent_spawns = 3
+# max_concurrent_spawns = 10
 # explore_max_depth = 100
 # max_upload_file_size = 52428800         # 50MB
 # tmux_autopilot = true
@@ -643,7 +643,7 @@ bind = "127.0.0.1"
 # exec_default_timeout = 30
 # tmux_command_timeout = "5s"
 # web_fetch_max_bytes = 1048576
-# max_concurrent_spawns = 3
+# max_concurrent_spawns = 10
 # explore_max_depth = 100                # max tool loops for explore spawn mode
 # tool_call_preview_chars = 450
 # tmux_memory_check_interval = "5m"

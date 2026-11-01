@@ -204,7 +204,7 @@ spawn(prompt="Research this topic thoroughly", context="clone")
 - Creates a branch session: `{parentKey}/b{TIMESTAMP}`
 - Branch has `NoResetHook` set (ephemeral, no memory formation on cleanup)
 - Recursive background spawns are blocked — a spawned session can use `raw`/`character` (directly) but not `clone` or a background character
-- Concurrent clone spawns are limited by `max_concurrent_spawns` (default 3)
+- Concurrent clone spawns are limited by `max_concurrent_spawns` (default 10, live-editable)
 - Runs as a full agent turn with all tools available
 - Always async: returns `"Spawn started in background."` immediately, delivers `[SPAWN RESULT]` via notifier on completion (matching the `[EXEC RESULT]`/`[HTTP RESULT]` pattern)
 

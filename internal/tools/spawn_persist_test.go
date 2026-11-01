@@ -381,7 +381,7 @@ func TestRestoredSpawnStoppableBeforeItRuns(t *testing.T) {
 	t.Parallel()
 	agent := newScriptedSpawnAgent(0)
 	h := newPersistHarness(agent, func(d *SpawnDeps) { d.MaxInherit = 1 })
-	h.spawner.sem <- struct{}{} // the only slot is taken
+	_ = h.spawner.slots.acquire(context.Background()) // the only slot is taken
 	rec := runningRecord("spawn-dd")
 	h.store.put(t, rec)
 
@@ -390,7 +390,7 @@ func TestRestoredSpawnStoppableBeforeItRuns(t *testing.T) {
 	if n := h.tracker.Stop("test/imain"); n != 1 {
 		t.Fatalf("Stop stopped %d, want the waiting restored spawn", n)
 	}
-	<-h.spawner.sem
+	h.spawner.slots.release()
 	d := h.nextDelivery(t)
 	if !strings.Contains(d.msg, "stopped by the user") {
 		t.Fatalf("delivered %q, want stopped", d.msg)

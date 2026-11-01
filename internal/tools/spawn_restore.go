@@ -177,7 +177,7 @@ func (s *Spawner) noticeRestore(parent string, r *spawnRestoreReport) {
 // a slot.
 func (s *Spawner) resumeAfterRestart(host *Spawner, agent SpawnAgent, rec spawnRecord, base context.Context, stop context.CancelFunc, texts []string) {
 	tr := s.deps.Tracker
-	s.sem <- struct{}{}
+	_ = s.slots.acquire(context.Background()) // never fails: a /stop meanwhile cancels base, so the run ends at once
 	running := recInfo(rec)
 	if running.Character && host.deps.PrepareCharacterBranch != nil {
 		// Its launch settings were in the last process's memory (#2643).

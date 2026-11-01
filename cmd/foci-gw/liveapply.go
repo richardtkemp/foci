@@ -184,6 +184,8 @@ var (
 		"tools.todo_format", "agent.tools.todo_format",
 		"tools.explore_max_depth", "agent.tools.explore_max_depth",
 		"tools.spawn_reserve_percent", "agent.tools.spawn_reserve_percent",
+		// #2722: resizes each Spawner's slots via getSpawner's OnChange.
+		"tools.max_concurrent_spawns", "agent.tools.max_concurrent_spawns",
 		"environment.enabled", "agent.environment.enabled",
 		"environment.docs_path", "agent.environment.docs_path",
 		"sessions.compaction_threshold", "agent.sessions.compaction_threshold",

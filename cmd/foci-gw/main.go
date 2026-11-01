@@ -433,7 +433,7 @@ Subcommands:
 
 	// Gateway-wide user-turn cap (#2281): ONE limiter shared by every agent,
 	// built once before the agent loop. nil when the limit is 0 (unlimited).
-	globalTurnLimit := agent.NewTurnLimiter(config.DerefInt(cfg.Behavior.MaxConcurrentTurnsAllAgents)) // static-cfg:ignore: sizes a FIFO semaphore at start-up, can't be live-resized — like MaxConcurrentSpawns (tool_table.go)
+	globalTurnLimit := agent.NewTurnLimiter(config.DerefInt(cfg.Behavior.MaxConcurrentTurnsAllAgents)) // static-cfg:ignore: sizes a FIFO semaphore at start-up, can't be live-resized
 
 	for _, acfg := range cfg.Agents {
 		if reason, skip := skipAgents[acfg.ID]; skip {

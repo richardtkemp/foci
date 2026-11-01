@@ -104,15 +104,13 @@ func (s *Spawner) resume(ctx context.Context, agent SpawnAgent, parent string, r
 	if s.deps.Notifier == nil {
 		return ToolResult{}, fmt.Errorf("spawn_send: no background delivery on this agent")
 	}
-	select {
-	case s.sem <- struct{}{}:
-	case <-ctx.Done():
-		return ToolResult{}, ctx.Err()
+	if err := s.slots.acquire(ctx); err != nil {
+		return ToolResult{}, err
 	}
 	spawnCtx, cancel := s.runContext(ctx, timeout, running, true)
 	if !s.deps.Tracker.restart(parent, running.ID, cancel) {
 		cancel()
-		<-s.sem
+		s.slots.release()
 		return ToolResult{}, fmt.Errorf("spawn %s started running again meanwhile; send the message again to reach it", running.ID)
 	}
 	s.deps.Tracker.appendLog(parent, running.ID, "message", "(resumed with) "+message)

@@ -211,7 +211,7 @@ func configureUniversal(ag *agent.Agent, p setupParams, compactor *compaction.Co
 	// cascade; the gateway-wide cap is the one shared limiter built in main.
 	// Both nil when their limit is 0 (unlimited) — the inbox then takes no
 	// slot at all.
-	ag.TurnLimit = agent.NewTurnLimiter(bc.MaxConcurrentTurns) // static-cfg:ignore: sizes a FIFO semaphore at start-up, can't be live-resized — like MaxConcurrentSpawns (tool_table.go)
+	ag.TurnLimit = agent.NewTurnLimiter(bc.MaxConcurrentTurns) // static-cfg:ignore: sizes a FIFO semaphore at start-up, can't be live-resized
 	ag.GlobalTurnLimit = p.globalTurnLimit
 
 	// Reset lifecycle: orientation template resolver (closed over config for lazy resolution).

@@ -23,8 +23,8 @@ const turnQueuedNotice = "⏳ Busy right now. Your message is queued and will ru
 // in either order. Release hands a slot directly to the head waiter rather
 // than decrementing, so a later TryAcquire can never jump the queue.
 //
-// Not live-resizable: the limit sizes the semaphore at construction, like
-// [tools] max_concurrent_spawns — changing it requires a restart.
+// Not live-resizable: the limit is fixed at construction, so changing it
+// requires a restart ([tools] max_concurrent_spawns is live, #2722).
 type TurnLimiter struct {
 	limit   int
 	mu      sync.Mutex
