@@ -433,6 +433,7 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		MessageEdit{ConversationID: "c", MessageID: "m", Text: "t"},
 		Reminders{ConversationID: "c", Reminders: []PendingReminder{{ID: 1, Text: "x", DueAtMs: 1, State: "pending"}}},
 		AskgwPrompts{Prompts: []AskgwPrompt{{PromptID: "p", Text: "t", Choices: []Choice{{Label: "Yes", Data: "y"}}}}},
+		ToolCall{ConversationID: "c", ToolCallID: "tc", Name: "exec", State: ToolCallRunning, Mode: "full", Args: `{}`},
 	}
 	for _, f := range frames {
 		wire, err := Encode(f, 0, 0, "id", "ts")
@@ -800,5 +801,89 @@ func TestDecode_ViewingPut(t *testing.T) {
 	}
 	if f := in.Frame.(ViewingPut); f.ConversationID != "" {
 		t.Errorf("empty put decoded as %+v, want none", f)
+	}
+}
+
+// TestToolCall_RoundTrip pins the tool.call wire (#999): field names the
+// client decodes by, omitted-when-empty optionals, and an encode→decode round
+// trip of both halves of a call.
+func TestToolCall_RoundTrip(t *testing.T) {
+	frames := []ToolCall{
+		{ConversationID: "c", ToolCallID: "tc1", Name: "exec", State: ToolCallRunning, Mode: "preview",
+			Args: `{"command":"ls €"}`, ArgsTruncated: true, ArgsBytes: 9000},
+		{ConversationID: "c", ToolCallID: "tc1", Name: "exec", State: ToolCallDone, Mode: "preview",
+			Result: "out", ResultTruncated: true, ResultBytes: 20000, IsError: true},
+	}
+	for _, f := range frames {
+		wire, err := Encode(f, 7, 0, "id", "ts")
+		if err != nil {
+			t.Fatal(err)
+		}
+		env, d := wireFields(t, wire)
+		if env["t"] != "tool.call" || env["seq"] != float64(7) {
+			t.Fatalf("envelope = %v", env)
+		}
+		for _, k := range []string{"conversationId", "toolCallId", "name", "state", "mode"} {
+			if _, ok := d[k]; !ok {
+				t.Errorf("%s frame missing %q: %s", f.State, k, wire)
+			}
+		}
+		var e Envelope
+		if err := json.Unmarshal([]byte(wire), &e); err != nil {
+			t.Fatal(err)
+		}
+		var back ToolCall
+		if err := json.Unmarshal(e.D, &back); err != nil {
+			t.Fatal(err)
+		}
+		if back != f {
+			t.Errorf("round trip: got %+v, want %+v", back, f)
+		}
+	}
+	// A start carries no result keys, a completion no args keys.
+	start, _ := Encode(ToolCall{ConversationID: "c", ToolCallID: "x", Name: "n", State: ToolCallRunning, Mode: "full"}, 1, 0, "", "")
+	for _, k := range []string{`"result"`, `"isError"`, `"argsTruncated"`, `"resultBytes"`} {
+		if strings.Contains(start, k) {
+			t.Errorf("start frame carries %s: %s", k, start)
+		}
+	}
+}
+
+// preToolCallClientDecode models the client decoder as it stood before #999
+// (foci-client FapCodec.decodeServer + InboundFrameDispatcher.conversationIdOf):
+// an unknown `t` decodes to an UnknownServerFrame, never an error, and its
+// conversationId is read from the raw payload so the frame still advances the
+// resume mark. Returns (known, conversationId, err).
+func preToolCallClientDecode(wire string, known map[string]bool) (bool, string, error) {
+	var env Envelope
+	if err := json.Unmarshal([]byte(wire), &env); err != nil {
+		return false, "", err
+	}
+	var p map[string]json.RawMessage
+	if err := json.Unmarshal(env.D, &p); err != nil {
+		return false, "", err
+	}
+	var conv string
+	_ = json.Unmarshal(p["conversationId"], &conv)
+	return known[env.T], conv, nil
+}
+
+// A decoder that does not know tool.call ignores it without error: the
+// server's own (app→server) decoder returns no frame and no error, and a
+// pre-#999 client decoder sees an unknown type that still carries its
+// conversationId (so it cannot pin that client's resume mark).
+func TestToolCall_UnknownToOldDecoders(t *testing.T) {
+	wire, err := Encode(ToolCall{ConversationID: "c9", ToolCallID: "x", Name: "n", State: ToolCallRunning, Mode: "full"}, 3, 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in, err := Decode(wire)
+	if err != nil || in.Frame != nil || in.T != TypeToolCall {
+		t.Fatalf("Decode(tool.call) = %+v, %v; want ignored (nil frame, no error)", in, err)
+	}
+	preKnown := map[string]bool{TypeMessage: true, TypeActivity: true, TypeConversationAck: true}
+	known, conv, err := preToolCallClientDecode(wire, preKnown)
+	if err != nil || known || conv != "c9" {
+		t.Fatalf("old client decode = known %v conv %q err %v; want unknown, conv c9, no error", known, conv, err)
 	}
 }

@@ -179,6 +179,15 @@ const featureWizard = "wizard"
 // changes back via setting.put.
 const featureSettingsSync = "settingsSync"
 
+// featureToolCalls is the capability for tool-call transcript content (#999):
+// the server advertises it in hello's Caps.Features (it can send tool.call
+// frames), and a client advertises it in its ClientHello to receive them. A
+// client without it never meets a tool.call frame: live and on resume it gets
+// a conversation.ack at the same seq instead (toolCallPlaceholder), because a
+// pre-#999 client shows an "Update needed" dialog for any live frame type it
+// cannot decode, and a skipped seq would hold its resume mark below the hole.
+const featureToolCalls = "toolCalls"
+
 // systemStateAppSettings is the system_state key under which the whole synced
 // app-preferences bag is stored as a JSON object.
 const systemStateAppSettings = "app_settings"
@@ -428,6 +437,9 @@ func (h *Hub) connectedDeviceIDs() map[string]bool {
 // push transports available.
 func (h *Hub) caps() fap.Caps {
 	c := fap.Caps{Versions: []int{fap.ProtocolVersion}, Host: h.host}
+	// Always on: whether frames are actually sent is the per-session
+	// show_tool_calls gate (appSink), not a server-wide switch.
+	c.Features = append(c.Features, featureToolCalls)
 	if h.pusher != nil {
 		c.Push = []string{"fcm"}
 	}
@@ -842,6 +854,14 @@ func (h *Hub) setupAgent(params platform.AgentConnectionParams) *appConn {
 	}
 	conn.stt = params.STT
 	conn.tts = params.TTS
+	conn.toolCallConfig = liveToolCallConfig(params.ResolvedLive)
+	conn.displayOverride = params.DisplayOverrideFn
+	conn.redact = func(s string) string {
+		if ag.Redact != nil {
+			return ag.Redact(s)
+		}
+		return s
+	}
 
 	h.mu.Lock()
 	if _, exists := h.agents[params.AgentID]; !exists {
@@ -2940,7 +2960,11 @@ func (b *convBinding) sendThen(frame fap.ServerFrame, onRecorded func()) {
 	// Fan out: every attached device receives the frame, ack-stamped for ITS own
 	// stream. Per-client app dedups by envelope id and tracks its own resume point.
 	for _, t := range targets {
-		t.c.enqueue(stampAck(wire, t.ack))
+		w := wire
+		if frame.Type() == fap.TypeToolCall {
+			w = toolCallPlaceholder(wire, t.c)
+		}
+		t.c.enqueue(stampAck(w, t.ack))
 	}
 
 	// Wake every capable device that isn't currently connected — even if another
@@ -3151,6 +3175,40 @@ func substituteResolvedAsk(wire string, orphaned map[string]struct{}) string {
 	return out
 }
 
+// toolCallPlaceholder returns wire unchanged unless it is a tool.call frame
+// and client did not advertise featureToolCalls. Then it returns a
+// conversation.ack for the same conversation at the same seq/id/ts: the frame
+// type every client build knows and drops silently, which still closes the
+// seq so the client's contiguous resume mark advances past it (#999). The
+// canonical tool.call wire stays in the buffer and the durable store, so a
+// capable device that replays later still gets the card.
+func toolCallPlaceholder(wire string, client *wsClient) string {
+	if !strings.HasPrefix(wire, `{"t":"`+fap.TypeToolCall+`"`) {
+		return wire
+	}
+	client.mu.Lock()
+	_, capable := client.features[featureToolCalls]
+	client.mu.Unlock()
+	if capable {
+		return wire
+	}
+	var env fap.Envelope
+	if json.Unmarshal([]byte(wire), &env) != nil || env.T != fap.TypeToolCall {
+		return wire
+	}
+	var p struct {
+		ConversationID string `json:"conversationId"`
+	}
+	if json.Unmarshal(env.D, &p) != nil {
+		return wire
+	}
+	out, err := fap.Encode(fap.ConversationAck{ConversationID: p.ConversationID}, env.Seq, env.Ack, env.ID, env.TS)
+	if err != nil {
+		return wire
+	}
+	return out
+}
+
 // replayTo re-sends buffered frames with seq > fromSeq to the socket, in seq
 // order — the reconnect resume path.
 // replayTo pushes this conversation's frames above fromSeq to client. It
@@ -3203,7 +3261,7 @@ func (b *convBinding) replayTo(client *wsClient, fromSeq int64) bool {
 			if hasMem && sf.seq >= memFloor {
 				break
 			}
-			if !client.enqueueReplay(stampAck(substituteResolvedAsk(sf.wire, orphaned), ack)) {
+			if !client.enqueueReplay(stampAck(toolCallPlaceholder(substituteResolvedAsk(sf.wire, orphaned), client), ack)) {
 				truncated = true
 				break
 			}
@@ -3212,7 +3270,7 @@ func (b *convBinding) replayTo(client *wsClient, fromSeq int64) bool {
 	}
 	if !truncated {
 		for _, wire := range pending {
-			if !client.enqueueReplay(stampAck(substituteResolvedAsk(wire, orphaned), ack)) {
+			if !client.enqueueReplay(stampAck(toolCallPlaceholder(substituteResolvedAsk(wire, orphaned), client), ack)) {
 				truncated = true
 				break
 			}

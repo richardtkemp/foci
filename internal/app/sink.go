@@ -26,7 +26,10 @@ import (
 //   - the agent activity indicator, driven off the turn boundary as structured
 //     fap.Activity frames (the renderer's SendTyping is a no-op for the app);
 //   - the structured fap.Meta frame on turn completion (model/cost/tokens —
-//     the typed replacement for the [meta] text blob the Telegram bridge injects).
+//     the typed replacement for the [meta] text blob the Telegram bridge injects);
+//   - tool.call transcript frames when show_tool_calls is preview/full (#999,
+//     toolcalls.go). The renderer's own tool display stays off: it renders
+//     Telegram-style text, and the app gets structured frames instead.
 //
 // One appSink per turn on one conversation.
 type appSink struct {
@@ -75,6 +78,12 @@ type appSink struct {
 	// this gate, TurnComplete would re-synthesize that whole accumulation as
 	// one clip, reading past the bubble it belongs to and into the next.
 	voiceBlockDelivered bool
+
+	// toolCalls sends this turn's tool calls as tool.call transcript frames
+	// (#999). nil = the session's resolved show_tool_calls is off (the app
+	// default): only the transient activity frame is sent, as before #999.
+	// Set by appConn.NewTurnSink, which resolves the gate once per turn.
+	toolCalls *toolCallEmitter
 
 	// afterTurn runs at the end of cleanup, once every frame of the turn is
 	// sent: appConn.NewTurnSink points it at Hub.finishTurnRead, which applies
@@ -144,12 +153,18 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		if line := skillLoadLine(e); line != "" {
 			s.b.send(fap.Notification{ConversationID: s.b.convID, MessageID: fap.NewULID(), Text: line, Level: "info", Ambient: true})
 		}
+		if s.toolCalls != nil {
+			s.toolCalls.call(e)
+		}
 		s.inner.Emit(ctx, ev)
 
 	case turnevent.ToolResult:
 		// Tool finished; the model is processing its result with no output token
 		// yet — back to the "warming" (working) state until the next event.
 		s.b.setTurnActivity(fap.ActivityKindWarming)
+		if s.toolCalls != nil {
+			s.toolCalls.result(e)
+		}
 		s.inner.Emit(ctx, ev)
 
 	case turnevent.TextDelta, turnevent.TextBlock:

@@ -70,8 +70,19 @@ type appConn struct {
 	routeLateAnswer func(la tools.LateAnswer) bool
 	commands        *command.Registry
 	cmdCtx          command.CommandContext
-	stt             voice.STT // inbound voice transcription; nil = unsupported
-	tts             voice.TTS // outbound voice-mode synthesis (#1439); nil = unconfigured, text-only
+	// toolCallConfig returns the app platform's resolved show_tool_calls from
+	// the live config snapshot, read once per turn (#999). nil = off.
+	toolCallConfig func() string
+	// displayOverride returns the session's display overrides from
+	// session_metadata (platform.AgentConnectionParams.DisplayOverrideFn, the
+	// same source Telegram's resolveDisplay reads). nil = none.
+	displayOverride func(sessionKey string) platform.DisplaySettings
+	// redact is the agent's secret redaction (agent.Agent.Redact), applied to
+	// tool-call args and results before they go on the wire (#999). Reads the
+	// field at call time: it is wired after the platform. nil = none.
+	redact func(string) string
+	stt    voice.STT // inbound voice transcription; nil = unsupported
+	tts    voice.TTS // outbound voice-mode synthesis (#1439); nil = unconfigured, text-only
 
 	// Pending interactive headers, set by SetInteractiveHeader and consumed
 	// by SendTextWithButtons. Keyed by prompt ID. Pointer-based so the
@@ -752,7 +763,25 @@ func (c *appConn) NewTurnSink(env agent.Envelope) (turnevent.Sink, func()) {
 	sink.tts = c.tts
 	sink.attachVoice = func(audio []byte) error { return c.sendVoiceModeAttachment(b, audio) }
 	sink.afterTurn = func() { c.hub.finishTurnRead(b) }
+	if mode := c.toolCallMode(env.SessionKey); mode != "" {
+		sink.toolCalls = newToolCallEmitter(b, mode, c.redact)
+	}
 	return sink, sink.cleanup
+}
+
+// toolCallMode resolves the tool-call gate for one turn (#999): the app
+// platform's show_tool_calls from the LIVE resolved config (so a /config set or
+// app-editor edit applies from the next turn, no restart), overridden by the
+// session's session_metadata value. "" = off.
+func (c *appConn) toolCallMode(sessionKey string) string {
+	var configured, override string
+	if c.toolCallConfig != nil {
+		configured = c.toolCallConfig()
+	}
+	if c.displayOverride != nil {
+		override = c.displayOverride(sessionKey).ShowToolCalls
+	}
+	return toolCallMode(configured, override)
 }
 
 func (c *appConn) Connection() platform.Connection { return c }

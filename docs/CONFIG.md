@@ -1075,6 +1075,8 @@ Set in `[platforms.display]`, overridable per-agent via `[agents.platforms.displ
 
 Supported keys: `show_tool_calls`, `show_thinking`, `stream_output`, `display_width`. Aliases: `stream` → `stream_output`, `width` → `display_width`.
 
+`show_tool_calls` applies to the app too (#999). The app's default is `"off"`; with `"preview"` or `"full"` (in `[platforms.display]` for the `app` platform, the agent or global `[display]`, or a per-session `/display` override) the app receives each tool call's name, arguments, result and error flag as structured transcript content, labelled with the mode, from the next turn — no restart. The app client decides how to draw it (preview = it may replace the card when the reply arrives; full = kept). Arguments are capped at 4 KiB and results at 8 KiB, secret-redacted; only clients that support tool-call content receive it.
+
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `show_tool_calls` | string | `"off"` | Tool call display mode: `"off"` (hidden), `"preview"` (shown then overwritten by reply), `"full"` (shown and kept; reply is a separate message). Accepts bool for backwards compat (`true` → `"preview"`, `false` → `"off"`). Overridable at runtime via `/display`. |

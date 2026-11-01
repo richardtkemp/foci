@@ -106,6 +106,15 @@ const (
 	// Re-sent to every socket on each change and after each hello, so an empty
 	// list clears a device's stale dialog.
 	TypeAskgwPrompts = "askgw.prompts"
+	// TypeToolCall (server->app) is one tool call of a turn as transcript
+	// content (#999): sent when the call starts (State "running") and again,
+	// same ToolCallID, when it completes (State "done") — the client upserts by
+	// ToolCallID. Durable and seq'd like a message. Sent only while the
+	// session's resolved show_tool_calls is preview or full, and only to a
+	// client that advertised the "toolCalls" ClientHello feature; any other
+	// client gets a conversation.ack at the same seq instead (see
+	// app.convBinding.sendThen), so a pre-#999 build never meets the type.
+	TypeToolCall = "tool.call"
 
 	// app -> server
 	TypeCommand                = "command"
@@ -819,6 +828,48 @@ type SubagentEnd struct {
 }
 
 func (SubagentEnd) Type() string { return TypeSubagentEnd }
+
+// ToolCall states (ToolCall.State).
+const (
+	ToolCallRunning = "running"
+	ToolCallDone    = "done"
+)
+
+// ToolCall is one tool call of a turn, as transcript content (#999). See
+// TypeToolCall. A call is sent twice: at its start (State "running", Args
+// set) and at its completion (State "done", Result and IsError set; Args is
+// NOT repeated — the client merges the completion into the start's card). The
+// two share ToolCallID, which is unique per call (a ULID the server mints, NOT
+// the backend's tool-use id, so two turns that reuse an id such as "call_1"
+// never merge), so overlapping calls pair unambiguously. A completion whose
+// start this server never sent gets a fresh ToolCallID and stands alone.
+//
+// Args (the call's raw JSON arguments) and Result are bounded
+// (app.toolCallArgsMax / toolCallResultMax bytes, cut on a rune boundary,
+// never mid-UTF-8). ArgsTruncated / ResultTruncated say a cut happened, and
+// ArgsBytes / ResultBytes then give the uncut size. Both are secret-redacted
+// before they are bounded. A truncated Args is no longer valid JSON.
+//
+// Mode is the session's resolved show_tool_calls ("preview" or "full") at
+// the turn's start, with the Telegram meaning: preview = the client may
+// replace the card once the reply arrives; full = the card is kept. The
+// server only labels it; rendering is the client's.
+type ToolCall struct {
+	ConversationID  string `json:"conversationId"`
+	ToolCallID      string `json:"toolCallId"`
+	Name            string `json:"name"`
+	State           string `json:"state"` // ToolCallRunning | ToolCallDone
+	Mode            string `json:"mode"`  // "preview" | "full"
+	Args            string `json:"args,omitempty"`
+	ArgsTruncated   bool   `json:"argsTruncated,omitempty"`
+	ArgsBytes       int    `json:"argsBytes,omitempty"` // uncut size, set only when ArgsTruncated
+	Result          string `json:"result,omitempty"`
+	ResultTruncated bool   `json:"resultTruncated,omitempty"`
+	ResultBytes     int    `json:"resultBytes,omitempty"` // uncut size, set only when ResultTruncated
+	IsError         bool   `json:"isError,omitempty"`
+}
+
+func (ToolCall) Type() string { return TypeToolCall }
 
 // SubagentPrompt carries a SendMessage follow-up sent to a subagent that is
 // STILL RUNNING (#1419) — no new run begins (CC never refires task_started for

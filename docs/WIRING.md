@@ -407,7 +407,7 @@ main
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
  ├── discord       → agent, turnevent, chatmeta, command, config, dispatch, display, log, netretry, platform, question, secrets, session, timeutil, tooldetail, toolformat, turn, voice
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
- ├── app           → agent, turnevent, command, config, delegator, dispatch, fap, log, memory, mermaid, platform, question, ratelimit, secrets, session, sqlite, tempdir, toolformat, tools, turn, voice (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
+ ├── app           → agent, turnevent, command, config, delegator, dispatch, fap, log, memory, mermaid, platform, question, ratelimit, secrets, session, sqlite, telemetry, tempdir, toolformat, tools, turn, voice (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
  ├── netretry      → log (startup-connect retry shared by telegram + discord: Backoff schedule, Do loop, PermanentMarkers auth/transient split)
  ├── askgw         → clock, log, peercred, question (opt-in ask-gateway for external Apps — see Ask Gateway section)
  ├── telemetry     → turnevent, delegator/accounting, log, modelinfo, provider, session, go.opentelemetry.io/otel (+ sdk, otlptracehttp) — OpenTelemetry export of every turn to an OTLP/HTTP collector (Langfuse) plus scores/score configs over its REST API; wired from cmd/foci-gw (init), agent (turn spans), tools + cmd/foci-gw (cross-agent links). See "Tracing".
@@ -1287,7 +1287,7 @@ Tool call display is controlled by `show_tool_calls` (string: `"off"`, `"preview
 
 **Tracker state machine (`internal/turn/tracker.go`):** `ToolCallTracker` keys its per-tool state by `tool_use_id`, not by insertion order. This matters when Claude batches multiple `tool_use` blocks in a single assistant message (common: three `Read` calls, a `Grep` + `Bash`, etc.) — each tool call gets its own `trackerEntry{msgID, text, fullText, lastParams}` so parallel `ObserveToolResult` calls each update the correct message's hint and store entry, regardless of arrival order. Preview mode uses a sentinel `""` key for the single shared preview message that every call edits in place. `LastMsgID` / `ResetMsgID` return and clear the most-recently-inserted entry respectively, preserving the preview-mode "one message edited by reply" UX.
 
-A Read of a skill's `SKILL.md` (base name exactly `SKILL.md`, case-sensitive) renders its compact line — the entry's `CompactText` — as `📖 Loaded skill: <dir>` instead of the path summary: one rule in `toolformat.LoadedSkillLine` over `skills.NameFromReadPath`, shared by both platform compact formatters (Telegram escapes it, Discord sends it raw) (#1299); the expanded view still shows the real path and params. The chip fires only on read tool calls: the Codex backend reports every file read as a `bash` `commandExecution` (it has no read item), so a Codex agent's skill load keeps the plain command line (#1299). The app has no compact tool lines (its sink turns tool display off and shows only the live Activity indicator), so `appSink` sends the same `toolformat.LoadedSkillLine` text as a `fap.Notification` with `Ambient: true` (#2335): stored, replayed and drawn as a system row like any notification, but `pushPreview` returns not-visible for it, so it never sets the conversation-list preview or `lastActMs` and never triggers an offline push. `Ambient` is `json:"-"` (server-side only; the wire is unchanged, so no client change and no ordering constraint). It has no expand view: the real path is not shown in the app.
+A Read of a skill's `SKILL.md` (base name exactly `SKILL.md`, case-sensitive) renders its compact line — the entry's `CompactText` — as `📖 Loaded skill: <dir>` instead of the path summary: one rule in `toolformat.LoadedSkillLine` over `skills.NameFromReadPath`, shared by both platform compact formatters (Telegram escapes it, Discord sends it raw) (#1299); the expanded view still shows the real path and params. The chip fires only on read tool calls: the Codex backend reports every file read as a `bash` `commandExecution` (it has no read item), so a Codex agent's skill load keeps the plain command line (#1299). The app has no compact tool lines (with `show_tool_calls` off its sink shows only the live Activity indicator; preview/full add structured `tool.call` frames, #999, not text lines), so `appSink` sends the same `toolformat.LoadedSkillLine` text as a `fap.Notification` with `Ambient: true` (#2335): stored, replayed and drawn as a system row like any notification, but `pushPreview` returns not-visible for it, so it never sets the conversation-list preview or `lastActMs` and never triggers an offline push. `Ambient` is `json:"-"` (server-side only; the wire is unchanged, so no client change and no ordering constraint). It has no expand view: the real path is not shown in the app.
 
 Ccstream plumbs the id via the CC hook integration described above, feeding `handler.OnToolEnd(id, name, output, isError)` which the StreamingSink forwards to the tracker.
 
@@ -2964,7 +2964,7 @@ emits the new suffix as `text.delta`; `appBackend.Deliver` finalizes each
 segment with `text.end` (streamed) or a fresh `message` (non-streamed). A
 no-op `SinkTracker` (no tool-preview/retry surface) and `ShowThinking="off"`
 keep those event paths inert. `appSink` layers on only what has no home in the
-renderer: the `typing on`/`off` frames bracketing the turn boundary, dropping
+renderer: the `tool.call` content frames (below), the `typing on`/`off` frames bracketing the turn boundary, dropping
 `SubagentText` (no app surface yet — forwarding would prematurely finalize the
 in-flight stream), and the structured `meta` status frame on `TurnComplete`
 (model/cost/tokens from the turn usage; state, plus gap via `Agent.MetaStatus`,
@@ -2972,6 +2972,39 @@ threaded as the sink's `statusFn`). Deltas are batched by the stream pump
 (`appStreamInterval`, 50ms) — beneficial: it keeps a fast token stream from
 flooding the socket. Per-conversation outbound `seq` is stamped, buffered, and
 replayed on reconnect (slice 3).
+
+**Tool-call content (`toolcalls.go`, #999):** the renderer's own tool display
+stays off (it renders Telegram text); instead `appConn.NewTurnSink` resolves a
+per-turn gate and, when open, gives the sink a `toolCallEmitter`. The gate is
+`toolCallMode(configured, override)`: `configured` is the app platform's
+`show_tool_calls` read from the LIVE resolved snapshot
+(`liveToolCallConfig(params.ResolvedLive)` → `PlatformDisplay("app")`, so a
+`/config set` applies from the next turn via `liveApplyResolvedAddrs`), and
+`override` is the session's session_metadata value through
+`params.DisplayOverrideFn` (the same source as Telegram's `resolveDisplay`;
+override wins). `preview`/`full` open it; `off` (the provider default) leaves
+the sink with no emitter, so it sends exactly the pre-#999 frames (the
+transient `activity` frame only). Open, each `turnevent.ToolCall` sends a
+`tool.call` frame (`state: running`, args) and each `ToolResult` a second one
+(`state: done`, result, `isError`), both through `convBinding.send` (seq'd,
+buffered, durably stored, replayed). Pairing: the emitter mints a ULID
+`toolCallId` per call and maps the backend's tool-use id to it (FIFO per tool
+name when a backend gives no id); a completion with no known start gets a fresh
+id. Args/results pass `appConn.redact` (`agent.Agent.Redact`: secrets store +
+Bitwarden values) then `telemetry.NewRedactor(nil)` (the generic credential
+shapes the trace exporter strips), then `boundUTF8` (4 KiB args / 8 KiB result,
+rune-aligned, `*Truncated` + `*Bytes`). No per-backend code: it consumes the
+same `ToolCall`/`ToolResult` events that API agents (`turn_api_tools.go`) and
+delegated backends (`inbox.go` `OnToolStart`/`OnToolEnd`) emit. Those events
+carry no subagent group key, so no grouping is sent. Back-compat: the server
+advertises `toolCalls` in `hello.caps.features`; a client receives `tool.call`
+only if its `ClientHello.features` has `toolCalls`. `convBinding.sendThen`
+(live fan-out) and `replayTo` (WS resume) pass every tool.call wire through
+`toolCallPlaceholder`, which gives any other client a `conversation.ack` at the
+same seq/id/ts: a pre-#999 client shows an "Update needed" dialog for a live
+unknown frame type, and a skipped seq would hold its contiguous resume mark.
+The canonical wire stays in the buffer/store. `GET /app/replay` is unchanged:
+old clients' history sync drops undecodable frames silently.
 
 > **Why a separate sink, not just "different output functions"?** The
 > `turnevent.Sink` seam *is* the reuse boundary, and both the app and the

@@ -32,7 +32,9 @@ import (
 // only when it genuinely cannot be live, and say why beside the field.
 // Walkthrough: the foci-add-live-config-field skill.
 
-// ToolCallDisplay controls how tool calls are shown in Telegram.
+// ToolCallDisplay controls how tool calls are shown: Telegram and Discord
+// render them as messages; the app (#999) receives them as structured tool.call
+// frames labelled with the mode, and its client renders them.
 type ToolCallDisplay string
 
 const (
