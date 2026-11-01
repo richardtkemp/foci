@@ -51,6 +51,10 @@ const (
 	// the periodic runner (#2218) — the anchor for the once-per-window and
 	// human-interacted-since rules.
 	MetaKeyQuietCompactedAt = "quiet_compacted_at"
+	// MetaKeyPrecoldCompactedAt holds the RFC3339Nano time of the session's
+	// last pre-cold compaction ATTEMPT that passed the guards, written by the
+	// periodic runner (#1066) — the anchor for the once-per-idle-period rule.
+	MetaKeyPrecoldCompactedAt = "precold_compacted_at"
 	// MetaKeyOrientationConsumed marks a branch session's orientation text as
 	// consumed (branch.go ConsumeOrientation; branch sessions only).
 	MetaKeyOrientationConsumed = "orientation_consumed"
@@ -102,4 +106,5 @@ var SessionMetadataKeys = []SessionMetadataKey{
 	{Key: MetaKeyDisplayWidth},
 	{Key: MetaKeyCCUndelivered},
 	{Key: MetaKeyQuietCompactedAt},
+	{Key: MetaKeyPrecoldCompactedAt},
 }

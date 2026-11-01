@@ -181,6 +181,7 @@ type ResolvedCompaction struct {
 	FacetNoCompact             bool
 	ReloadOnCompact            bool
 	Quiet                      ResolvedQuietCompaction
+	Precold                    ResolvedPrecoldCompaction
 }
 
 // ResolvedQuietCompaction is the resolved quiet-hours idle-compaction trigger
@@ -223,6 +224,40 @@ func resolveQuietCompaction(m CompactionConfig) ResolvedQuietCompaction {
 	}
 }
 
+// ResolvedPrecoldCompaction is the resolved pre-cold idle-compaction trigger
+// (#1066): compact an idle session just before its prompt cache expires, when
+// keepalive will not warm it again. Off by default (Dick, 2026-10-10). Lead
+// stays a duration string so the runner parses it per tick, like MinIdle.
+type ResolvedPrecoldCompaction struct {
+	Enabled   bool
+	Threshold float64
+	Lead      string
+}
+
+// Built-in pre-cold defaults (#1066). They are applied in
+// resolvePrecoldCompaction as well as by the tag defaults, so Resolve is
+// correct for configs built without Load (struct literals in tests).
+const (
+	DefaultPrecoldThreshold = 0.5
+	DefaultPrecoldLead      = "10m"
+)
+
+func resolvePrecoldCompaction(m CompactionConfig) ResolvedPrecoldCompaction {
+	threshold := DefaultPrecoldThreshold
+	if m.CompactionPrecoldThreshold != nil {
+		threshold = *m.CompactionPrecoldThreshold
+	}
+	lead := DefaultPrecoldLead
+	if m.CompactionPrecoldLead != nil && *m.CompactionPrecoldLead != "" {
+		lead = *m.CompactionPrecoldLead
+	}
+	return ResolvedPrecoldCompaction{
+		Enabled:   DerefBool(m.CompactionPrecold),
+		Threshold: threshold,
+		Lead:      lead,
+	}
+}
+
 func resolveCompaction(m CompactionConfig) ResolvedCompaction {
 	threshold := 0.8
 	if m.CompactionThreshold != nil {
@@ -236,6 +271,7 @@ func resolveCompaction(m CompactionConfig) ResolvedCompaction {
 		FacetNoCompact:             DerefBool(m.FacetNoCompact),
 		ReloadOnCompact:            m.ReloadOnCompact == nil || *m.ReloadOnCompact, // default ON
 		Quiet:                      resolveQuietCompaction(m),
+		Precold:                    resolvePrecoldCompaction(m),
 	}
 }
 

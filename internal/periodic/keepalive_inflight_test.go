@@ -49,7 +49,7 @@ func waitIdle(t *testing.T, r *Runner) {
 func isIdle(r *Runner) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return !(r.keepaliveRunning || r.backgroundRunning || r.reflectionRunning || r.consolidationRunning || r.resetRunning || r.ephemeralCleanupRunning || r.quietCompactionRunning)
+	return !(r.keepaliveRunning || r.backgroundRunning || r.reflectionRunning || r.consolidationRunning || r.resetRunning || r.ephemeralCleanupRunning || r.quietCompactionRunning || r.precoldCompactionRunning)
 }
 
 // inFlightFn returns a stub IsTurnInFlightFunc that reports the given base

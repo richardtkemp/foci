@@ -59,6 +59,19 @@ if keepalive.enabled
 - Keepalive branch starting
 - Background branch starting
 
+### When keepalive stops: pre-cold compaction
+
+Keepalive stops warming a session in two cases: keepalive is off for the agent, or `max_user_idle` has run out (no human touched the session within that window). The session's cache then goes cold, and the next turn pays a cache write of the whole prefix. The opt-in `[sessions] compaction_precold` (default off) compacts such a session shortly before its cache expires, so that write is smaller. See [CONFIG.md](CONFIG.md#compaction--sessions) for its settings.
+
+It fires only when keepalive will **not** warm the session again before the cache expires. The runner answers that question with keepalive's own per-session rules (`keepaliveWillRewarm`, sharing its helpers with `keepaliveTargets`): keepalive enabled with caching available, the session among the sessions keepalive warms (the default session, or the open app chats with `warm_open_app_chats`), and the `max_user_idle` gate still open at the next moment keepalive could fire (`last_cache_touch + interval`, or now if that has passed) and before the cache expires. So:
+
+- keepalive off: pre-cold compaction can fire;
+- keepalive on with `max_user_idle = 0` (no limit): it never fires for a session keepalive warms, and config load warns if both are set;
+- keepalive on with a limit: it fires only in the last cache lifetime after the limit runs out;
+- a session keepalive does not warm (an open app chat while `warm_open_app_chats` is off) can be pre-cold compacted whatever `max_user_idle` is.
+
+Keepalive yields while a pre-cold pass runs, as it does for a quiet-hours compaction.
+
 ## Background Work
 
 Background work executes tasks from the todo list while the user is away, gated by the `can_run_background` check so an operator can decide when it's worth spending.
@@ -139,6 +152,7 @@ can_run_background = "check.sh"     # optional gate executable (exit 0 = allowed
 
 - **Warning:** `background.interval > keepalive.interval` -- keepalive resets the cache timer before background interval elapses, so background work may never trigger.
 - **Warning:** `keepalive.interval > 1h` -- Anthropic cache TTL is ~1 hour; longer interval means cache expires between keepalives, defeating the purpose.
+- **Warning:** `compaction_precold = true` with keepalive enabled and `max_user_idle = 0` -- keepalive never lets a session it warms go cold, so pre-cold compaction cannot fire for those sessions.
 
 ## Branch Behavior
 

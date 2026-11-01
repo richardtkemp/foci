@@ -111,6 +111,14 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		}
 	}
 
+	// Pre-cold compaction (#1066) runs only where foci can trigger a
+	// compaction itself — the same reach as /compact and quiet-hours
+	// compaction (an API compactor or a delegated backend). The setting is
+	// still accepted elsewhere; warn once at startup that it does nothing.
+	if inst.LiveConfig().Compaction.Precold.Enabled && inst.ag.Compactor == nil && inst.ag.DelegatedManager == nil {
+		keepaliveLog.Warnf("agent %q compaction_precold is enabled, but foci does not control compaction for this agent: it will never fire", acfg.ID)
+	}
+
 	// Every agent gets a runner even when nothing is currently enabled: the
 	// live config-apply path (liveapply.go) can switch these features on at
 	// runtime, and an idle runner is one goroutine ticking every 30s.
@@ -131,6 +139,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 			Reflection:             rc.Reflection,
 			Maintenance:            rc.Maintenance,
 			QuietCompaction:        rc.Compaction.Quiet,
+			PrecoldCompaction:      rc.Compaction.Precold,
 			TickInterval:           rc.Scheduler.TickInterval,
 			EphemeralRetentionDays: freshAcfg.Sessions.EffectiveEphemeralRetentionDays(freshCfg.Sessions.EphemeralRetentionDays),
 		}
@@ -286,7 +295,8 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		// warm_open_app_chats is on (#2641), so the flag hot-reloads.
 		OpenChatSessionsFn: func() []string { return app.OpenSessionsForAgent(agentID) },
 
-		QuietCompaction: inst.LiveConfig().Compaction.Quiet,
+		QuietCompaction:   inst.LiveConfig().Compaction.Quiet,
+		PrecoldCompaction: inst.LiveConfig().Compaction.Precold,
 
 		// Clock stays nil (the real wall clock) in production; tests inject
 		// a fake through RunnerConfig.

@@ -2,8 +2,10 @@ package periodic
 
 import (
 	"context"
+	"slices"
 	"time"
 
+	"foci/internal/config"
 	"foci/shared/prompts"
 )
 
@@ -19,16 +21,7 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 		}
 	}()
 
-	// Check if caching is still available.
-	// cachingOverride allows models with auto-detected caching (OpenAI, DeepSeek) to
-	// bypass the client.IsCachingAvailable() check which may return false for non-Anthropic clients.
-	cachingAvailable := true
-	if r.cachingOverride != nil {
-		cachingAvailable = *r.cachingOverride
-	} else if r.client != nil {
-		cachingAvailable = r.client.IsCachingAvailable()
-	}
-	if !cachingAvailable {
+	if !r.cachingAvailable() {
 		skip = "caching not available"
 		return
 	}
@@ -44,6 +37,7 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 	consolidationRunning := r.consolidationRunning
 	resetRunning := r.resetRunning
 	quietCompactionRunning := r.quietCompactionRunning
+	precoldCompactionRunning := r.precoldCompactionRunning
 	r.mu.Unlock()
 
 	if running {
@@ -77,6 +71,13 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 	// next tick after the compaction warms the small post-compaction prefix.
 	if quietCompactionRunning {
 		skip = "quiet compaction running"
+		return
+	}
+	// Likewise for a pre-cold compaction (#1066). It only picks sessions
+	// keepalive will not warm, so the two rarely meet; the yield covers a
+	// config change or a new open chat between the pick and the dispatch.
+	if precoldCompactionRunning {
+		skip = "pre-cold compaction running"
 		return
 	}
 
@@ -133,7 +134,67 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 // warmed this tick had the in-flight gate not deferred it — the event the L2
 // gate test (TestL2_Cron_KeepaliveSkippedWhenTurnInFlight) syncs on (#2084).
 func (r *Runner) keepaliveTargets(interval time.Duration) (ready []string, why string) {
+	return r.keepaliveTargetsAt(interval, time.Now())
+}
+
+// keepaliveTargetsAt is keepaliveTargets evaluated at now. Keepalive itself
+// passes the wall clock; tests replay it at chosen instants to check that
+// keepaliveWillRewarm agrees with it (#1066).
+func (r *Runner) keepaliveTargetsAt(interval time.Duration, now time.Time) (ready []string, why string) {
 	why = "no session in the warm window"
+	candidates := r.keepaliveCandidates()
+	if r.sessionIndex == nil {
+		return nil, why
+	}
+
+	maxIdle := r.keepaliveMaxUserIdle()
+
+	for _, sk := range candidates {
+		if skip := r.checkRateLimit(sk); skip != "" {
+			continue // endpoint rate-limited — don't warm into a cap
+		}
+		if !r.keepaliveUserIdleAllows(sk, now, maxIdle) {
+			continue // no human touched this session within max_user_idle — let it expire
+		}
+		touchAge, ok := r.lastCacheTouchAge(sk, now)
+		if !ok {
+			continue // never warmed / reset — no live cache to keep alive
+		}
+		if !keepaliveWarmWindow(touchAge, interval, r.ttlFor(sk)) {
+			continue // warmed recently (not due yet), or already expired (don't warm a corpse)
+		}
+		if r.parentTurnInFlight(sk) {
+			why = "due but turn in flight on " + sk
+			continue
+		}
+		ready = append(ready, sk)
+	}
+	return ready, why
+}
+
+// The helpers below are keepalive's per-session decision, shared by
+// keepaliveTargets (which warms) and keepaliveWillRewarm (pre-cold
+// compaction's "will keepalive warm this again before it expires?", #1066).
+// One copy of each rule, so the two can never disagree.
+
+// cachingAvailable reports whether keepalive can warm anything at all.
+// cachingOverride allows models with auto-detected caching (OpenAI, DeepSeek)
+// to bypass client.IsCachingAvailable(), which may return false for
+// non-Anthropic clients.
+func (r *Runner) cachingAvailable() bool {
+	if r.cachingOverride != nil {
+		return *r.cachingOverride
+	}
+	if r.client != nil {
+		return r.client.IsCachingAvailable()
+	}
+	return true
+}
+
+// keepaliveCandidates returns the sessions keepalive considers: the open app
+// chats while warm_open_app_chats is on, else (or when none are open) the
+// default session.
+func (r *Runner) keepaliveCandidates() []string {
 	var candidates []string
 	if r.kaCfg.WarmOpenAppChats && r.openChatSessionsFn != nil {
 		candidates = r.openChatSessionsFn()
@@ -143,44 +204,77 @@ func (r *Runner) keepaliveTargets(interval time.Duration) (ready []string, why s
 			candidates = []string{parentKey}
 		}
 	}
-	if r.sessionIndex == nil {
-		return nil, why
-	}
+	return candidates
+}
 
-	var maxIdle time.Duration
-	if r.kaCfg.MaxUserIdle != "" {
-		if d, ok := r.parseDuration("keepalive max_user_idle", r.kaCfg.MaxUserIdle); ok {
-			maxIdle = d
+// keepaliveMaxUserIdle is the parsed max_user_idle; 0 = no limit (unset, "0",
+// or unparseable — the last logs a warning).
+func (r *Runner) keepaliveMaxUserIdle() time.Duration {
+	if config.KeepaliveMaxUserIdleUnlimited(r.kaCfg.MaxUserIdle) {
+		if r.kaCfg.MaxUserIdle != "" {
+			// Log an unparseable value the same way as before (a "0" parses
+			// cleanly and logs nothing).
+			r.parseDuration("keepalive max_user_idle", r.kaCfg.MaxUserIdle)
 		}
+		return 0
 	}
+	d, _ := time.ParseDuration(r.kaCfg.MaxUserIdle)
+	return d
+}
 
-	now := time.Now()
-	for _, sk := range candidates {
-		if skip := r.checkRateLimit(sk); skip != "" {
-			continue // endpoint rate-limited — don't warm into a cap
-		}
-		if maxIdle > 0 {
-			if ua, ok := r.sessionIndex.LastUserActivity(sk); !ok || now.Sub(ua) > maxIdle {
-				continue // no human touched this session within max_user_idle — let it expire
-			}
-		}
-		touchAge, ok := r.lastCacheTouchAge(sk, now)
-		if !ok {
-			continue // never warmed / reset — no live cache to keep alive
-		}
-		if touchAge < interval {
-			continue // warmed recently — not due yet
-		}
-		if ttl := r.ttlFor(sk); ttl > 0 && touchAge >= ttl {
-			continue // cache already expired — don't warm a corpse
-		}
-		if r.parentTurnInFlight(sk) {
-			why = "due but turn in flight on " + sk
-			continue
-		}
-		ready = append(ready, sk)
+// keepaliveUserIdleAllows reports whether keepalive's max_user_idle gate lets
+// it warm sk at the moment at: no limit, or a human touched sk within maxIdle
+// of at. No recorded human activity fails the gate when a limit is set.
+func (r *Runner) keepaliveUserIdleAllows(sk string, at time.Time, maxIdle time.Duration) bool {
+	if maxIdle <= 0 {
+		return true
 	}
-	return ready, why
+	ua, ok := r.sessionIndex.LastUserActivity(sk)
+	return ok && at.Sub(ua) <= maxIdle
+}
+
+// keepaliveWarmWindow reports whether a cache last touched touchAge ago is in
+// keepalive's warm window [interval, ttl): due for a refresh and not yet
+// expired. ttl 0 = unknown, no upper bound.
+func keepaliveWarmWindow(touchAge, interval, ttl time.Duration) bool {
+	if touchAge < interval {
+		return false
+	}
+	return ttl <= 0 || touchAge < ttl
+}
+
+// keepaliveWillRewarm reports whether keepalive, as configured now, will warm
+// sk's cache again before it expires. Pre-cold compaction (#1066) runs only
+// when this is false. It replays keepaliveTargets' own rules at the first
+// moment keepalive could fire — the later of now and touch+interval:
+// keepalive enabled with caching available, sk among its candidates, a
+// recorded touch, that moment inside the warm window, and the max_user_idle
+// gate still open at that moment. The transient gates (rate limit, a turn in
+// flight, a yield to another task) only delay keepalive by a tick and are not
+// replayed.
+func (r *Runner) keepaliveWillRewarm(sk string, now time.Time) bool {
+	if !r.kaCfg.Enabled || !r.cachingAvailable() || r.sessionIndex == nil {
+		return false
+	}
+	if !slices.Contains(r.keepaliveCandidates(), sk) {
+		return false
+	}
+	interval, err := time.ParseDuration(r.kaCfg.Interval)
+	if err != nil {
+		return false // keepalive cannot parse it either, and never fires
+	}
+	touchAge, ok := r.lastCacheTouchAge(sk, now)
+	if !ok {
+		return false
+	}
+	wait := time.Duration(0)
+	if touchAge < interval {
+		wait = interval - touchAge
+	}
+	if !keepaliveWarmWindow(touchAge+wait, interval, r.ttlFor(sk)) {
+		return false // the warm window is empty or already over
+	}
+	return r.keepaliveUserIdleAllows(sk, now.Add(wait), r.keepaliveMaxUserIdle())
 }
 
 // lastCacheTouchAge returns how long ago the session's prompt cache was last

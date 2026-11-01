@@ -77,10 +77,17 @@ func (r *Runner) maybeQuietCompaction(ctx context.Context) {
 	consolidationRunning := r.consolidationRunning
 	resetRunning := r.resetRunning
 	keepaliveRunning := r.keepaliveRunning
+	precoldRunning := r.precoldCompactionRunning
 	r.mu.Unlock()
 
 	if running {
 		skip = "already running"
+		return
+	}
+	// Yield to a pre-cold compaction pass (#1066): both compact the same
+	// sessions.
+	if precoldRunning {
+		skip = "pre-cold compaction running"
 		return
 	}
 	// Yield to the memory passes and reset (they mutate the same sessions,

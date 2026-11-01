@@ -18,6 +18,10 @@
 //     compacts each idle open session whose context usage is at or above
 //     compaction_quiet_threshold, once per window occurrence (#2218) — so
 //     keepalive stops re-warming a full context nobody is using.
+//
+//   - Pre-cold compaction (opt-in, #1066): compacts an idle open session just
+//     before its prompt cache expires, when keepalive will not warm it again,
+//     so the next turn's full cache write is smaller.
 package periodic
 
 import (
@@ -152,6 +156,11 @@ type Runner struct {
 	// Window "" = off. Installed at construction and by applySettings.
 	quietCfg config.ResolvedQuietCompaction
 
+	// precoldCfg is the resolved pre-cold compaction trigger (#1066).
+	// Enabled false = off (the default). Installed at construction and by
+	// applySettings.
+	precoldCfg config.ResolvedPrecoldCompaction
+
 	// clock is the injectable time source for clock-time schedulers
 	// (quiet-hours compaction); nil = the real wall clock. The runner
 	// converts reads into the process timezone via Runner.now.
@@ -219,6 +228,11 @@ type Runner struct {
 	// to remove.
 	quietCompactionRunning bool
 
+	// precoldCompactionRunning latches a pre-cold compaction pass in flight
+	// (#1066), exactly like quietCompactionRunning; keepalive and quiet
+	// compaction yield to it.
+	precoldCompactionRunning bool
+
 	// Ephemeral-session cleanup
 	ephemeralRetentionDays  int       // 0 = disabled
 	lastEphemeralCleanup    time.Time // last daily GC run (persisted, #2026)
@@ -241,6 +255,7 @@ type Settings struct {
 	Reflection             config.ResolvedReflection
 	Maintenance            config.ResolvedMaintenance
 	QuietCompaction        config.ResolvedQuietCompaction
+	PrecoldCompaction      config.ResolvedPrecoldCompaction
 	TickInterval           string // Go duration string; "" = default
 	EphemeralRetentionDays int
 }
@@ -271,6 +286,7 @@ func (r *Runner) applySettings(s Settings, ticker *time.Ticker) {
 	r.reflectCfg = s.Reflection
 	r.maintCfg = s.Maintenance
 	r.quietCfg = s.QuietCompaction
+	r.precoldCfg = s.PrecoldCompaction
 	r.ephemeralRetentionDays = s.EphemeralRetentionDays
 
 	newTick := defaultTickInterval
@@ -333,14 +349,18 @@ type RunnerConfig struct {
 	// Window "" = off (the default). Hot-reloadable via Settings.
 	QuietCompaction config.ResolvedQuietCompaction
 
+	// PrecoldCompaction is the resolved pre-cold compaction trigger (#1066).
+	// Enabled false = off (the default). Hot-reloadable via Settings.
+	PrecoldCompaction config.ResolvedPrecoldCompaction
+
 	// Clock is the time source for clock-time schedulers (quiet-hours
 	// compaction, #2218). nil = the real wall clock; tests inject a
 	// *clock.Fake so window membership never depends on the wall clock.
 	Clock clock.Clock
 
 	// NotifyQuietCompact is called with (sessionKey, text) after each
-	// successful quiet-hours compaction (#2218) to post the one-line note to
-	// the session's chat. nil = no notification.
+	// successful quiet-hours (#2218) or pre-cold (#1066) compaction to post
+	// the one-line note to the session's chat. nil = no notification.
 	NotifyQuietCompact func(sessionKey, text string)
 
 	WarningDispatcher     *warnings.Dispatcher
@@ -403,6 +423,7 @@ func New(cfg RunnerConfig) *Runner {
 
 		openChatSessionsFn: cfg.OpenChatSessionsFn,
 		quietCfg:           cfg.QuietCompaction,
+		precoldCfg:         cfg.PrecoldCompaction,
 		clock:              cfg.Clock,
 		notifyQuietCompact: cfg.NotifyQuietCompact,
 
@@ -594,10 +615,14 @@ func (r *Runner) run(ctx context.Context) {
 			// quietCompactionRunning on the same tick: without it keepalive
 			// would race the compaction and re-warm the full context the
 			// compaction is about to shrink — the exact waste #2218 removes.
+			// Pre-cold compaction (#1066) sits right after quiet compaction
+			// for the same reason, and yields to it (quiet runs first, so
+			// its flag is visible on the same tick).
 			r.maybeReflection()
 			r.maybeConsolidation()
 			r.maybeReset(ctx)
 			r.maybeQuietCompaction(ctx)
+			r.maybePrecoldCompaction(ctx)
 			r.maybeKeepalive(ctx)
 			r.maybeBackgroundWork(ctx)
 			r.maybeEphemeralCleanup(ctx)

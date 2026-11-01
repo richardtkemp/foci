@@ -366,6 +366,11 @@ func decodeConfig(data []byte, path string, knownBackends []string) (*Config, er
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
+	// Pre-cold compaction (#1066) enabled where it can never fire.
+	for _, w := range PrecoldNeverFiresWarnings(&cfg) {
+		configLog.Warnf("%s", w)
+	}
+
 	return &cfg, nil
 }
 

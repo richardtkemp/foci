@@ -352,8 +352,14 @@ func (cfg *Config) Validate(knownBackends []string) error {
 	if err := validateQuietCompaction("[sessions]", cfg.Sessions.CompactionConfig); err != nil {
 		return err
 	}
+	if err := validatePrecoldCompaction("[sessions]", cfg.Sessions.CompactionConfig); err != nil {
+		return err
+	}
 	for _, a := range cfg.Agents {
 		if err := validateQuietCompaction(fmt.Sprintf("agent %q [sessions]", a.ID), a.Sessions.CompactionConfig); err != nil {
+			return err
+		}
+		if err := validatePrecoldCompaction(fmt.Sprintf("agent %q [sessions]", a.ID), a.Sessions.CompactionConfig); err != nil {
 			return err
 		}
 	}
@@ -587,6 +593,25 @@ func validateQuietCompaction(where string, c CompactionConfig) error {
 		}
 		if v <= 0 {
 			return fmt.Errorf("%s compaction_quiet_min_idle = %q: must be a positive duration", where, *d)
+		}
+	}
+	return nil
+}
+
+// validatePrecoldCompaction checks one scope's compaction_precold_* values
+// (#1066): a set threshold must be in (0, 1] and a set lead must parse as a
+// positive duration. where names the scope in the error.
+func validatePrecoldCompaction(where string, c CompactionConfig) error {
+	if t := c.CompactionPrecoldThreshold; t != nil && (*t <= 0 || *t > 1) {
+		return fmt.Errorf("%s compaction_precold_threshold = %g: must be greater than 0 and at most 1", where, *t)
+	}
+	if d := c.CompactionPrecoldLead; d != nil && *d != "" {
+		v, err := time.ParseDuration(*d)
+		if err != nil {
+			return fmt.Errorf("%s compaction_precold_lead = %q: %w", where, *d, err)
+		}
+		if v <= 0 {
+			return fmt.Errorf("%s compaction_precold_lead = %q: must be a positive duration", where, *d)
 		}
 	}
 	return nil
