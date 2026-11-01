@@ -941,9 +941,9 @@ func (a *Agent) ClearSessionState(sessionKey string) {
 	delete(a.meta, sessionKey)
 	a.metaMu.Unlock()
 
-	a.turnLocksMu.Lock()
-	delete(a.turnLocks, sessionKey)
-	a.turnLocksMu.Unlock()
+	// Kept while held: removing a held mutex would let the next turn take a
+	// fresh one and run beside the holder (#2283, dropTurnLock).
+	a.dropTurnLock(sessionKey)
 
 	if a.SessionIndex != nil {
 		if err := a.SessionIndex.DeleteAllSessionMetadata(sessionKey); err != nil {

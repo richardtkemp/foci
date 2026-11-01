@@ -300,8 +300,13 @@ const compactionHoldPoll = 100 * time.Millisecond
 // Each session runs its own worker goroutine so different sessions on the
 // same agent (e.g. multiple users in DMs) proceed in parallel. The worker
 // is spawned exactly once via workerStarted (sync.Once) and lives until
-// agent shutdown (idle GC of long-quiet sessions deferred to a future
-// version — typical agents have O(10) sessions, each goroutine is ~8KB).
+// agent shutdown or until the session has been idle for 3h (#2283,
+// inbox_evict.go): the reaper checks every 10 minutes and asks an idle
+// session's worker to evict itself; the worker, at its idle point, stops,
+// drops the a.inboxes entry and the session's refilling bookkeeping, and the
+// next message on the key creates a new inbox and worker. A session with
+// anything queued, held, deferred or running is never evicted, and an
+// Enqueue that has found the inbox pins it (evictMu) until it has written.
 type sessionInbox struct {
 	sk         string
 	ch         chan Envelope
@@ -381,15 +386,30 @@ type sessionInbox struct {
 	enqSeq      atomic.Uint64
 	stopThrough atomic.Uint64
 
+	// Idle eviction (#2283, inbox_evict.go). evictMu is read-locked by an
+	// Enqueue from finding this inbox until it has written to it (pinInbox),
+	// and write-locked (TryLock only) by tryEvictInbox, which sets evicted
+	// under it; an evicted inbox is never written to again. evictReq carries
+	// the reaper's request to the worker. lastUsed is when Enqueue last
+	// accepted an envelope or the worker last finished a batch or an
+	// injection (unix nanoseconds).
+	evictMu  sync.RWMutex
+	evicted  bool
+	evictReq chan struct{}
+	lastUsed atomic.Int64
+
 	log *log.ComponentLogger
 }
 
 func newSessionInbox(sk string, lg *log.ComponentLogger) *sessionInbox {
-	return &sessionInbox{
-		sk:  sk,
-		ch:  make(chan Envelope, inboxChanSize),
-		log: lg,
+	inb := &sessionInbox{
+		sk:       sk,
+		ch:       make(chan Envelope, inboxChanSize),
+		evictReq: make(chan struct{}, 1),
+		log:      lg,
 	}
+	inb.touch()
+	return inb
 }
 
 func (inb *sessionInbox) appendSteer(e SteerEntry) {
@@ -625,11 +645,17 @@ func (a *Agent) StartInbox(ctx context.Context) {
 			go a.sessionWorker(a.inboxCtx, inb)
 		})
 	}
+	// Idle-inbox reaper (#2283): exits with the workers on ctx.
+	go a.inboxReaper(ctx)
 }
 
 // Enqueue accepts a fully-resolved envelope and routes it to the right
 // per-session inbox. The session inbox + worker are lazy-created on first
-// call for a given session key.
+// call for a given session key, and recreated after an idle eviction
+// (#2283): Enqueue pins the inbox it found (pinInbox) until it has written,
+// so an envelope is never left on an evicted inbox and is processed exactly
+// once. An accepted envelope marks the session used (touch). Enqueue never
+// blocks on a full channel, and its pin holds up no other session.
 //
 // Enqueue is THE entry point for input to an agent session — the "when" half
 // of the pair it forms with delegator.ImmediateInject (the "how": the raw
@@ -656,7 +682,7 @@ func (a *Agent) StartInbox(ctx context.Context) {
 //
 // Drops envelopes with empty session keys (logged) — caller is expected
 // to resolve the session key before calling Enqueue.
-func (a *Agent) Enqueue(env Envelope) bool {
+func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 	if env.SessionKey == "" {
 		a.logger().Warnf("inbox: enqueue with empty session key, dropping (text=%dB)", len(env.Text))
 		return false
@@ -692,7 +718,13 @@ func (a *Agent) Enqueue(env Envelope) bool {
 		reloginHold = true
 	}
 
-	inb := a.getOrCreateInbox(env.SessionKey)
+	inb := a.pinInbox(env.SessionKey)
+	defer inb.evictMu.RUnlock()
+	defer func() {
+		if accepted {
+			inb.touch()
+		}
+	}()
 
 	// Injections skip all user-message routing (plan-cancel, ask-capture, steer)
 	// — they are system turns, not user input. Queue straight to the worker.
@@ -1148,6 +1180,10 @@ func (a *Agent) lookupInbox(sk string) *sessionInbox {
 	return a.inboxes[sk]
 }
 
+// getOrCreateInbox returns sk's inbox in a.inboxes, creating it (and starting
+// its worker once the inbox subsystem has started) if there is none — the
+// first message on the key, or the first after an idle eviction (#2283). It
+// does not pin the inbox: a caller that writes to it uses pinInbox.
 func (a *Agent) getOrCreateInbox(sk string) *sessionInbox {
 	a.inboxesMu.Lock()
 	defer a.inboxesMu.Unlock()
@@ -1198,6 +1234,8 @@ func (a *Agent) getOrCreateInbox(sk string) *sessionInbox {
 // (which has no loop top to return to) via consumeHeldHint.
 func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 	a.logger().Debugf("inbox: session worker started sk=%s", inb.sk)
+	a.inboxWorkers.Add(1)
+	defer a.inboxWorkers.Add(-1)
 	defer func() {
 		stopHeldWatch(inb)
 		a.refuseHeld(inb)
@@ -1228,6 +1266,7 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 			if !a.handleDequeued(ctx, inb, env) {
 				return
 			}
+			inb.touch()
 			continue
 		}
 		var openCh <-chan bool
@@ -1250,6 +1289,14 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 			stopHeldWatch(inb)
 		case env := <-inb.ch:
 			if !a.handleDequeued(ctx, inb, env) {
+				return
+			}
+			inb.touch()
+		case <-inb.evictReq:
+			// The reaper's idle-eviction request (#2283). Checked here, at
+			// the worker's idle point, so nothing this worker has taken can
+			// be stranded; an eviction that does not apply changes nothing.
+			if a.tryEvictInbox(inb) {
 				return
 			}
 		}

@@ -12,6 +12,7 @@ package chatmeta
 
 import (
 	"sync"
+	"time"
 
 	"foci/internal/log"
 	"foci/internal/platform"
@@ -26,7 +27,72 @@ type Resolver struct {
 	PlatformName string
 	Logger       func() *log.ComponentLogger // lazy logger (borrows the bot's logger)
 
-	registered sync.Map // chatID → struct{}: chats already registered this process
+	// registered maps each chat registered this process to when it was last
+	// seen, so a repeat contact skips the database write. Entries not seen for
+	// registeredIdleAfter are dropped by a sweep run from RegisterChat itself
+	// (at most every registeredSweepEvery), so the map does not grow with
+	// every chat ever seen (#2283). Guarded by regMu.
+	regMu      sync.Mutex
+	registered map[int64]time.Time
+	lastSweep  time.Time
+
+	// idleAfter and sweepEvery override registeredIdleAfter and
+	// registeredSweepEvery in tests; zero = the defaults.
+	idleAfter  time.Duration
+	sweepEvery time.Duration
+	now        func() time.Time // test clock; nil = time.Now
+}
+
+// A registered chat not seen for registeredIdleAfter is dropped from the
+// in-process cache; the sweep runs at most every registeredSweepEvery. Not
+// configurable: they match the 3h / 10m inbox idle eviction (#2283).
+const (
+	registeredIdleAfter  = 3 * time.Hour
+	registeredSweepEvery = 10 * time.Minute
+)
+
+func (r *Resolver) registeredIdle() time.Duration {
+	if r.idleAfter > 0 {
+		return r.idleAfter
+	}
+	return registeredIdleAfter
+}
+
+func (r *Resolver) registeredSweep() time.Duration {
+	if r.sweepEvery > 0 {
+		return r.sweepEvery
+	}
+	return registeredSweepEvery
+}
+
+// markSeen records chatID as seen now and reports whether it was already
+// registered and seen within the idle threshold (no write needed). It first
+// sweeps out chats idle past the threshold, when a sweep is due.
+func (r *Resolver) markSeen(chatID int64, now time.Time) (fresh bool) {
+	r.regMu.Lock()
+	defer r.regMu.Unlock()
+	if r.registered == nil {
+		r.registered = make(map[int64]time.Time)
+	}
+	idle := r.registeredIdle()
+	if now.Sub(r.lastSweep) >= r.registeredSweep() {
+		for id, seen := range r.registered {
+			if now.Sub(seen) >= idle {
+				delete(r.registered, id)
+			}
+		}
+		r.lastSweep = now
+	}
+	last, ok := r.registered[chatID]
+	r.registered[chatID] = now
+	return ok && now.Sub(last) < idle
+}
+
+// forget drops chatID so its next contact writes again.
+func (r *Resolver) forget(chatID int64) {
+	r.regMu.Lock()
+	delete(r.registered, chatID)
+	r.regMu.Unlock()
 }
 
 // SessionKeyForChat returns the stable session key for a chat ID and records
@@ -41,12 +107,19 @@ func (r *Resolver) SessionKeyForChat(chatID int64) string {
 }
 
 // RegisterChat persists the platform-ownership row for a chat. Idempotent and
-// cached: only the first call per chat per process hits the database.
+// cached: a chat seen within the last 3h makes no database write. A chat idle
+// longer than that is dropped from the cache (#2283), so its next contact
+// writes the (idempotent) row once more; a failed write is retried on the
+// next contact.
 func (r *Resolver) RegisterChat(chatID int64) {
 	if r == nil || r.Index == nil || r.AgentID == "" || r.PlatformName == "" {
 		return
 	}
-	if _, seen := r.registered.LoadOrStore(chatID, struct{}{}); seen {
+	now := time.Now
+	if r.now != nil {
+		now = r.now
+	}
+	if r.markSeen(chatID, now()) {
 		return
 	}
 	// registered='true' is the universal "this is a real user-facing chat"
@@ -57,7 +130,7 @@ func (r *Resolver) RegisterChat(chatID int64) {
 	// (alias/username/features) can't be mistaken for a routable chat.
 	if err := r.Index.SetChatMetadata(r.AgentID, r.PlatformName, chatID, "registered", "true"); err != nil {
 		r.Logger().Errorf("register chat %d: %v", chatID, err)
-		r.registered.Delete(chatID) // retry on next contact
+		r.forget(chatID) // retry on next contact
 	}
 }
 

@@ -44,10 +44,9 @@ func (t *APITransport) RateLimitGate(ts *TurnState) error {
 // Extracted from agent.go:309-316.
 func (t *APITransport) AcquireTurnLock(ts *TurnState) func() {
 	a := t.agent
-	sessionLock := a.turnLock(ts.SessionKey)
 	a.logger().Debugf("turn_lock_wait session=%s trigger=%s", ts.SessionKey, ts.Trigger)
 	lockStart := time.Now()
-	sessionLock.Lock()
+	sessionLock := a.lockTurn(ts.SessionKey)
 	lockDur := time.Since(lockStart)
 	a.logTurnLockWait(ts.SessionKey, lockDur, ts.Trigger)
 	return sessionLock.Unlock

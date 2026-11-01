@@ -135,7 +135,9 @@ func (a *Agent) IsInFlightDelivering(key string) bool {
 //
 // Safe under concurrent waiters and concurrent state changes: close-and-replace
 // happens under inFlightMu, so every waiter that fetched the channel before
-// the change observes the close.
+// the change observes the close. When an idle session is evicted (#2283) its
+// channel is closed and removed (dropInFlightChanged, only with nothing in
+// flight): a waiter wakes, re-checks and gets a fresh channel from here.
 func (a *Agent) InFlightWaitCh(key string) <-chan struct{} {
 	base := key
 	a.inFlightMu.Lock()

@@ -220,6 +220,12 @@ type Agent struct {
 	// platform-supplied Driver. See inbox.go.
 	inboxes               map[string]*sessionInbox                                          // per-session inbox registry, lazy-created
 	inboxesMu             sync.Mutex                                                        // protects inboxes map + StartInbox idempotency
+	inboxWorkers          atomic.Int64                                                      // running session workers (#2283 eviction; diagnostics and tests)
+	inboxEvictions        atomic.Int64                                                      // idle inboxes evicted since start (#2283; diagnostics and tests)
+	inboxIdleAfter        time.Duration                                                     // idle-eviction threshold override (tests); 0 = inboxIdleAfter (3h)
+	inboxReapEvery        time.Duration                                                     // idle-reaper interval override (tests); 0 = inboxReapEvery (10m)
+	enqueueFoundHook      func(sk string)                                                   // test seam: runs after Enqueue finds the inbox, before it pins it
+	turnLockFetchedHook   func(sk string)                                                   // test seam: runs after lockTurn fetches the mutex, before it locks it
 	inboxStarted          bool                                                              // true once StartInbox has been called
 	reloginDrainOnce      sync.Once                                                         // registers DrainReloginDeferred with relogin.G once, on the first paused injection (#2384)
 	inboxCtx              context.Context                                                   //nolint:containedctx // parent ctx for session worker goroutines
@@ -615,9 +621,12 @@ func (a *Agent) ProcessingDetails() []TurnDetail {
 	return out
 }
 
-// turnLock returns a per-session mutex that serializes HandleMessage calls.
-// This prevents concurrent turns on the same session from interleaving messages
-// in the session file, which would invalidate Anthropic's prefix-matched prompt cache.
+// turnLock returns the map's per-session mutex that serializes HandleMessage
+// calls. This prevents concurrent turns on the same session from interleaving
+// messages in the session file, which would invalidate Anthropic's
+// prefix-matched prompt cache. The entry can be removed while nobody holds it
+// (idle eviction, ClearSessionState: dropTurnLock), so never lock its result
+// directly: lockTurn locks it and retries when it was removed meanwhile.
 func (a *Agent) turnLock(sessionKey string) *sync.Mutex {
 	a.turnLocksMu.Lock()
 	defer a.turnLocksMu.Unlock()
