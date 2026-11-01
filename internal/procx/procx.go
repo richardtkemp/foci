@@ -44,6 +44,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -99,14 +100,31 @@ func Setup() error {
 var setupErr error
 
 // credentialSetupError returns a non-nil error for the fail-closed condition:
-// the process holds the foci-secrets group (found) but the CAP_SETGID probe
-// failed (probeErr != nil), so the group cannot be dropped from children.
-// Every other combination is safe. (P2-12.)
-func credentialSetupError(found bool, probeErr error) error {
-	if found && probeErr != nil {
-		return fmt.Errorf("process holds a security group but cannot drop it from children (CAP_SETGID unavailable): %w", probeErr)
+// the process holds one or more security groups (held) but the credential-drop
+// probe failed (probeErr != nil), so the groups cannot be dropped from
+// children. Every other combination is safe. (P2-12.)
+//
+// The message names the groups actually held, and the remedy depends on goos
+// (#2665): on Linux the fix is CAP_SETGID; macOS has no capability system and
+// setgroups(2) is root-only, so there is nothing to fix there (Seatbelt
+// isolation is tracked as #2663).
+func credentialSetupError(goos string, held []string, probeErr error) error {
+	if len(held) == 0 || probeErr == nil {
+		return nil
 	}
-	return nil
+	groups := strings.Join(held, ", ")
+	if goos == "linux" {
+		return fmt.Errorf("process holds security group(s) %s but cannot drop them from children (CAP_SETGID unavailable; add AmbientCapabilities=CAP_SETGID to the systemd unit, see docs/SECRETS.md): %w", groups, probeErr)
+	}
+	return fmt.Errorf("process holds security group(s) %s but cannot drop them from children: subprocess group isolation is not available on %s (no way to drop supplementary groups as a non-root user); remove the user from %s or run without isolation: %w", groups, osDisplayName(goos), groups, probeErr)
+}
+
+// osDisplayName returns the human name of a GOOS value for operator messages.
+func osDisplayName(goos string) string {
+	if goos == "darwin" {
+		return "macOS"
+	}
+	return goos
 }
 
 func setupImpl() {
@@ -150,17 +168,17 @@ func setupImpl() {
 
 	// Build filtered list: all groups EXCEPT those in dropGIDs.
 	var filteredGroups []uint32
-	found := false
+	var held []string
 	for _, g := range currentGroups {
 		if name, drop := dropGIDs[uint32(g)]; drop { //nolint:gosec // G115: GID values are non-negative
-			found = true
+			held = append(held, name)
 			execLog.Debugf("will drop group %s (gid %d) from children", name, g)
 			continue
 		}
 		filteredGroups = append(filteredGroups, uint32(g)) // #nosec G115
 	}
 
-	if !found {
+	if len(held) == 0 {
 		execLog.Debugf("process does not hold any drop groups — skipping child credential setup")
 		return
 	}
@@ -180,17 +198,18 @@ func setupImpl() {
 	}
 
 	// Probe: try spawning a trivial process with the credential.
-	// If CAP_SETGID is not available, setgroups() fails and we should
-	// not set the credential (which would break all exec calls).
+	// If the process may not call setgroups() (no CAP_SETGID on Linux; never
+	// as non-root on macOS), the exec fails and we must not set the
+	// credential (which would break all exec calls).
 	probe := exec.Command("true") //nolint:forbidigo // probe is the bootstrap that decides whether the credential mechanism works
 	probe.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid:    true,
 		Credential: cred,
 	}
 	if err := probe.Run(); err != nil {
-		execLog.Warnf("cannot drop security groups (CAP_SETGID not available): %v", err)
-		execLog.Warnf("child processes will inherit parent groups — add AmbientCapabilities=CAP_SETGID to systemd unit")
-		setupErr = credentialSetupError(true, err)
+		// Setup's only caller (foci-gw) logs setupErr, fatally or as an
+		// INSECURE warning, so the error carries the whole message.
+		setupErr = credentialSetupError(runtime.GOOS, held, err)
 		return
 	}
 

@@ -14,22 +14,68 @@ import (
 )
 
 // TestCredentialSetupError proves the fail-closed decision: a process that
-// holds the foci-secrets group but whose CAP_SETGID probe failed must surface
+// holds a security group but whose credential-drop probe failed must surface
 // an error (otherwise children silently inherit the group and can read
-// secrets.toml). Every other combination is safe and must not error. (P2-12.)
+// secrets.toml or reach the askgw socket). Every other combination is safe
+// and must not error. (P2-12.)
 func TestCredentialSetupError(t *testing.T) {
 	t.Parallel()
-	if err := credentialSetupError(true, errors.New("EPERM")); err == nil {
-		t.Error("held group + failed probe must fail closed (non-nil error)")
+	held := []string{SecurityGroupName}
+	for _, goos := range []string{"linux", "darwin"} {
+		if err := credentialSetupError(goos, held, errors.New("EPERM")); err == nil {
+			t.Errorf("%s: held group + failed probe must fail closed (non-nil error)", goos)
+		}
+		if err := credentialSetupError(goos, nil, errors.New("EPERM")); err != nil {
+			t.Errorf("%s: no group membership must not fail closed: %v", goos, err)
+		}
+		if err := credentialSetupError(goos, held, nil); err != nil {
+			t.Errorf("%s: successful probe must not fail closed: %v", goos, err)
+		}
+		if err := credentialSetupError(goos, nil, nil); err != nil {
+			t.Errorf("%s: no group + success must not fail closed: %v", goos, err)
+		}
 	}
-	if err := credentialSetupError(false, errors.New("EPERM")); err != nil {
-		t.Errorf("no group membership must not fail closed: %v", err)
+}
+
+// TestCredentialSetupErrorMessage pins what the fail-closed message tells the
+// operator (#2665): it names the group actually held (not always foci-secrets),
+// and on macOS it says isolation is unavailable instead of pointing at
+// CAP_SETGID or a systemd unit, neither of which exists there.
+func TestCredentialSetupErrorMessage(t *testing.T) {
+	t.Parallel()
+	probe := errors.New("operation not permitted")
+
+	macErr := credentialSetupError("darwin", []string{"foci-askgw"}, probe)
+	if macErr == nil {
+		t.Fatal("darwin: held group + failed probe must fail closed")
 	}
-	if err := credentialSetupError(true, nil); err != nil {
-		t.Errorf("successful probe must not fail closed: %v", err)
+	mac := macErr.Error()
+	if !strings.Contains(mac, "foci-askgw") {
+		t.Errorf("darwin message must name the held group foci-askgw: %q", mac)
 	}
-	if err := credentialSetupError(false, nil); err != nil {
-		t.Errorf("no group + success must not fail closed: %v", err)
+	if strings.Contains(mac, SecurityGroupName) {
+		t.Errorf("darwin message names %s, which is not held: %q", SecurityGroupName, mac)
+	}
+	for _, bad := range []string{"CAP_SETGID", "systemd", "AmbientCapabilities"} {
+		if strings.Contains(mac, bad) {
+			t.Errorf("darwin message mentions %s, which does not exist on macOS: %q", bad, mac)
+		}
+	}
+	if !strings.Contains(mac, "macOS") {
+		t.Errorf("darwin message must say isolation is unavailable on macOS: %q", mac)
+	}
+	if !errors.Is(macErr, probe) {
+		t.Error("darwin error must wrap the probe error")
+	}
+
+	linErr := credentialSetupError("linux", []string{SecurityGroupName, "foci-askgw"}, probe)
+	if linErr == nil {
+		t.Fatal("linux: held group + failed probe must fail closed")
+	}
+	for _, want := range []string{SecurityGroupName, "foci-askgw", "CAP_SETGID", "AmbientCapabilities=CAP_SETGID"} {
+		if !strings.Contains(linErr.Error(), want) {
+			t.Errorf("linux message must mention %s: %q", want, linErr.Error())
+		}
 	}
 }
 

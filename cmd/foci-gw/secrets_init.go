@@ -77,16 +77,17 @@ func initSecrets(configPath string, cfg *config.Config) secretsResult {
 	// [[platforms]] id="app" brings the endpoint up with no shared secret.
 
 	// Initialise the child-credential drop (probes CAP_SETGID, stashes a
-	// Credential that filters foci-secrets out of child processes' groups).
+	// Credential that filters the security groups out of child processes').
 	// Every subprocess foci-gw spawns goes through procx.Spawn /
 	// procx.SpawnSetsid, which read the credential populated here.
 	// Only foci-gw calls this — see internal/procx/procx.go for why the
 	// foci CLI deliberately skips it (TODO #755 cron-log noise fix).
 	if err := procx.Setup(); err != nil {
 		if cfg.SkipSecurityChecks {
-			securityLog.Warnf("procx child-credential setup failed but skip_security_checks is set — continuing INSECURELY (subprocesses keep the %s group): %v", procx.SecurityGroupName, err)
+			securityLog.Warnf("procx child-credential setup failed but skip_security_checks is set — continuing INSECURELY (subprocesses keep foci's security groups): %v", err)
 		} else {
-			log.Fatalf("security", "procx child-credential setup failed: %v — subprocesses would inherit the %s group and could read secrets.toml. Fix CAP_SETGID (see docs/SECRETS.md) or set skip_security_checks=true to override.", err, procx.SecurityGroupName)
+			// err names the groups held and the platform's remedy (#2665).
+			log.Fatalf("security", "procx child-credential setup failed: %v — subprocesses would inherit those groups (foci-secrets can read secrets.toml, foci-askgw can connect to the askgw socket). Fix the cause above, or set skip_security_checks=true to run without this check; that flag ALSO turns off the secrets.toml ownership/permission checks and lets the SSRF guard reach loopback HTTP targets.", err)
 		}
 	}
 
