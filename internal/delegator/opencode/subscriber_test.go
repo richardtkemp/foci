@@ -1053,3 +1053,36 @@ func TestBackend_Dispatcher_DefaultHandlerIsNoOp(t *testing.T) {
 		t.Errorf("events channel has %d undrained events with default handler", len(be.events))
 	}
 }
+
+// TestSubscriber_StopsOnCtxCancelWhileBlockedInRead pins #2725: a cancel that
+// arrives while Run is already blocked reading a silent stream must still end
+// Run. The heartbeat proves Run has passed its pre-read ctx check and gone
+// back into the read before cancel() is called.
+func TestSubscriber_StopsOnCtxCancelWhileBlockedInRead(t *testing.T) {
+	r, w := io.Pipe()
+	defer func() { _ = r.Close() }()
+	defer func() { _ = w.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	beat := make(chan struct{}, 1)
+	sub := NewSubscriber(r, nil, func() { beat <- struct{}{} })
+	done := make(chan error, 1)
+	go func() { done <- sub.Run(ctx) }()
+
+	if _, err := w.Write([]byte(": hb\n")); err != nil {
+		t.Fatalf("write heartbeat: %v", err)
+	}
+	<-beat
+	// Run now loops back, passes the ctx check and blocks in the next read.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Run returned %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after ctx cancel while blocked in a read")
+	}
+}

@@ -109,6 +109,15 @@ func (sub *Subscriber) Run(ctx context.Context) error {
 	const maxLine = 16 << 20 // 16 MiB hard ceiling per SSE line
 	reader := bufio.NewReaderSize(sub.r, 64*1024)
 
+	// The ctx check below runs only between reads, so a cancel that lands
+	// while Run is blocked reading a silent stream would go unseen (#2725).
+	// Closing the stream on cancel unblocks that read; the read error is then
+	// reported as ctx.Err().
+	if c, ok := sub.r.(io.Closer); ok {
+		stop := context.AfterFunc(ctx, func() { _ = c.Close() })
+		defer stop()
+	}
+
 	var dataLines []string // accumulates "data:" lines for the current frame
 
 	for {
@@ -127,6 +136,9 @@ func (sub *Subscriber) Run(ctx context.Context) error {
 			continue
 		}
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr // the read failed because cancel closed the stream
+			}
 			return err // io.EOF on clean close, or the underlying read error
 		}
 		line := string(lineBytes)
