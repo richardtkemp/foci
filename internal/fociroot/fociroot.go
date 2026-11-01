@@ -22,6 +22,7 @@ package fociroot
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 )
 
 // EnvVar names the environment variable that sets foci's install root.
@@ -80,6 +81,17 @@ func CCConfigDir() (string, error) {
 	}
 	return filepath.Join(root, ".claude"), nil
 }
+
+// CCProjectSlug converts a working directory to the name of Claude Code's
+// per-project transcript folder under <CC config dir>/projects. CC replaces
+// every non-alphanumeric character with '-', not just '/': e.g.
+// "/home/foci/clutch" → "-home-foci-clutch", "/a/.b_c" → "-a--b-c".
+func CCProjectSlug(path string) string {
+	return ccNonAlnum.ReplaceAllString(path, "-")
+}
+
+// ccNonAlnum matches the characters Claude Code replaces when slugging a path.
+var ccNonAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)
 
 // EnsureCCConfigEnv points the Claude Code foci starts at its own config
 // folder when the install root is separate from HOME: it sets

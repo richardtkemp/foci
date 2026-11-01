@@ -534,6 +534,13 @@ func main() {
 		}
 		return
 	}
+	if os.Args[1] == "rename-agent" {
+		if err := cmdRenameAgent(os.Args[2:], os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "rename-agent: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if os.Args[1] == "debug" {
 		if err := cmdDebug(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "debug: %v\n", err)
@@ -691,6 +698,7 @@ Commands:
   pair [host]          Mint a single-use Android pairing key (-a for agent)
   debug session <key>  Tail a session file with formatted output
   pretool list|test    Check PreToolUse rules against the config (see foci pretool -h)
+  rename-agent OLD NEW Rename an agent id everywhere, gateway stopped (see foci rename-agent -h)
   version              Print version information
 
 Flags:

@@ -1,7 +1,6 @@
 package session
 
 import (
-	"bufio"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -235,59 +234,8 @@ func clashFreePath(path string) string {
 // No-op when the first line is not a branch_meta or the parent key is
 // already stable.
 func rewriteBranchMetaParent(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
-	if !scanner.Scan() {
-		return scanner.Err()
-	}
-	first := scanner.Bytes()
-
-	var meta BranchMeta
-	if json.Unmarshal(first, &meta) != nil || meta.Type != "branch_meta" {
-		return nil
-	}
-	stable, isLegacy := LegacyKeyToStable(meta.ParentKey)
-	if !isLegacy {
-		return nil
-	}
-	meta.ParentKey = stable
-	newFirst, err := json.Marshal(meta)
-	if err != nil {
-		return err
-	}
-
-	info, err := f.Stat()
-	if err != nil {
-		return err
-	}
-	tmp, err := os.OpenFile(path+".migrate-tmp", os.O_RDWR|os.O_CREATE|os.O_TRUNC, info.Mode().Perm())
-	if err != nil {
-		return err
-	}
-	if _, err := tmp.Write(append(newFirst, '\n')); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	for scanner.Scan() {
-		if _, err := tmp.Write(append(scanner.Bytes(), '\n')); err != nil {
-			_ = tmp.Close()
-			return err
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(path+".migrate-tmp", path)
+	_, err := RewriteBranchParent(path, LegacyKeyToStable)
+	return err
 }
 
 // migrateLegacyStateDB re-keys state.db rows written under legacy session

@@ -1,10 +1,9 @@
 package provision
 
-import "regexp"
-
-var agentIDRe = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+import "foci/internal/config"
 
 // IsValidAgentID checks if a string is a valid agent identifier (lowercase slug).
+// The rule lives in config (config.IsValidAgentID) so every id check shares it.
 func IsValidAgentID(id string) bool {
-	return agentIDRe.MatchString(id)
+	return config.IsValidAgentID(id)
 }

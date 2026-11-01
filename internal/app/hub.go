@@ -51,11 +51,11 @@ const (
 // a phone that drops the socket constantly. These are the code defaults;
 // [platforms.app] replay_buffer / replay_ttl override them per the config cascade.
 const (
-	defaultReplayBufferDepth = 1000                // max retained server frames per conversation (in-memory)
-	defaultReplayTTL         = 24 * time.Hour      // max age of a retained in-memory frame
-	defaultReplayStoreTTL    = 30 * 24 * time.Hour // max age of a durably-stored frame (backfill DB)
-	defaultReplayStoreFile   = "app-frames.db"     // durable replay-frame DB, relative to data_dir
-	maxSeenInbound           = 4096                // per-conversation inbound dedup window (mirrors client)
+	defaultReplayBufferDepth = 1000                          // max retained server frames per conversation (in-memory)
+	defaultReplayTTL         = 24 * time.Hour                // max age of a retained in-memory frame
+	defaultReplayStoreTTL    = 30 * 24 * time.Hour           // max age of a durably-stored frame (backfill DB)
+	defaultReplayStoreFile   = config.DefaultReplayStoreFile // durable replay-frame DB, relative to data_dir
+	maxSeenInbound           = 4096                          // per-conversation inbound dedup window (mirrors client)
 	defaultDevicesFile       = "app-devices.json"
 	maxReplayPage            = 10000 // max frames per GET /app/replay page (HTTP backfill; the app applies a page as ONE Room transaction, so big pages are cheap)
 	maxResumeStoreReplay     = 2000  // max durable-store frames pushed over the ws on reconnect resume — the app dispatches ws frames one-by-one, so keep this burst modest

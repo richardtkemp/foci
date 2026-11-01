@@ -33,14 +33,10 @@ func ccProjectsDir() (string, error) {
 	return filepath.Join(dir, "projects"), nil
 }
 
-// nonAlnum matches the characters Claude Code replaces when slugging a path.
-var nonAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)
-
 // projectSlug converts a workspace path to Claude Code's project directory
-// name. CC replaces every non-alphanumeric character with '-', not just '/':
-// e.g. "/home/foci/clutch" → "-home-foci-clutch", "/a/.b_c" → "-a--b-c".
+// name (fociroot.CCProjectSlug, shared with the agent-rename command).
 func projectSlug(path string) string {
-	return nonAlnum.ReplaceAllString(path, "-")
+	return fociroot.CCProjectSlug(path)
 }
 
 // ForkSession implements delegator.BackendBrancher for the CC stream backend.

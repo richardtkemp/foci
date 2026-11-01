@@ -87,6 +87,13 @@ func (h *Hub) handleServerRestart(client *wsClient) {
 // checkedFileEdit, which runs the whole-file load check before anything is
 // written.
 func (h *Hub) applyConfigEdit(scope, section, key string, value *string) error {
+	// The agent id is read-only here (#1281): it keys session files, every
+	// database, bot and secret names and crontab lines, so an edit of the id
+	// line alone orphans the agent's history. The rename command migrates all
+	// of it; the refusal names that command.
+	if (section == "agent" || section == "agents") && key == "id" {
+		return agentIDReadOnlyError(scope)
+	}
 	// Map-object sections first, before the generic scope check, so a scoped
 	// put is refused with the real reason (no per-agent override exists for
 	// models/endpoints) rather than the generic scope/section mismatch.
@@ -525,4 +532,10 @@ func (h *Hub) buildConfigSchema(errMsg string) fap.ConfigSchema {
 	}
 
 	return fap.ConfigSchema{Fields: descs, Scopes: scopes, Error: errMsg}
+}
+
+// agentIDReadOnlyError is the editor's refusal of an agent-id edit: it names
+// the rename command for the agent in scope.
+func agentIDReadOnlyError(scope string) error {
+	return fmt.Errorf("the agent id is read-only here: changing it would orphan the agent's sessions, databases, bots and cron jobs. To rename an agent, stop the gateway and run: %s", config.RenameAgentCommand(scope))
 }

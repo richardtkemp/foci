@@ -31,7 +31,7 @@ func buildAgentMemorySources(globalSources map[string]memory.SourceConfig, agent
 
 	// Add agent-specific sources with weight boost
 	for _, src := range agentSources {
-		combined["agent/"+src.Name] = memory.SourceConfig{
+		combined[config.AgentMemorySourcePrefix+src.Name] = memory.SourceConfig{
 			Dir:    src.Dir,
 			Weight: src.Weight + AgentMemoryBoost,
 		}

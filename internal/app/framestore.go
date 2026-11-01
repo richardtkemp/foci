@@ -736,3 +736,15 @@ func (s *frameStore) Close() {
 		appLog.Errorf("frame store close: %v", err)
 	}
 }
+
+// InitReplayStore creates (or migrates) the durable replay store's schema at
+// path and closes it — the exact schema the hub opens. For tools that build a
+// data dir offline, such as the agent-rename command's tests.
+func InitReplayStore(path string) error {
+	s, err := newFrameStore(path, defaultReplayStoreTTL)
+	if err != nil {
+		return err
+	}
+	s.Close()
+	return nil
+}
