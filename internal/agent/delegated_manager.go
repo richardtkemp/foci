@@ -67,6 +67,14 @@ func (m *DelegatedManager) typingExpiry() <-chan time.Time {
 // for the delegated transport path. Each session key gets its own Backend
 // (own CC session). Idle backends are closed after IdleTimeout and resumed
 // on next message.
+//
+// Every live backend holds a place in the live-session caps (#2280,
+// LiveSessionLimiter): this agent's MaxLiveSessions and the gateway's
+// [sessions] max_live_sessions. A creation that finds a cap full evicts the
+// least-recently-used idle backend under it (resume ID kept, so the next
+// message resumes it); with nothing idle, the creation for a user turn
+// (GetForUserTurn) waits with a queued notice, and any other creation goes
+// over the cap.
 type DelegatedManager struct {
 	mu       sync.Mutex
 	backends map[string]*managedBackend // sessionKey → managed backend
@@ -213,6 +221,21 @@ type DelegatedManager struct {
 	// Zero uses DefaultIdleTimeout.
 	IdleTimeout time.Duration
 
+	// LiveSessions is the gateway's shared live-session limiter (#2280),
+	// holding the gateway cap ([sessions] max_live_sessions). Nil = a private
+	// limiter with no gateway cap (limiter()).
+	LiveSessions *LiveSessionLimiter
+	limiterOnce  sync.Once
+
+	// MaxLiveSessions is this agent's live-backend cap
+	// ([[agents]].sessions.max_live_sessions); 0 = no agent cap.
+	MaxLiveSessions int
+
+	// SessionBusy reports agent-level work on a session that makes its backend
+	// not evictable (#2280): a turn in flight (Agent.IsTurnInFlight) or a
+	// compaction (Agent.IsCompacting). Nil = none known.
+	SessionBusy func(sessionKey string) bool
+
 	// DeferredBouncePoll is how often a deferred post-compaction reload bounce
 	// re-checks whether the session's background work has finished (#1539).
 	// Zero uses defaultDeferredBouncePoll.
@@ -236,6 +259,10 @@ type DelegatedManager struct {
 	// Shutdown calls BeginShutdown before Close, so the latch is already set
 	// there. Guarded by mu.
 	noNewBackends bool
+
+	// shuttingDown mirrors noNewBackends for the live-session wait, which
+	// must not take m.mu (#2280: no lock order with the limiter).
+	shuttingDown atomic.Bool
 
 	// createGroup serializes backend creation per session key so concurrent
 	// Get callers for the same key spawn exactly one CC instead of racing to
@@ -290,6 +317,13 @@ type managedBackend struct {
 	// reflection, wake, cron, foci send (#2320). Set by the agent before it
 	// dispatches each turn (SetTypingAllowed); the zero value keeps typing on.
 	typingSuppressed atomic.Bool
+
+	// place is the backend's place in the live-session caps (#2280), taken
+	// when its creation starts and released exactly once when it leaves the
+	// map. creating is true until getOrCreate returns: a backend mid-creation
+	// is never evicted.
+	place    *livePlace
+	creating atomic.Bool
 
 	// systemTurn is true while the session's current turn is a system turn:
 	// one no human started (keepalive, reflection, wake, cron, notification —
@@ -454,8 +488,22 @@ func (mb *managedBackend) clearPermission() {
 }
 
 // Get returns the Backend for the given session key, creating and starting
-// one if it doesn't exist yet. Each session key gets its own backend.
+// one if it doesn't exist yet. Each session key gets its own backend. A
+// creation through Get is a system creation (#2280): with a live-session cap
+// full and nothing idle to evict, it goes ahead over the cap.
 func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (delegator.Delegator, error) {
+	return m.get(ctx, sessionKey, false)
+}
+
+// GetForUserTurn is Get for the backend a user turn needs
+// (DelegatedTransport.RunInference, interactive triggers only). With a
+// live-session cap full and nothing idle to evict, its creation waits for a
+// place, sending the session one queued notice (#2280).
+func (m *DelegatedManager) GetForUserTurn(ctx context.Context, sessionKey string) (delegator.Delegator, error) {
+	return m.get(ctx, sessionKey, true)
+}
+
+func (m *DelegatedManager) get(ctx context.Context, sessionKey string, user bool) (delegator.Delegator, error) {
 	// Fast path: an existing, running backend needs no creation, so don't
 	// serialize it through the singleflight group.
 	m.mu.Lock()
@@ -471,7 +519,7 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (delegato
 	// concurrent callers for the same key run getOrCreate once and share the
 	// result, so exactly one CC is spawned. (P2-3.)
 	v, err, _ := m.createGroup.Do(sessionKey, func() (interface{}, error) {
-		return m.getOrCreate(ctx, sessionKey)
+		return m.getOrCreate(ctx, sessionKey, user)
 	})
 	if err != nil {
 		return nil, err
@@ -480,8 +528,9 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (delegato
 }
 
 // getOrCreate looks up or creates the backend for sessionKey. It is always
-// invoked through createGroup.Do, so per-key creation is serialized.
-func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (delegator.Delegator, error) {
+// invoked through createGroup.Do, so per-key creation is serialized. user
+// marks the creation a user turn needs (GetForUserTurn).
+func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string, user bool) (_ delegator.Delegator, retErr error) {
 	m.mu.Lock()
 	// dead is the corpse to clean up after the lock is released. Holding
 	// m.mu across be.Close() risks deadlocking the entire agent if the
@@ -519,12 +568,31 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 		if dead.bridge != nil {
 			dead.bridge.Close()
 		}
+		// The dead backend's place is freed now; its respawn takes a new one.
+		dead.place.release()
 	}
 
 	if refuse {
 		m.logger().Infof("not creating backend for %s: shutting down", sessionKey)
 		return nil, fmt.Errorf("create delegated backend for %s: %w", sessionKey, ErrShuttingDown)
 	}
+
+	// Take a place in the live-session caps before anything is started
+	// (#2280): it counts from here until the backend leaves the map, and a
+	// creation that fails gives it back.
+	place, err := m.limiter().acquire(ctx, m, sessionKey, user)
+	if err != nil {
+		return nil, err
+	}
+	var mb *managedBackend
+	defer func() {
+		if retErr != nil {
+			place.release()
+		}
+		if mb != nil {
+			mb.creating.Store(false)
+		}
+	}()
 
 	// Create and start a new Backend for this session.
 	be, err := m.NewBackend()
@@ -669,14 +737,16 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 	}
 
 	// Create the managedBackend early so callbacks can reference it.
-	mb := &managedBackend{
+	mb = &managedBackend{
 		be:               be,
 		bridge:           bridge,
 		lastActive:       time.Now(),
 		sessionKey:       sessionKey,
 		systemPromptHash: promptHash,
 		systemPrompt:     opts.SystemPrompt,
+		place:            place,
 	}
+	mb.creating.Store(true)
 	m.setBackendCallbacks(mb)
 
 	// resumeFellBack becomes true if a requested resume ended up creating a
@@ -1344,13 +1414,7 @@ func (m *DelegatedManager) closeManagedExact(sessionKey string, want *managedBac
 	}
 	m.mu.Unlock()
 
-	mb.clearPermission()
-	_ = mb.be.Close()
-	if mb.bridge != nil {
-		mb.bridge.Close()
-	}
-	// A prompt the closed backend raised can never be answered now.
-	m.ClearSessionPrompts(sessionKey)
+	m.closeRemoved(sessionKey, mb)
 	return true
 }
 
@@ -1391,6 +1455,7 @@ func (m *DelegatedManager) Close() {
 		if mb.bridge != nil {
 			mb.bridge.Close()
 		}
+		mb.place.release()
 	}
 }
 
@@ -1401,6 +1466,9 @@ func (m *DelegatedManager) refuseNewBackends() {
 	m.mu.Lock()
 	m.noNewBackends = true
 	m.mu.Unlock()
+	// End every live-session wait of this agent with ErrShuttingDown.
+	m.shuttingDown.Store(true)
+	m.limiter().broadcast()
 }
 
 // Count returns the number of active delegated backends.
@@ -1770,14 +1838,27 @@ func (m *DelegatedManager) loadResumeID(sessionKey string) string {
 	return id
 }
 
+// maxIdleReapPeriod is the longest gap between idle-reaper checks.
+const maxIdleReapPeriod = 10 * time.Minute
+
+// idleReapPeriod is how often the idle reaper checks: half the timeout, at
+// most maxIdleReapPeriod. A backend therefore closes at most half its timeout
+// (and never more than 10 minutes) after it went idle (#2280): a 10m timeout
+// closes within 15m, the 3h default keeps today's 10-minute check.
+func idleReapPeriod(timeout time.Duration) time.Duration {
+	if p := timeout / 2; p > 0 && p < maxIdleReapPeriod {
+		return p
+	}
+	return maxIdleReapPeriod
+}
+
 // idleReaper periodically checks for idle delegated backends and closes them.
 func (m *DelegatedManager) idleReaper(ctx context.Context) {
 	timeout := m.IdleTimeout
 	if timeout == 0 {
 		timeout = DefaultIdleTimeout
 	}
-	// Check every 10 minutes.
-	ticker := time.NewTicker(10 * time.Minute)
+	ticker := time.NewTicker(idleReapPeriod(timeout))
 	defer ticker.Stop()
 
 	for {
@@ -2172,5 +2253,6 @@ func (m *DelegatedManager) closeIdle(timeout time.Duration) {
 		if c.mb.bridge != nil {
 			c.mb.bridge.Close()
 		}
+		c.mb.place.release()
 	}
 }

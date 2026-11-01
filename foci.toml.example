@@ -221,6 +221,7 @@ system_files = [
 # branch_orientation_facet_prompt = "prompts/orient-facet.md"
 # branch_orientation_headless_prompt = "prompts/orient-headless.md"
 # branch_orientation_depth_prompt = "prompts/orient-depth.md"
+# max_live_sessions = 0                   # THIS agent's cap on open conversations (live backends); does NOT inherit [sessions] max_live_sessions; 0/unset = no cap
 
 # Per-agent tool overrides (from [tools]):
 # [agents.tools]
@@ -514,6 +515,8 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # archive_after = "24h"                   # gzip idle sessions after 24 hours
 # file_mode = "0600"                      # octal permissions for session files
 # ephemeral_retention_days = 7            # delete ephemeral branch/fork transcripts after N days (0 = never)
+# max_live_sessions = 0                   # gateway TOTAL of open conversations (live delegated backends) across all agents; full = evict the longest-idle one, else a user message waits (queued note); 0 = no cap
+# idle_timeout = "3h"                     # close a delegated conversation's backend after this idle time (resumes on next message); backend_config.idle_timeout overrides per agent
 
 # ─── Skills ───────────────────────────────────────────────────────────
 # [skills]

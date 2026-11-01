@@ -119,9 +119,10 @@ type setupParams struct {
 	ttsMap          map[string]voice.TTS
 	sttMap          map[string]voice.STT
 	braveKey        string
-	gwSocketPath    string             // Unix socket path for same-user CLI auth (injected into child env as FOCI_GW_SOCK)
-	skillLoader     *skills.Loader     // shared across all agents so the shared skills dir is scanned/warned once, not once per agent
-	globalTurnLimit *agent.TurnLimiter // gateway-wide user-turn cap (#2281); built ONCE in main from [behavior] max_concurrent_turns_all_agents, same pointer for every agent; nil = unlimited
+	gwSocketPath    string                    // Unix socket path for same-user CLI auth (injected into child env as FOCI_GW_SOCK)
+	skillLoader     *skills.Loader            // shared across all agents so the shared skills dir is scanned/warned once, not once per agent
+	globalTurnLimit *agent.TurnLimiter        // gateway-wide user-turn cap (#2281); built ONCE in main from [behavior] max_concurrent_turns_all_agents, same pointer for every agent; nil = unlimited
+	liveSessions    *agent.LiveSessionLimiter // gateway-wide live-backend count and cap (#2280); built ONCE in main from [sessions] max_live_sessions, same pointer for every delegated agent; nil in tests = a private limiter per agent
 
 	startTime       time.Time
 	ctx             context.Context

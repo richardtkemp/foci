@@ -499,7 +499,7 @@ func ResolveAgentValue(global map[string]string, agents map[string]map[string]st
 	if v, ok := agents[agentID][field.Key]; ok {
 		return v, fmt.Sprintf("set for %s in foci.toml", agentID)
 	}
-	if prefix, rest, dotted := strings.Cut(field.Key, "."); dotted {
+	if prefix, rest, dotted := strings.Cut(field.Key, "."); dotted && !field.NoInherit {
 		if gs, mapped := agentGlobalSections()[prefix]; mapped {
 			if v, ok := global[gs+"."+rest]; ok && v != "" {
 				return v, fmt.Sprintf("inherited from [%s] in foci.toml", gs)
@@ -530,6 +530,9 @@ func ResolveAgentValue(global map[string]string, agents map[string]map[string]st
 // global section (a present-but-empty global counts as unset). Pure; no
 // I/O.
 func AgentRunningValue(cfg *Config, a AgentConfig, key string) string {
+	if f, ok := LookupField("agent." + key); ok && f.NoInherit {
+		return LookupValue(cfg, a, "agent", key)
+	}
 	if prefix, rest, dotted := strings.Cut(key, "."); dotted {
 		if gs, mapped := agentGlobalSections()[prefix]; mapped {
 			if v := LookupValue(cfg, AgentConfig{}, gs, rest); v != "" {

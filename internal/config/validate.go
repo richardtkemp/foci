@@ -286,6 +286,11 @@ func (cfg *Config) Validate(knownBackends []string) error {
 		return err
 	}
 
+	// Live-session caps and idle timeouts (#2280).
+	if err := validateLiveSessions(cfg); err != nil {
+		return err
+	}
+
 	// Validate webhook entries: hook IDs carry no path separators (defense in
 	// depth), and each entry is well-formed (#1134).
 	if err := validateWebhooks("[system] webhooks", cfg.System.Webhooks); err != nil {
@@ -569,6 +574,45 @@ func validateBehaviorTurnLimits(cfg *Config) error {
 			}
 			configLog.Warnf("%s max_concurrent_turns_all_agents is set but the key is global-only (read from [behavior]) — the per-agent value is ignored", a.ID)
 		}
+	}
+	return nil
+}
+
+// validateLiveSessions checks the #2280 keys: a negative max_live_sessions at
+// either level ([sessions] or [[agents]].sessions) fails load naming the key
+// (0 = no cap), and an idle_timeout at either level ([sessions] or
+// [[agents]].backend_config) that does not parse or is not positive fails
+// load naming the key and the agent.
+func validateLiveSessions(cfg *Config) error {
+	if err := validateNonNegative(cfg.Sessions.MaxLiveSessions, "[sessions] max_live_sessions"); err != nil {
+		return err
+	}
+	if err := validatePositiveDuration("[sessions] idle_timeout", cfg.Sessions.IdleTimeout); err != nil {
+		return err
+	}
+	for _, a := range cfg.Agents {
+		if err := validateNonNegative(DerefInt(a.Sessions.MaxLiveSessions), fmt.Sprintf("agent %q [sessions] max_live_sessions", a.ID)); err != nil {
+			return err
+		}
+		if err := validatePositiveDuration(fmt.Sprintf("agent %q [backend_config] idle_timeout", a.ID), DerefStr(a.BackendConfig.IdleTimeout)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validatePositiveDuration fails a set value that does not parse as a Go
+// duration or is not positive; empty means unset and passes.
+func validatePositiveDuration(where, v string) error {
+	if v == "" {
+		return nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return fmt.Errorf("%s = %q: %w", where, v, err)
+	}
+	if d <= 0 {
+		return fmt.Errorf("%s = %q: must be a positive duration", where, v)
 	}
 	return nil
 }

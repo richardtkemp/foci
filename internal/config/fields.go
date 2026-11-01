@@ -41,6 +41,12 @@ type ConfigField struct {
 	// be made live (tag + applier) wherever possible: see the rule at the top
 	// of types.go (#2603).
 	NeedsRestart bool
+	// NoInherit marks an agent-override field that shares its global
+	// section's key name but not its meaning (the `inherit:"no"` struct tag,
+	// e.g. sessions.max_live_sessions: the global value is a gateway total, the
+	// agent value a per-agent cap). An unset agent value then resolves to the
+	// built-in default, never to the global value.
+	NoInherit bool
 }
 
 // LiveEditNote is appended to the one-line description of every live-applied
@@ -290,6 +296,7 @@ func walkType(typ reflect.Type, section, prefix string, fields *[]ConfigField, c
 			Description:  desc,
 			Default:      f.Tag.Get("default"),
 			NeedsRestart: needsRestart,
+			NoInherit:    section == "agent" && f.Tag.Get("inherit") == "no",
 		})
 
 		// Parse constraints from tags

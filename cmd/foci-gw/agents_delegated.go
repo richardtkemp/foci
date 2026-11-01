@@ -139,13 +139,10 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	platformFor := func(sessionKey string) string {
 		return platformForSession(sessionIdx, agentID, sessionKey)
 	}
-	// Parse idle timeout from config (default 3h; see agent.DefaultIdleTimeout).
-	var idleTimeout time.Duration
-	if bc.IdleTimeout != nil && *bc.IdleTimeout != "" {
-		if d, err := time.ParseDuration(*bc.IdleTimeout); err == nil {
-			idleTimeout = d
-		}
-	}
+	// Idle timeout (#2280): the agent's backend_config.idle_timeout, else
+	// [sessions] idle_timeout, else agent.DefaultIdleTimeout (0 here). Config
+	// load has already refused a value that does not parse.
+	idleTimeout := resolveIdleTimeout(p.cfg, bc)
 
 	// Automated re-login trigger (#843). Built once here so both the 401
 	// auth-failure callback and the manual /login command invoke the same
@@ -412,6 +409,14 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		// #2684: a spawn starts in its spawner's permission mode.
 		SpawnerPermissionMode: ag.SessionPermissionMode,
 		IdleTimeout:           idleTimeout,
+		// Live-session caps (#2280): the shared gateway limiter and this
+		// agent's own cap; a backend is evictable only when neither a turn nor
+		// a compaction is running on its session.
+		LiveSessions:    p.liveSessions,
+		MaxLiveSessions: config.DerefInt(p.acfg.Sessions.MaxLiveSessions), // static-cfg:ignore: the cap is fixed at start-up (restart required)
+		SessionBusy: func(sessionKey string) bool {
+			return ag.IsTurnInFlight(sessionKey) || ag.IsCompacting(sessionKey)
+		},
 		// Resume-missed wording reads Spec.ResumeRetention (only claude-code
 		// publishes one).
 		LastUseFunc: ag.PrevRequestTime,
@@ -433,6 +438,23 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		skillRegistry: br.skillRegistry,
 		skillsDirs:    br.skillsDirs,
 	}, true
+}
+
+// resolveIdleTimeout returns an agent's delegated idle timeout (#2280): its
+// backend_config.idle_timeout, else [sessions] idle_timeout, else 0 (the
+// manager then uses agent.DefaultIdleTimeout). Config load refuses a value at
+// either level that does not parse or is not positive, so a parse failure here
+// only means "unset".
+func resolveIdleTimeout(cfg *config.Config, bc config.BackendConfig) time.Duration {
+	for _, v := range []string{config.DerefStr(bc.IdleTimeout), cfg.Sessions.IdleTimeout} {
+		if v == "" {
+			continue
+		}
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 0
 }
 
 // foldGlobalBackendConfig folds the global section of the backend's config

@@ -6,7 +6,7 @@
 
 - **Cold-launch effort:** pass `claude --effort <level>` (`internal/delegator/backend.go` → ccstream). NOT via `--settings`: an `effortLevel` there is silently ignored. Mid-session effort changes use the `apply_flag_settings` control (`internal/delegator/control.go`).
 - `--settings` carries only the hook command string (the PostToolUse hook that installs `foci-cc-hook`). `--resume <id>` continues a CC session across a foci restart.
-- **Two different timeouts, do not conflate them:** `DefaultIdleTimeout = 3h` (`internal/agent/delegated_manager.go`, per-agent key `idle_timeout`) closes an idle delegated backend; the next turn resumes it. `streamIdleTimeout` (~24h) is the silence tolerance *inside* one turn stream.
+- **Two different timeouts, do not conflate them:** the idle timeout closes an idle delegated backend; the next turn resumes it. It is `[[agents]].backend_config.idle_timeout`, else `[sessions] idle_timeout`, else `DefaultIdleTimeout = 3h` (`internal/agent/delegated_manager.go`); a value that does not parse fails config load, and the reaper checks every half-timeout (at most 10m). Separately, the live-session caps (`[sessions]`/`[[agents]].sessions` `max_live_sessions`, #2280) evict the longest-idle backend early when a cap is full. `streamIdleTimeout` (~24h) is the silence tolerance *inside* one turn stream.
 
 ## opencode
 

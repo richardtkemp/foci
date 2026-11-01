@@ -348,7 +348,7 @@ func (h *Hub) buildConfigSchema(errMsg string) fap.ConfigSchema {
 			d.Max = c.Max
 			d.Choices = c.Choices
 		}
-		if f.Section == "agent" {
+		if f.Section == "agent" && !f.NoInherit {
 			if prefix, rest, ok := strings.Cut(f.Key, "."); ok {
 				if gs, mapped := agentToGlobalMap[prefix]; mapped && globalExists[gs+"."+rest] {
 					d.GlobalKey = gs + "." + rest

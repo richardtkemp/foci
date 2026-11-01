@@ -434,6 +434,9 @@ Subcommands:
 	// Gateway-wide user-turn cap (#2281): ONE limiter shared by every agent,
 	// built once before the agent loop. nil when the limit is 0 (unlimited).
 	globalTurnLimit := agent.NewTurnLimiter(config.DerefInt(cfg.Behavior.MaxConcurrentTurnsAllAgents)) // static-cfg:ignore: sizes a FIFO semaphore at start-up, can't be live-resized
+	// Gateway-wide live-session count (#2280): ONE limiter shared by every
+	// delegated agent, holding the [sessions] max_live_sessions cap.
+	liveSessions := agent.NewLiveSessionLimiter(cfg.Sessions.MaxLiveSessions) // static-cfg:ignore: the cap is fixed at start-up (restart required)
 
 	for _, acfg := range cfg.Agents {
 		if reason, skip := skipAgents[acfg.ID]; skip {
@@ -479,6 +482,7 @@ Subcommands:
 			gwSocketPath:    gwSocketPath,
 			skillLoader:     skillLoader,
 			globalTurnLimit: globalTurnLimit,
+			liveSessions:    liveSessions,
 			startTime:       startTime,
 			ctx:             ctx,
 			agentListFn:     agentListFn,
@@ -607,8 +611,12 @@ Subcommands:
 	// Prompt TTL = min(configured prompt_ttl, idle timeout). An unanswered
 	// prompt must never outlive the backend waiting on it — the idle reaper
 	// clears the prompt anyway when it closes the backend. promptTTL starts at
-	// the idle default and the config override only lowers it (d < promptTTL).
+	// the global idle timeout ([sessions] idle_timeout, else the default) and
+	// the config override only lowers it (d < promptTTL).
 	promptTTL := agent.DefaultIdleTimeout
+	if d, err := time.ParseDuration(cfg.Sessions.IdleTimeout); err == nil && d > 0 {
+		promptTTL = d
+	}
 	if d, err := time.ParseDuration(cfg.Permissions.PromptTTL); err == nil && d > 0 && d < promptTTL {
 		promptTTL = d
 	}

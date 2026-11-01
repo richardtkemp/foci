@@ -240,6 +240,17 @@ func answerPendingBackendPrompt(lg *log.ComponentLogger, be delegator.Delegator,
 // They dispatch as Inject(SourceSystem), and when the backend reports a turn
 // in flight they wait gracefully for it to complete before beginning a
 // fresh, fully-tracked turn of their own.
+// backendFor returns the session's backend for this turn. A turn whose trigger
+// is interactive (a platform message or voice) is a user turn: if its backend
+// has to be created while a live-session cap is full and nothing is idle, it
+// waits for a place (#2280). Every other turn's creation goes ahead.
+func (t *DelegatedTransport) backendFor(ts *TurnState) (delegator.Delegator, error) {
+	if isInteractiveTrigger(ts.Trigger) {
+		return t.agent.DelegatedManager.GetForUserTurn(ts.Ctx, ts.SessionKey)
+	}
+	return t.agent.DelegatedManager.Get(ts.Ctx, ts.SessionKey)
+}
+
 func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	a := t.agent
 	// answersPrompts = may this turn's text be consumed as the answer to a
@@ -264,7 +275,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	}
 
 	t.logger().Debugf("RunInference: Get backend start sk=%s", ts.SessionKey)
-	be, err := a.DelegatedManager.Get(ts.Ctx, ts.SessionKey)
+	be, err := t.backendFor(ts)
 	if err != nil {
 		return err
 	}
@@ -343,7 +354,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 			// refused it (#2050). Its turn is over: start a fresh one on the
 			// respawned backend instead of losing the message.
 			t.logger().Infof("session=%s follow-up refused by an exited backend — starting a fresh turn instead", ts.SessionKey)
-			if be, err = a.DelegatedManager.Get(ts.Ctx, ts.SessionKey); err != nil {
+			if be, err = t.backendFor(ts); err != nil {
 				close(ts.CompletionChan)
 				return err
 			}

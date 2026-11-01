@@ -1,0 +1,1 @@
+TestLiveCap_NoCapsChangesNothing: characterisation (#2280 req 9): with both caps 0 nothing waits, notifies, evicts or logs, exactly as before the change

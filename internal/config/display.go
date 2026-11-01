@@ -191,6 +191,10 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	if cfg.Sessions.BranchOrientationHeadlessPrompt != nil {
 		add("sessions", "branch_orientation_headless_prompt", *cfg.Sessions.BranchOrientationHeadlessPrompt)
 	}
+	add("sessions", "max_live_sessions", cfg.Sessions.MaxLiveSessions)
+	if cfg.Sessions.IdleTimeout != "" {
+		add("sessions", "idle_timeout", cfg.Sessions.IdleTimeout)
+	}
 
 	// memory
 	if len(cfg.Memory.Sources) > 0 {
@@ -419,6 +423,9 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	}
 	if agent.Sessions.FacetNoCompact != nil {
 		add("facet_no_compact", *agent.Sessions.FacetNoCompact)
+	}
+	if agent.Sessions.MaxLiveSessions != nil {
+		add("max_live_sessions", *agent.Sessions.MaxLiveSessions)
 	}
 	if agent.Display.ShowToolCalls != nil {
 		add("show_tool_calls", string(*agent.Display.ShowToolCalls))

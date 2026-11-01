@@ -498,6 +498,11 @@ type AgentSessionsOverride struct {
 	MaxSystemPromptFile             *int    `toml:"max_system_prompt_chars_file"  desc:"Logs a server-side warning if any single system prompt file, eg a character file, exceeds this many characters. Overrides the global sessions value for this agent"`
 	MaxSystemPromptTotal            *int    `toml:"max_system_prompt_chars_total" desc:"Logs a server-side warning if this agent's combined system prompt exceeds this many characters total. Overrides the global sessions value for this agent"`
 	EphemeralRetentionDays          *int    `toml:"ephemeral_retention_days"      hot:"event" desc:"Auto-deletes old transcripts from short-lived internal sessions, eg reflection, keepalive, background tasks, after this many days. Normal chat history is untouched. 0 = never delete" min:"0"`
+	// MaxLiveSessions is this agent's own live-session cap (#2280). It shares
+	// the [sessions] key name but NOT its meaning: the global value is the
+	// gateway total, so the agent value never inherits it (inherit:"no").
+	// Restart required: read once into the agent's DelegatedManager.
+	MaxLiveSessions *int `toml:"max_live_sessions" inherit:"no" desc:"Per-agent cap: the most conversations THIS agent keeps open at once, counting its live backend processes (delegated agents only). It does not inherit [sessions] max_live_sessions, which is the gateway total; unset means no per-agent cap. When it is full, this agent's conversation that has been idle longest is closed and later resumes where it left off; if none is idle, a new user message waits and its sender gets a note that it is queued, while system work goes ahead. 0 means no cap. Restart required" min:"0"`
 }
 
 // EffectiveEphemeralRetentionDays returns the per-agent ephemeral-session
@@ -1008,6 +1013,12 @@ type SessionsConfig struct {
 	FileMode     string `toml:"file_mode"     default:"0600" desc:"Octal file permissions for session files (default 0600)"`
 
 	EphemeralRetentionDays int `toml:"ephemeral_retention_days" default:"7" hot:"event" desc:"Days to keep ephemeral branch and fork session transcripts before automatic daily cleanup deletes them; 0 disables cleanup" min:"0"` // daily GC of stale ephemeral session files
+
+	// Live delegated sessions (#2280). Both are restart-required: the cap is
+	// held by the gateway's one LiveSessionLimiter, built at start-up, and the
+	// timeout is read once into each agent's DelegatedManager idle reaper.
+	MaxLiveSessions int    `toml:"max_live_sessions" default:"0" desc:"Gateway total, not a per-agent default: the most conversations kept open at once across ALL agents together, counting every live backend process of a delegated agent (Claude Code, opencode, codex). When it is full, the conversation that has been idle longest is closed and later resumes where it left off; if none is idle, a new user message waits and its sender gets a note that it is queued, while system work goes ahead. 0 means no cap. Each agent can also have its own cap, [[agents]].sessions.max_live_sessions. Restart required" min:"0"`
+	IdleTimeout     string `toml:"idle_timeout" desc:"How long a conversation of a delegated agent can sit idle before its backend process is closed (the next message resumes it), for every agent. An agent's backend_config.idle_timeout overrides it. Empty = 3h. Restart required" type:"duration"`
 }
 
 type MemorySource struct {
