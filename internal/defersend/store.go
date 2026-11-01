@@ -1,7 +1,8 @@
 // Package defersend persists "wait-until" requests: a foci send, branch or
 // command whose activity gate (--wait-cold/-warm/-user-active/-user-inactive)
 // is not yet satisfied is enqueued here and delivered later by a background
-// sweep once the condition holds (or the deadline expires). Persisting to
+// sweep once the condition holds (or, for a send or branch, once the deadline
+// expires; a command is dropped at its deadline instead). Persisting to
 // SQLite means a pending request survives a gateway restart/deploy — the
 // property that distinguishes this from a purely in-memory blocking wait.
 package defersend
@@ -58,6 +59,12 @@ type Record struct {
 	Silent           bool
 	CreatedAt        time.Time
 	DeadlineAt       time.Time
+	// Attempts counts the delivery attempts that failed TRANSIENTLY (a full
+	// inbox) — the sweep retries such a record on a later tick and drops it
+	// after a bounded number (#2220). Persisted, so a gateway restart does
+	// not reset the count. A row written before the column existed reads
+	// back as 0.
+	Attempts int
 }
 
 // EffectiveKind normalises the stored kind: a row written before the kind
@@ -99,7 +106,8 @@ func NewStore(path string) (*Store, error) {
 			kind               TEXT NOT NULL DEFAULT '',
 			no_compact         INTEGER NOT NULL DEFAULT 0,
 			no_reset_hook      INTEGER NOT NULL DEFAULT 0,
-			silent             INTEGER NOT NULL DEFAULT 0
+			silent             INTEGER NOT NULL DEFAULT 0,
+			attempts           INTEGER NOT NULL DEFAULT 0
 		)`,
 	)
 	if err != nil {
@@ -117,6 +125,7 @@ func NewStore(path string) (*Store, error) {
 		{"no_reset_hook", `ALTER TABLE deferred_sends ADD COLUMN no_reset_hook INTEGER NOT NULL DEFAULT 0`},
 		{"silent", `ALTER TABLE deferred_sends ADD COLUMN silent INTEGER NOT NULL DEFAULT 0`},
 		{"steer", `ALTER TABLE deferred_sends ADD COLUMN steer TEXT NOT NULL DEFAULT ''`},
+		{"attempts", `ALTER TABLE deferred_sends ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0`},
 	} {
 		if _, err := db.Exec(col.ddl); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			_ = db.Close()
@@ -129,25 +138,101 @@ func NewStore(path string) (*Store, error) {
 // Close closes the underlying database.
 func (s *Store) Close() error { return s.db.Close() }
 
-// Enqueue persists a pending request and returns its assigned id.
-func (s *Store) Enqueue(r Record) (int64, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	res, err := s.db.Exec(
+// insert writes r as a new row inside tx and returns its id.
+func insert(tx *sql.Tx, r Record) (int64, error) {
+	res, err := tx.Exec(
 		`INSERT INTO deferred_sends
 		   (agent_id, session_key, text, policy, model, steer,
 		    wait_warm, wait_cold, wait_user_active, wait_user_inactive,
-		    kind, no_compact, no_reset_hook, silent, created_at, deadline_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		    kind, no_compact, no_reset_hook, silent, created_at, deadline_at, attempts)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.AgentID, r.SessionKey, r.Text, r.Policy, r.Model, r.Steer,
 		r.WaitWarm, r.WaitCold, r.WaitUserActive, r.WaitUserInactive,
 		string(r.Kind), r.NoCompact, r.NoResetHook, r.Silent,
-		timeutil.Format(r.CreatedAt), timeutil.Format(r.DeadlineAt),
+		timeutil.Format(r.CreatedAt), timeutil.Format(r.DeadlineAt), r.Attempts,
 	)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// Enqueue persists r and, in the same transaction, removes every
+// pending record IDENTICAL to it (#2220 dedupe): a repeated request — a cron
+// re-issuing the same deferred `/reset` every 15 minutes — replaces the
+// queued one instead of piling up beside it. Identical means the same
+// effective kind (a legacy "" row is a send), agent, session, text, model,
+// policy, all four wait conditions, no_compact, no_reset_hook and silent;
+// any other field (steer, created/deadline times, attempts) is not part of
+// the identity, and the new record carries its own. Returns the new id and
+// the ids it replaced (oldest first).
+func (s *Store) Enqueue(r Record) (int64, []int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+
+	rows, err := tx.Query(
+		`SELECT id FROM deferred_sends
+		  WHERE (CASE kind WHEN '' THEN ? ELSE kind END) = ?
+		    AND agent_id = ? AND session_key = ? AND text = ? AND model = ? AND policy = ?
+		    AND wait_warm = ? AND wait_cold = ? AND wait_user_active = ? AND wait_user_inactive = ?
+		    AND no_compact = ? AND no_reset_hook = ? AND silent = ?
+		  ORDER BY id`,
+		string(KindSend), string(r.EffectiveKind()),
+		r.AgentID, r.SessionKey, r.Text, r.Model, r.Policy,
+		r.WaitWarm, r.WaitCold, r.WaitUserActive, r.WaitUserInactive,
+		r.NoCompact, r.NoResetHook, r.Silent)
+	if err != nil {
+		return 0, nil, err
+	}
+	var replaced []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return 0, nil, err
+		}
+		replaced = append(replaced, id)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return 0, nil, err
+	}
+	for _, id := range replaced {
+		if _, err := tx.Exec(`DELETE FROM deferred_sends WHERE id = ?`, id); err != nil {
+			return 0, nil, err
+		}
+	}
+	id, err := insert(tx, r)
+	if err != nil {
+		return 0, nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, nil, err
+	}
+	return id, replaced, nil
+}
+
+// RecordFailedAttempt increments a pending record's transient-failure count
+// and returns the new count. A record that no longer exists returns
+// (0, sql.ErrNoRows).
+func (s *Store) RecordFailedAttempt(id int64) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.db.Exec(`UPDATE deferred_sends SET attempts = attempts + 1 WHERE id = ?`, id); err != nil {
+		return 0, err
+	}
+	var n int
+	if err := s.db.QueryRow(`SELECT attempts FROM deferred_sends WHERE id = ?`, id).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // All returns every pending request, oldest first.
@@ -157,7 +242,7 @@ func (s *Store) All() ([]Record, error) {
 	rows, err := s.db.Query(
 		`SELECT id, agent_id, session_key, text, policy, model, steer,
 		        wait_warm, wait_cold, wait_user_active, wait_user_inactive,
-		        kind, no_compact, no_reset_hook, silent, created_at, deadline_at
+		        kind, no_compact, no_reset_hook, silent, created_at, deadline_at, attempts
 		   FROM deferred_sends ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -171,7 +256,7 @@ func (s *Store) All() ([]Record, error) {
 		var created, deadline string
 		if err := rows.Scan(&r.ID, &r.AgentID, &r.SessionKey, &r.Text, &r.Policy, &r.Model, &r.Steer,
 			&r.WaitWarm, &r.WaitCold, &r.WaitUserActive, &r.WaitUserInactive,
-			&kind, &r.NoCompact, &r.NoResetHook, &r.Silent, &created, &deadline); err != nil {
+			&kind, &r.NoCompact, &r.NoResetHook, &r.Silent, &created, &deadline, &r.Attempts); err != nil {
 			return nil, err
 		}
 		r.Kind = Kind(kind) // read verbatim; normalise via EffectiveKind

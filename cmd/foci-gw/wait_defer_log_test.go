@@ -46,7 +46,7 @@ func logLineWith(t *testing.T, logs *logCapture, substrs ...string) string {
 func enqueueCommand(t *testing.T, store *defersend.Store, sessionKey, text string) int64 {
 	t.Helper()
 	now := timeutil.Now()
-	id, err := store.Enqueue(defersend.Record{
+	id, _, err := store.Enqueue(defersend.Record{
 		Kind: defersend.KindCommand, AgentID: testAgentID, SessionKey: sessionKey,
 		Text: text, WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
 	})

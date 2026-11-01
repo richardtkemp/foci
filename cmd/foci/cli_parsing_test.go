@@ -717,7 +717,7 @@ func captureStderr(t *testing.T, fn func()) string {
 
 // TestBranchAndCommandHelpListWaitFlags pins req 8's help contract: branch
 // and command help list the wait flags with send's descriptions, including
-// the persistence/restart/always-async/2h facts.
+// the persistence/restart/always-async/24h-default facts.
 func TestBranchAndCommandHelpListWaitFlags(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -730,7 +730,7 @@ func TestBranchAndCommandHelpListWaitFlags(t *testing.T) {
 			help := captureStderr(t, tc.fn)
 			for _, want := range []string{
 				"--wait-warm", "--wait-cold", "--wait-user-active", "--wait-user-inactive",
-				"--wait-timeout", "--no-gate", "2h", "survive a gateway restart", "always async",
+				"--wait-timeout", "--no-gate", "24h", "survive a gateway restart", "always async",
 			} {
 				if !strings.Contains(help, want) {
 					t.Errorf("%s help missing %q", tc.name, want)

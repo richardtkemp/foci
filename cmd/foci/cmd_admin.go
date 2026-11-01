@@ -116,7 +116,9 @@ default session — a turn in flight always counts as warm):
   --wait-cold <dur>         Defer until this session is cold (env: FOCI_WAIT_COLD; alias --wait-inactive)
   --wait-user-active <dur>  Defer until the user has touched this agent within duration (env: FOCI_WAIT_USER_ACTIVE)
   --wait-user-inactive <dur> Defer until the user has NOT touched this agent within duration (env: FOCI_WAIT_USER_INACTIVE)
-  --wait-timeout <dur>      Max wait before running anyway (default 2h; alias --deadline; env: FOCI_WAIT_TIMEOUT)
+  --wait-timeout <dur>      Deadline (default 24h; alias --deadline; env: FOCI_WAIT_TIMEOUT). At the
+                            deadline a deferred command whose condition never held is
+                            DROPPED with a notice, not run
   --no-gate                 Run now, ignoring any wait condition (env: FOCI_NO_GATE)
   --human                   Declare a human sent this: counts as user attention on the
                             command's session once dispatched (env: FOCI_HUMAN)
@@ -124,9 +126,14 @@ default session — a turn in flight always counts as warm):
 --wait-* DEFER the command until the condition holds, then dispatch it.
 Deferred requests are persisted (they survive a gateway restart) and are
 always async — an unmet --wait-* gate returns a deferred receipt immediately.
-If the condition never holds, --wait-timeout / --deadline (default 2h) runs
-the command anyway. Unlike send (which defaults to --wait-cold 1m), a command
-with NO if/wait flag runs immediately.
+Every deferred request has a deadline (default 24h; --wait-timeout /
+--deadline). When it passes, a send or branch is delivered ANYWAY, but a
+COMMAND is dropped with a notice to the session's chat — so a deferred
+/reset never fires mid-conversation just because time ran out. An unknown
+command is refused when it is queued, not when it would run. A repeated
+identical request replaces the pending one. Unlike send (which defaults to
+--wait-cold 1m), a command with NO if/wait flag runs immediately. The ping
+and pair shorthands take no --wait-* flags and ignore FOCI_WAIT_*.
 
 Every flag above is read only BEFORE the slash command's words — move it
 in front of the text — and the connection flags (--addr, --api-key,
@@ -150,7 +157,8 @@ flags are read wherever they sit, and a valueless flag word that ends
 their line stays a word, dispatched as typed.
 
 Example (overnight reset that runs once the session has been cold for 55m,
-instead of skipping and hoping the next cron tick lands):
+instead of skipping and hoping the next cron tick lands; if the session is
+never cold for 55m before the deadline, the reset is dropped, not run):
   foci command --wait-cold 55m -a helen /reset
 `, commandUsageLine)
 }
@@ -165,6 +173,14 @@ type commandFlags struct {
 	waitFlags
 	humanFlag
 	sessionFlag // -s/--session target (#2296) — no FOCI_SESSION default, see applyEnvDefaults
+	// noWait excludes the wait flags (--wait-* and their FOCI_WAIT_* env
+	// defaults) — set by the ping and pair shorthands (#2220): a deferred
+	// ping or pairing key would answer only into the gateway log. Their
+	// --wait-* words are then ordinary unrecognised words, as any other
+	// unknown flag is for them. --no-gate is still consumed (their scan has
+	// always taken it) but is a no-op: there is no wait to ignore, so no
+	// wait field reaches the gateway.
+	noWait bool
 }
 
 // commandLead declares the command family's half of the one placement
@@ -178,7 +194,11 @@ func (flags *commandFlags) consumeOwnFlag(args []string, i int) (next int, consu
 	if c, ni := flags.gateFlags.tryParseGateArg(args, i); c {
 		return ni, true
 	}
-	if c, ni := flags.waitFlags.tryParseWaitArg(args, i); c {
+	if flags.noWait {
+		if args[i] == "--no-gate" {
+			return i, true
+		}
+	} else if c, ni := flags.waitFlags.tryParseWaitArg(args, i); c {
 		return ni, true
 	}
 	if flags.humanFlag.tryParseHumanArg(args[i]) {
@@ -196,7 +216,7 @@ func (flags *commandFlags) consumeOwnFlag(args []string, i int) (next int, consu
 // they end the line where the free text would start.
 func (flags *commandFlags) ownValueFlagWord(tok string) bool {
 	return isDetachedFlagWord(flags.gateFlags.specs(), tok) ||
-		isDetachedFlagWord(flags.waitFlags.specs(), tok) ||
+		(!flags.noWait && isDetachedFlagWord(flags.waitFlags.specs(), tok)) ||
 		isDetachedFlagWord(flags.sessionFlag.specs(), tok)
 }
 
@@ -207,7 +227,9 @@ func (flags *commandFlags) ownValueFlagWord(tok string) bool {
 // ruling). The agent fallback (FOCI_AGENT) is applied by the scan.
 func (flags *commandFlags) applyEnvDefaults() {
 	flags.gateFlags.applyEnvDefaults()
-	flags.waitFlags.applyEnvDefaults()
+	if !flags.noWait {
+		flags.waitFlags.applyEnvDefaults()
+	}
 	flags.humanFlag.applyEnvDefault()
 }
 
@@ -226,7 +248,9 @@ func dispatchCommand(base string, flags commandFlags, agent string, text []strin
 		body["agent"] = agent
 	}
 	flags.gateFlags.addToBody(body)
-	flags.waitFlags.addToBody(body)
+	if !flags.noWait {
+		flags.waitFlags.addToBody(body)
+	}
 	flags.humanFlag.addToBody(body)
 	flags.sessionFlag.addToBody(body)
 	return postJSON(base+"/command", body)
@@ -261,13 +285,13 @@ func cmdCommand(base string, args []string) error {
 // cmdPing dispatches the `foci ping` shorthand: /ping takes no
 // arguments, so its line is flags only — no free text to protect — and
 // keeps the historical whole-line disposition of the one scan; the /ping
-// word lands after them.
+// word lands after them. It takes no wait flags (noWait, #2220).
 func cmdPing(base string, args []string) error {
 	if wantsHelp(args) {
 		pingUsage()
 		return nil
 	}
-	var flags commandFlags
+	flags := commandFlags{noWait: true}
 	lead, err := scanCommandLine(args, &flags, commandLead, false)
 	if err != nil {
 		return err
@@ -279,13 +303,13 @@ func cmdPing(base string, args []string) error {
 // cmdPair dispatches the `foci pair`/`pair-key` shorthand: the host is
 // its one argument — no free text — so the line keeps the historical
 // whole-line disposition of the one scan, and the /pair word lands
-// before the host.
+// before the host. It takes no wait flags (noWait, #2220).
 func cmdPair(base string, args []string) error {
 	if wantsHelp(args) {
 		pairKeyUsage()
 		return nil
 	}
-	var flags commandFlags
+	flags := commandFlags{noWait: true}
 	lead, err := scanCommandLine(args, &flags, commandLead, false)
 	if err != nil {
 		return err

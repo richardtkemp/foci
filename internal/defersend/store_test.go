@@ -21,7 +21,7 @@ func newTestStore(t *testing.T) *Store {
 func TestStore_Roundtrip(t *testing.T) {
 	s := newTestStore(t)
 	now := time.Now().UTC().Truncate(time.Second)
-	id, err := s.Enqueue(Record{
+	id, _, err := s.Enqueue(Record{
 		AgentID: "clutch", SessionKey: "clutch/c1", Text: "hi", Policy: "fallback",
 		WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(2 * time.Hour),
 	})
@@ -62,7 +62,7 @@ func TestStore_Roundtrip(t *testing.T) {
 func TestStore_KindAndBranchOptionsRoundtrip(t *testing.T) {
 	s := newTestStore(t)
 	now := time.Now().UTC().Truncate(time.Second)
-	if _, err := s.Enqueue(Record{
+	if _, _, err := s.Enqueue(Record{
 		Kind: KindBranch, AgentID: "helen", SessionKey: "helen/i0", Text: "morning check",
 		Model: "fast", NoCompact: true, NoResetHook: true, Silent: true,
 		WaitCold: "55m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
@@ -152,7 +152,7 @@ func TestStore_OldSchemaMigration(t *testing.T) {
 	}
 
 	// The migrated store accepts new-kind rows alongside the old one.
-	if _, err := s.Enqueue(Record{Kind: KindCommand, AgentID: "clutch", SessionKey: "clutch/i0", Text: "/reset", CreatedAt: time.Now()}); err != nil {
+	if _, _, err := s.Enqueue(Record{Kind: KindCommand, AgentID: "clutch", SessionKey: "clutch/i0", Text: "/reset", CreatedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	if all, _ := s.All(); len(all) != 2 {
@@ -191,13 +191,13 @@ func TestStore_AlterFailureSurfaces(t *testing.T) {
 func TestStore_SteerChoiceRoundtrip(t *testing.T) {
 	s := newTestStore(t)
 	now := time.Now().UTC().Truncate(time.Second)
-	if _, err := s.Enqueue(Record{
+	if _, _, err := s.Enqueue(Record{
 		AgentID: "clutch", SessionKey: "clutch/c1", Text: "redirect it", Policy: "fallback",
 		Steer: "steer", WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Enqueue(Record{
+	if _, _, err := s.Enqueue(Record{
 		AgentID: "clutch", SessionKey: "clutch/c1", Text: "no choice", Policy: "fallback",
 		CreatedAt: now, DeadlineAt: now.Add(time.Hour),
 	}); err != nil {
@@ -271,7 +271,7 @@ func TestStore_PreSteerSchemaMigration(t *testing.T) {
 	}
 
 	// The migrated store accepts a choice-carrying row alongside the old one.
-	if _, err := s.Enqueue(Record{AgentID: "clutch", SessionKey: "clutch/i0", Text: "x", Steer: "queue", CreatedAt: time.Now()}); err != nil {
+	if _, _, err := s.Enqueue(Record{AgentID: "clutch", SessionKey: "clutch/i0", Text: "x", Steer: "queue", CreatedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	if all, _ := s.All(); len(all) != 2 || all[1].Steer != "queue" {
@@ -287,7 +287,7 @@ func TestStore_ReopenSameFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s1.Enqueue(Record{Kind: KindBranch, AgentID: "a", SessionKey: "a/i0", Text: "br"}); err != nil {
+	if _, _, err := s1.Enqueue(Record{Kind: KindBranch, AgentID: "a", SessionKey: "a/i0", Text: "br"}); err != nil {
 		t.Fatal(err)
 	}
 

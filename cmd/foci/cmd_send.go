@@ -200,7 +200,9 @@ user-active/user-inactive):
            sends are persisted (they survive a gateway restart) and are
            always async — an unmet --wait-* gate returns a deferred receipt
            immediately, even with --sync. If the condition never holds,
-           --wait-timeout / --deadline (default 2h) sends anyway.
+           --wait-timeout / --deadline (default 24h) sends anyway (a
+           deferred COMMAND is dropped with a notice at its deadline
+           instead — see foci command -h).
   --if-warm / --if-cold (aliases --if-active / --if-inactive) and their --wait-*
      counterparts consult SESSION cache-warmth — whether THIS session ran a turn
      (any trigger) within the duration; a turn in flight always counts as warm.
@@ -252,7 +254,7 @@ Flags:
   --wait-cold <dur>         Defer until this session is cold (env: FOCI_WAIT_COLD; alias --wait-inactive)
   --wait-user-active <dur>  Defer until the user has touched this agent within duration (env: FOCI_WAIT_USER_ACTIVE)
   --wait-user-inactive <dur> Defer until the user has NOT touched this agent within duration (env: FOCI_WAIT_USER_INACTIVE)
-  --wait-timeout <dur>      Max wait before sending anyway (default 2h; alias --deadline; env: FOCI_WAIT_TIMEOUT)
+  --wait-timeout <dur>      Max wait before sending anyway (default 24h; alias --deadline; env: FOCI_WAIT_TIMEOUT)
   --no-gate                 Send immediately: no wait default, no gating (env: FOCI_NO_GATE)
   --human                   Declare a human sent this: counts as user attention once
                             dispatched; skipped/deferred requests never do (env: FOCI_HUMAN)
@@ -330,7 +332,9 @@ user-active/user-inactive):
            requests are persisted (they survive a gateway restart) and are
            always async — an unmet --wait-* gate returns a deferred receipt
            immediately, even with --sync. If the condition never holds,
-           --wait-timeout / --deadline (default 2h) runs the branch anyway.
+           --wait-timeout / --deadline (default 24h) runs the branch anyway
+           (a deferred COMMAND is dropped with a notice at its deadline
+           instead — see foci command -h).
   --if-warm / --if-cold (aliases --if-active / --if-inactive) and their --wait-*
      counterparts consult SESSION cache-warmth — whether the PARENT session ran
      a turn (any trigger) within the duration; a turn in flight always counts
@@ -361,7 +365,7 @@ Flags:
   --wait-cold <dur>         Defer until the parent session is cold (env: FOCI_WAIT_COLD; alias --wait-inactive)
   --wait-user-active <dur>  Defer until the user has touched this agent within duration (env: FOCI_WAIT_USER_ACTIVE)
   --wait-user-inactive <dur> Defer until the user has NOT touched this agent within duration (env: FOCI_WAIT_USER_INACTIVE)
-  --wait-timeout <dur>      Max wait before running anyway (default 2h; alias --deadline; env: FOCI_WAIT_TIMEOUT)
+  --wait-timeout <dur>      Max wait before running anyway (default 24h; alias --deadline; env: FOCI_WAIT_TIMEOUT)
   --no-gate                 Run now, ignoring any wait condition (env: FOCI_NO_GATE)
   --human                   Declare a human sent this: counts as user attention on the
                             new branch session once it runs (env: FOCI_HUMAN)

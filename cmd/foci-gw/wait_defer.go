@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -19,9 +20,29 @@ import (
 
 var deferLog = log.NewComponentLogger("defersend")
 
-// defaultWaitTimeout bounds how long a deferred send waits for its condition
-// before it is delivered anyway (send-anyway-on-timeout).
-const defaultWaitTimeout = 2 * time.Hour
+// defaultWaitTimeout is the deadline a deferred request gets when the caller
+// gives no wait_timeout (Dick, 2026-10-10: 24 h). At the deadline a send or a
+// branch whose condition never held is delivered anyway; a COMMAND is dropped
+// with a notice instead (#2220), so a deferred `/reset` never fires
+// mid-conversation just because time ran out. A stored record keeps the
+// deadline it was enqueued with.
+const defaultWaitTimeout = 24 * time.Hour
+
+// deferMaxAttempts bounds the delivery attempts of a record whose delivery
+// fails TRANSIENTLY (a full inbox): it stays queued for a later sweep, and the
+// third failure drops it with a notice (#2220). A permanent failure drops at
+// once.
+const deferMaxAttempts = 3
+
+var (
+	// errDeferUnknownCommand: a deferred command's name is not registered
+	// (the registry changed during the wait, or a record predates the
+	// enqueue check). Permanent.
+	errDeferUnknownCommand = errors.New("unknown command")
+	// errDeferNotExecutable: a deferred command is registered but has no
+	// Execute function. Permanent.
+	errDeferNotExecutable = errors.New("command not executable")
+)
 
 // deferSweepInterval is how often the background sweep re-evaluates pending
 // sends.
@@ -150,13 +171,19 @@ func enqueueDeferred(w http.ResponseWriter, d httpHandlerDeps, rec defersend.Rec
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if code, msg := refuseDeferred(d, rec); code != 0 {
+		deferLog.Infof("refused deferred %s at enqueue (agent=%s session=%s): %d %s",
+			rec.EffectiveKind(), rec.AgentID, rec.SessionKey, code, deferRefusalLogText(rec, msg))
+		http.Error(w, msg, code)
+		return
+	}
 	rec.WaitWarm = wc.warm
 	rec.WaitCold = wc.cold
 	rec.WaitUserActive = wc.userActive
 	rec.WaitUserInactive = wc.userInactive
 	rec.CreatedAt = timeutil.Now()
 	rec.DeadlineAt = rec.CreatedAt.Add(timeout)
-	id, err := d.deferStore.Enqueue(rec)
+	id, replaced, err := d.deferStore.Enqueue(rec)
 	if err != nil {
 		deferLog.Errorf("enqueue deferred %s: %v", rec.EffectiveKind(), err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -164,6 +191,9 @@ func enqueueDeferred(w http.ResponseWriter, d httpHandlerDeps, rec defersend.Rec
 	}
 	deferLog.Infof("deferred %s %d queued (agent=%s session=%s deadline=%s)",
 		rec.EffectiveKind(), id, rec.AgentID, rec.SessionKey, timeutil.Format(rec.DeadlineAt))
+	if len(replaced) > 0 {
+		deferLog.Infof("deferred %s %d replaces identical pending %v", rec.EffectiveKind(), id, replaced)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -173,6 +203,61 @@ func enqueueDeferred(w http.ResponseWriter, d httpHandlerDeps, rec defersend.Rec
 		"session":      rcpt.SessionKey,
 		"resolved_via": string(rcpt.Via),
 	})
+}
+
+// refuseDeferred is the enqueue-time check of a request about to be stored
+// (#2220): it refuses, with the status and text the immediate path would
+// answer, a request whose delivery could only fail — so the caller learns now
+// instead of getting a 202 for a record the sweep would silently drop. code 0
+// means accept. A command must name a registered, executable command (404
+// "unknown command", handleCommand's answer); a send or branch carrying a
+// model must resolve it exactly as the immediate path does (400, the
+// errBranchBadModel text). Delivery checks again: the registry or config can
+// change during the wait.
+func refuseDeferred(d httpHandlerDeps, rec defersend.Record) (int, string) {
+	inst, ok := d.agents[rec.AgentID]
+	if !ok {
+		return 0, ""
+	}
+	switch rec.EffectiveKind() {
+	case defersend.KindCommand:
+		if err := checkDeferredCommand(inst, rec); err != nil {
+			return http.StatusNotFound, "unknown command"
+		}
+	default:
+		if rec.Model != "" {
+			if err := checkModelOverride(inst, rec.SessionKey, rec.Model, d.cfg.Models); err != nil {
+				return http.StatusBadRequest, fmt.Errorf("%w: %w", errBranchBadModel, err).Error()
+			}
+		}
+	}
+	return 0, ""
+}
+
+// deferRefusalLogText is msg for the log line — except for a command, whose
+// refusal is logged as its name only (never its arguments, #2259).
+func deferRefusalLogText(rec defersend.Record, msg string) string {
+	if rec.EffectiveKind() != defersend.KindCommand {
+		return msg
+	}
+	return msg + ": /" + command.RequestFromText(rec.Text, rec.SessionKey, "", 0).Name
+}
+
+// checkDeferredCommand reports whether a command record names a registered
+// command with an Execute function — the lookup Registry.Dispatch makes, on
+// the name command.RequestFromText parses, the same parse dispatch uses.
+func checkDeferredCommand(inst *agentInstance, rec defersend.Record) error {
+	if inst.cmds == nil {
+		return errDeferUnknownCommand
+	}
+	cmd := inst.cmds.Get(command.RequestFromText(rec.Text, rec.SessionKey, "", 0).Name)
+	if cmd == nil {
+		return errDeferUnknownCommand
+	}
+	if cmd.Execute == nil {
+		return errDeferNotExecutable
+	}
+	return nil
 }
 
 // deferUnmetWait is the wait gate shared by /send, /branch and /command: with
@@ -217,13 +302,19 @@ func resolveWaitTimeout(s string) (time.Duration, error) {
 
 // deferSweeper periodically re-evaluates pending deferred requests — sends,
 // branches and commands — and delivers each one whose wait condition now
-// holds, or whose deadline has passed (deliver-anyway). It runs until ctx is
-// cancelled.
+// holds. At the deadline a send or branch is delivered anyway; a command is
+// dropped with a notice (#2220). A transient delivery failure keeps the
+// record for a later sweep, up to deferMaxAttempts; a permanent one drops it
+// at once with a notice. It runs until ctx is cancelled.
 type deferSweeper struct {
 	store           *defersend.Store
 	deps            httpHandlerDeps
 	isUserActive    userActivityChecker
 	isSessionActive sessionActivityChecker
+	// deliverFn replaces deliver when set — a test seam for driving the
+	// retry/drop classification with a chosen failure. Production leaves it
+	// nil.
+	deliverFn func(*agentInstance, defersend.Record) error
 }
 
 func (s *deferSweeper) run(ctx context.Context) {
@@ -241,7 +332,8 @@ func (s *deferSweeper) run(ctx context.Context) {
 
 // sweep delivers every ready pending request once, regardless of kind. A
 // record is ready when its wait condition holds now or its deadline has
-// passed.
+// passed; a command that reaches its deadline with its condition unmet is
+// dropped, not delivered.
 func (s *deferSweeper) sweep() {
 	records, err := s.store.All()
 	if err != nil {
@@ -252,6 +344,7 @@ func (s *deferSweeper) sweep() {
 	for _, r := range records {
 		inst, ok := s.deps.agents[r.AgentID]
 		if !ok {
+			// No agent, so no session chat to notify: log only.
 			deferLog.Warnf("dropping deferred %s %d: agent %q gone", r.EffectiveKind(), r.ID, r.AgentID)
 			_ = s.store.Delete(r.ID)
 			continue
@@ -265,8 +358,7 @@ func (s *deferSweeper) sweep() {
 		wc := waitConds{warm: r.WaitWarm, cold: r.WaitCold, userActive: r.WaitUserActive, userInactive: r.WaitUserInactive}
 		activityOK, err := waitSatisfied(wc, in, s.isUserActive, s.isSessionActive)
 		if err != nil {
-			deferLog.Errorf("dropping deferred %s %d: %v", r.EffectiveKind(), r.ID, err)
-			_ = s.store.Delete(r.ID)
+			s.drop(r, "bad wait condition", err)
 			continue
 		}
 		// A rate-limited endpoint withholds delivery unconditionally (#1417) —
@@ -285,27 +377,114 @@ func (s *deferSweeper) sweep() {
 		if !activityOK && !timedOut {
 			continue
 		}
+		if !activityOK && r.EffectiveKind() == defersend.KindCommand {
+			// #2220 (Dick, 2026-10-10): a command is never delivered just
+			// because time ran out — `foci command --wait-cold 55m /reset`
+			// must not reset mid-conversation at its deadline.
+			s.drop(r, "deadline reached and the wait condition never held", nil)
+			continue
+		}
 		reason := "condition met"
 		if !activityOK {
 			reason = "deadline reached — sending anyway"
 		}
 		deferLog.Infof("delivering deferred %s %d (agent=%s session=%s): %s", r.EffectiveKind(), r.ID, r.AgentID, r.SessionKey, reason)
-		s.deliver(inst, r)
+		deliver := s.deliver
+		if s.deliverFn != nil {
+			deliver = s.deliverFn
+		}
+		if err := deliver(inst, r); err != nil {
+			s.failed(r, err)
+			continue
+		}
 		_ = s.store.Delete(r.ID)
 	}
 }
 
-// deliver hands one ready record to its kind's delivery path. Errors are
-// logged by the path itself; the sweep deletes the record after this single
-// attempt either way (a deferred request is never retried forever).
-func (s *deferSweeper) deliver(inst *agentInstance, r defersend.Record) {
+// failed handles one failed delivery attempt: a transient failure keeps the
+// record for a later sweep until its deferMaxAttempts-th failure (the count
+// is persisted, so it survives a restart); a permanent failure, or the last
+// transient one, drops it with a notice.
+func (s *deferSweeper) failed(r defersend.Record, err error) {
+	transient, class := classifyDeferFailure(err)
+	if transient {
+		n, cerr := s.store.RecordFailedAttempt(r.ID)
+		if cerr != nil {
+			deferLog.Errorf("deferred %s %d: record failed attempt: %v", r.EffectiveKind(), r.ID, cerr)
+		} else if n < deferMaxAttempts {
+			deferLog.Warnf("deferred %s %d delivery failed (attempt %d of %d, will retry; agent=%s session=%s): %v",
+				r.EffectiveKind(), r.ID, n, deferMaxAttempts, r.AgentID, r.SessionKey, err)
+			return
+		}
+		class = fmt.Sprintf("%s, %d attempts", class, deferMaxAttempts)
+	}
+	s.drop(r, class, err)
+}
+
+// classifyDeferFailure sorts a delivery error into transient (worth another
+// sweep: the target's inbox was full) or permanent, and names its reason
+// class — the short phrase the drop notice carries. The class never includes
+// request text or arguments.
+func classifyDeferFailure(err error) (transient bool, class string) {
+	switch {
+	case errors.Is(err, errBranchInboxFull):
+		return true, "session inbox full"
+	case errors.Is(err, errBranchBadModel):
+		return false, "bad model"
+	case errors.Is(err, errBranchUnbranchableParent):
+		return false, "backend cannot branch this session"
+	case errors.Is(err, errDeferUnknownCommand):
+		return false, "unknown command"
+	case errors.Is(err, errDeferNotExecutable):
+		return false, "command not executable"
+	default:
+		return false, "delivery failed"
+	}
+}
+
+// drop removes a record that will never be delivered, logs it at WARN and
+// sends the drop notice to the target session's chat. cause (may be nil) is
+// logged, never sent: for a command it is built from the name only.
+func (s *deferSweeper) drop(r defersend.Record, class string, cause error) {
+	if cause != nil {
+		deferLog.Warnf("dropping deferred %s %d (agent=%s session=%s): %s: %v", r.EffectiveKind(), r.ID, r.AgentID, r.SessionKey, class, cause)
+	} else {
+		deferLog.Warnf("dropping deferred %s %d (agent=%s session=%s): %s", r.EffectiveKind(), r.ID, r.AgentID, r.SessionKey, class)
+	}
+	_ = s.store.Delete(r.ID)
+	s.notifyDropped(r, class)
+}
+
+// deferDropNotice is the drop notice text: the kind, the record id and the
+// reason class — never the request text or arguments, which can carry
+// secrets (#2259).
+func deferDropNotice(r defersend.Record, class string) string {
+	return fmt.Sprintf("⚠️ Deferred %s #%d dropped: %s.", r.EffectiveKind(), r.ID, class)
+}
+
+// notifyDropped sends the drop notice to the target session's OWN chat
+// (route.PolicyStrict: never the agent's primary), and nothing when that
+// session has no live connection. For a branch the target is the parent.
+func (s *deferSweeper) notifyDropped(r defersend.Record, class string) {
+	conn, _ := route.ConnFor(s.deps.connMgr, r.AgentID, r.SessionKey, route.PolicyStrict)
+	if conn == nil {
+		return
+	}
+	if err := conn.SendToSession(r.SessionKey, deferDropNotice(r, class)); err != nil {
+		deferLog.Warnf("deferred %s %d: drop notice not sent: %v", r.EffectiveKind(), r.ID, err)
+	}
+}
+
+// deliver hands one ready record to its kind's delivery path and returns the
+// failure, if any, for the sweep to classify (classifyDeferFailure).
+func (s *deferSweeper) deliver(inst *agentInstance, r defersend.Record) error {
 	switch r.EffectiveKind() {
 	case defersend.KindBranch:
-		s.deliverBranch(inst, r)
+		return s.deliverBranch(inst, r)
 	case defersend.KindCommand:
-		s.deliverCommand(inst, r)
+		return s.deliverCommand(inst, r)
 	default:
-		s.deliverSend(inst, r)
+		return s.deliverSend(inst, r)
 	}
 }
 
@@ -314,11 +493,13 @@ func (s *deferSweeper) deliver(inst *agentInstance, r defersend.Record) {
 // (the caller is long gone; a deferred send is fire-and-forget). A
 // choice-carrying record (Steer, #1318) routes as a user envelope instead so
 // its mode takes effect at delivery — except policy=broadcast, where the mode
-// is inert exactly as on the immediate path (steerChoiceRoutes).
-func (s *deferSweeper) deliverSend(inst *agentInstance, r defersend.Record) {
+// is inert exactly as on the immediate path (steerChoiceRoutes). A model that
+// no longer resolves is a permanent failure (the immediate path refuses it
+// with 400), and nothing is delivered; a full inbox is transient.
+func (s *deferSweeper) deliverSend(inst *agentInstance, r defersend.Record) error {
 	if r.Model != "" {
 		if err := applyModelOverride(inst, r.SessionKey, r.Model, s.deps.cfg.Models); err != nil {
-			deferLog.Warnf("deferred model override %q: %v", r.Model, err)
+			return fmt.Errorf("%w: %w", errBranchBadModel, err)
 		}
 	}
 	app.DeliverExternalPrompt(r.SessionKey, r.Text)
@@ -327,22 +508,26 @@ func (s *deferSweeper) deliverSend(inst *agentInstance, r defersend.Record) {
 		// (#1130): whoever declared themselves human at enqueue time may be
 		// gone by delivery — a deferred request always delivers as automated.
 		if !enqueueSteerChoice(inst, s.deps, r.SessionKey, r.Text, pref, false, route.Policy(r.Policy)) {
-			deferLog.Warnf("deferred steer choice for session %s not delivered: inbox full", r.SessionKey)
+			return errBranchInboxFull
 		}
-		return
+		return nil
 	}
 	sendCtx := agent.WithTrigger(s.deps.ctx, "user")
-	deliverBufferedQueued(inst, s.deps.connMgr, sendCtx, r.SessionKey, r.Text, "defersend", false, route.Policy(r.Policy))
+	if !deliverBufferedQueued(inst, s.deps.connMgr, sendCtx, r.SessionKey, r.Text, "defersend", false, route.Policy(r.Policy)) {
+		return errBranchInboxFull
+	}
+	return nil
 }
 
 // deliverBranch runs a deferred branch at delivery time: the fork happens NOW
 // from r.SessionKey (the parent's state at delivery, not at enqueue), the
 // turn is async with trigger "branch", and no receipt exists (the HTTP caller
-// is long gone). A delivery failure (bad model at delivery time, fork error,
-// full inbox, a named parent on a backend that cannot branch — #2284's
-// refusal, from the same shared runBranchTurn) is logged and the record
-// dropped after that one attempt — a branch has not started yet, and silently
-// forking on the wrong model is worse than a loud drop. The main/named
+// is long gone). A delivery failure is returned for the sweep to classify: a
+// full inbox is retried (bounded), while a bad model at delivery time, a fork
+// error or a named parent on a backend that cannot branch (#2284's refusal,
+// from the same shared runBranchTurn) drops the record with a notice — a
+// branch has not started yet, and silently forking on the wrong model is
+// worse than a loud drop. The main/named
 // oracle here is the plain default key (defaultSessionKey, no create hook):
 // the record carries no rung (#2284 R1: no deferred-record change), so a
 // deferred empty-selector branch whose default was CreateDefault-minted
@@ -351,34 +536,44 @@ func (s *deferSweeper) deliverSend(inst *agentInstance, r defersend.Record) {
 // it is not part of the deferrable record, and whoever declared themselves
 // human at enqueue time may be gone by delivery — a deferred request always
 // delivers as automated.
-func (s *deferSweeper) deliverBranch(inst *agentInstance, r defersend.Record) {
+func (s *deferSweeper) deliverBranch(inst *agentInstance, r defersend.Record) error {
 	parentIsDefault := r.SessionKey == defaultSessionKey(s.deps, inst.id)
 	_, err := runBranchTurn(s.deps, inst, r.SessionKey, parentIsDefault, route.Receipt{SessionKey: r.SessionKey}, branchTurnOptions{
 		Text: r.Text, Model: r.Model, NoCompact: r.NoCompact, NoResetHook: r.NoResetHook, Silent: r.Silent,
 	}, false, false)
-	if err != nil {
-		deferLog.Warnf("deferred branch %d delivery failed (agent=%s parent=%s): %v", r.ID, r.AgentID, r.SessionKey, err)
-	}
+	return err
 }
 
 // deliverCommand dispatches a deferred command through the agent's command
 // registry — the same dispatch handleCommand uses, DocPath send included.
-// ok=false means a REGISTERED command without an Execute function; unknown
-// names are answered by the registry itself (ok=true, "Unknown command"
-// text). The delivery is logged with metadata only (id, agent, session,
+// A name that is no longer registered, or a registered command without an
+// Execute function, is a permanent failure (checked BEFORE dispatch, the
+// lookup refuseDeferred made at enqueue: the registry can change during the
+// wait). The delivery is logged with metadata only (id, agent, session,
 // kind, text length); the result text is never logged, because it can carry
 // secrets such as a pairing key (#2259). The !ok warning likewise logs the
 // command name only, never its arguments: the name comes from the same
 // command.RequestFromText the dispatch parsed, so it is exactly the name the
 // registry looked up.
-func (s *deferSweeper) deliverCommand(inst *agentInstance, r defersend.Record) {
-	result, ok := dispatchAgentCommand(s.deps, inst, s.deps.ctx, r.SessionKey, r.Text)
+func (s *deferSweeper) deliverCommand(inst *agentInstance, r defersend.Record) error {
+	name := command.RequestFromText(r.Text, r.SessionKey, "", 0).Name
+	err := checkDeferredCommand(inst, r)
+	if errors.Is(err, errDeferUnknownCommand) {
+		deferLog.Warnf("deferred command %d unknown — no such registered command (agent=%s session=%s): /%s",
+			r.ID, r.AgentID, r.SessionKey, name)
+		return err
+	}
+	var result command.Response
+	ok := err == nil
+	if ok {
+		result, ok = dispatchAgentCommand(s.deps, inst, s.deps.ctx, r.SessionKey, r.Text)
+	}
 	if !ok {
-		name := command.RequestFromText(r.Text, r.SessionKey, "", 0).Name
 		deferLog.Warnf("deferred command %d not executable — registered command has no Execute (agent=%s session=%s): /%s",
 			r.ID, r.AgentID, r.SessionKey, name)
-		return
+		return errDeferNotExecutable
 	}
 	deferLog.Infof("deferred command %d delivered (agent=%s session=%s kind=%s text_len=%d)",
 		r.ID, r.AgentID, r.SessionKey, r.EffectiveKind(), len(result.Text))
+	return nil
 }

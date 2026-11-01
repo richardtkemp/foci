@@ -170,7 +170,7 @@ func TestBranch_UnmetWaitDefers(t *testing.T) {
 
 	t.Run("record", func(t *testing.T) {
 		_, _, store, mux := warmSetup(t)
-		w := postJSON(mux, "/branch", `{"text":"morning check","wait_cold":"55m","wait_timeout":"3h","no_compact":true,"no_reset_hook":true,"silent":true,"model":"cheap"}`)
+		w := postJSON(mux, "/branch", `{"text":"morning check","wait_cold":"55m","wait_timeout":"3h","no_compact":true,"no_reset_hook":true,"silent":true,"model":"test/branch-model"}`)
 		if w.Code != http.StatusAccepted {
 			t.Fatalf("code=%d want 202; body=%s", w.Code, w.Body.String())
 		}
@@ -179,17 +179,17 @@ func TestBranch_UnmetWaitDefers(t *testing.T) {
 			t.Fatalf("queued=%d want 1", len(all))
 		}
 		r := all[0]
-		// Model is stored VERBATIM, unvalidated: it is resolved at delivery
-		// time (a bad model fails then, loudly — see
-		// TestSweep_DropsBranchOnBadModel), so "cheap" — which the immediate
-		// path would reject — defers fine.
+		// Model is stored VERBATIM. It is checked at enqueue (a model the
+		// immediate path would reject is refused 400 — #2220,
+		// TestDeferEnqueue_BranchBadModelRefused) and resolved again at
+		// delivery time.
 		if r.Kind != defersend.KindBranch {
 			t.Errorf("Kind=%q want %q", r.Kind, defersend.KindBranch)
 		}
 		if r.SessionKey != testSessionKey {
 			t.Errorf("SessionKey=%q want the parent %q", r.SessionKey, testSessionKey)
 		}
-		if r.Text != "morning check" || !r.NoCompact || !r.NoResetHook || !r.Silent || r.Model != "cheap" {
+		if r.Text != "morning check" || !r.NoCompact || !r.NoResetHook || !r.Silent || r.Model != "test/branch-model" {
 			t.Errorf("branch fields not carried into the record: %+v", r)
 		}
 		if r.WaitCold != "55m" {

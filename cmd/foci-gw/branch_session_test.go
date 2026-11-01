@@ -563,7 +563,7 @@ func TestSweep_BranchNamedParentRefusedWhenBackendCannotBranch(t *testing.T) {
 	now := timeutil.Now()
 	// wait_cold holds (the named session never ran a turn) → deliverable on
 	// the first sweep.
-	_, _ = store.Enqueue(defersend.Record{
+	_, _, _ = store.Enqueue(defersend.Record{
 		Kind: defersend.KindBranch, AgentID: testAgentID, SessionKey: parent,
 		Text: "deferred branch", WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
 	})

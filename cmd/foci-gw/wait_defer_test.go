@@ -261,7 +261,7 @@ func TestSweep_WithholdsWhileRateLimited(t *testing.T) {
 	mock.entered = make(chan string, 1)
 	store := withDeferStore(t, &d)
 	now := timeutil.Now()
-	_, _ = store.Enqueue(defersend.Record{
+	_, _, _ = store.Enqueue(defersend.Record{
 		AgentID: testAgentID, SessionKey: testSessionKey, Text: "held msg", Policy: "fallback",
 		CreatedAt: now, DeadlineAt: now.Add(time.Hour),
 	})
@@ -305,7 +305,7 @@ func TestSweep_DeliversWhenSatisfied(t *testing.T) {
 	store := withDeferStore(t, &d)
 	now := timeutil.Now()
 	// Cold session → wait_cold satisfied on the next sweep.
-	_, _ = store.Enqueue(defersend.Record{
+	_, _, _ = store.Enqueue(defersend.Record{
 		AgentID: testAgentID, SessionKey: testSessionKey, Text: "queued msg", Policy: "fallback",
 		WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
 	})
@@ -333,7 +333,7 @@ func TestSweep_DeliversOnDeadline(t *testing.T) {
 	store := withDeferStore(t, &d)
 	now := timeutil.Now()
 	// wait_warm on a cold session never holds, but the deadline has passed → send anyway.
-	_, _ = store.Enqueue(defersend.Record{
+	_, _, _ = store.Enqueue(defersend.Record{
 		AgentID: testAgentID, SessionKey: testSessionKey, Text: "deadline msg", Policy: "fallback",
 		WaitWarm: "1h", CreatedAt: now.Add(-3 * time.Hour), DeadlineAt: now.Add(-time.Hour),
 	})
@@ -384,7 +384,7 @@ func TestSweep_DeliversSteerRecord_AsUserEnvelope(t *testing.T) {
 	mock.entered = make(chan string, 1)
 	store := withDeferStore(t, &d)
 	now := timeutil.Now()
-	_, _ = store.Enqueue(defersend.Record{
+	_, _, _ = store.Enqueue(defersend.Record{
 		AgentID: testAgentID, SessionKey: testSessionKey, Text: "deferred redirect",
 		Policy: "fallback", Steer: "steer",
 		WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
@@ -421,7 +421,7 @@ func TestSweep_SteerRecord_Broadcast_KeepsTodayPath(t *testing.T) {
 	mock.entered = make(chan string, 1)
 	store := withDeferStore(t, &d)
 	now := timeutil.Now()
-	_, _ = store.Enqueue(defersend.Record{
+	_, _, _ = store.Enqueue(defersend.Record{
 		AgentID: testAgentID, SessionKey: testSessionKey, Text: "deferred heads up",
 		Policy: "broadcast", Steer: "steer",
 		WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
@@ -451,7 +451,7 @@ func TestSweep_DeliversBranchRecord(t *testing.T) {
 	store := withDeferStore(t, &d)
 	now := timeutil.Now()
 	// wait_cold holds (session never touched) → deliverable on the first sweep.
-	_, _ = store.Enqueue(defersend.Record{
+	_, _, _ = store.Enqueue(defersend.Record{
 		Kind: defersend.KindBranch, AgentID: testAgentID, SessionKey: testSessionKey,
 		Text: "deferred branch work", Model: "", NoCompact: true, NoResetHook: true, Silent: true,
 		WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
@@ -515,7 +515,7 @@ func TestSweep_DeliversCommandRecord(t *testing.T) {
 	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{spy}})
 	store := withDeferStore(t, &d)
 	now := timeutil.Now()
-	_, _ = store.Enqueue(defersend.Record{
+	_, _, _ = store.Enqueue(defersend.Record{
 		Kind: defersend.KindCommand, AgentID: testAgentID, SessionKey: testSessionKey,
 		Text: "/reset", WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
 	})
@@ -540,7 +540,7 @@ func TestSweep_DeliversBranchOnDeadline(t *testing.T) {
 	store := withDeferStore(t, &d)
 	now := timeutil.Now()
 	// wait_warm on a never-touched session never holds; the deadline passed → branch anyway.
-	_, _ = store.Enqueue(defersend.Record{
+	_, _, _ = store.Enqueue(defersend.Record{
 		Kind: defersend.KindBranch, AgentID: testAgentID, SessionKey: testSessionKey,
 		Text: "deadline branch", WaitWarm: "1h",
 		CreatedAt: now.Add(-3 * time.Hour), DeadlineAt: now.Add(-time.Hour),
@@ -570,7 +570,7 @@ func TestSweep_DropsBranchOnBadModel(t *testing.T) {
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	store := withDeferStore(t, &d)
 	now := timeutil.Now()
-	_, _ = store.Enqueue(defersend.Record{
+	_, _, _ = store.Enqueue(defersend.Record{
 		Kind: defersend.KindBranch, AgentID: testAgentID, SessionKey: testSessionKey,
 		Text: "doomed branch", Model: "cheap",
 		WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
@@ -602,7 +602,7 @@ func TestSweep_WithholdsBranchWhileRateLimited(t *testing.T) {
 	mock.entered = make(chan string, 1)
 	store := withDeferStore(t, &d)
 	now := timeutil.Now()
-	_, _ = store.Enqueue(defersend.Record{
+	_, _, _ = store.Enqueue(defersend.Record{
 		Kind: defersend.KindBranch, AgentID: testAgentID, SessionKey: testSessionKey,
 		Text: "held branch", WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
 	})

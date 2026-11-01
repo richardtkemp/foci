@@ -1089,6 +1089,29 @@ func freshWebhookSessionKey(idx *session.SessionIndex, agentID, hookID string) (
 // applyModelOverride resolves a model value (group name, alias, or developer/model_id)
 // and sets it as a per-session override on the agent instance.
 func applyModelOverride(inst *agentInstance, sessionKey, value string, models map[string]config.ModelConfig) error {
+	set, err := resolveModelOverride(inst, sessionKey, value, models)
+	if err != nil {
+		return err
+	}
+	set()
+	return nil
+}
+
+// checkModelOverride reports whether value resolves exactly as
+// applyModelOverride would resolve it, without applying anything — the
+// enqueue-time check for a deferred request that carries a model (#2220),
+// so a model the immediate path would refuse is refused before the request
+// is stored, with the same error.
+func checkModelOverride(inst *agentInstance, sessionKey, value string, models map[string]config.ModelConfig) error {
+	_, err := resolveModelOverride(inst, sessionKey, value, models)
+	return err
+}
+
+// resolveModelOverride is the ONE model-override resolution shared by
+// applyModelOverride and checkModelOverride: it resolves value and returns
+// the side effect that installs it on sessionKey, or the refusal. Resolving
+// has no side effect; only calling the returned func does.
+func resolveModelOverride(inst *agentInstance, sessionKey, value string, models map[string]config.ModelConfig) (func(), error) {
 	// Per-session model override is an API-agent feature: it resolves through the
 	// model groups / aliases and swaps the provider client. Delegated
 	// (claude-code) agents route all LLM work through the backend, have no
@@ -1097,28 +1120,30 @@ func applyModelOverride(inst *agentInstance, sessionKey, value string, models ma
 	// "model not found" resolver error.
 	if inst.ag.DelegatedManager != nil {
 		httpLog.Infof("model override rejected for delegated agent %q (session=%s, value=%q): not supported for claude-code backends", inst.id, sessionKey, value)
-		return fmt.Errorf("per-session model override is not supported for claude-code (delegated) agents")
+		return nil, fmt.Errorf("per-session model override is not supported for claude-code (delegated) agents")
 	}
 
 	// Check if value is a group name (built-in or user-defined).
 	if inst.ag.GroupResolver != nil {
 		if resolved := inst.ag.GroupResolver.ResolveGroup(value); resolved != nil {
-			client := inst.ag.ClientProvider.ResolveEndpointClient(resolved.Endpoint, resolved.Format)
-			model := resolved.Developer + "/" + resolved.ModelID
-			inst.ag.SetSessionModel(sessionKey, model, resolved.Endpoint, resolved.Format, client)
-			return nil
+			return func() {
+				client := inst.ag.ClientProvider.ResolveEndpointClient(resolved.Endpoint, resolved.Format)
+				model := resolved.Developer + "/" + resolved.ModelID
+				inst.ag.SetSessionModel(sessionKey, model, resolved.Endpoint, resolved.Format, client)
+			}, nil
 		}
 	}
 
 	// Resolve as alias or developer/model_id
 	resolved, err := config.ResolveModel(value, "", models)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	model := resolved.Developer + "/" + resolved.ModelID
-	client := inst.ag.ClientProvider.ResolveEndpointClient(resolved.Endpoint, resolved.Format)
-	inst.ag.SetSessionModel(sessionKey, model, resolved.Endpoint, resolved.Format, client)
-	return nil
+	return func() {
+		model := resolved.Developer + "/" + resolved.ModelID
+		client := inst.ag.ClientProvider.ResolveEndpointClient(resolved.Endpoint, resolved.Format)
+		inst.ag.SetSessionModel(sessionKey, model, resolved.Endpoint, resolved.Format, client)
+	}, nil
 }
 
 // handleReloadCredentials returns the handler for POST /-/reload-credentials.

@@ -3,7 +3,9 @@ package main
 // waitFlags holds the "wait-until" gate flags shared by `foci send`,
 // `foci branch` and `foci command`: unlike the if-* gates (which skip when
 // unmet), an unmet wait-* condition defers the request server-side until it
-// holds (or --wait-timeout / --deadline elapses, then it runs anyway).
+// holds (or --wait-timeout / --deadline elapses, default 24h: then a send or
+// branch runs anyway and a command is dropped with a notice, #2220). The ping
+// and pair shorthands do not take these flags (commandFlags.noWait).
 // --no-gate opts out: "ignore any wait condition" (and, for send, the wait
 // default).
 type waitFlags struct {
