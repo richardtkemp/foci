@@ -229,8 +229,9 @@ func (b *Backend) injectSystem(ctx context.Context, inj delegator.Inject) error 
 // to User-idle (mirroring ccstream's race-fix semantics). At idle +
 // no Turn it returns ErrTurnNotInFlight so the caller (Agent.Inbox)
 // re-routes through the normal idle path. Mid-turn it buffers the steer
-// and aborts the active turn: opencode queues a mid-turn prompt_async
-// behind the active turn and POST /abort discards that queue, so the
+// and aborts the active turn — after the running subagents end, because
+// the abort cascades to them (#2753, startDeferredSteerAbort). opencode
+// queues a mid-turn prompt_async behind the active turn and POST /abort discards that queue, so the
 // steer can only land as a fresh turn AFTER the abort. The drain
 // (handlers.go + the backstop timer below) flushes the buffered steer
 // once the abort's event burst settles (pattern or 500ms, whichever
@@ -238,28 +239,31 @@ func (b *Backend) injectSystem(ctx context.Context, inj delegator.Inject) error 
 func (b *Backend) injectSteer(ctx context.Context, inj delegator.Inject) error {
 	if b.IsTurnInFlight() {
 		// Mid-turn: buffer the steer and abort the active turn. A second
-		// steer arriving during the drain just appends (the flush combines
-		// all buffered messages), so the abort fires only once.
+		// steer arriving during the drain (or while the abort waits for
+		// subagents) just appends (the flush combines all buffered
+		// messages), so the abort fires only once.
+		// Read the tracker before taking turnMu: it has its own lock and
+		// may fire the status callback.
+		running := b.agents.Pending()
 		b.turnMu.Lock()
 		b.steerBuf = append(b.steerBuf, inj.Text)
-		if b.aborting {
+		if b.aborting || b.steerAbortDeferred {
 			b.turnMu.Unlock()
-			log.NewComponentLogger(b.logComponent()).Debugf("inject: steer appended mid-turn (abort drain in progress, %d buffered)", len(b.steerBuf))
+			log.NewComponentLogger(b.logComponent()).Debugf("inject: steer appended mid-turn (abort pending, %d buffered)", len(b.steerBuf))
 			return nil
 		}
-		b.aborting = true
-		b.abortIdlesSeen = 0
-		b.armAbortTimerLocked()
-		b.turnMu.Unlock()
-		log.NewComponentLogger(b.logComponent()).Debugf("inject: steer mid-turn → aborting active turn, drain pending")
-		if err := b.Interrupt(ctx); err != nil {
-			// Abort failed — clear drain state and fall back to flushing at
-			// the next natural OnSessionIdle (legacy behaviour).
-			b.turnMu.Lock()
-			b.disarmAbortLocked()
+		// #2753: POST /abort cascades to every running child session, so
+		// aborting now would return "Task cancelled" for each running task
+		// tool and discard its work. Wait for the last one to end
+		// (handleToolPart calls startDeferredSteerAbort).
+		if running > 0 {
+			b.steerAbortDeferred = true
 			b.turnMu.Unlock()
-			log.NewComponentLogger(b.logComponent()).Warnf("inject: steer abort failed (%v); will flush at next idle", err)
+			log.NewComponentLogger(b.logComponent()).Infof("inject: steer mid-turn while %d subagent(s) run → abort deferred until they end", running)
+			return nil
 		}
+		b.turnMu.Unlock()
+		b.startSteerAbort(ctx)
 		return nil
 	}
 	// Idle.
@@ -486,6 +490,51 @@ func (b *Backend) flushSteerBuf(ctx context.Context, turnFactory func() *delegat
 // ---------------------------------------------------------------------------
 // Mid-turn steer abort-drain (opencode 1.17.11)
 // ---------------------------------------------------------------------------
+
+// startSteerAbort arms the abort drain and POSTs /abort for a buffered
+// mid-turn steer. Called by injectSteer (no subagents running) and by
+// startDeferredSteerAbort (the last subagent has ended).
+func (b *Backend) startSteerAbort(ctx context.Context) {
+	b.turnMu.Lock()
+	b.aborting = true
+	b.abortIdlesSeen = 0
+	b.armAbortTimerLocked()
+	b.turnMu.Unlock()
+	log.NewComponentLogger(b.logComponent()).Debugf("inject: steer mid-turn → aborting active turn, drain pending")
+	if err := b.Interrupt(ctx); err != nil {
+		// Abort failed — clear drain state and fall back to flushing at
+		// the next natural OnSessionIdle (legacy behaviour).
+		b.turnMu.Lock()
+		b.disarmAbortLocked()
+		b.turnMu.Unlock()
+		log.NewComponentLogger(b.logComponent()).Warnf("inject: steer abort failed (%v); will flush at next idle", err)
+	}
+}
+
+// startDeferredSteerAbort fires a steer abort that injectSteer deferred
+// because subagents were running (#2753). handleToolPart calls it after a
+// task tool ends; it acts only once no subagent is left running and the
+// turn is still in flight.
+func (b *Backend) startDeferredSteerAbort() {
+	if b.agents.Pending() > 0 {
+		return
+	}
+	b.turnMu.Lock()
+	if !b.steerAbortDeferred {
+		b.turnMu.Unlock()
+		return
+	}
+	b.steerAbortDeferred = false
+	inFlight := b.turnActive
+	b.turnMu.Unlock()
+	if !inFlight {
+		return // the turn already ended; onSessionIdle flushed the steer
+	}
+	log.NewComponentLogger(b.logComponent()).Infof("inject: last subagent ended → firing the deferred steer abort")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	b.startSteerAbort(ctx)
+}
 
 // armAbortTimerLocked arms the backstop timer that flushes the buffered steer
 // if the abort's idle burst never arrives (or arrives too slowly). Default

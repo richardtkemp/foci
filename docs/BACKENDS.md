@@ -445,7 +445,9 @@ Notes:
    foci sends nothing outbound. ccstream sends `keep_alive` every 30s (`cc/lifecycle.go:runKeepAlive`).
 7. opencode has no mid-turn fold: a steer buffers in `steerBuf`, POSTs `/abort` and is
    re-sent as a fresh turn once the abort burst drains (`oc/inject.go:injectSteer`,
-   `flushSteerBuf`). The in-flight work is lost, not folded.
+   `flushSteerBuf`). The in-flight work is lost, not folded. While task-tool subagents run, the
+   abort waits until the last one ends, because it would cancel them (#2753,
+   `startDeferredSteerAbort`).
 8. opencode queues a mid-turn user message and sends it as a new turn at `session.idle`
    (`oc/inject.go:injectUser`). It is answered after the current turn, not inside it.
 9. codex returns `ErrTurnNotInFlight` only when `turn/steer` races completion

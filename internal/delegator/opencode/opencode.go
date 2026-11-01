@@ -272,6 +272,14 @@ type Backend struct {
 	abortTimer        *time.Timer
 	abortDrainTimeout time.Duration
 
+	// steerAbortDeferred: a mid-turn steer is buffered but its abort waits
+	// for the running subagents (#2753). opencode's POST /abort cascades to
+	// every child session, so aborting while a task tool runs returns "Task
+	// cancelled" to the parent and discards the subagents' work. The abort
+	// fires when the last task tool ends (handleToolPart); if the turn goes
+	// idle first, the steer flushes at that idle instead. Guarded by turnMu.
+	steerAbortDeferred bool
+
 	// Callbacks — set before Start, read-only after. Each is referenced
 	// by the matching Set* method below; that's enough production-code
 	// use for the unused linter (which excludes tests) to be satisfied.

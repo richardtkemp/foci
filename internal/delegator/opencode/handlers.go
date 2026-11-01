@@ -353,6 +353,7 @@ func (b *Backend) handleToolPart(part Part) {
 			if se := b.sessionEvents.Load(); se != nil && se.OnSubagentEnd != nil {
 				se.OnSubagentEnd(part.CallID, 1)
 			}
+			b.startDeferredSteerAbort() // #2753: a steer waiting on subagents
 		}
 
 	case ToolStateError:
@@ -364,6 +365,7 @@ func (b *Backend) handleToolPart(part Part) {
 			if se := b.sessionEvents.Load(); se != nil && se.OnSubagentEnd != nil {
 				se.OnSubagentEnd(part.CallID, 1)
 			}
+			b.startDeferredSteerAbort() // #2753: a steer waiting on subagents
 		}
 	}
 }
@@ -585,6 +587,9 @@ func (b *Backend) onSessionIdle(sessionID string) {
 		}
 		return
 	}
+	// The turn ended on its own while a steer waited for its subagents
+	// (#2753): no abort is needed any more, the flush below sends it.
+	b.steerAbortDeferred = false
 	b.turnMu.Unlock()
 
 	// Flush steerBuf — any user/steer messages that arrived during the
