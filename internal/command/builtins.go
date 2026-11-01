@@ -81,6 +81,9 @@ func FacetCommand() *Command {
 		Name:        "facet",
 		Description: "Fork session to a secondary bot",
 		Category:    "session",
+		// Listed only where it can run: a backend that cannot branch refuses
+		// it at run time (forkFacetBranch), so it is not offered there (#957).
+		Visible: branchCapableVisible,
 		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
 			return forkFacet(ctx, req, cc)
 		},

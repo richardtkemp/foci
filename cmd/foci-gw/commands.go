@@ -316,8 +316,9 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		}
 	}
 
-	// Facet
+	// Facet and fork: both listed only where the agent can branch (#957).
 	cmds.Register(command.FacetCommand())
+	cmds.Register(command.ForkCommand())
 
 	// Custom script commands from config
 	for _, cc := range p.cfg.Commands {

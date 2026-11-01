@@ -591,7 +591,10 @@ func ClassifySessionKey(key string) SessionType {
 // consumers (reflection eligibility, cost attribution) don't care about.
 func SessionTypeForBranch(branchType string) SessionType {
 	switch branchType {
-	case "facet":
+	// A /fork chat (#957) is a human chat forked from another chat's history:
+	// the facet class, though its branch_type is "fork" (no orientation, and
+	// compaction stays on).
+	case "facet", "fork":
 		return SessionTypeFacet
 	case "spawn":
 		return SessionTypeSpawn
