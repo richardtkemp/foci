@@ -320,7 +320,7 @@ func TestAskUserDeliver_ReachesBackendAsSourceUser(t *testing.T) {
 	t.Parallel()
 	be := &sourceProbeBackend{sources: make(chan delegator.InjectSource, 4)}
 	d := delegatedBranchHarnessWith(t, httpTestOpts{}, be, delegator.Spec{})
-	inst := d.agents[testAgentID]
+	inst := d.agents.at(testAgentID)
 	sk := testAgentID + "/i" + runToken("ask")
 	if _, err := inst.ag.DelegatedManager.Get(d.ctx, sk); err != nil {
 		t.Fatalf("start backend: %v", err)

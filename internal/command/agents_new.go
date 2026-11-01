@@ -26,6 +26,12 @@ type AgentNewDeps struct {
 	// registry. Empty → the wizard falls back to offering just "claude-code".
 	AvailableBackends []string
 	Registry          *Registry // for setting wizard
+	// StartAgent starts the agent the wizard has just written to the config,
+	// in the running process (#963). It returns hint lines for the reply
+	// (e.g. a missing Telegram token), or the reason the agent did not
+	// start. nil = no live start available (unit tests, first-run setup):
+	// the wizard then tells the user to /restart.
+	StartAgent func(agentID string) (hints []string, err error)
 }
 
 // Wizard step indices. The flow is name → backend → model → character mode.
@@ -339,7 +345,12 @@ func (w *agentWizard) handleCharMode(text string) (string, bool) {
 	return result, true
 }
 
-// createAgent is the default creation function that sets up workspace, config, and crontab.
+// createAgent is the default creation function: it sets up the workspace,
+// appends the [[agents]] block to foci.toml, adds the crontab entries, and
+// then starts the agent live through deps.StartAgent, with no restart (#963).
+// A failed start keeps the config block (it is not rolled back) and the
+// reply names the reason and says to /restart. Only a NEW agent starts live:
+// edits to existing [[agents]] blocks still need a restart.
 func createAgent(w *agentWizard) (string, error) {
 	spec := provision.AgentSpec{
 		ID:          w.id,
@@ -409,9 +420,29 @@ func createAgent(w *agentWizard) (string, error) {
 		}
 	}
 
-	sb.WriteString(fmt.Sprintf("\n%s (%s) is ready.\n", w.display, w.id))
-	sb.WriteString("Restart foci for the new agent to start: /restart")
+	sb.WriteString(w.startLine())
 	return sb.String(), nil
+}
+
+// restartLine is the wizard's last line when the agent is not running yet.
+const restartLine = "Restart foci for the new agent to start: /restart"
+
+// startLine starts the new agent live and returns the reply's closing lines:
+// that it is running (plus any hints), or why it is not and to /restart.
+func (w *agentWizard) startLine() string {
+	if w.deps.StartAgent == nil {
+		return fmt.Sprintf("\n%s (%s) is ready.\n%s", w.display, w.id, restartLine)
+	}
+	hints, err := w.deps.StartAgent(w.id)
+	if err != nil {
+		return fmt.Sprintf("\n⚠️  %s (%s) is configured but did not start: %s\nThe config block was kept. %s", w.display, w.id, err, restartLine)
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "\n✅ %s (%s) is running. You can talk to it now.", w.display, w.id)
+	for _, h := range hints {
+		fmt.Fprintf(&sb, "\n⚠️  %s", h)
+	}
+	return sb.String()
 }
 
 // appendToFile appends text to a file.

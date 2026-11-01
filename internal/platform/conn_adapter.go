@@ -68,7 +68,14 @@ func (a *ConnectionManagerAdapter[B]) AcquireFacet(agentID string) (Connection, 
 }
 
 func (a *ConnectionManagerAdapter[B]) StartAll(ctx context.Context) { a.source.StartAll(ctx) }
-func (a *ConnectionManagerAdapter[B]) Wait()                        { a.source.Wait() }
+
+// StartAgent forwards to the source when it can start one agent (AgentStarter).
+func (a *ConnectionManagerAdapter[B]) StartAgent(ctx context.Context, agentID string) {
+	if s, ok := a.source.(AgentStarter); ok {
+		s.StartAgent(ctx, agentID)
+	}
+}
+func (a *ConnectionManagerAdapter[B]) Wait() { a.source.Wait() }
 func (a *ConnectionManagerAdapter[B]) HasFacet(agentID string) bool {
 	return a.source.HasFacet(agentID)
 }

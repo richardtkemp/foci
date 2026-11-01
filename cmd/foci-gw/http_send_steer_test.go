@@ -23,7 +23,7 @@ import (
 func steerEnvelopeObserver(d httpHandlerDeps) (observe func() []agent.Envelope) {
 	var mu sync.Mutex
 	var seen []agent.Envelope
-	d.agents[testAgentID].ag.SetTurnObserver(func(sk string, batch []agent.Envelope) {
+	d.agents.at(testAgentID).ag.SetTurnObserver(func(sk string, batch []agent.Envelope) {
 		if len(batch) > 0 {
 			mu.Lock()
 			seen = append(seen, batch[0])
@@ -127,7 +127,7 @@ func TestSend_Queue_MidTurn_QueuesAsUserTurn(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("first turn never reached the backend")
 	}
-	waitForCond(t, "first turn in flight", func() bool { return d.agents[testAgentID].ag.IsTurnInFlight(testSessionKey) })
+	waitForCond(t, "first turn in flight", func() bool { return d.agents.at(testAgentID).ag.IsTurnInFlight(testSessionKey) })
 
 	w := postJSON(mux, "/send", `{"text":"second","async":true,"steer":"queue"}`)
 	if w.Code != http.StatusAccepted {
@@ -210,10 +210,10 @@ func TestSend_Steer_MidTurn_FoldsIntoRunningTurn(t *testing.T) {
 	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	fc := &foldingClient{mockClient: &mockClient{}}
-	d.agents[testAgentID].ag.Client = fc
+	d.agents.at(testAgentID).ag.Client = fc
 	toolEntered := make(chan struct{})
 	toolRelease := make(chan struct{})
-	holdOpenTool(d.agents[testAgentID].ag, toolEntered, toolRelease)
+	holdOpenTool(d.agents.at(testAgentID).ag, toolEntered, toolRelease)
 	mux := newTestMux(d)
 
 	firstDone := make(chan struct{})
@@ -229,7 +229,7 @@ func TestSend_Steer_MidTurn_FoldsIntoRunningTurn(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("first turn never reached its tool")
 	}
-	waitForCond(t, "turn-active gate open", func() bool { return d.agents[testAgentID].ag.InboxTurnActive(testSessionKey) })
+	waitForCond(t, "turn-active gate open", func() bool { return d.agents.at(testAgentID).ag.InboxTurnActive(testSessionKey) })
 
 	w := postJSON(mux, "/send", `{"text":"redirect this","async":true,"steer":"steer"}`)
 	if w.Code != http.StatusAccepted {
@@ -263,10 +263,10 @@ func TestSend_Steer_MidTurn_InjectedTurn_DoesNotFold(t *testing.T) {
 	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	fc := &foldingClient{mockClient: &mockClient{}}
-	d.agents[testAgentID].ag.Client = fc
+	d.agents.at(testAgentID).ag.Client = fc
 	toolEntered := make(chan struct{})
 	toolRelease := make(chan struct{})
-	holdOpenTool(d.agents[testAgentID].ag, toolEntered, toolRelease)
+	holdOpenTool(d.agents.at(testAgentID).ag, toolEntered, toolRelease)
 	observe := steerEnvelopeObserver(d)
 	mux := newTestMux(d)
 
@@ -281,8 +281,8 @@ func TestSend_Steer_MidTurn_InjectedTurn_DoesNotFold(t *testing.T) {
 	}
 	// The crux: the turn is in flight but the inbox's steer window is NOT
 	// open — only a user batch opens it, so a steer cannot fold here.
-	waitForCond(t, "injected turn in flight", func() bool { return d.agents[testAgentID].ag.IsTurnInFlight(testSessionKey) })
-	if d.agents[testAgentID].ag.InboxTurnActive(testSessionKey) {
+	waitForCond(t, "injected turn in flight", func() bool { return d.agents.at(testAgentID).ag.IsTurnInFlight(testSessionKey) })
+	if d.agents.at(testAgentID).ag.InboxTurnActive(testSessionKey) {
 		t.Fatal("an injected turn must not open the inbox steer window — --steer cannot fold into it")
 	}
 
@@ -327,7 +327,7 @@ func TestSend_Steer_MidTurn_InjectedTurn_DoesNotFold(t *testing.T) {
 func TestSend_HelpOnHTTP_HidesChatOnlyPrefixes(t *testing.T) {
 	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
-	reg := d.agents[testAgentID].cmds
+	reg := d.agents.at(testAgentID).cmds
 	reg.Register(command.HelpCommand(reg))
 	mux := newTestMux(d)
 
@@ -364,7 +364,7 @@ func TestSend_SyncSteerChoice_InFlight_Returns202AndStampsUserActivity(t *testin
 	case <-time.After(5 * time.Second):
 		t.Fatal("first turn never reached the backend")
 	}
-	waitForCond(t, "first turn in flight", func() bool { return d.agents[testAgentID].ag.IsTurnInFlight(testSessionKey) })
+	waitForCond(t, "first turn in flight", func() bool { return d.agents.at(testAgentID).ag.IsTurnInFlight(testSessionKey) })
 
 	// The choice send must answer 202 immediately — a blocking reply would
 	// hang on a raced fold. Run it in a goroutine with a bound so a
@@ -466,7 +466,7 @@ func TestSend_SteerChoice_PendingAsk_OnlyHumanAnswers(t *testing.T) {
 			d, mock := httpTestSetup(t, httpTestOpts{})
 			mock.entered = make(chan string, 1)
 			answered := make(chan string, 1)
-			d.agents[testAgentID].ag.AskRouter = &tools.AskRouter{
+			d.agents.at(testAgentID).ag.AskRouter = &tools.AskRouter{
 				PendingForSession: func(string) string { return "ask-1" },
 				IsPaused:          func(string) bool { return false },
 				HandleResponse:    func(_, data string) { answered <- data },
@@ -515,7 +515,7 @@ func TestSend_SteerChoice_OrphanedAutomatedSteer_NotAnAnswer(t *testing.T) {
 	// AFTER its request drained the steer buffer — so a steer arriving now is
 	// buffered and, round 2 ending text-only, orphaned.
 	fc := &foldingClient{mockClient: &mockClient{entered: make(chan string), proceed: make(chan struct{})}}
-	ag := d.agents[testAgentID].ag
+	ag := d.agents.at(testAgentID).ag
 	ag.Client = fc
 	toolRelease := make(chan struct{})
 	close(toolRelease)
@@ -648,10 +648,10 @@ func TestSend_SteerChoice_InboxFull503(t *testing.T) {
 	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	fc := &foldingClient{mockClient: &mockClient{}}
-	d.agents[testAgentID].ag.Client = fc
+	d.agents.at(testAgentID).ag.Client = fc
 	toolEntered := make(chan struct{})
 	toolRelease := make(chan struct{})
-	holdOpenTool(d.agents[testAgentID].ag, toolEntered, toolRelease)
+	holdOpenTool(d.agents.at(testAgentID).ag, toolEntered, toolRelease)
 	observe := steerEnvelopeObserver(d)
 	mux := newTestMux(d)
 
@@ -662,7 +662,7 @@ func TestSend_SteerChoice_InboxFull503(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("parking turn never reached its tool")
 	}
-	waitForCond(t, "parking turn in flight", func() bool { return d.agents[testAgentID].ag.IsTurnInFlight(testSessionKey) })
+	waitForCond(t, "parking turn in flight", func() bool { return d.agents.at(testAgentID).ag.IsTurnInFlight(testSessionKey) })
 
 	// Fill the session channel (capacity 64) with queued choice sends, then
 	// the next one must 503.

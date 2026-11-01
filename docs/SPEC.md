@@ -781,7 +781,7 @@ Messages starting with `/` are intercepted before reaching the agent. They execu
 
 **Agents:**
 - `/agents` - list active agent sessions with status, model, and message counts
-- `/agents new` - interactive wizard for creating a new agent. Walks through: agent ID, display name, emoji, model, bot token secret, character file mode. Creates workspace, appends config to foci.toml, adds crontab entries. Requires restart to activate.
+- `/agents new` - interactive wizard for creating a new agent. Walks through: agent ID, display name, emoji, model, bot token secret, character file mode. Creates workspace, appends config to foci.toml, adds crontab entries, then starts the new agent in the running process with no restart (#963; edits to existing `[[agents]]` blocks still need a restart).
 
 **System:**
 - `/version` - binary version, go version, build time, git commit

@@ -125,13 +125,18 @@ type autoApproveScope struct {
 func (cfg *Config) autoApproveScopes() []autoApproveScope {
 	scopes := []autoApproveScope{{global: true, label: "global", rules: &cfg.Permissions.AutoApprove}}
 	for i := range cfg.Agents {
-		scopes = append(scopes, autoApproveScope{
-			agentID: cfg.Agents[i].ID,
-			label:   fmt.Sprintf("agent %q", cfg.Agents[i].ID),
-			rules:   &cfg.Agents[i].Permissions.AutoApprove,
-		})
+		scopes = append(scopes, agentAutoApproveScope(&cfg.Agents[i]))
 	}
 	return scopes
+}
+
+// agentAutoApproveScope is one agent's auto_approve scope.
+func agentAutoApproveScope(a *AgentConfig) autoApproveScope {
+	return autoApproveScope{
+		agentID: a.ID,
+		label:   fmt.Sprintf("agent %q", a.ID),
+		rules:   &a.Permissions.AutoApprove,
+	}
 }
 
 // AutoApproveScopeReport is one scope's findings under ScanAutoApproveRules.
@@ -168,19 +173,29 @@ func (cfg *Config) ScanAutoApproveRules(env execguard.Env) []AutoApproveScopeRep
 // Call this from startup AFTER the operator PATH is final — see the package-level
 // note above. It is safe to call more than once: it only ever removes entries.
 func (cfg *Config) DropSubstitutableAutoApproveRules(env execguard.Env) {
-	warn := func(scope string, dropped []DroppedAutoApproveRule, unlocatable []UnlocatableAutoApproveCommand) {
-		for _, d := range dropped {
-			configLog.Warnf("[permissions] %s: ignoring auto_approve entry %q — %s (%s). Move the executable somewhere the foci process cannot write, or remove the entry.",
-				scope, d.Rule, d.Reason, d.Path)
-		}
-		for _, u := range unlocatable {
-			configLog.Warnf("[permissions] %s: auto_approve entry %q names %q, which is on no directory of this process's PATH. The substitutability check cannot judge a file it cannot find, so the entry is approved UNCHECKED. Either the entry is dead, or foci-gw's PATH differs from the shell's — compare os.Getenv(\"PATH\") here against a tool shell's (NOT /proc/<pid>/environ, which predates shellenv).",
-				scope, u.Rule, u.Command)
-		}
-	}
 	for _, s := range cfg.autoApproveScopes() {
-		kept, dropped, unlocatable := filterWritableAutoApproveRules(*s.rules, env)
-		*s.rules = kept
-		warn(s.label, dropped, unlocatable)
+		s.drop(env)
+	}
+}
+
+// DropSubstitutableAgentAutoApproveRules applies the same check to ONE
+// agent's block alone: an agent hot-added by /agents new (#963), whose
+// global block was already checked at boot and must not warn twice.
+func DropSubstitutableAgentAutoApproveRules(a *AgentConfig, env execguard.Env) {
+	agentAutoApproveScope(a).drop(env)
+}
+
+// drop filters the scope's entries in place, warning once per dropped entry
+// and once per entry whose command could not be located.
+func (s autoApproveScope) drop(env execguard.Env) {
+	kept, dropped, unlocatable := filterWritableAutoApproveRules(*s.rules, env)
+	*s.rules = kept
+	for _, d := range dropped {
+		configLog.Warnf("[permissions] %s: ignoring auto_approve entry %q — %s (%s). Move the executable somewhere the foci process cannot write, or remove the entry.",
+			s.label, d.Rule, d.Reason, d.Path)
+	}
+	for _, u := range unlocatable {
+		configLog.Warnf("[permissions] %s: auto_approve entry %q names %q, which is on no directory of this process's PATH. The substitutability check cannot judge a file it cannot find, so the entry is approved UNCHECKED. Either the entry is dead, or foci-gw's PATH differs from the shell's — compare os.Getenv(\"PATH\") here against a tool shell's (NOT /proc/<pid>/environ, which predates shellenv).",
+			s.label, u.Rule, u.Command)
 	}
 }

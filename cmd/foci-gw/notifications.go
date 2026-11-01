@@ -195,24 +195,10 @@ func handleRestartAndFirstRun(
 		}()
 	}
 
-	// First-run onboarding — store the prompt so it gets prepended to the first
-	// turn that builds a message (API or claude-code). We mark
-	// first_run_completed only when the message is ACTUALLY consumed
-	// (OnFirstRunConsumed), not on generic activity: a generic OnActivity
-	// callback fired on any first turn, including internal ones that never
-	// delivered the onboarding, marking it done while it was still pending —
-	// silently losing onboarding on claude-code agents (#853).
+	// First-run onboarding (armFirstRun): the prompt rides the first turn
+	// that builds a message. A hot-added agent is armed the same way by
+	// liveAgentStarter, with no restart notice or restart-context turn.
 	for _, agentID := range agentOrder {
-		inst := agents[agentID]
-		if msg := checkFirstRun(sessionIndex, inst.agentCfg); msg != "" {
-			inst.ag.FirstRunMessage.Store(msg)
-			agentID := agentID
-			inst.ag.OnFirstRunConsumed = func() {
-				if err := sessionIndex.SetAgentMetadata(agentID, "first_run_completed", "true"); err != nil {
-					mainLog.Errorf("set first_run_completed for %s: %v", agentID, err)
-				}
-				mainLog.Infof("first-run onboarding completed for %s", agentID)
-			}
-		}
+		armFirstRun(agents[agentID], sessionIndex)
 	}
 }

@@ -19,7 +19,7 @@ import (
 // now+retryAfter — see internal/ratelimit.Resolve).
 func engageRateLimit(t *testing.T, d httpHandlerDeps, retryAfter time.Duration) {
 	t.Helper()
-	d.agents[testAgentID].ag.EngageRateLimit(ratelimit.Signal{Kind: ratelimit.KindRequest, RetryAfter: retryAfter})
+	d.agents.at(testAgentID).ag.EngageRateLimit(ratelimit.Signal{Kind: ratelimit.KindRequest, RetryAfter: retryAfter})
 }
 
 // heldRateLimit is how long the withhold-then-deliver sweep tests close the
@@ -46,7 +46,7 @@ func waitRateLimitClear(t *testing.T, d httpHandlerDeps) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		if limited, _ := d.agents[testAgentID].ag.SessionRateLimited(testSessionKey); !limited {
+		if limited, _ := d.agents.at(testAgentID).ag.SessionRateLimited(testSessionKey); !limited {
 			return
 		}
 		if time.Now().After(deadline) {

@@ -128,8 +128,12 @@ type setupParams struct {
 	ctx             context.Context
 	agentListFn     func() []command.AgentInfo
 	agentResolverFn func(agentID string) *agentInstance
-	connMgr         platform.ConnectionManager
-	plat            *platform.Messaging
+	// startAgentFn starts an agent /agents new has just written to
+	// foci.toml, live (#963). nil = no live start (the wizard then says to
+	// /restart).
+	startAgentFn func(agentID string) ([]string, error)
+	connMgr      platform.ConnectionManager
+	plat         *platform.Messaging
 }
 
 // setupAgent wires up a single agent with its own tools, commands, bootstrap, and bot.

@@ -106,11 +106,12 @@ type gateEvaluator func(w http.ResponseWriter, in activityGateInputs) bool
 // pass them in via activityGateInputs.
 func buildResolvers(d httpHandlerDeps) (agentResolver, gateEvaluator) {
 	resolveAgent := func(agentID string) (*agentInstance, bool) {
-		if agentID == "" && len(d.agentOrder) > 0 {
-			return d.agents[d.agentOrder[0]], true
+		if agentID == "" {
+			if inst, ok := d.agents.Default(); ok {
+				return inst, true
+			}
 		}
-		inst, ok := d.agents[agentID]
-		return inst, ok
+		return d.agents.Get(agentID)
 	}
 
 	isUserActive, isSessionActive := buildActivityCheckers(d)
@@ -802,10 +803,9 @@ func buildVoiceConfig(d httpHandlerDeps) voice.HandlerConfig {
 	return voice.HandlerConfig{
 		ListAgents: func() []voice.AgentInfo {
 			var infos []voice.AgentInfo
-			for _, id := range d.agentOrder {
-				inst := d.agents[id]
+			for _, inst := range d.agents.All() {
 				infos = append(infos, voice.AgentInfo{
-					ID:    id,
+					ID:    inst.id,
 					Name:  inst.agentCfg.Name,
 					Emoji: inst.agentCfg.Emoji,
 				})
@@ -813,7 +813,7 @@ func buildVoiceConfig(d httpHandlerDeps) voice.HandlerConfig {
 			return infos
 		},
 		HandleMessage: func(msgCtx context.Context, agentID, sessionKey, text string) (string, error) {
-			inst, ok := d.agents[agentID]
+			inst, ok := d.agents.Get(agentID)
 			if !ok {
 				return "", fmt.Errorf("unknown agent: %q", agentID)
 			}
@@ -825,7 +825,7 @@ func buildVoiceConfig(d httpHandlerDeps) voice.HandlerConfig {
 		},
 		STT: resolveSTT(d.sttMap, d.cfg.STT, "", d.cfg.Voice.STTReplacements),
 		AgentTTS: func(agentID string) voice.TTS {
-			inst, ok := d.agents[agentID]
+			inst, ok := d.agents.Get(agentID)
 			if !ok {
 				return resolveTTS(d.ttsMap, d.cfg.TTS, "", 0, d.cfg.Voice.TTSReplacements)
 			}

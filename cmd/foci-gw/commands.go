@@ -57,7 +57,8 @@ type cmdRegParams struct {
 	skillRegistry *skills.Registry
 
 	// Cross-agent
-	agentListFn func() []command.AgentInfo
+	agentListFn  func() []command.AgentInfo
+	startAgentFn func(agentID string) ([]string, error) // /agents new live start (#963); nil = none
 
 	// Platform
 	plat              *platform.Messaging
@@ -164,6 +165,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		HomeDir:     filepath.Dir(p.acfg.Workspace),
 		FileMode:    cmdFileMode,
 		ListFn:      p.agentListFn,
+		StartAgent:  p.startAgentFn,
 		PreFlightFn: func(agentID string) []string {
 			if p.plat == nil {
 				return nil

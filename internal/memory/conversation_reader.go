@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"foci/internal/convo"
@@ -32,7 +33,8 @@ type ConversationRef struct {
 // ConversationReader reads messages from per-agent conversation log databases
 // to provide context around search results.
 type ConversationReader struct {
-	dbPaths map[string]string // agentID → conversation.db path
+	mu      sync.RWMutex
+	dbPaths map[string]string // agentID → conversation.db path; guarded by mu (AddAgent writes it while readers run)
 }
 
 // NewConversationReader creates a reader that can fetch conversation context.
@@ -42,6 +44,23 @@ func NewConversationReader(dbPaths map[string]string) *ConversationReader {
 		return nil
 	}
 	return &ConversationReader{dbPaths: dbPaths}
+}
+
+// AddAgent registers one more agent's conversation.db, for an agent started
+// after the reader was built (a hot-add from /agents new, #963). Safe to call
+// while other goroutines read.
+func (cr *ConversationReader) AddAgent(agentID, dbPath string) {
+	cr.mu.Lock()
+	defer cr.mu.Unlock()
+	cr.dbPaths[agentID] = dbPath
+}
+
+// dbPathFor returns the agent's conversation.db path.
+func (cr *ConversationReader) dbPathFor(agentID string) (string, bool) {
+	cr.mu.RLock()
+	defer cr.mu.RUnlock()
+	p, ok := cr.dbPaths[agentID]
+	return p, ok
 }
 
 // threadContextQuery selects half rows before the target plus (lines-half)
@@ -80,7 +99,7 @@ const legacyContextQuery = `
 // interleave. A DB that predates those columns gets the unscoped window.
 func (cr *ConversationReader) ReadContext(session string, rowID int64, lines int) ([]ConversationMessage, error) {
 	agentID := sessionAgent(session)
-	dbPath, ok := cr.dbPaths[agentID]
+	dbPath, ok := cr.dbPathFor(agentID)
 	if !ok {
 		return nil, fmt.Errorf("no conversation database for agent %q", agentID)
 	}
@@ -146,7 +165,7 @@ func (cr *ConversationReader) Kinds(refs []ConversationRef) map[ConversationRef]
 		}
 	}
 	for agentID, agentRefs := range byAgent {
-		dbPath, ok := cr.dbPaths[agentID]
+		dbPath, ok := cr.dbPathFor(agentID)
 		if !ok {
 			continue
 		}

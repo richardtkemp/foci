@@ -108,7 +108,7 @@ func TestSweep_DeferredPairKeyNotLogged(t *testing.T) {
 	t.Parallel()
 	const fakeKey = "FAKE-PAIRKEY-MARKER-2259"
 	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{command.PairKeyCommand()}})
-	d.agents[testAgentID].cc.AndroidDeps = &command.AndroidDeps{
+	d.agents.at(testAgentID).cc.AndroidDeps = &command.AndroidDeps{
 		MintPairKey: func(ttl time.Duration) (string, time.Time, error) {
 			return fakeKey, time.Now().Add(ttl), nil
 		},

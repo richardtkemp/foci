@@ -54,7 +54,7 @@ func TestSuggestionPressShowsPartsCommandReply(t *testing.T) {
 		},
 	}
 	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{multi}})
-	inst := d.agents[testAgentID]
+	inst := d.agents.at(testAgentID)
 
 	reg := suggestion.NewRegistry()
 	if err := reg.Register(suggestion.Spec{

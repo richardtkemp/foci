@@ -494,6 +494,14 @@ type ConnectionManager interface {
 	Wait()
 }
 
+// AgentStarter is implemented by connection managers that can start ONE
+// agent's connections after StartAll has run: the agent hot-added by
+// /agents new (#963). It starts only that agent's connections; one already
+// running is never started again.
+type AgentStarter interface {
+	StartAgent(ctx context.Context, agentID string)
+}
+
 // PrimaryConnectNotifier is implemented by connection managers whose primary
 // connection may attach after startup because it connects in the background
 // (#2043). See Messaging.WhenPrimaryConnected.
@@ -919,6 +927,22 @@ func (m *Messaging) StartAll(ctx context.Context) {
 	}
 	for _, p := range m.providers {
 		p.ConnectionManager().StartAll(ctx)
+	}
+}
+
+// StartAgent starts one hot-added agent's connections on every platform
+// (#963): its Telegram/Discord primary and facet bots, with the same pending
+// connect as StartAll, and the app roster push that shows it to connected
+// devices. Call after the agent's SetupAgentConnection, once it is
+// registered; every other agent's running connections are left alone.
+func (m *Messaging) StartAgent(ctx context.Context, agentID string) {
+	if m == nil {
+		return
+	}
+	for _, p := range m.providers {
+		if s, ok := p.ConnectionManager().(AgentStarter); ok {
+			s.StartAgent(ctx, agentID)
+		}
 	}
 }
 

@@ -261,8 +261,10 @@ var (
 )
 
 // registerLiveAppliers wires the tranche-1 appliers. Called once from main
-// after every agent (and its periodic runner) is set up.
-func registerLiveAppliers(la *liveApply, agents map[string]*agentInstance) {
+// after every agent (and its periodic runner) is set up. Each applier looks
+// agents up in the registry when it runs, so an agent hot-added by
+// /agents new (#963) is covered too.
+func registerLiveAppliers(la *liveApply, agents *agentRegistry) {
 	la.register(liveApplyLoggingAddrs, func(fresh *config.Config) error {
 		log.SetLevel(log.ParseLevel(fresh.Logging.Level))
 		return nil
@@ -270,7 +272,7 @@ func registerLiveAppliers(la *liveApply, agents map[string]*agentInstance) {
 
 	la.register(liveApplySkillsAddrs, func(fresh *config.Config) error {
 		for _, freshAcfg := range fresh.Agents {
-			if inst := agents[freshAcfg.ID]; inst != nil {
+			if inst, _ := agents.Get(freshAcfg.ID); inst != nil {
 				applySkillExtraDirs(inst.skillsDirs, fresh, freshAcfg)
 			}
 		}
@@ -288,7 +290,7 @@ func registerLiveAppliers(la *liveApply, agents map[string]*agentInstance) {
 
 	la.register(liveApplyPeriodicAddrs, func(fresh *config.Config) error {
 		for _, freshAcfg := range fresh.Agents {
-			inst := agents[freshAcfg.ID]
+			inst, _ := agents.Get(freshAcfg.ID)
 			if inst == nil {
 				continue
 			}
@@ -307,7 +309,7 @@ func registerLiveAppliers(la *liveApply, agents map[string]*agentInstance) {
 
 	la.register(liveApplyResolvedAddrs, func(fresh *config.Config) error {
 		for _, freshAcfg := range fresh.Agents {
-			if inst := agents[freshAcfg.ID]; inst != nil {
+			if inst, _ := agents.Get(freshAcfg.ID); inst != nil {
 				inst.resolved.Store(config.Resolve(fresh, freshAcfg))
 			}
 		}
@@ -319,7 +321,7 @@ func registerLiveAppliers(la *liveApply, agents map[string]*agentInstance) {
 	// every push), so reconfigure them explicitly on change (#1225).
 	la.register(liveApplyWarningAddrs, func(fresh *config.Config) error {
 		for _, freshAcfg := range fresh.Agents {
-			inst := agents[freshAcfg.ID]
+			inst, _ := agents.Get(freshAcfg.ID)
 			if inst == nil || inst.ag == nil {
 				continue
 			}
@@ -333,7 +335,7 @@ func registerLiveAppliers(la *liveApply, agents map[string]*agentInstance) {
 	// place (no rebuild, counters preserved) — #1228.
 	la.register(liveApplyNudgeAddrs, func(fresh *config.Config) error {
 		for _, freshAcfg := range fresh.Agents {
-			inst := agents[freshAcfg.ID]
+			inst, _ := agents.Get(freshAcfg.ID)
 			if inst == nil || inst.ag == nil || inst.ag.Nudger == nil {
 				continue
 			}
@@ -363,7 +365,7 @@ func registerLiveAppliers(la *liveApply, agents map[string]*agentInstance) {
 	mapSections := append([]string{"agent"}, config.MapFieldSections()...)
 	la.registerMapSection(mapSections, func(fresh *config.Config) error {
 		for _, freshAcfg := range fresh.Agents {
-			inst := agents[freshAcfg.ID]
+			inst, _ := agents.Get(freshAcfg.ID)
 			if inst == nil {
 				continue
 			}

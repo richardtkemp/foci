@@ -331,6 +331,7 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 		skillsDirs:          fp.skillsDirs,
 		skillRegistry:       fp.skillRegistry,
 		agentListFn:         p.agentListFn,
+		startAgentFn:        p.startAgentFn,
 		plat:                p.plat,
 		connMgr:             p.connMgr,
 		groupResolver:       s.groupResolver,

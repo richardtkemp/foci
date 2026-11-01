@@ -194,8 +194,7 @@ func httpTestSetup(t *testing.T, opts httpTestOpts) (httpHandlerDeps, *mockClien
 	})
 
 	d := httpHandlerDeps{
-		agents:       map[string]*agentInstance{testAgentID: inst},
-		agentOrder:   []string{testAgentID},
+		agents:       registryOf(t, inst),
 		cfg:          &config.Config{},
 		sessions:     sessions,
 		sessionIndex: idx,

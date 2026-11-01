@@ -342,7 +342,7 @@ func (s *deferSweeper) sweep() {
 	}
 	now := timeutil.Now()
 	for _, r := range records {
-		inst, ok := s.deps.agents[r.AgentID]
+		inst, ok := s.deps.agents.Get(r.AgentID)
 		if !ok {
 			// No agent, so no session chat to notify: log only.
 			deferLog.Warnf("dropping deferred %s %d: agent %q gone", r.EffectiveKind(), r.ID, r.AgentID)

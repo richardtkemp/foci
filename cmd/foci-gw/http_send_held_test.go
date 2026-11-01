@@ -33,8 +33,8 @@ func TestSend_Async_HeldField(t *testing.T) {
 
 	// An adopted delivering run in flight (the worker idle) holds the
 	// session's system input.
-	d.agents[testAgentID].ag.SetInFlightDeliveringForTest(testSessionKey, true)
-	t.Cleanup(func() { d.agents[testAgentID].ag.SetInFlightDeliveringForTest(testSessionKey, false) })
+	d.agents.at(testAgentID).ag.SetInFlightDeliveringForTest(testSessionKey, true)
+	t.Cleanup(func() { d.agents.at(testAgentID).ag.SetInFlightDeliveringForTest(testSessionKey, false) })
 
 	rcpt := postSendAsync(t, d)
 	if rcpt["held"] != "background_work" {

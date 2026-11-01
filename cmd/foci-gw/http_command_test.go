@@ -329,7 +329,7 @@ func TestCommand_SessionGateInFlightReadsTarget(t *testing.T) {
 	// real turn under its key does to IsTurnInFlight.
 	markTargetInFlight := func(t *testing.T, d httpHandlerDeps) {
 		t.Helper()
-		ag := d.agents[testAgentID].ag
+		ag := d.agents.at(testAgentID).ag
 		ag.SetTurnInFlightForTest(testAgentID+"/iside", true)
 		t.Cleanup(func() { ag.SetTurnInFlightForTest(testAgentID+"/iside", false) })
 	}
@@ -404,7 +404,7 @@ func TestCommand_SessionGateLastTurnEndReadsTarget(t *testing.T) {
 			t.Fatalf("seeding /send: status = %d; body: %s", w.Code, w.Body.String())
 		}
 		d.sessionIndex.TouchCacheTouch(testAgentID+"/iside", time.Now().Add(-2*time.Hour))
-		if end := d.agents[testAgentID].ag.LastTurnEnd(testAgentID + "/iside"); end.IsZero() || time.Since(end) > time.Minute {
+		if end := d.agents.at(testAgentID).ag.LastTurnEnd(testAgentID + "/iside"); end.IsZero() || time.Since(end) > time.Minute {
 			t.Fatalf("seeding turn left LastTurnEnd = %v on the target, want a moment ago", end)
 		}
 		if touched, ok := d.sessionIndex.LastCacheTouch(testAgentID + "/iside"); !ok || time.Since(touched) < time.Hour {

@@ -61,7 +61,7 @@ func TestLiveApplyResolvedActuallySwaps(t *testing.T) {
 	}
 
 	la := newLiveApply("")
-	registerLiveAppliers(la, map[string]*agentInstance{"a": inst})
+	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{"a": inst}))
 
 	fresh := &config.Config{Agents: []config.AgentConfig{{ID: "a", Voice: config.VoiceConfig{TTS: &newTTS}}}}
 	applier := la.appliers["voice.tts"]
@@ -92,7 +92,7 @@ func TestLiveApplyPeriodicRefreshesSnapshot(t *testing.T) {
 	}
 
 	la := newLiveApply("")
-	registerLiveAppliers(la, map[string]*agentInstance{"a": inst})
+	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{"a": inst}))
 
 	fresh := &config.Config{Agents: []config.AgentConfig{{ID: "a", Reflection: config.ReflectionConfig{NotifyOnSkillCreation: &off}}}}
 	applier := la.appliers["reflection.notify_on_skill_creation"]
@@ -122,7 +122,7 @@ func TestLiveApplyForceInSessionOverridesGoLive(t *testing.T) {
 	}
 
 	la := newLiveApply("")
-	registerLiveAppliers(la, map[string]*agentInstance{"a": inst})
+	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{"a": inst}))
 
 	on := true
 	fresh := &config.Config{Agents: []config.AgentConfig{{ID: "a", Keepalive: config.KeepaliveConfig{ForceInSession: &on}}}}
@@ -162,7 +162,7 @@ func TestLiveApply_MapSection(t *testing.T) {
 	}
 
 	la := newLiveApply("")
-	registerLiveAppliers(la, map[string]*agentInstance{"a": inst})
+	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{"a": inst}))
 
 	if r := inst.ag.GroupResolver.ResolveGroup(config.GroupPowerful); r == nil || r.ModelID != "claude-opus-4-6" {
 		t.Fatalf("initial ResolveGroup(powerful) = %+v, want claude-opus-4-6", r)
@@ -235,7 +235,7 @@ func TestLiveApply_AgentMapSection(t *testing.T) {
 	}
 
 	la := newLiveApply("")
-	registerLiveAppliers(la, map[string]*agentInstance{"a": inst})
+	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{"a": inst}))
 
 	if r := inst.ag.GroupResolver.ResolveGroup("myteam"); r != nil {
 		t.Fatalf("initial ResolveGroup(myteam) = %+v, want nil (not yet defined)", r)
@@ -292,7 +292,7 @@ func TestLiveApply_WarningQueuesFlipOnLive(t *testing.T) {
 
 	inst := &agentInstance{id: "a", ag: ag, resolved: config.NewLiveValue(rc)}
 	la := newLiveApply("")
-	registerLiveAppliers(la, map[string]*agentInstance{"a": inst})
+	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{"a": inst}))
 
 	applier := la.appliers["notify.inject_agent_warnings"]
 	if applier == nil {
@@ -341,7 +341,7 @@ func TestLiveApplyNudgeReconfigures(t *testing.T) {
 	inst := &agentInstance{id: "a", ag: &agent.Agent{Nudger: sched}}
 
 	la := newLiveApply("")
-	registerLiveAppliers(la, map[string]*agentInstance{"a": inst})
+	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{"a": inst}))
 
 	fresh := &config.Config{Agents: []config.AgentConfig{{ID: "a", Nudge: config.NudgeConfig{NudgePreAnswerGate: &on}}}}
 	applier := la.appliers["nudge.nudge_pre_answer_gate"]
@@ -383,7 +383,7 @@ id = "a"
 		t.Fatalf("WriteFile: %v", err)
 	}
 	la := newLiveApply(configPath)
-	registerLiveAppliers(la, map[string]*agentInstance{})
+	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{}))
 
 	applied, err := la.Apply("modelinfo", "")
 	if err != nil {
@@ -409,7 +409,7 @@ func TestLiveApply_RestartRequiredWarns(t *testing.T) {
 	t.Cleanup(func() { flog.SetOutput(os.Stderr) })
 
 	la := newLiveApply("")
-	registerLiveAppliers(la, map[string]*agentInstance{})
+	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{}))
 
 	if applied, err := la.Apply("message_transforms", ""); applied || err != nil {
 		t.Fatalf(`Apply("message_transforms", "") = %v, %v; want false, nil`, applied, err)
@@ -431,7 +431,7 @@ func TestLiveApply_RestartRequiredWarns(t *testing.T) {
 // and a restart-required one must not.
 func TestLiveApplyCoversLiveObjectSections(t *testing.T) {
 	la := newLiveApply("")
-	registerLiveAppliers(la, map[string]*agentInstance{})
+	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{}))
 	for _, spec := range config.ObjectFields() {
 		has := la.appliers[spec.Section] != nil
 		if spec.Live && !has {

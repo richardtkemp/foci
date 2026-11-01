@@ -111,7 +111,7 @@ func TestBranchTurn_BackendForkRunsUnderParentGate(t *testing.T) {
 	t.Parallel()
 	be := &gateProbeForkBackend{}
 	d := delegatedBranchHarnessWith(t, httpTestOpts{}, be, capBranchSpec)
-	ag := d.agents[testAgentID].ag
+	ag := d.agents.at(testAgentID).ag
 
 	parent := testAgentID + "/i" + runToken("gate")
 	seedMarker(t, d, parent, "parent marker")
@@ -160,7 +160,7 @@ func TestBranchTurn_RunIndependentRunsUnderParentGate(t *testing.T) {
 	t.Parallel()
 	be := &gateProbeBackend{}
 	d := delegatedBranchHarnessWith(t, httpTestOpts{}, be, delegator.Spec{})
-	ag := d.agents[testAgentID].ag
+	ag := d.agents.at(testAgentID).ag
 
 	parent := testAgentID + "/i" + runToken("gate")
 	seedMarker(t, d, parent, "parent marker")

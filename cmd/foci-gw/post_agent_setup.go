@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"foci/internal/app"
@@ -13,13 +14,39 @@ import (
 	"foci/internal/tools/tmux"
 )
 
-// setupWarningHooks wires log warnings into agent warning queues.
-// Pushes to both agent session queues and chat notification queues when configured.
-func setupWarningHooks(agents map[string]*agentInstance, cfg *config.Config) {
+// warningHook wires log warnings into agent warning queues: it pushes to
+// both agent session queues and chat notification queues when configured.
+// The hook is installed once some agent enables injection — at boot, or when
+// a hot-added agent (#963) is the first to — and it reads the registry on
+// every warning, so a hot-added agent receives warnings too.
+type warningHook struct {
+	agents *agentRegistry
+	cfg    *config.Config
+
+	mu        sync.Mutex
+	installed bool
+}
+
+// setupWarningHooks builds the warning hook and installs it if any agent
+// enables warning injection.
+func setupWarningHooks(agents *agentRegistry, cfg *config.Config) *warningHook {
+	h := &warningHook{agents: agents, cfg: cfg}
+	h.install()
+	return h
+}
+
+// install installs the log warning hook unless it already is, or no agent
+// enables agent or chat warning injection.
+func (h *warningHook) install() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.installed {
+		return
+	}
 	anyInjection := false
-	for _, inst := range agents {
-		if anyNotifyEnabled(inst.LiveConfig(), cfg, func(n config.ResolvedNotify) bool { return n.InjectAgentWarnings.Enabled() }) ||
-			anyNotifyEnabled(inst.LiveConfig(), cfg, func(n config.ResolvedNotify) bool { return n.InjectChatWarnings.Enabled() }) {
+	for _, inst := range h.agents.All() {
+		if anyNotifyEnabled(inst.LiveConfig(), h.cfg, func(n config.ResolvedNotify) bool { return n.InjectAgentWarnings.Enabled() }) ||
+			anyNotifyEnabled(inst.LiveConfig(), h.cfg, func(n config.ResolvedNotify) bool { return n.InjectChatWarnings.Enabled() }) {
 			anyInjection = true
 			break
 		}
@@ -27,8 +54,9 @@ func setupWarningHooks(agents map[string]*agentInstance, cfg *config.Config) {
 	if !anyInjection {
 		return
 	}
+	agents := h.agents
 	log.SetWarnHook(func(level log.Level, component string, msg string) {
-		for _, inst := range agents {
+		for _, inst := range agents.All() {
 			if w := inst.ag.Warnings(); w != nil {
 				w.Push(level.String(), component, msg)
 			}
@@ -37,14 +65,15 @@ func setupWarningHooks(agents map[string]*agentInstance, cfg *config.Config) {
 			}
 		}
 	})
+	h.installed = true
 	mainLog.Infof("warning injection enabled")
 }
 
 // setupTmuxMemoryMonitor starts the tmux memory monitor if tmux is available.
-// Returns a stop function (may be nil).
+// Returns a stop function (may be nil). It reads the registry on every
+// check, so it covers a hot-added agent too.
 func setupTmuxMemoryMonitor(
-	agents map[string]*agentInstance,
-	agentOrder []string,
+	agents *agentRegistry,
 	cfg *config.Config,
 	connMgr platform.ConnectionManager,
 	ctx context.Context,
@@ -68,19 +97,18 @@ func setupTmuxMemoryMonitor(
 			KillStr:       cfg.Tools.TmuxMemoryKill,
 		},
 		func(msg string) {
-			for _, id := range agentOrder {
-				inst := agents[id]
+			for _, inst := range agents.All() {
 				if anyNotifyEnabled(inst.LiveConfig(), cfg, func(n config.ResolvedNotify) bool { return n.InjectAgentWarnings.Enabled() }) {
 					continue
 				}
-				if conn := connMgr.Primary(id); conn != nil {
+				if conn := connMgr.Primary(inst.id); conn != nil {
 					conn.SendNotification(msg)
 				}
 			}
 		},
 		func() {
-			for _, id := range agentOrder {
-				if fn := agents[id].tmuxClearAll; fn != nil {
+			for _, inst := range agents.All() {
+				if fn := inst.tmuxClearAll; fn != nil {
 					fn()
 				}
 			}
@@ -90,8 +118,10 @@ func setupTmuxMemoryMonitor(
 	return tmuxMemMon.Stop
 }
 
-// setupMemoryGuard starts the system memory guard if enabled. Returns a stop function (may be nil).
-func setupMemoryGuard(agents map[string]*agentInstance, cfg *config.Config, ctx context.Context) func() {
+// setupMemoryGuard starts the system memory guard if enabled. Returns a stop
+// function (may be nil). It reads the registry on every warning, so it covers
+// a hot-added agent too.
+func setupMemoryGuard(agents *agentRegistry, cfg *config.Config, ctx context.Context) func() {
 	if !config.DerefBool(cfg.Resources.MemoryGuardEnabled) {
 		return nil
 	}
@@ -107,7 +137,7 @@ func setupMemoryGuard(agents map[string]*agentInstance, cfg *config.Config, ctx 
 			PressureThreshold: config.DerefFloat(cfg.Resources.MemoryPressureThreshold),
 		},
 		func(msg string) {
-			for _, inst := range agents {
+			for _, inst := range agents.All() {
 				if w := inst.ag.Warnings(); w != nil {
 					w.Push("WARN", "memory_guard", msg)
 				}

@@ -11,7 +11,7 @@ import (
 	"foci/internal/route"
 )
 
-func setupAskgw(cfg *config.Config, agents map[string]*agentInstance, agentOrder []string, connMgr platform.ConnectionManager) *askgw.Server {
+func setupAskgw(cfg *config.Config, agents *agentRegistry, connMgr platform.ConnectionManager) *askgw.Server {
 	if !cfg.Askgw.Enabled {
 		return nil
 	}
@@ -26,8 +26,8 @@ func setupAskgw(cfg *config.Config, agents map[string]*agentInstance, agentOrder
 		if cfg.MasterAgent != "" {
 			return cfg.MasterAgent
 		}
-		if len(agentOrder) > 0 {
-			return agentOrder[0]
+		if inst, ok := agents.Default(); ok {
+			return inst.id
 		}
 		return ""
 	}
@@ -37,7 +37,7 @@ func setupAskgw(cfg *config.Config, agents map[string]*agentInstance, agentOrder
 		if agentID == "" {
 			return "", ""
 		}
-		inst := agents[agentID]
+		inst, _ := agents.Get(agentID)
 		if inst == nil {
 			return agentID, ""
 		}

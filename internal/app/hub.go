@@ -100,9 +100,15 @@ type Hub struct {
 	checkboxReplayAge  time.Duration // max age of a document that replay sends
 	checkboxRetention  time.Duration // hub-start sweep removes documents not updated for this long
 
-	mu           sync.RWMutex
-	agents       map[string]*appConn     // agentID → its connection
-	agentOrder   []string                // registration order (for default-agent resolution)
+	mu         sync.RWMutex
+	agents     map[string]*appConn // agentID → its connection
+	agentOrder []string            // registration order (for default-agent resolution)
+	// agentCfgs holds each registered agent's config (agentID →
+	// config.AgentConfig), written by setupAgent. A sync.Map, not h.mu: the
+	// roster reads it while holding h.mu. It is how an agent hot-added by
+	// /agents new (#963), absent from the startup config, gets its name,
+	// emoji and avatar in the roster.
+	agentCfgs    sync.Map
 	convs        map[string]*convBinding // conversationId → durable conversation state (outlives sockets)
 	bySession    map[string]*convBinding // sessionKey → conversation binding
 	clients      map[*wsClient]struct{}  // live sockets
@@ -863,6 +869,7 @@ func (h *Hub) setupAgent(params platform.AgentConnectionParams) *appConn {
 		return s
 	}
 
+	h.agentCfgs.Store(params.AgentID, params.AgentConfig)
 	h.mu.Lock()
 	if _, exists := h.agents[params.AgentID]; !exists {
 		h.agentOrder = append(h.agentOrder, params.AgentID)
@@ -994,6 +1001,14 @@ func (h *Hub) StartAll(context.Context) {
 	}
 }
 func (h *Hub) Wait() {}
+
+// StartAgent implements platform.AgentStarter for an agent hot-added after
+// StartAll (#963). The app connection needs no start of its own (setupAgent
+// registered it and started its inbox); connected devices learn of the new
+// agent from a roster push, without reconnecting.
+func (h *Hub) StartAgent(context.Context, string) {
+	h.pushRosterAll()
+}
 
 // Close shuts every live socket.
 func (h *Hub) Close() error {
@@ -1293,15 +1308,27 @@ func (h *Hub) pushCommandsTo(client *wsClient) {
 // agentAvatarPath returns the resolved absolute path to an agent's avatar image
 // (config.AgentConfig.Avatar, set at load), or "" if the agent has none.
 func (h *Hub) agentAvatarPath(id string) string {
-	if h.deps.Config == nil {
-		return ""
-	}
-	for i := range h.deps.Config.Agents {
-		if a := &h.deps.Config.Agents[i]; a.ID == id {
-			return a.Avatar
-		}
+	if a, ok := h.agentConfig(id); ok {
+		return a.Avatar
 	}
 	return ""
+}
+
+// agentConfig returns a registered agent's config (set by setupAgent), else
+// its row in the startup config.
+func (h *Hub) agentConfig(id string) (config.AgentConfig, bool) {
+	if v, ok := h.agentCfgs.Load(id); ok {
+		return v.(config.AgentConfig), true
+	}
+	if h.deps.Config == nil {
+		return config.AgentConfig{}, false
+	}
+	for i := range h.deps.Config.Agents {
+		if a := h.deps.Config.Agents[i]; a.ID == id {
+			return a, true
+		}
+	}
+	return config.AgentConfig{}, false
 }
 
 // agentAvatarRef returns the roster fields for an agent's avatar image: the
@@ -1324,18 +1351,14 @@ func (h *Hub) agentAvatarRef(id string) (url, ver string) {
 // config, falling back to the agent ID when no config entry / name is set.
 func (h *Hub) agentDisplay(id string) (name, emoji string) {
 	name = id
-	if h.deps.Config == nil {
+	a, ok := h.agentConfig(id)
+	if !ok {
 		return name, ""
 	}
-	for i := range h.deps.Config.Agents {
-		if a := &h.deps.Config.Agents[i]; a.ID == id {
-			if a.Name != "" {
-				name = a.Name
-			}
-			return name, a.Emoji
-		}
+	if a.Name != "" {
+		name = a.Name
 	}
-	return name, ""
+	return name, a.Emoji
 }
 
 // aliasFor returns the user-set conversation alias persisted in the session index's

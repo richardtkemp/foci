@@ -39,7 +39,7 @@ import (
 // foci-gw startup — the harness gates tests on observable backend state,
 // not on the control socket being present, so a missing socket simply
 // means lifecycle-control tests can't run against that gateway.
-func setupTestharnessControl(ctx context.Context, agents map[string]*agentInstance) {
+func setupTestharnessControl(ctx context.Context, agents *agentRegistry) {
 	sockPath := os.Getenv("FOCI_TESTHARNESS_CONTROL_SOCK")
 	if sockPath == "" {
 		return
@@ -79,7 +79,7 @@ func setupTestharnessControl(ctx context.Context, agents map[string]*agentInstan
 // handleTestharnessControlConn reads commands one line at a time and
 // writes one reply line per command. The connection stays open until the
 // remote side closes it.
-func handleTestharnessControlConn(conn net.Conn, agents map[string]*agentInstance) {
+func handleTestharnessControlConn(conn net.Conn, agents *agentRegistry) {
 	defer func() { _ = conn.Close() }()
 	br := bufio.NewReader(conn)
 	for {
@@ -104,7 +104,7 @@ func handleTestharnessControlConn(conn net.Conn, agents map[string]*agentInstanc
 // dispatchTestharnessControl parses one command line and dispatches it to
 // the matching foci-gw operation. Returns the reply string (without
 // trailing newline; the writer appends one).
-func dispatchTestharnessControl(line string, agents map[string]*agentInstance) string {
+func dispatchTestharnessControl(line string, agents *agentRegistry) string {
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
 		return "error: empty command"
@@ -124,7 +124,7 @@ func dispatchTestharnessControl(line string, agents map[string]*agentInstance) s
 			return "error: close_backend requires <agentID>"
 		}
 		agentID := fields[1]
-		inst, ok := agents[agentID]
+		inst, ok := agents.Get(agentID)
 		if !ok {
 			return "error: unknown agent " + agentID
 		}
@@ -145,7 +145,7 @@ func dispatchTestharnessControl(line string, agents map[string]*agentInstance) s
 			return "error: backend_status requires <agentID> <sessionKey>"
 		}
 		agentID := fields[1]
-		inst, ok := agents[agentID]
+		inst, ok := agents.Get(agentID)
 		if !ok {
 			return "error: unknown agent " + agentID
 		}
@@ -173,7 +173,7 @@ func dispatchTestharnessControl(line string, agents map[string]*agentInstance) s
 		if err != nil {
 			return "error: set_active_work count must be int: " + err.Error()
 		}
-		inst, ok := agents[agentID]
+		inst, ok := agents.Get(agentID)
 		if !ok {
 			return "error: unknown agent " + agentID
 		}
@@ -212,7 +212,7 @@ func dispatchTestharnessControl(line string, agents map[string]*agentInstance) s
 				reason = rest
 			}
 		}
-		inst, ok := agents[agentID]
+		inst, ok := agents.Get(agentID)
 		if !ok {
 			return "error: unknown agent " + agentID
 		}
@@ -231,7 +231,7 @@ func dispatchTestharnessControl(line string, agents map[string]*agentInstance) s
 			return "error: stop_agent requires <agentID>"
 		}
 		agentID := fields[1]
-		inst, ok := agents[agentID]
+		inst, ok := agents.Get(agentID)
 		if !ok {
 			return "error: unknown agent " + agentID
 		}

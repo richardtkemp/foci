@@ -234,6 +234,13 @@ type BotManager[B PooledBot[B]] struct {
 	mu      sync.RWMutex
 	wg      sync.WaitGroup // tracks running bot goroutines for graceful shutdown
 
+	// started holds every bot whose goroutine has been launched, so StartAll
+	// and StartAgent never run a bot twice. waiting is set once Wait has
+	// begun: no bot may start after that (a WaitGroup Add racing its Wait).
+	// Both guarded by mu.
+	started map[B]bool
+	waiting bool
+
 	// pendMu guards pending and onLive. It is a leaf lock: taken after mu or a
 	// pool's mu, never held while taking another.
 	pendMu  sync.Mutex
@@ -255,6 +262,7 @@ func NewBotManager[B PooledBot[B]](name string) *BotManager[B] {
 		pools:   make(map[string]*Pool[B]),
 		pending: make(map[B]pendingConnect),
 		onLive:  make(map[B][]func(B)),
+		started: make(map[B]bool),
 	}
 }
 
@@ -473,15 +481,52 @@ func (m *BotManager[B]) HasFacet(agentID string) bool {
 	return m.shared != nil && m.shared.liveSize() > 0
 }
 
-// StartAll starts all bots as goroutines. Non-blocking: a pending bot
-// connects first, inside its own goroutine (see ConnectBeforeRun).
-// Use Wait() after cancelling ctx to block until all bots have finished cleanup.
+// StartAll starts every registered bot not yet started, each in its own
+// goroutine. Non-blocking: a pending bot connects first, inside its own
+// goroutine (see ConnectBeforeRun). A bot already started is never started
+// again. Use Wait() after cancelling ctx to block until all bots have
+// finished cleanup.
 func (m *BotManager[B]) StartAll(ctx context.Context) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.startLocked(ctx, m.all)
+}
+
+// StartAgent starts one agent's bots — its primary and its per-agent facet
+// pool, not the shared pool — registered after StartAll ran: an agent
+// hot-added by /agents new (#963). Bots already started (every other agent's,
+// and the shared pool's) are left alone, and nothing starts once Wait has
+// begun.
+func (m *BotManager[B]) StartAgent(ctx context.Context, agentID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var bots []B
+	if b, ok := m.primary[agentID]; ok {
+		bots = append(bots, b)
+	}
+	if pool := m.pools[agentID]; pool != nil {
+		pool.ForEach(func(b B) { bots = append(bots, b) })
+	}
+	m.startLocked(ctx, bots)
+}
+
+// startLocked launches the goroutine of each bot in bots not yet started.
+// Caller holds m.mu (write).
+func (m *BotManager[B]) startLocked(ctx context.Context, bots []B) {
 	lg := log.NewComponentLogger(m.name)
-	connecting := 0
-	for _, bot := range m.all {
+	if m.waiting {
+		if len(bots) > 0 {
+			lg.Infof("not starting %d bot(s): shutting down", len(bots))
+		}
+		return
+	}
+	launched, connecting := 0, 0
+	for _, bot := range bots {
+		if m.started[bot] {
+			continue
+		}
+		m.started[bot] = true
+		launched++
 		m.pendMu.Lock()
 		pc, pending := m.pending[bot]
 		m.pendMu.Unlock()
@@ -520,9 +565,9 @@ func (m *BotManager[B]) StartAll(ctx context.Context) {
 		}(bot)
 	}
 	if connecting > 0 {
-		lg.Infof("started %d bot(s), %d connecting in the background", len(m.all), connecting)
+		lg.Infof("started %d bot(s), %d connecting in the background", launched, connecting)
 	} else {
-		lg.Infof("started %d bot(s)", len(m.all))
+		lg.Infof("started %d bot(s)", launched)
 	}
 }
 
@@ -530,8 +575,11 @@ func (m *BotManager[B]) StartAll(ctx context.Context) {
 // cleanup such as acknowledging processed platform updates. A background
 // connect pending at cancellation does not hold it up: its retry loop stops
 // at the next attempt boundary, and an attempt already in flight is abandoned
-// (see StartAll).
+// (see StartAll). Once Wait has begun, no further bot starts.
 func (m *BotManager[B]) Wait() {
+	m.mu.Lock()
+	m.waiting = true
+	m.mu.Unlock()
 	m.wg.Wait()
 }
 

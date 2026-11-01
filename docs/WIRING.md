@@ -132,7 +132,14 @@ fociroot.EnsureCCConfigEnv()                             ← internal/fociroot (
      → returns *platform.Messaging facade wrapping all active providers
    → voice STT/TTS providers                              ← shared across agents
 
-   Per-agent loop (for each cfg.Agents[i]):
+   Per-agent loop (for each cfg.Agents[i]):              ← main.go. Each block is built by agentEnv.buildAgent (agent_lifecycle.go)
+                                                            and published with agentRegistry.commit (agent_registry.go) — one locked
+                                                            id → agent map + order that every reader after boot reads through (HTTP,
+                                                            askgw, live appliers, warning hook, memory guard, tmux monitor, facet
+                                                            restore, agentResolverFn/agentListFn). `/agents new` builds a NEW agent
+                                                            through the same buildAgent, live, with no restart — see "Live agent
+                                                            start" below; edits to existing blocks still need a restart.
+   → seed character files, then the agent's memory from memorySystem.forAgent (memory_init.go)
    → setupAgent(params)                                    ← agents.go → agentInstance{ag, cmds, registry, bootstrap, suggestionSender}
      → resolveSharedSetup(params)                           ← agents_shared.go — config cascade, prompt dirs, group resolver
      → IF delegated agent (acfg.Backend != "" && != "api"):
@@ -220,7 +227,10 @@ fociroot.EnsureCCConfigEnv()                             ← internal/fociroot (
     → each Codex app-server Start → model/list → modelcaps.Publish(codex)
   → setupPeriodic(inst, acfg, periodicParams{...})        ← periodic_setup.go (per-agent; renamed from setupKeepalive/keepalive_setup.go — the runner now covers keepalive+background+reflection+consolidation+reset, see Reflection & Consolidation Timers)
   → plat.SetupSharedFacet(...)                         ← shared facet bots (via messaging facade)
-  → setupWarningHooks(agents, cfg)                         ← post_agent_setup.go
+  → StartInbox per agent
+  → setupWarningHooks(agents, cfg)                         ← post_agent_setup.go; returns the warningHook, installed once any agent
+                                                            enables injection (a hot-added agent can be the first)
+  → newLiveAgentStarter(env, agents, load, warnHook)        ← agent_lifecycle.go; the `/agents new` live start (below)
   → setupTmuxMemoryMonitor(...)                            ← post_agent_setup.go
   → setupMemoryGuard(...)                                  ← post_agent_setup.go
   → registerLiveAppliers(gwLiveApply, agents)              ← liveapply.go; wires each agent's hot-reloadable config fields (`hot:"turn"` etc.) into the registry created earlier
@@ -235,6 +245,7 @@ fociroot.EnsureCCConfigEnv()                             ← internal/fociroot (
                                                             errors, fail fast on auth / discord close 4004,4010-4014 → ERROR
                                                             "(running without it)"; ctx cancel at shutdown ends it) → markLive →
                                                             WhenPrimaryLive callbacks → Bot.Run
+  → agentRestorePhases, each across every agent:          ← agent_lifecycle.go; the four per-agent restores below, in this order
   → Agent.SpawnRestore() per agent (Spawner.RestoreSpawns) ← #2589: deliver untaken spawn results, resume interrupted spawns (or report
                                                             them lost), one chat notice per parent; BEFORE RestoreUndelivered, as it
                                                             takes the spawn branches' unconsumed inputs into their resume turns
@@ -262,13 +273,32 @@ fociroot.EnsureCCConfigEnv()                             ← internal/fociroot (
   → setupAskgwHTTP(ctx, cfg, mux, askgwSrv)                ← askgw_http.go (opt-in [askgw] http_enabled=true, on top of enabled=true; HTTP transport onto the SAME askgw.Server/Registry, for remote callers that can't reach the local socket — registers /askgw/ask*, /askgw/notify on the shared mux, so they inherit http.api_key auth for free)
   → setupTestharnessControl(ctx, agents)                   ← testharness_control.go; test-only control surface for the L2 integration harness (internal/testharness), no-op in production
   → checkDelegatedReadiness(...)                           ← notifications.go (probe each delegated backend; fire relogin if not ready — gate active before first-run injection)
-  → handleRestartAndFirstRun(...)                          ← notifications.go (restart + welcome via HandleMessage)
+  → handleRestartAndFirstRun(...)                          ← notifications.go (restart + welcome via HandleMessage; armFirstRun per agent)
   → log "startup complete"                                 ← the LAST startup line, and the L2 harness's ready signal (testharness
                                                             readyPattern). "started N agent(s)" comes BEFORE the readiness probe and
                                                             the first-run arming, so a turn composed between the two carries no
                                                             onboarding; a harness that waited for it raced the arming (#2438)
   → block on signal → runShutdown(...)                     ← shutdown.go
 ```
+
+**Live agent start (`/agents new`, #963).** The wizard (`command.createAgent`) writes the workspace, the `[[agents]]` block and the crontab, then calls `AgentNewDeps.StartAgent` = `liveAgentStarter.Start` (agent_lifecycle.go), which builds and starts the new agent in the running process, one hot-add at a time:
+  → agentRegistry.reserve(id)                              ← a running or in-progress id is refused; the reservation is invisible to readers
+  → config.Load(configPath) → the block with this id        ← a FRESH load; the startup config stays frozen (liveapply.go rule)
+  → config.ApplyAgentProviderDefaults + DropSubstitutableAgentAutoApproveRules   ← the boot finishing steps, for this block alone
+  → hotAddBotConflict(running agents, block)               ← config.DetectBotTokenConflicts + buildBotConflictSkipSet: a running agent's
+                                                            bot token is refused, as at boot, naming the platform and that agent
+  → agentEnv.buildLive                                     ← ensureAgentWorkspace, convo.OpenAgent (conversation log),
+                                                            memorySystem.addAgent (stores; in per-agent mode its own index, routed by
+                                                            convo.Hook = memorySystem.indexAgentConversation under the memory lock),
+                                                            buildAgent (setupAgent → plat.SetupAgentConnection registers its bots,
+                                                            unstarted), armFirstRun, StartInbox
+  → agentRegistry.commit(inst)                             ← published at the END of the order: the default agent never changes
+  → plat.StartAgent(ctx, id)                               ← platform.AgentStarter: BotManager.StartAgent starts ONLY this agent's primary
+                                                            and per-agent facet bots (pending connect as in StartAll; a started bot is
+                                                            never started again; none after Wait began); app Hub.StartAgent pushes the
+                                                            roster (pushRosterAll) so connected devices see the agent
+  → agentRestorePhases for the agent, warningHook.install()
+A failure before commit releases the reservation: nothing is registered and none of its bots or its inbox runs; the block stays in foci.toml and the wizard reply gives the reason and says to /restart. A missing Telegram token is not a failure: the agent runs on the app and HTTP, and the reply says to `/secrets set telegram.<id> <token>` and /restart. No restart notice and no restart-context turn are sent. Not live (restart): a token added later, edits to any existing block, hand-added blocks, and switching the memory mode (shared vs per-agent indices is fixed at boot; a new agent with `[agents.memory]` overrides in a shared-mode process is told its memory settings need a restart). The first-run setup (`cmd/foci/setup.go`) has no live start. Shutdown calls `liveAgentStarter.close()` first, so a hot-add in progress finishes and is in shutdown's registry snapshot.
 
 **Multi-agent:** Each agent gets its own tool registry, command registry, workspace bootstrap, compactor, and platform connection(s). Each agent gets a `provider.Client` resolved from the `[groups]` configuration (the powerful group determines the agent's primary model/endpoint/format). Clients are lazy-initialized — only endpoints actually referenced create connections. Shared resources (session store, voice providers) are passed to each agent.
 
@@ -434,7 +464,7 @@ No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `sk
 
 Most packages depend on `provider` for types; only `main.go` (`cmd/foci-gw/credentials.go`) imports `anthropic` directly in production code (for Anthropic-specific features — `tools` only references it from test-only helpers now). `periodic` still imports `session` directly (it holds a `*session.SessionIndex` to pick keepalive/reflection/background candidates) but never imports `agent` — warning dispatch is handled by the `warnings` package, wired together in `main.go`.
 
-**`provision` package:** Shared agent creation logic used by both `cmd/foci/setup.go` (first-run wizard) and `command/agents_new.go` (`/agents new` runtime command). Imports only `modelinfo` and `procx`. Provides `AgentSpec` + `Provision()` (workspace creation, character file copying, SOUL.md templating), validation (`IsValidAgentID`), config block generation (`GenerateAgentBlock`), and crontab templating (`GenerateCrontab`, `AppendCrontab`). `ResolveModelAlias` turns a family word (`opus`, `sonnet`, `haiku`, `fable`; empty ⇒ sonnet) into `anthropic/<newest id in that family>` via `modelinfo.NewestInFamily`, and passes anything else through untouched — an alias names a family, not a version, so pinning it to a literal guarantees drift (the old fixed map still returned `claude-opus-4-6` long after every real turn ran opus-5). `NewestInFamily` ranks only the numeric segments FOLLOWING the family token, which excludes `-latest` pointers, `-fast`/`[1m]` variants, and `claude-3-haiku` (version before the token). This affects agent CREATION only; a delegated backend still resolves its own `backend_config.model` string itself. Platform-specific validators (e.g. `IsValidBotToken`, `IsValidUserID`) live in their respective platform packages (e.g. `internal/telegram/validate.go`).
+**`provision` package:** Shared agent creation logic used by both `cmd/foci/setup.go` (first-run wizard) and `command/agents_new.go` (`/agents new` runtime command, which then starts the new agent live with no restart — see "Live agent start"; edits to existing `[[agents]]` blocks still need a restart). Imports only `modelinfo` and `procx`. Provides `AgentSpec` + `Provision()` (workspace creation, character file copying, SOUL.md templating), validation (`IsValidAgentID`), config block generation (`GenerateAgentBlock`), and crontab templating (`GenerateCrontab`, `AppendCrontab`). `ResolveModelAlias` turns a family word (`opus`, `sonnet`, `haiku`, `fable`; empty ⇒ sonnet) into `anthropic/<newest id in that family>` via `modelinfo.NewestInFamily`, and passes anything else through untouched — an alias names a family, not a version, so pinning it to a literal guarantees drift (the old fixed map still returned `claude-opus-4-6` long after every real turn ran opus-5). `NewestInFamily` ranks only the numeric segments FOLLOWING the family token, which excludes `-latest` pointers, `-fast`/`[1m]` variants, and `claude-3-haiku` (version before the token). This affects agent CREATION only; a delegated backend still resolves its own `backend_config.model` string itself. Platform-specific validators (e.g. `IsValidBotToken`, `IsValidUserID`) live in their respective platform packages (e.g. `internal/telegram/validate.go`).
 
 ## Command Dispatch Architecture
 
@@ -3162,7 +3192,7 @@ audio_start{sample_rate} → binary frames (raw PCM) → audio_end
 - `turnMu` — serializes agent turns (prevents concurrent STT→agent→TTS pipelines)
 - `audioMu` — protects recording state and audio buffer
 
-**Wiring in `main.go`:** Callback-based (`HandlerConfig`) — `ListAgents` reads `agents` map + `agentOrder`, `HandleMessage` calls `inst.ag.HandleMessage` with `voice` trigger, `AgentTTS` resolves per-agent TTS via `resolveTTS(ttsMap, cfg.TTS, agentTTSID, agentRate, replacements)` which also wraps with word replacements (entry → `[voice]` → per-agent `[voice]`, merged). Gate: `cfg.HTTP.WSEnabled && len(sttMap) > 0`.
+**Wiring in `main.go`:** Callback-based (`HandlerConfig`) — `ListAgents` reads the agent registry (`agentRegistry.All`, so a hot-added agent is listed), `HandleMessage` calls `inst.ag.HandleMessage` with `voice` trigger, `AgentTTS` resolves per-agent TTS via `resolveTTS(ttsMap, cfg.TTS, agentTTSID, agentRate, replacements)` which also wraps with word replacements (entry → `[voice]` → per-agent `[voice]`, merged). Gate: `cfg.HTTP.WSEnabled && len(sttMap) > 0`.
 
 ## Facet (`platform/botpool.go`, `telegram/manager.go`, `telegram/bot.go`)
 

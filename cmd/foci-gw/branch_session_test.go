@@ -251,7 +251,7 @@ func delegatedBranchHarnessWith(t *testing.T, opts httpTestOpts, be delegator.De
 		DelegatedManager: mgr,
 		SessionIndex:     d.sessionIndex,
 	}
-	d.agents[testAgentID].ag = ag
+	d.agents.at(testAgentID).ag = ag
 	ag.StartInbox(d.ctx)
 	return d
 }

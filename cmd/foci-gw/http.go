@@ -26,8 +26,7 @@ import (
 
 // httpHandlerDeps holds shared state needed by HTTP endpoint handlers.
 type httpHandlerDeps struct {
-	agents            map[string]*agentInstance
-	agentOrder        []string
+	agents            *agentRegistry // read per request: covers an agent hot-added by /agents new (#963)
 	sessionIndex      *session.SessionIndex
 	sessions          *session.Store
 	cfg               *config.Config

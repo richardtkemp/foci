@@ -115,16 +115,25 @@ func ApplyProviderDefaults(cfg *Config, getDefaults PlatformDefaulter) {
 		}
 	}
 	for i := range cfg.Agents {
-		for j := range cfg.Agents[i].Platforms {
-			agentPlat := &cfg.Agents[i].Platforms[j]
-			// Merge: agent platform < global platform
-			if globalPlat := cfg.Platform(agentPlat.ID); globalPlat != nil {
-				agentPlat.ApplyDefaults(*globalPlat)
-			}
-			// Then apply provider defaults for anything still unset
-			if defaults := getDefaults(agentPlat.ID); defaults != nil {
-				agentPlat.ApplyDefaults(*defaults)
-			}
+		ApplyAgentProviderDefaults(cfg, &cfg.Agents[i], getDefaults)
+	}
+}
+
+// ApplyAgentProviderDefaults merges one agent's platform configs: agent
+// platform < cfg's global platform < provider defaults. It writes only a; cfg
+// is read. ApplyProviderDefaults runs it for every agent at boot; an agent
+// hot-added by /agents new (#963) runs it against the running (already
+// defaulted) startup config, which stays untouched.
+func ApplyAgentProviderDefaults(cfg *Config, a *AgentConfig, getDefaults PlatformDefaulter) {
+	for j := range a.Platforms {
+		agentPlat := &a.Platforms[j]
+		// Merge: agent platform < global platform
+		if globalPlat := cfg.Platform(agentPlat.ID); globalPlat != nil {
+			agentPlat.ApplyDefaults(*globalPlat)
+		}
+		// Then apply provider defaults for anything still unset
+		if defaults := getDefaults(agentPlat.ID); defaults != nil {
+			agentPlat.ApplyDefaults(*defaults)
 		}
 	}
 }

@@ -74,7 +74,7 @@ func TestSkillExtraDirsStartupAndLiveApply(t *testing.T) {
 	}
 
 	la := newLiveApply("")
-	registerLiveAppliers(la, map[string]*agentInstance{"a": {id: "a", skillsDirs: br.skillsDirs}})
+	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{"a": {id: "a", skillsDirs: br.skillsDirs}}))
 
 	// Global edit: g-extra → new-extra; the [skills] dir is also changed in
 	// the file, but it is restart-only and must not apply.

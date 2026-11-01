@@ -31,16 +31,17 @@ func newTodoRouteDeps(t *testing.T) (httpHandlerDeps, *memory.TodoStore) {
 	t.Helper()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	other := &agentInstance{id: "other"}
-	d.agents["other"] = other
-	d.agentOrder = append(d.agentOrder, "other")
+	if err := d.agents.commit(other); err != nil {
+		t.Fatal(err)
+	}
 
 	store, err := memory.NewTodoStore(filepath.Join(t.TempDir(), "todo.db"))
 	if err != nil {
 		t.Fatalf("NewTodoStore: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	for _, id := range d.agentOrder {
-		d.agents[id].cc.TodoStore = store
+	for _, id := range d.agents.Order() {
+		d.agents.at(id).cc.TodoStore = store
 	}
 	return d, store
 }
@@ -218,7 +219,7 @@ func TestTodoDone_Refusals(t *testing.T) {
 			store.Add(testAgentID, "must survive", "medium", "")
 			store.Add("other", "must survive too", "medium", "")
 			if tt.nilStore {
-				d.agents["other"].cc.TodoStore = nil
+				d.agents.at("other").cc.TodoStore = nil
 			}
 			if tt.closeSto {
 				if err := store.Close(); err != nil {
