@@ -221,12 +221,15 @@ func (SpawnObserver) SpawnStarted(parentSession string, s tools.RunningSpawn, pr
 	if b == nil {
 		return
 	}
-	b.send(fap.SubagentStart{ConversationID: b.convID, GroupKey: s.ID, Label: s.Description, RunIndex: 1, Prompt: prompt})
+	// The app labels a spawn by its name (#2721), not by its prompt, which
+	// the view still shows as its first message.
+	label := s.Label()
+	b.send(fap.SubagentStart{ConversationID: b.convID, GroupKey: s.ID, Label: label, RunIndex: 1, Prompt: prompt})
 	var started int64
 	if !s.Started.IsZero() {
 		started = s.Started.UnixMilli()
 	}
-	b.addSpawn(fap.RunningSubagent{ID: s.ID, Description: s.Description, Kind: "agent", Model: s.Model, SubagentType: "spawn", StartedMs: started}, s.CallerShell)
+	b.addSpawn(fap.RunningSubagent{ID: s.ID, Description: label, Kind: "agent", Model: s.Model, SubagentType: "spawn", StartedMs: started}, s.CallerShell)
 }
 
 // SpawnText adds one block of the spawn's text to its chit.

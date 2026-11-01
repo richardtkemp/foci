@@ -121,7 +121,7 @@ func newPersistHarness(agent SpawnAgent, deps func(*SpawnDeps)) *persistHarness 
 
 func (h *persistHarness) spawn(t *testing.T, prompt string) string {
 	t.Helper()
-	params, _ := json.Marshal(map[string]any{"prompt": prompt, "context": "clone", "timeout": 30})
+	params, _ := json.Marshal(map[string]any{"name": "persis1", "prompt": prompt, "context": "clone", "timeout": 30})
 	res, err := h.spawner.SpawnTool().Execute(h.ctx, params)
 	if err != nil {
 		t.Fatalf("spawn: %v", err)

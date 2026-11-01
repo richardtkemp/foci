@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -20,9 +21,15 @@ import (
 type RunningSpawn struct {
 	// ID is the spawn's subagent group key: the app's chit for it is
 	// "subagent:<ID>". It holds no colon, which the client's chit ids reserve.
-	ID          string
-	BranchKey   string
-	Description string // the prompt's opening, as the agent's own subagent descriptions are
+	ID        string
+	BranchKey string
+	// Name is the spawn's name, given by the spawn call (#2721): required,
+	// trimmed, and unique among the spawns spawn_status lists in its
+	// session. It is the label the user sees (Label) and a second handle for
+	// spawn_send, spawn_stop and spawn_status. "" only for a spawn persisted
+	// before names existed.
+	Name        string
+	Description string // the prompt's opening: spawn_status's Task line
 	Model       string // the branch session's model; empty = unknown
 	Started     time.Time
 	// Character marks a background character spawn (#2643): a fresh branch
@@ -91,6 +98,10 @@ type SpawnTracker struct {
 	// cut by the shutdown, and is resumed by the next process instead of
 	// being reported failed.
 	shuttingDown bool
+	// starting holds, per caller session, the names its spawn calls have
+	// claimed (claimName) and not yet registered a spawn under, so two calls
+	// at once cannot take one name (#2721).
+	starting map[string]map[string]bool
 	// persistMu orders the writes of persist: each write snapshots the
 	// spawn's state under it, so the last write always holds the latest state.
 	persistMu sync.Mutex
@@ -266,6 +277,88 @@ func (t *SpawnTracker) find(parent, idOrBranch string) *trackedSpawn {
 		}
 	}
 	return nil
+}
+
+// spawnNamed is a spawn found by its name, with the session it is keyed under.
+type spawnNamed struct {
+	parent string
+	snap   SpawnSnapshot
+}
+
+// lookupName finds the spawns of parents named name (#2721), with their last
+// n log entries (all when n <= 0). A spawn with no name never matches.
+func (t *SpawnTracker) lookupName(parents []string, name string, n int) []spawnNamed {
+	if t == nil || name == "" {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var out []spawnNamed
+	for _, p := range parents {
+		for _, s := range t.spawns[p] {
+			if s.info.Name != name {
+				continue
+			}
+			snap := s.snapshot(n)
+			if n <= 0 {
+				snap.Log = slices.Clone(s.log)
+			}
+			out = append(out, spawnNamed{parent: p, snap: snap})
+		}
+	}
+	slices.SortFunc(out, func(a, b spawnNamed) int { return strings.Compare(a.snap.ID, b.snap.ID) })
+	return out
+}
+
+// claimName reserves name for a spawn caller is starting (#2721). It fails
+// when a spawn of parents (the sessions whose spawns caller's spawn_status
+// lists: its own, and those handed over to it) is named name, or another of
+// caller's spawn calls is starting under it. release frees the reservation;
+// call it once the spawn is registered, or did not start.
+func (t *SpawnTracker) claimName(caller string, parents []string, name string) (release func(), err error) {
+	if t == nil {
+		return func() {}, nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, p := range parents {
+		for _, s := range t.spawns[p] {
+			if s.info.Name == name {
+				return nil, fmt.Errorf("this session already has a spawn named %q (%s); give this one another name (a finished spawn keeps its name until it is no longer listed by spawn_status)", name, s.info.ID)
+			}
+		}
+	}
+	if t.starting[caller][name] {
+		return nil, fmt.Errorf("another spawn named %q is starting in this session; give this one another name", name)
+	}
+	if t.starting == nil {
+		t.starting = map[string]map[string]bool{}
+	}
+	if t.starting[caller] == nil {
+		t.starting[caller] = map[string]bool{}
+	}
+	t.starting[caller][name] = true
+	return func() {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		delete(t.starting[caller], name)
+		if len(t.starting[caller]) == 0 {
+			delete(t.starting, caller)
+		}
+	}, nil
+}
+
+// spawnInfo is parent's spawn id as it was started, whether or not it runs.
+func (t *SpawnTracker) spawnInfo(parent, id string) (RunningSpawn, bool) {
+	if t == nil {
+		return RunningSpawn{}, false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if s := t.spawns[parent][id]; s != nil {
+		return s.info, true
+	}
+	return RunningSpawn{}, false
 }
 
 func (s *trackedSpawn) snapshot(n int) SpawnSnapshot {
@@ -592,10 +685,28 @@ func (t *SpawnTracker) stopper(parent, id string) string {
 	return "the user"
 }
 
-// spawnDescription is the one-line label a spawn is listed under: its prompt's
-// opening, whitespace collapsed so a multi-line prompt reads as one line.
+// UnnamedSpawnLabel stands in for the name of a spawn that has none (one
+// persisted before #2721 and restored after it), wherever a name is shown.
+const UnnamedSpawnLabel = "(unnamed spawn)"
+
+// Label is the spawn's name on one line (whitespace collapsed), or
+// UnnamedSpawnLabel when it has none: what the user and the agent see it as.
+func (r RunningSpawn) Label() string {
+	if l := oneLine(r.Name); l != "" {
+		return l
+	}
+	return UnnamedSpawnLabel
+}
+
+// oneLine collapses s's whitespace runs, line breaks included, to one space.
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// spawnDescription is a spawn's prompt opening on one line, whitespace
+// collapsed: spawn_status's Task line for it.
 func spawnDescription(prompt string) string {
-	r := []rune(strings.Join(strings.Fields(prompt), " "))
+	r := []rune(oneLine(prompt))
 	if len(r) > 100 {
 		return string(r[:100]) + "…"
 	}

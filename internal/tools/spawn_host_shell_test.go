@@ -112,7 +112,7 @@ func TestDirectSpawn_EntryCarriesCallerShell(t *testing.T) {
 	t.Parallel()
 	s, obs, _ := newObservedDirectSpawner("dobs5")
 	ctx := WithCallerPID(WithSessionKey(context.Background(), "dobs5/c1"), startShellTree(t))
-	if _, err := s.runDirect(ctx, s, spawnModeRaw, "p", "", time.Minute, func(context.Context) (ToolResult, error) {
+	if _, err := s.runDirect(ctx, s, spawnModeRaw, "d1", "p", "", time.Minute, func(context.Context) (ToolResult, error) {
 		return TextResult("ok"), nil
 	}); err != nil {
 		t.Fatal(err)

@@ -11,13 +11,13 @@ foci's **own** general-purpose tools, which a CC agent gets from CC instead:
 - **`read`**, **`write`**, **`edit`** (exact string replacement), **`shell`** — files and shell.
 - **`tmux`** — persistent terminals by name: `start|send|read|list|kill|watch|unwatch`. `watch` sends async inactivity notifications.
 - **`browser`** — headless browser actions (only if the browser feature is enabled in config).
-- **`spawn`** — a sub-call to a model. Model group `powerful|fast|cheap`. Timeout: 120 s direct, 3600 s background, 86400 s max. Modes:
+- **`spawn`** — a sub-call to a model. `name` is required: short, unique among this session's spawns that `spawn_status` lists (`all` is reserved); the user sees the spawn by it, and `spawn_send`, `spawn_status` and `spawn_stop` take it in place of the id. Model group `powerful|fast|cheap`. Timeout: 120 s direct, 3600 s background, 86400 s max. Modes:
 - `character` (default): your system prompt and tools, not this conversation, so the prompt must carry the whole task. Direct, or background with `background=true`.
 - `clone`: a background fork of this session; the result arrives later as a message. Use it only when the task needs too much of the conversation to write down.
 - `raw`: just your prompt, the cheapest isolated call. `explore`: direct, read-only, cheap model, restricted tools.
 - **`spawn_send`** — steer a running background spawn, or resume a finished one with a new message. **`spawn_status`** — the list of your spawns, or one spawn's latest activity.
 - **`send_to_spawner`** — inside a spawn, of any mode: message the session that spawned you while you run. From a background spawn it arrives now (your spawner answers with `spawn_send`); from a spawn your spawner waits on, it is kept and heads your result.
-- **`spawn_stop`** — stop a running spawn of any mode by id (or `all`).
+- **`spawn_stop`** — stop a running spawn of any mode by name or id (or `all`).
 - **`spawn` with `agent=<id>`** runs as another agent: its character, tools and model; implies character mode. The result comes back to you, and its `send_to_chat` lands in your chat.
 - Every spawn checks its backend's plan allowance first. It is refused with less than `[tools] spawn_reserve_percent` (default 10%) left, unless `use_reserve=true`.
 - **`scratchpad`** — working-notes store (only if configured).

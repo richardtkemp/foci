@@ -28,7 +28,7 @@ func TestDirectSpawn_ObserverShowsTeedText(t *testing.T) {
 	t.Parallel()
 	s, obs, tr := newObservedDirectSpawner("dobs1")
 	ctx := WithSessionKey(context.Background(), "dobs1/c1")
-	res, err := s.runDirect(ctx, s, spawnModeExplore, "Look\n  around", "", time.Minute, func(runCtx context.Context) (ToolResult, error) {
+	res, err := s.runDirect(ctx, s, spawnModeExplore, "d1", "Look\n  around", "", time.Minute, func(runCtx context.Context) (ToolResult, error) {
 		obs.mu.Lock()
 		started := append([]RunningSpawn(nil), obs.started...)
 		obs.mu.Unlock()
@@ -76,7 +76,7 @@ func TestDirectSpawn_ObserverShowsAnswerWhenNothingStreamed(t *testing.T) {
 	t.Parallel()
 	s, obs, _ := newObservedDirectSpawner("dobs2")
 	ctx := WithSessionKey(context.Background(), "dobs2/c1")
-	if _, err := s.runDirect(ctx, s, spawnModeRaw, "p", "", time.Minute, func(context.Context) (ToolResult, error) {
+	if _, err := s.runDirect(ctx, s, spawnModeRaw, "d2", "p", "", time.Minute, func(context.Context) (ToolResult, error) {
 		return TextResult("plain answer"), nil
 	}); err != nil {
 		t.Fatal(err)
@@ -101,7 +101,7 @@ func TestDirectSpawn_StopSubagentsStopsIt(t *testing.T) {
 	running := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		_, err := s.runDirect(ctx, s, spawnModeCharacter, "p", "", time.Minute, func(runCtx context.Context) (ToolResult, error) {
+		_, err := s.runDirect(ctx, s, spawnModeCharacter, "d3", "p", "", time.Minute, func(runCtx context.Context) (ToolResult, error) {
 			close(running)
 			<-runCtx.Done()
 			return ToolResult{}, runCtx.Err()
@@ -150,7 +150,7 @@ func TestDirectSpawn_EveryModeTeesItsBatch(t *testing.T) {
 	s.deps.Observer = obs
 	ctx := WithSessionKey(context.Background(), "test/c1")
 	for _, mode := range []string{spawnModeRaw, spawnModeExplore, spawnModeCharacter} {
-		params, _ := json.Marshal(map[string]string{"prompt": "p", "context": mode})
+		params, _ := json.Marshal(map[string]string{"name": "direct1-" + mode, "prompt": "p", "context": mode})
 		if _, err := s.SpawnTool().Execute(ctx, params); err != nil {
 			t.Fatalf("%s: %v", mode, err)
 		}
@@ -177,7 +177,7 @@ func TestDirectSpawn_EntryNamesItsModel(t *testing.T) {
 		s.deps.ModelFor = func(sk string) string { return "model-of:" + sk }
 		ctx := WithSessionKey(context.Background(), "test/c1/b9")
 		for _, model := range []string{"", "sonnet"} {
-			params, _ := json.Marshal(map[string]string{"prompt": "p", "context": spawnModeExplore, "model": model})
+			params, _ := json.Marshal(map[string]string{"name": "direct2-" + model, "prompt": "p", "context": spawnModeExplore, "model": model})
 			if _, err := s.SpawnTool().Execute(ctx, params); err != nil {
 				t.Fatal(err)
 			}
@@ -195,7 +195,7 @@ func TestDirectSpawn_EntryNamesItsModel(t *testing.T) {
 		s := NewSpawner(SpawnDeps{AgentID: "dobs6", MaxInherit: 1, Tracker: NewSpawnTracker(), Observer: obs, FallbackModel: "anthropic/claude-x"},
 			func() SpawnAgent { return &busyAgent{} })
 		ctx := WithSessionKey(context.Background(), "dobs6/c1")
-		if _, err := s.runDirect(ctx, s, spawnModeRaw, "p", "", time.Minute, func(context.Context) (ToolResult, error) {
+		if _, err := s.runDirect(ctx, s, spawnModeRaw, "d4", "p", "", time.Minute, func(context.Context) (ToolResult, error) {
 			return TextResult("ok"), nil
 		}); err != nil {
 			t.Fatal(err)

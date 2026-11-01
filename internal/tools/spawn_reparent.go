@@ -12,8 +12,10 @@ package tools
 // restart routes, and holds, again.
 
 import (
+	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 
 	"foci/internal/session"
@@ -145,50 +147,65 @@ func SpawnBranchOwner(branchKey string) (owner string, ok bool) {
 	return s.BranchOwner(branchKey)
 }
 
-// ownedLookup finds a spawn the caller owns but did not start: one whose
-// starting session handed it over to caller (#2624). It returns the starting
-// session too, which the tracker keys the spawn under.
-func (s *Spawner) ownedLookup(caller, idOrBranch string, n int) (string, SpawnSnapshot, bool) {
+// handedOver lists the sessions, other than caller, whose spawns caller owns
+// now: the depth leaves that handed theirs over to it (#2624).
+func (s *Spawner) handedOver(caller string) []string {
 	if s.deps.Route == nil {
-		return "", SpawnSnapshot{}, false
+		return nil
 	}
+	var out []string
 	for _, p := range s.deps.Tracker.parents(s.deps.AgentID) {
-		if p == caller || s.route(p).Owner != caller {
-			continue
-		}
-		if snap, ok := s.deps.Tracker.Lookup(p, idOrBranch, n); ok {
-			return p, snap, true
+		if p != caller && s.route(p).Owner == caller {
+			out = append(out, p)
 		}
 	}
-	return "", SpawnSnapshot{}, false
+	return out
 }
 
+// errNoSpawn is lookupForCaller's error for a reference that matches no spawn
+// of the caller's.
+var errNoSpawn = errors.New("no such spawn")
+
 // lookupForCaller finds a spawn of caller's, its own or handed over to it,
-// and the session it is keyed under.
-func (s *Spawner) lookupForCaller(caller, idOrBranch string, n int) (string, SpawnSnapshot, bool) {
-	if snap, ok := s.deps.Tracker.Lookup(caller, idOrBranch, n); ok {
-		return caller, snap, true
+// and the session it is keyed under. ref is its id or branch key, which win,
+// or its name (#2721). A name that more than one of them carries (only
+// possible across spawns handed over from different depth leaves) is refused
+// with their ids; no match is errNoSpawn.
+func (s *Spawner) lookupForCaller(caller, ref string, n int) (string, SpawnSnapshot, error) {
+	parents := append([]string{caller}, s.handedOver(caller)...)
+	for _, p := range parents {
+		if snap, ok := s.deps.Tracker.Lookup(p, ref, n); ok {
+			return p, snap, nil
+		}
 	}
-	return s.ownedLookup(caller, idOrBranch, n)
+	found := s.deps.Tracker.lookupName(parents, strings.TrimSpace(ref), n)
+	switch len(found) {
+	case 0:
+		return "", SpawnSnapshot{}, errNoSpawn
+	case 1:
+		return found[0].parent, found[0].snap, nil
+	}
+	ids := make([]string, len(found))
+	for i, f := range found {
+		ids[i] = f.snap.ID
+	}
+	return "", SpawnSnapshot{}, fmt.Errorf("more than one of your spawns is named %q (%s): give its id instead", strings.TrimSpace(ref), strings.Join(ids, ", "))
+}
+
+// claimSpawnName reserves name for a spawn caller is starting (#2721): it
+// must not be the name of any spawn caller's spawn_status lists.
+func (s *Spawner) claimSpawnName(caller, name string) (release func(), err error) {
+	return s.deps.Tracker.claimName(caller, append([]string{caller}, s.handedOver(caller)...), name)
 }
 
 // listForCaller lists caller's spawns, its own and those handed over to it;
 // a handed-over one's description says where it came from.
 func (s *Spawner) listForCaller(caller string) []SpawnSnapshot {
 	out := s.deps.Tracker.List(caller)
-	if s.deps.Route == nil {
-		return out
-	}
-	for _, p := range s.deps.Tracker.parents(s.deps.AgentID) {
-		if p == caller {
-			continue
-		}
-		r := s.route(p)
-		if r.Owner != caller {
-			continue
-		}
+	for _, p := range s.handedOver(caller) {
+		via := s.route(p).Via
 		for _, sp := range s.deps.Tracker.List(p) {
-			sp.Description = fmt.Sprintf("(from %s) %s", r.Via, sp.Description)
+			sp.Description = fmt.Sprintf("(from %s) %s", via, sp.Description)
 			out = append(out, sp)
 		}
 	}

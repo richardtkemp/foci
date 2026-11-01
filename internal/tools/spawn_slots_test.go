@@ -161,7 +161,7 @@ func TestSpawnerSetMaxConcurrentRaiseStartsQueued(t *testing.T) {
 	})
 	tool := spawner.SpawnTool()
 	ctx := WithSessionKey(context.Background(), "test/imain")
-	params, _ := json.Marshal(map[string]string{"prompt": "task", "context": "clone"})
+	params, _ := json.Marshal(map[string]string{"name": "slots1", "prompt": "task", "context": "clone"})
 
 	// The first spawn takes the only slot; the next two block in Execute.
 	acks := make(chan string, 3)

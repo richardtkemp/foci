@@ -60,7 +60,8 @@ func CompactSummary(toolName string, m map[string]json.RawMessage) string {
 	case "send_to_chat":
 		return Truncate(str(m, "text"), 40)
 	case "spawn":
-		return Truncate(str(m, "prompt"), 40)
+		// The spawn's name (#2721), on one line, never its prompt.
+		return strings.Join(strings.Fields(str(m, "name")), " ")
 	}
 
 	// Fallback: use the first string-valued param (sorted for determinism)

@@ -432,6 +432,7 @@ func spawnParams(modes []string, delegated bool) json.RawMessage {
 		"type": "object",
 		"properties": map[string]any{
 			"prompt": map[string]any{"type": "string", "description": "The task. Write it to carry everything the spawn needs: only a clone sees this conversation."},
+			"name":   map[string]any{"type": "string", "description": spawnNameDoc},
 			"model":  map[string]any{"type": "string", "description": modelDoc},
 			"context": map[string]any{
 				"type":        "string",
@@ -455,7 +456,7 @@ func spawnParams(modes []string, delegated bool) json.RawMessage {
 				"description": spawnUseReserveDoc,
 			},
 		},
-		"required": []string{"prompt"},
+		"required": []string{"prompt", "name"},
 	}
 	out, err := json.Marshal(schema)
 	if err != nil {
@@ -463,6 +464,26 @@ func spawnParams(modes []string, delegated bool) json.RawMessage {
 	}
 	return out
 }
+
+// reservedSpawnName is the one name a spawn may not take: spawn_stop all
+// already means every spawn of the session.
+const reservedSpawnName = "all"
+
+// validSpawnName checks a spawn call's name (#2721) and returns it trimmed:
+// it is required, and may be anything but blank or reservedSpawnName.
+func validSpawnName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return "", fmt.Errorf("name is required: give the spawn a short name, unique among this session's spawns (spawn_status lists them)")
+	}
+	if name == reservedSpawnName {
+		return "", fmt.Errorf("a spawn cannot be named %q: spawn_stop %s already means every spawn of this session", reservedSpawnName, reservedSpawnName)
+	}
+	return name, nil
+}
+
+// spawnNameDoc is the name parameter's doc (#2721).
+const spawnNameDoc = "Required. A short name for this spawn, e.g. 'reviewer'. It must be unique among this session's spawns that spawn_status lists (running, or finished and still remembered); 'all' is reserved. The user sees it in place of the prompt, in the app and in the chat; you see it in [SPAWN RESULT] and spawn_status; spawn_send, spawn_status and spawn_stop take it in place of the spawn's id."
 
 // spawnAgentDoc and spawnUseReserveDoc are the agent and use_reserve
 // parameter docs (#2662); new text for Dick to approve.
@@ -509,6 +530,7 @@ func (s *Spawner) SpawnTool() *Tool {
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			p, err := UnmarshalParams[struct {
 				Prompt     string `json:"prompt"`
+				Name       string `json:"name"`
 				Model      string `json:"model"`
 				Context    string `json:"context"`
 				Background bool   `json:"background"`
@@ -521,6 +543,10 @@ func (s *Spawner) SpawnTool() *Tool {
 			}
 			if p.Prompt == "" {
 				return ToolResult{}, fmt.Errorf("prompt is required")
+			}
+			name, err := validSpawnName(p.Name)
+			if err != nil {
+				return ToolResult{}, err
 			}
 			host, err := s.hostFor(ctx, strings.TrimSpace(p.Agent))
 			if err != nil {
@@ -547,6 +573,16 @@ func (s *Spawner) SpawnTool() *Tool {
 			background := p.Context == spawnModeClone || p.Background
 			timeout := resolveSpawnTimeout(p.Timeout, background)
 
+			// The name is held from here until the spawn is registered under
+			// it, so a concurrent spawn call cannot take it meanwhile.
+			if caller := SessionKeyFromContext(ctx); caller != "" {
+				release, err := s.claimSpawnName(caller, name)
+				if err != nil {
+					return ToolResult{}, err
+				}
+				defer release()
+			}
+
 			// The allowance of the backend the spawn runs on: the target's for a
 			// spawn as another agent, against the caller's reserve.
 			note, err := host.checkAllowance(ctx, s.reservePercent(), p.UseReserve)
@@ -556,11 +592,11 @@ func (s *Spawner) SpawnTool() *Tool {
 			var res ToolResult
 			switch {
 			case p.Context == spawnModeClone:
-				res, err = s.startClone(ctx, p.Prompt, timeout)
+				res, err = s.startClone(ctx, name, p.Prompt, timeout)
 			case background:
-				res, err = s.startBackgroundCharacter(ctx, host, p.Prompt, p.Model, timeout)
+				res, err = s.startBackgroundCharacter(ctx, host, name, p.Prompt, p.Model, timeout)
 			default:
-				res, err = s.runDirect(ctx, host, p.Context, p.Prompt, p.Model, timeout, func(runCtx context.Context) (ToolResult, error) {
+				res, err = s.runDirect(ctx, host, p.Context, name, p.Prompt, p.Model, timeout, func(runCtx context.Context) (ToolResult, error) {
 					return s.runDirectAs(runCtx, host, p.Context, p.Prompt, p.Model, timeout)
 				})
 			}
@@ -583,14 +619,14 @@ func (s *Spawner) SpawnTool() *Tool {
 // an API one-shot streams none, so its answer is shown when it ends. Its
 // entry names the model it runs on (directModel, #2685), and the shell call it
 // was started from (CallerShell), whose own entry the app hides meanwhile.
-func (s *Spawner) runDirect(ctx context.Context, host *Spawner, mode, prompt, model string, timeout time.Duration, run func(context.Context) (ToolResult, error)) (ToolResult, error) {
+func (s *Spawner) runDirect(ctx context.Context, host *Spawner, mode, name, prompt, model string, timeout time.Duration, run func(context.Context) (ToolResult, error)) (ToolResult, error) {
 	parent := SessionKeyFromContext(ctx)
 	if parent == "" {
 		return run(ctx)
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	info := RunningSpawn{ID: newSpawnID(), Description: spawnDescription(prompt), Started: time.Now(), Mode: mode, Direct: true,
+	info := RunningSpawn{ID: newSpawnID(), Name: name, Description: spawnDescription(prompt), Started: time.Now(), Mode: mode, Direct: true,
 		CallerShell: callerShell(CallerPIDFromContext(ctx)), SpawnerUnattended: s.deps.turnUnattended(parent)}
 	owner := parent
 	if host != s {
@@ -1224,7 +1260,7 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (string, error) {
 // notifier is available, the spawn runs asynchronously in a background
 // goroutine and delivers its result via the notifier. When notifier is nil, it
 // falls back to synchronous execution (for tests).
-func (s *Spawner) startClone(ctx context.Context, prompt string, timeout time.Duration) (ToolResult, error) {
+func (s *Spawner) startClone(ctx context.Context, name, prompt string, timeout time.Duration) (ToolResult, error) {
 	deps := s.deps
 	parentSession := SessionKeyFromContext(ctx)
 	// No-recursion guard: reject clone calls from inside a clone. An API
@@ -1266,7 +1302,7 @@ func (s *Spawner) startClone(ctx context.Context, prompt string, timeout time.Du
 
 	// Async path: launch goroutine, return immediately.
 	if deps.Notifier != nil {
-		return s.launchBackground(ctx, agent, parentSession, RunningSpawn{BranchKey: branchKey}, prompt, timeout)
+		return s.launchBackground(ctx, agent, parentSession, RunningSpawn{BranchKey: branchKey, Name: name}, prompt, timeout)
 	}
 
 	// Synchronous fallback (nil notifier — for tests).
@@ -1322,8 +1358,8 @@ func (s *Spawner) launchBackground(ctx context.Context, agent SpawnAgent, parent
 	if running.Agent != "" {
 		kind += " as " + running.Agent
 	}
-	pending := fmt.Sprintf("%s started in background.\nSpawn: %s\nBranch: %s\nTimeout: %s\nPrompt: %s\nResults will be delivered when complete. Send it more with spawn_send; check on it with spawn_status.",
-		kind, running.ID, running.BranchKey, timeout, truncatePromptPreview(prompt))
+	pending := fmt.Sprintf("%s started in background.\nName: %s\nSpawn: %s\nBranch: %s\nTimeout: %s\nPrompt: %s\nResults will be delivered when complete. Send it more with spawn_send; check on it with spawn_status (by its name or id).",
+		kind, running.Label(), running.ID, running.BranchKey, timeout, truncatePromptPreview(prompt))
 	return s.runBackground(ctx, agent, parent, running, []string{prompt}, spawnCtx, cancel, pending)
 }
 
@@ -1336,7 +1372,7 @@ func (s *Spawner) launchBackground(ctx context.Context, agent SpawnAgent, parent
 // host runs it: s, or for a spawn as another agent (#2662) that agent's
 // Spawner, whose agent runs the turns on a fresh branch of its cross-agent
 // root. The caller (s) tracks it and gets its result.
-func (s *Spawner) startBackgroundCharacter(ctx context.Context, host *Spawner, prompt, model string, timeout time.Duration) (ToolResult, error) {
+func (s *Spawner) startBackgroundCharacter(ctx context.Context, host *Spawner, name, prompt, model string, timeout time.Duration) (ToolResult, error) {
 	parent := SessionKeyFromContext(ctx)
 	// The same no-recursion guard as clone: a background spawn may not start
 	// another one (a delegated character branch has no spawn tools at all).
@@ -1353,7 +1389,7 @@ func (s *Spawner) startBackgroundCharacter(ctx context.Context, host *Spawner, p
 	if agent == nil {
 		return ToolResult{}, fmt.Errorf("spawn character: agent %s not available", host.deps.AgentID)
 	}
-	running := RunningSpawn{Character: true, SpawnModel: model, Mode: spawnModeCharacter}
+	running := RunningSpawn{Name: name, Character: true, SpawnModel: model, Mode: spawnModeCharacter}
 	branchParent := parent
 	if host != s {
 		running.Agent = host.deps.AgentID
@@ -1462,22 +1498,30 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 	})
 }
 
+// spawnResultHead opens every [SPAWN RESULT]: the spawn's name (label), its
+// branch and its id.
+func spawnResultHead(label, branchKey, id string) string {
+	return fmt.Sprintf("[SPAWN RESULT] %s — Branch %s (spawn %s)", label, branchKey, id)
+}
+
 // resultMessage is the [SPAWN RESULT] for one run of a background spawn that
 // ended (not cut short by a shutdown): stopped, failed (runErr) or completed
 // with result. The messages it kept for its spawner head it.
 func (s *Spawner) resultMessage(parent, id, branchKey string, stopped bool, runErr error, result string, dropped int) string {
 	tr := s.deps.Tracker
+	info, _ := tr.spawnInfo(parent, id)
+	head := spawnResultHead(info.Label(), branchKey, id)
 	var msg string
 	switch {
 	case stopped:
-		msg = fmt.Sprintf("[SPAWN RESULT] Branch %s (spawn %s) was stopped by %s.", branchKey, id, tr.stopper(parent, id))
+		msg = fmt.Sprintf("%s was stopped by %s.", head, tr.stopper(parent, id))
 	case runErr != nil:
-		msg = fmt.Sprintf("[SPAWN RESULT] Branch %s (spawn %s) failed:\n\n%v", branchKey, id, runErr)
+		msg = fmt.Sprintf("%s failed:\n\n%v", head, runErr)
 	default:
 		if result == "" {
 			result = "(empty response)"
 		}
-		msg = fmt.Sprintf("[SPAWN RESULT] Branch %s (spawn %s) completed:\n\n%s", branchKey, id, result)
+		msg = fmt.Sprintf("%s completed:\n\n%s", head, result)
 	}
 	// Messages to its spawner that had to wait (#2662) head it.
 	if head := keptMessagesHead(id, tr.takeKept(parent, id)); head != "" {

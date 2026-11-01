@@ -123,7 +123,7 @@ func TestDelegatedSpawn_UnofferedModeRefused(t *testing.T) {
 	s := newDelegatedSpawner(runner, map[delegator.Capability]delegator.Support{
 		delegator.CapBranch: delegator.Yes(), delegator.CapIsolatedBatch: delegator.No("test"), delegator.CapReadOnlyBatch: delegator.Yes(),
 	})
-	_, err := s.SpawnTool().Execute(WithSessionKey(context.Background(), "test/c1"), json.RawMessage(`{"prompt":"p","context":"raw"}`))
+	_, err := s.SpawnTool().Execute(WithSessionKey(context.Background(), "test/c1"), json.RawMessage(`{"name":"delega1","prompt":"p","context":"raw"}`))
 	if err == nil || !strings.Contains(err.Error(), "invalid context") {
 		t.Fatalf("raw spawn on a backend without isolation: err = %v, want invalid context", err)
 	}
@@ -144,17 +144,17 @@ func TestDelegatedSpawn_OneShotsRunAsBatches(t *testing.T) {
 	ctx := WithSessionKey(context.Background(), "test/c1")
 	tool := s.SpawnTool()
 
-	res, err := tool.Execute(ctx, json.RawMessage(`{"prompt":"draft it","context":"raw","model":"zai/glm-4.6","timeout":30}`))
+	res, err := tool.Execute(ctx, json.RawMessage(`{"name":"delega2","prompt":"draft it","context":"raw","model":"zai/glm-4.6","timeout":30}`))
 	if err != nil {
 		t.Fatalf("raw: %v", err)
 	}
 	if !strings.HasPrefix(res.Text, "answer for spawn_raw") || !strings.Contains(res.Text, "out.txt") {
 		t.Errorf("raw result = %q, want the answer and the created file", res.Text)
 	}
-	if _, err := tool.Execute(ctx, json.RawMessage(`{"prompt":"as me","context":"character"}`)); err != nil {
+	if _, err := tool.Execute(ctx, json.RawMessage(`{"name":"delega3","prompt":"as me","context":"character"}`)); err != nil {
 		t.Fatalf("character: %v", err)
 	}
-	res, err = tool.Execute(ctx, json.RawMessage(`{"prompt":"where is X","context":"explore"}`))
+	res, err = tool.Execute(ctx, json.RawMessage(`{"name":"delega4","prompt":"where is X","context":"explore"}`))
 	if err != nil || res.Text != "answer for spawn_explore" {
 		t.Fatalf("explore = %q, %v", res.Text, err)
 	}
@@ -213,7 +213,7 @@ func TestDelegatedSpawn_NeverTouchesModelGroups(t *testing.T) {
 	}
 	ctx := WithSessionKey(context.Background(), "test/c1")
 	for _, mode := range []string{"raw", "character", "explore"} {
-		params, _ := json.Marshal(map[string]string{"prompt": "p", "context": mode, "model": "cheap"})
+		params, _ := json.Marshal(map[string]string{"name": "delega5", "prompt": "p", "context": mode, "model": "cheap"})
 		if _, err := s.SpawnTool().Execute(ctx, params); err != nil {
 			t.Fatalf("%s: %v", mode, err)
 		}

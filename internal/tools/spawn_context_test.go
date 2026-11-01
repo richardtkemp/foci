@@ -49,6 +49,7 @@ func TestSpawnContextRaw(t *testing.T) {
 	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
+		"name":    "contex1",
 		"prompt":  "What is the meaning of life?",
 		"model":   "powerful",
 		"context": "raw",
@@ -112,6 +113,7 @@ func TestSpawnContextCharacter(t *testing.T) {
 	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
+		"name":    "contex2",
 		"prompt":  "Analyze this deeply",
 		"model":   "opus",
 		"context": "character",
@@ -161,6 +163,7 @@ func TestSpawnContextClone(t *testing.T) {
 	ctx := WithSessionKey(context.Background(), "test/imain")
 
 	params, _ := json.Marshal(map[string]string{
+		"name":    "contex3",
 		"prompt":  "Do the research task",
 		"context": "clone",
 	})
@@ -257,6 +260,7 @@ func TestSpawnExploreMode(t *testing.T) {
 	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
+		"name":    "contex4",
 		"prompt":  "Find all Go files in the project",
 		"model":   "powerful", // explicitly request powerful — explore ignores it, uses cheap group
 		"context": "explore",

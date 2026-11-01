@@ -120,7 +120,7 @@ var spawnIDRe = regexp.MustCompile(`Spawn: (spawn-[0-9a-f]+)`)
 
 func (h *followupHarness) start(t *testing.T, prompt string) string {
 	t.Helper()
-	params, _ := json.Marshal(map[string]string{"prompt": prompt, "context": "clone"})
+	params, _ := json.Marshal(map[string]string{"name": "follow1", "prompt": prompt, "context": "clone"})
 	res, err := h.spawner.SpawnTool().Execute(h.ctx, params)
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
@@ -343,7 +343,7 @@ func TestSpawn_NestedFromSpawnBranchRefused(t *testing.T) {
 	waitStarted(t, agent, 0)
 	defer close(agent.gates[0])
 
-	params, _ := json.Marshal(map[string]string{"prompt": "nested", "context": "clone"})
+	params, _ := json.Marshal(map[string]string{"name": "follow2", "prompt": "nested", "context": "clone"})
 	_, err := h.spawner.SpawnTool().Execute(WithSessionKey(context.Background(), branch), params)
 	if err == nil || !strings.Contains(err.Error(), "nested") {
 		t.Errorf("spawn from a spawn's branch: err = %v, want nested refusal", err)

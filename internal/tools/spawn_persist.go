@@ -29,9 +29,11 @@ const maxSpawnRestartResumes = 3
 // spawnRecord is the persisted form of one spawn: what a new process needs to
 // resume it, or to hand its finished result to the parent.
 type spawnRecord struct {
-	ID          string        `json:"id"`
-	Parent      string        `json:"parent"`
-	BranchKey   string        `json:"branch_key"`
+	ID        string `json:"id"`
+	Parent    string `json:"parent"`
+	BranchKey string `json:"branch_key"`
+	// Name: see RunningSpawn (#2721); "" in a record written before names.
+	Name        string        `json:"name,omitempty"`
 	Description string        `json:"description"`
 	Model       string        `json:"model,omitempty"`
 	Prompt      string        `json:"prompt,omitempty"`
@@ -118,7 +120,7 @@ func (s *trackedSpawn) record(parent string) *spawnRecord {
 	}
 	return &spawnRecord{
 		ID: s.info.ID, Parent: parent, BranchKey: s.info.BranchKey,
-		Description: s.info.Description, Model: s.info.Model, Prompt: s.prompt,
+		Name: s.info.Name, Description: s.info.Description, Model: s.info.Model, Prompt: s.prompt,
 		Started: s.info.Started, Timeout: s.timeout, Pending: slices.Clone(s.pending),
 		Resumes: s.resumes, Running: s.running, Result: s.result,
 		Character: s.info.Character, SpawnModel: s.info.SpawnModel,

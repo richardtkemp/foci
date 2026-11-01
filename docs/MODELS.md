@@ -105,7 +105,7 @@ Env var: `FOCI_MODEL` (flag takes precedence).
 Agents can specify a model when spawning sub-agents:
 
 ```json
-{"tool": "spawn", "input": {"mode": "raw", "model": "anthropic/claude-haiku-4-5", "task": "..."}}
+{"tool": "spawn", "input": {"name": "quick check", "context": "raw", "model": "anthropic/claude-haiku-4-5", "prompt": "..."}}
 ```
 
 ### `/effort` command (Telegram)

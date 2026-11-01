@@ -637,7 +637,10 @@ type Activity struct {
 type RunningSubagent struct {
 	// ID is the subagent's group key (its Agent tool_use id): the app's
 	// subagent chit is "subagent:<ID>", which is how a tap opens its view.
-	ID          string `json:"id"`
+	ID string `json:"id"`
+	// Description is the entry's label: an Agent-tool subagent's own
+	// description, or, for a foci spawn (SubagentType "spawn"), the spawn's
+	// name (#2721; "(unnamed spawn)" for one started before names).
 	Description string `json:"description,omitempty"`
 	// Kind is "agent" (an Agent-tool subagent) or "command" (a background
 	// shell command, which has no subagent view).
@@ -800,7 +803,8 @@ func (InteractiveRemove) Type() string { return TypeInteractiveRemove }
 
 // SubagentStart marks a subagent (Task/Agent tool) run beginning, so the app can
 // create a collapsed "Agent started" entry that its text blocks attach to. GroupKey
-// is the parent tool_use id; Label the agent's description. From the PreToolUse hook
+// is the parent tool_use id; Label the agent's description (for a foci spawn, its
+// name, #2721; its prompt comes as Prompt). From the PreToolUse hook
 // — the app creates a run's entry ONLY on this frame, so a broken hook (no start)
 // means text with no group renders inline, never a "never finishes" run.
 type SubagentStart struct {

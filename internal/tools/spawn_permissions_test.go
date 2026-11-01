@@ -53,10 +53,10 @@ func TestDirectSpawn_SessionNamesItsSpawner(t *testing.T) {
 			s.deps.Tracker = NewSpawnTracker()
 			var asked []string
 			s.deps.TurnUnattended = func(sk string) bool { asked = append(asked, sk); return unattended }
-			if _, err := s.SpawnTool().Execute(WithSessionKey(context.Background(), parent), json.RawMessage(`{"prompt":"run go build"}`)); err != nil {
+			if _, err := s.SpawnTool().Execute(WithSessionKey(context.Background(), parent), json.RawMessage(`{"name":"permis1","prompt":"run go build"}`)); err != nil {
 				t.Fatalf("spawn: %v", err)
 			}
-			if !runner.seenOK || !runner.seen.Direct || runner.seen.Parent != parent || runner.seen.ID == "" || runner.seen.Description == "" {
+			if !runner.seenOK || !runner.seen.Direct || runner.seen.Parent != parent || runner.seen.ID == "" || runner.seen.Label != "permis1" {
 				t.Fatalf("SpawnOfSession while running = %+v, %v; want the direct spawn of %s", runner.seen, runner.seenOK, parent)
 			}
 			if runner.seen.SpawnerUnattended != unattended {

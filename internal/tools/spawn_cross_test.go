@@ -95,7 +95,7 @@ func TestDirectSpawnListedAndStoppable(t *testing.T) {
 	s := newDelegatedSpawner(runner, allBatchCaps)
 	s.deps.Tracker = NewSpawnTracker()
 	ctx := WithSessionKey(context.Background(), "test/c1")
-	call := runSpawnAsync(s, ctx, `{"prompt":"long job"}`)
+	call := runSpawnAsync(s, ctx, `{"name":"cross1","prompt":"long job"}`)
 	waitBatch(t, runner)
 
 	list, err := s.StatusTool().Execute(ctx, json.RawMessage(`{}`))
@@ -124,7 +124,7 @@ func TestDirectSpawnListedAndStoppable(t *testing.T) {
 		t.Errorf("after stop: %+v, want finished as stopped", sn[0])
 	}
 	// /stop reaches direct spawns too (it stops every spawn of the session).
-	call = runSpawnAsync(s, ctx, `{"prompt":"another"}`)
+	call = runSpawnAsync(s, ctx, `{"name":"cross2","prompt":"another"}`)
 	waitBatch(t, runner)
 	if n := s.deps.Tracker.Stop("test/c1"); n != 1 {
 		t.Fatalf("/stop stopped %d, want 1", n)
@@ -142,7 +142,7 @@ func TestDirectSpawnStopsWithItsCall(t *testing.T) {
 	s := newDelegatedSpawner(runner, allBatchCaps)
 	s.deps.Tracker = NewSpawnTracker()
 	ctx, cancel := context.WithCancel(WithSessionKey(context.Background(), "test/c1"))
-	call := runSpawnAsync(s, ctx, `{"prompt":"p","timeout":3600}`)
+	call := runSpawnAsync(s, ctx, `{"name":"cross3","prompt":"p","timeout":3600}`)
 	waitBatch(t, runner)
 	cancel() // what the exec bridge does when foci-call dies
 	if r := waitCall(t, call); r.err == nil {
@@ -162,9 +162,9 @@ func TestSpawnStopAll(t *testing.T) {
 	s := newDelegatedSpawner(runner, allBatchCaps)
 	s.deps.Tracker = NewSpawnTracker()
 	ctx := WithSessionKey(context.Background(), "test/c1")
-	a := runSpawnAsync(s, ctx, `{"prompt":"a"}`)
+	a := runSpawnAsync(s, ctx, `{"name":"cross4","prompt":"a"}`)
 	waitBatch(t, runner)
-	b := runSpawnAsync(s, ctx, `{"prompt":"b"}`)
+	b := runSpawnAsync(s, ctx, `{"name":"cross5","prompt":"b"}`)
 	waitBatch(t, runner)
 	out, err := s.StopTool().Execute(ctx, json.RawMessage(`{"id":"all"}`))
 	if err != nil || !strings.Contains(out.Text, "Stopping 2") {
@@ -214,7 +214,7 @@ func TestCrossAgentDirectSpawnRunsAsTarget(t *testing.T) {
 	t.Parallel()
 	caller, callerRunner, target, targetRunner := newCrossPair(t, "xdirect")
 	ctx := WithSessionKey(context.Background(), caller.deps.AgentID+"/c1")
-	call := runSpawnAsync(caller, ctx, `{"prompt":"do it for me","agent":"`+target.deps.AgentID+`"}`)
+	call := runSpawnAsync(caller, ctx, `{"name":"cross6","prompt":"do it for me","agent":"`+target.deps.AgentID+`"}`)
 	req := waitBatch(t, targetRunner)
 	if req.OwnerSessionKey != session.CrossAgentSpawnRoot(target.deps.AgentID) || !req.AgentPrompt || req.Access != delegator.BatchAccessParent {
 		t.Fatalf("target batch = %+v, want a character batch under the target's cross-agent root", req)
@@ -254,12 +254,12 @@ func TestCrossAgentSpawnRefusals(t *testing.T) {
 	caller, _, target, _ := newCrossPair(t, "xrefuse")
 	ctx := WithSessionKey(context.Background(), caller.deps.AgentID+"/c1")
 	for _, mode := range []string{"raw", "explore", "clone"} {
-		_, err := caller.SpawnTool().Execute(ctx, json.RawMessage(`{"prompt":"p","context":"`+mode+`","agent":"`+target.deps.AgentID+`"}`))
+		_, err := caller.SpawnTool().Execute(ctx, json.RawMessage(`{"name":"cross7","prompt":"p","context":"`+mode+`","agent":"`+target.deps.AgentID+`"}`))
 		if err == nil || !strings.Contains(err.Error(), "always runs in character mode") {
 			t.Errorf("%s as another agent: err = %v, want refused", mode, err)
 		}
 	}
-	_, err := caller.SpawnTool().Execute(ctx, json.RawMessage(`{"prompt":"p","agent":"nobody-xrefuse"}`))
+	_, err := caller.SpawnTool().Execute(ctx, json.RawMessage(`{"name":"cross8","prompt":"p","agent":"nobody-xrefuse"}`))
 	if err == nil || !strings.Contains(err.Error(), `unknown agent "nobody-xrefuse"`) || !strings.Contains(err.Error(), target.deps.AgentID) {
 		t.Errorf("unknown agent: err = %v, want a clear error naming the agents", err)
 	}
@@ -268,12 +268,12 @@ func TestCrossAgentSpawnRefusals(t *testing.T) {
 		"character":   WithSpawnCharacter(ctx),
 		"cross-agent": WithSessionKey(context.Background(), session.CrossAgentSpawnRoot(caller.deps.AgentID)+"/b1"),
 	} {
-		if _, err := caller.SpawnTool().Execute(c, json.RawMessage(`{"prompt":"p","agent":"`+target.deps.AgentID+`"}`)); err == nil || !strings.Contains(err.Error(), "cannot start a spawn of another agent") {
+		if _, err := caller.SpawnTool().Execute(c, json.RawMessage(`{"name":"cross9","prompt":"p","agent":"`+target.deps.AgentID+`"}`)); err == nil || !strings.Contains(err.Error(), "cannot start a spawn of another agent") {
 			t.Errorf("from a %s spawn: err = %v, want refused", name, err)
 		}
 	}
 	// Naming yourself is an ordinary spawn.
-	if _, err := caller.SpawnTool().Execute(ctx, json.RawMessage(`{"prompt":"p","context":"raw","agent":"`+caller.deps.AgentID+`"}`)); err != nil {
+	if _, err := caller.SpawnTool().Execute(ctx, json.RawMessage(`{"name":"cross10","prompt":"p","context":"raw","agent":"`+caller.deps.AgentID+`"}`)); err != nil {
 		t.Errorf("agent = own id: %v, want an ordinary spawn", err)
 	}
 }
@@ -294,7 +294,7 @@ func TestCrossAgentBackgroundSpawn(t *testing.T) {
 	registerTestSpawner(t, h.spawner)
 	registerTestSpawner(t, target)
 
-	res, err := h.spawner.SpawnTool().Execute(h.ctx, json.RawMessage(`{"prompt":"long task","background":true,"agent":"xbg-target"}`))
+	res, err := h.spawner.SpawnTool().Execute(h.ctx, json.RawMessage(`{"name":"cross11","prompt":"long task","background":true,"agent":"xbg-target"}`))
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
@@ -464,7 +464,7 @@ func TestSpawnAllowanceCheck(t *testing.T) {
 	}
 
 	s, runner := newS(fixedUsage(UsageRead{Info: usageOf(94, 20)}))
-	_, err := s.SpawnTool().Execute(ctx, json.RawMessage(`{"prompt":"p"}`))
+	_, err := s.SpawnTool().Execute(ctx, json.RawMessage(`{"name":"cross12","prompt":"p"}`))
 	if err == nil {
 		t.Fatal("a spawn on a backend with 6% left ran")
 	}
@@ -476,29 +476,29 @@ func TestSpawnAllowanceCheck(t *testing.T) {
 	if len(runner.reqs) != 0 {
 		t.Fatal("the refused spawn ran a batch")
 	}
-	if _, err := s.SpawnTool().Execute(ctx, json.RawMessage(`{"prompt":"p","use_reserve":true}`)); err != nil || len(runner.reqs) != 1 {
+	if _, err := s.SpawnTool().Execute(ctx, json.RawMessage(`{"name":"cross13","prompt":"p","use_reserve":true}`)); err != nil || len(runner.reqs) != 1 {
 		t.Fatalf("use_reserve: %v, batches %d; want it run", err, len(runner.reqs))
 	}
 
 	s, runner = newS(nil)
-	if res, err := s.SpawnTool().Execute(ctx, json.RawMessage(`{"prompt":"p"}`)); err != nil || strings.Contains(res.Text, "not checked") {
+	if res, err := s.SpawnTool().Execute(ctx, json.RawMessage(`{"name":"cross14","prompt":"p"}`)); err != nil || strings.Contains(res.Text, "not checked") {
 		t.Errorf("no usage source: %q, %v; want it run with no note", res.Text, err)
 	}
 
 	s, _ = newS(fixedUsage(UsageRead{Err: errors.New("boom")}))
-	if res, err := s.SpawnTool().Execute(ctx, json.RawMessage(`{"prompt":"p"}`)); err != nil || !strings.Contains(res.Text, "not checked: the usage read failed: boom") {
+	if res, err := s.SpawnTool().Execute(ctx, json.RawMessage(`{"name":"cross15","prompt":"p"}`)); err != nil || !strings.Contains(res.Text, "not checked: the usage read failed: boom") {
 		t.Errorf("failed read: %q, %v; want it run with a note", res.Text, err)
 	}
 
 	s, _ = newS(fixedUsage(UsageRead{Pending: true}))
-	if res, err := s.SpawnTool().Execute(ctx, json.RawMessage(`{"prompt":"p"}`)); err != nil || !strings.Contains(res.Text, "still running") {
+	if res, err := s.SpawnTool().Execute(ctx, json.RawMessage(`{"name":"cross16","prompt":"p"}`)); err != nil || !strings.Contains(res.Text, "still running") {
 		t.Errorf("pending read: %q, %v; want it run with a note", res.Text, err)
 	}
 
 	// The reserve is the caller's setting; 0 turns the check off.
 	s, _ = newS(fixedUsage(UsageRead{Info: usageOf(100, 100)}))
 	s.deps.ReservePercent = func() int { return 0 }
-	if _, err := s.SpawnTool().Execute(ctx, json.RawMessage(`{"prompt":"p"}`)); err != nil {
+	if _, err := s.SpawnTool().Execute(ctx, json.RawMessage(`{"name":"cross17","prompt":"p"}`)); err != nil {
 		t.Errorf("reserve 0: %v, want no check", err)
 	}
 }
@@ -510,7 +510,7 @@ func TestCrossAgentSpawnChecksTargetAllowance(t *testing.T) {
 	caller.deps.Usage = fixedUsage(UsageRead{Info: usageOf(10, 10)})
 	target.deps.Usage = fixedUsage(UsageRead{Info: usageOf(10, 97)})
 	ctx := WithSessionKey(context.Background(), caller.deps.AgentID+"/c1")
-	_, err := caller.SpawnTool().Execute(ctx, json.RawMessage(`{"prompt":"p","agent":"`+target.deps.AgentID+`"}`))
+	_, err := caller.SpawnTool().Execute(ctx, json.RawMessage(`{"name":"cross18","prompt":"p","agent":"`+target.deps.AgentID+`"}`))
 	if err == nil || !strings.Contains(err.Error(), target.deps.AgentID+"'s Claude Code allowance") || !strings.Contains(err.Error(), "weekly window has 3% left") {
 		t.Fatalf("err = %v, want refused on the target's weekly window", err)
 	}
@@ -826,7 +826,7 @@ func TestCrossAgentDirectSpawnPromptsGoToCaller(t *testing.T) {
 	t.Parallel()
 	caller, _, target, targetRunner := newCrossPair(t, "xperm")
 	callerSession := caller.deps.AgentID + "/c2730"
-	call := runSpawnAsync(caller, WithSessionKey(context.Background(), callerSession), `{"prompt":"run go build","agent":"`+target.deps.AgentID+`"}`)
+	call := runSpawnAsync(caller, WithSessionKey(context.Background(), callerSession), `{"name":"cross19","prompt":"run go build","agent":"`+target.deps.AgentID+`"}`)
 	req := waitBatch(t, targetRunner)
 	batchKey := session.CrossAgentSpawnRoot(target.deps.AgentID) + "/b2730"
 	req.OnSession(batchKey)

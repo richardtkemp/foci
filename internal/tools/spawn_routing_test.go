@@ -82,7 +82,7 @@ func newSpawnEchoRegistry() *Registry {
 func runCharacterSpawn(t *testing.T, deps SpawnDeps) {
 	t.Helper()
 	tool := NewSpawner(deps, nil).SpawnTool()
-	params, err := json.Marshal(map[string]string{"prompt": "test", "context": "character"})
+	params, err := json.Marshal(map[string]string{"name": "routin1", "prompt": "test", "context": "character"})
 	if err != nil {
 		t.Fatalf("marshal params: %v", err)
 	}

@@ -15,8 +15,9 @@ package tools
 // started from (Parent), what the tracker shows for it, and whether the
 // turn that started it was unattended.
 type SpawnSession struct {
-	ID                string
-	Description       string
+	ID string
+	// Label is the spawn's name as shown (RunningSpawn.Label).
+	Label             string
 	Parent            string
 	Direct            bool
 	SpawnerUnattended bool
@@ -32,7 +33,7 @@ func SpawnOfSession(sessionKey string) (SpawnSession, bool) {
 	if v, ok := directSpawnBatches.Load(sessionKey); ok {
 		l := v.(spawnLink)
 		return SpawnSession{
-			ID: l.info.ID, Description: l.info.Description, Parent: l.parent,
+			ID: l.info.ID, Label: l.info.Label(), Parent: l.parent,
 			Direct: true, SpawnerUnattended: l.info.SpawnerUnattended,
 		}, true
 	}
@@ -41,7 +42,7 @@ func SpawnOfSession(sessionKey string) (SpawnSession, bool) {
 		return SpawnSession{}, false
 	}
 	return SpawnSession{
-		ID: info.ID, Description: info.Description, Parent: parent,
+		ID: info.ID, Label: info.Label(), Parent: parent,
 		Direct: info.Direct, SpawnerUnattended: info.SpawnerUnattended,
 	}, true
 }

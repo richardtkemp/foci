@@ -32,7 +32,9 @@ func TestCompactSummary(t *testing.T) {
 		{"scratchpad", "scratchpad", raw(map[string]string{"action": "read"}), "read"},
 		{"remind", "remind", raw(map[string]string{"text": "remember this"}), "remember this"},
 		{"send_to_chat", "send_to_chat", raw(map[string]string{"text": "hello world"}), "hello world"},
-		{"spawn", "spawn", raw(map[string]string{"prompt": "summarize this"}), "summarize this"},
+		{"spawn", "spawn", raw(map[string]string{"name": "summariser", "prompt": "summarize this"}), "summariser"},
+		{"spawn name on one line", "spawn", raw(map[string]string{"name": "fix\n  the parser", "prompt": "summarize this"}), "fix the parser"},
+		{"spawn without a name", "spawn", raw(map[string]string{"prompt": "summarize this"}), ""},
 		{"unknown fallback", "custom_tool", raw(map[string]string{"foo": "bar value"}), "bar value"},
 		{"empty params", "unknown", map[string]json.RawMessage{}, ""},
 	}

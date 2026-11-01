@@ -818,18 +818,18 @@ func chatAgentID(sessionKey, fallback string) string {
 // (#2730): its request is shown in the caller's chat, where the human must
 // see which agent asks. Text from any other session is returned unchanged.
 func prependSpawnOrigin(tr *tools.SpawnTracker, sessionKey, text string) string {
-	id, desc := "", ""
+	id, label := "", ""
 	if _, sp, ok := tr.ForBranch(sessionKey); ok {
-		id, desc = sp.ID, sp.Description
+		id, label = sp.ID, sp.Label()
 	} else if sp, ok := tools.SpawnOfSession(sessionKey); ok && sp.Direct {
-		id, desc = sp.ID, sp.Description
+		id, label = sp.ID, sp.Label
 	} else {
 		return text
 	}
 	if session.IsCrossAgentSpawnKey(sessionKey) {
-		return fmt.Sprintf("🐣 **From %s's spawn %s:** %s", session.AgentIDFromKey(sessionKey), id, desc) + "\n\n" + text
+		return fmt.Sprintf("🐣 **From %s's spawn %s:** %s", session.AgentIDFromKey(sessionKey), id, label) + "\n\n" + text
 	}
-	return fmt.Sprintf("🐣 **From spawn %s:** %s", id, desc) + "\n\n" + text
+	return fmt.Sprintf("🐣 **From spawn %s:** %s", id, label) + "\n\n" + text
 }
 
 // backendPromptFuncs returns the two prompt closures the DelegatedManager

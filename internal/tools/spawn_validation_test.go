@@ -20,6 +20,7 @@ func TestSpawnEmptyPrompt(t *testing.T) {
 	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
+		"name":    "valida1",
 		"prompt":  "",
 		"context": "raw",
 	})
@@ -44,6 +45,7 @@ func TestSpawnInvalidContext(t *testing.T) {
 	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
+		"name":    "valida2",
 		"prompt":  "test",
 		"context": "bogus",
 	})
@@ -75,6 +77,7 @@ func TestSpawnInheritNoParentSession(t *testing.T) {
 
 	// No session key in context
 	params, _ := json.Marshal(map[string]string{
+		"name":    "valida3",
 		"prompt":  "task",
 		"context": "clone",
 	})
@@ -111,6 +114,7 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 
 	// Inherit should be rejected
 	params, _ := json.Marshal(map[string]string{
+		"name":    "valida4",
 		"prompt":  "nested task",
 		"context": "clone",
 	})
@@ -130,6 +134,7 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 	tool = NewSpawner(deps, func() SpawnAgent { return mockAgent }).SpawnTool()
 
 	params, _ = json.Marshal(map[string]string{
+		"name":    "valida5",
 		"prompt":  "simple query",
 		"context": "raw",
 	})
@@ -142,6 +147,7 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 	}
 
 	params, _ = json.Marshal(map[string]string{
+		"name":    "valida6",
 		"prompt":  "full query",
 		"context": "character",
 	})
@@ -173,6 +179,7 @@ func TestSpawnInheritOrientationTemplate(t *testing.T) {
 
 	ctx := WithSessionKey(context.Background(), "test/imain")
 	params, _ := json.Marshal(map[string]string{
+		"name":    "valida7",
 		"prompt":  "Do something",
 		"context": "clone",
 	})
@@ -232,6 +239,7 @@ func TestSpawnModelGroups(t *testing.T) {
 
 		params, _ := json.Marshal(map[string]string{
 			"model":   tt.group,
+			"name":    "valida8",
 			"prompt":  "test",
 			"context": "raw",
 		})
@@ -269,6 +277,7 @@ func TestSpawnModelDefault(t *testing.T) {
 
 	// No model specified — should use parent's default (session model)
 	params, _ := json.Marshal(map[string]string{
+		"name":    "valida9",
 		"prompt":  "test",
 		"context": "raw",
 	})
@@ -346,6 +355,7 @@ func TestSpawnModelOpenRouter(t *testing.T) {
 			tool := NewSpawner(deps, nil).SpawnTool()
 
 			params, _ := json.Marshal(map[string]string{
+				"name":    "valida10",
 				"prompt":  "test",
 				"context": "raw",
 			})
@@ -375,6 +385,7 @@ func TestSpawnTimeout(t *testing.T) {
 	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]interface{}{
+		"name":    "valida11",
 		"prompt":  "test",
 		"context": "raw",
 		"timeout": 1, // 1 second timeout

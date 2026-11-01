@@ -75,7 +75,7 @@ func TestSpawnInherit_ObserverListsAndStopStops(t *testing.T) {
 	}
 	tool := NewSpawner(deps, func() SpawnAgent { return agent }).SpawnTool()
 	ctx := WithSessionKey(context.Background(), "test/imain")
-	params, _ := json.Marshal(map[string]string{"prompt": "Find the bug\n  in   the parser", "context": "clone"})
+	params, _ := json.Marshal(map[string]string{"name": "tracke1", "prompt": "Find the bug\n  in   the parser", "context": "clone"})
 	if _, err := tool.Execute(ctx, params); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}

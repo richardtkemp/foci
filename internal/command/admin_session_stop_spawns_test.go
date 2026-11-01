@@ -39,7 +39,7 @@ func TestStopSubagents_StopsBackgroundSpawns(t *testing.T) {
 		Tracker:    tools.Spawns,
 	}, func() tools.SpawnAgent { return ag }).SpawnTool()
 	ctx := tools.WithSessionKey(context.Background(), "agent:stoptest:main")
-	params, _ := json.Marshal(map[string]string{"prompt": "work", "context": "clone"})
+	params, _ := json.Marshal(map[string]string{"name": "worker", "prompt": "work", "context": "clone"})
 	if _, err := tool.Execute(ctx, params); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}

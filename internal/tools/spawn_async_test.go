@@ -50,6 +50,7 @@ func TestSpawnInheritSemaphore(t *testing.T) {
 	// Launch 4 concurrent inherit calls (all return immediately with ack)
 	for i := 0; i < 4; i++ {
 		params, _ := json.Marshal(map[string]string{
+			"name":    "async1",
 			"prompt":  "task",
 			"context": "clone",
 		})
@@ -98,6 +99,7 @@ func TestSpawnInheritAsyncDelivery(t *testing.T) {
 
 	ctx := WithSessionKey(context.Background(), "test/imain")
 	params, _ := json.Marshal(map[string]string{
+		"name":    "async2",
 		"prompt":  "Do research",
 		"context": "clone",
 	})
@@ -155,6 +157,7 @@ func TestSpawnInheritAsyncError(t *testing.T) {
 
 	ctx := WithSessionKey(context.Background(), "test/imain")
 	params, _ := json.Marshal(map[string]string{
+		"name":    "async3",
 		"prompt":  "Do task",
 		"context": "clone",
 	})
@@ -201,6 +204,7 @@ func TestSpawnInheritNilNotifierSync(t *testing.T) {
 
 	ctx := WithSessionKey(context.Background(), "test/imain")
 	params, _ := json.Marshal(map[string]string{
+		"name":    "async4",
 		"prompt":  "Do task",
 		"context": "clone",
 	})

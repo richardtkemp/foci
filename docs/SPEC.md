@@ -189,9 +189,11 @@ Stored in SQLite, scoped per-agent via `agent_id` column. On compaction, scratch
 The `spawn` tool is a unified sub-call mechanism with four context modes:
 
 ```
-spawn(prompt="Evaluate this architecture", model="opus", context="raw")
-spawn(prompt="Research this topic thoroughly", context="clone")
+spawn(name="arch review", prompt="Evaluate this architecture", model="opus", context="raw")
+spawn(name="research", prompt="Research this topic thoroughly", context="clone")
 ```
+
+Every spawn call names its spawn (`name`, required, #2721). The name is unique among the spawns `spawn_status` lists in the calling session (running, or finished and still remembered); `all` is reserved. The user sees a spawn by its name, not its prompt, and `spawn_send`, `spawn_status` and `spawn_stop` take the name as well as the id.
 
 **Context modes:**
 
@@ -318,7 +320,7 @@ Selected tools are exposed as shell functions inside `shell` commands. A per-she
 - `foci_memory_search <query>`
 - `foci_todo <action> [args...]`
 - `foci_send_to_chat <text>` (also reads stdin when no args)
-- `foci_spawn <prompt> [--model M] [--context C]`
+- `foci_spawn <prompt> --name N [--model M] [--context C]`
 
 **Example:** `foci_web_search "golang generics" | head -3 | foci_send_to_chat`
 

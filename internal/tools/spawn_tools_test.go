@@ -62,6 +62,7 @@ func TestSpawnOneShotWithTools(t *testing.T) {
 	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
+		"name":    "tools1",
 		"prompt":  "test",
 		"context": "character",
 	})
@@ -308,6 +309,7 @@ func TestSpawnCharacterTools(t *testing.T) {
 	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
+		"name":    "tools2",
 		"prompt":  "test",
 		"context": "character",
 	})
@@ -391,7 +393,7 @@ func spawnWithLedger(t *testing.T, ctx context.Context) (*accounting.Ledger, []a
 	})
 	deps := SpawnDeps{Client: newTestAnthropicClient(server.URL, "test-token"), Registry: reg,
 		FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: func() int { return 10 }}
-	params, _ := json.Marshal(map[string]string{"prompt": "test", "context": "character"})
+	params, _ := json.Marshal(map[string]string{"name": "tools3", "prompt": "test", "context": "character"})
 	if _, err := NewSpawner(deps, nil).SpawnTool().Execute(WithSessionKey(ctx, "gil/c1"), params); err != nil {
 		t.Fatal(err)
 	}

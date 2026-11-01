@@ -77,7 +77,7 @@ func TestBackendPrompt_SpawnerChatClosedIsUnattended(t *testing.T) {
 func TestPrependSpawnOrigin_KnownSpawns(t *testing.T) {
 	t.Parallel()
 	const parent, bk = "main/c26842", "main/c26842/b1"
-	tools.Spawns.Add(parent, tools.RunningSpawn{ID: "spawn-bg2684", BranchKey: bk, Description: "watch CI"}, func() {})
+	tools.Spawns.Add(parent, tools.RunningSpawn{ID: "spawn-bg2684", BranchKey: bk, Name: "watch CI"}, func() {})
 	t.Cleanup(func() { tools.Spawns.Stop(parent) })
 	if got := prependSpawnOrigin(tools.Spawns, bk, "Allow?"); !strings.HasPrefix(got, "🐣 **From spawn spawn-bg2684:** watch CI") {
 		t.Errorf("background spawn prompt = %q, want it named", got)
@@ -115,7 +115,7 @@ func TestBackendPrompt_CrossAgentSpawnShownInCallersChat(t *testing.T) {
 		spawn  = "helen/ixspawn/b2730"
 		caller = "clutch/c2730"
 	)
-	tools.Spawns.Add(caller, tools.RunningSpawn{ID: "spawn-x2730", BranchKey: spawn, Description: "build it", Agent: "helen"}, func() {})
+	tools.Spawns.Add(caller, tools.RunningSpawn{ID: "spawn-x2730", BranchKey: spawn, Name: "build it", Agent: "helen"}, func() {})
 	t.Cleanup(func() { tools.Spawns.Stop(caller) })
 	ownerOf := func(branchKey string) (string, bool) {
 		if branchKey == spawn {

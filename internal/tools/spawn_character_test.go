@@ -92,7 +92,7 @@ func TestDelegatedSpawnTool_DefaultsToCharacter(t *testing.T) {
 	s := newDelegatedSpawner(runner, allBatchCaps)
 	tr := NewSpawnTracker()
 	s.deps.Tracker = tr
-	res, err := s.SpawnTool().Execute(WithSessionKey(context.Background(), "test/c1"), json.RawMessage(`{"prompt":"do it"}`))
+	res, err := s.SpawnTool().Execute(WithSessionKey(context.Background(), "test/c1"), json.RawMessage(`{"name":"charac1","prompt":"do it"}`))
 	if err != nil || res.Text != "answer for spawn_character" {
 		t.Fatalf("default spawn = %q, %v; want the character batch's answer", res.Text, err)
 	}
@@ -121,7 +121,7 @@ func TestSpawnContextCharacterDefault(t *testing.T) {
 		FallbackFormat: "anthropic",
 		MaxInherit:     3,
 	}, func() SpawnAgent { return mockAgent }).SpawnTool()
-	if _, err := tool.Execute(WithSessionKey(context.Background(), "test/imain"), json.RawMessage(`{"prompt":"Do something"}`)); err != nil {
+	if _, err := tool.Execute(WithSessionKey(context.Background(), "test/imain"), json.RawMessage(`{"name":"charac2","prompt":"Do something"}`)); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if mockSessions.parentKey != "" {
@@ -155,11 +155,11 @@ func TestSpawnTimeoutsByRunForm(t *testing.T) {
 	// Through the tool: a clone with no timeout gets an hour; one asking
 	// for more than a day gets a day; a direct one-shot over a day too.
 	h := newFollowupHarness(newScriptedSpawnAgent(0))
-	if _, err := h.spawner.SpawnTool().Execute(h.ctx, json.RawMessage(`{"prompt":"a","context":"clone"}`)); err != nil {
+	if _, err := h.spawner.SpawnTool().Execute(h.ctx, json.RawMessage(`{"name":"charac3","prompt":"a","context":"clone"}`)); err != nil {
 		t.Fatal(err)
 	}
 	h.result(t)
-	if _, err := h.spawner.SpawnTool().Execute(h.ctx, json.RawMessage(`{"prompt":"b","context":"clone","timeout":999999}`)); err != nil {
+	if _, err := h.spawner.SpawnTool().Execute(h.ctx, json.RawMessage(`{"name":"charac4","prompt":"b","context":"clone","timeout":999999}`)); err != nil {
 		t.Fatal(err)
 	}
 	h.result(t)
@@ -173,7 +173,7 @@ func TestSpawnTimeoutsByRunForm(t *testing.T) {
 
 	runner := &recordingBatchRunner{}
 	s := newDelegatedSpawner(runner, allBatchCaps)
-	if _, err := s.SpawnTool().Execute(WithSessionKey(context.Background(), "test/c1"), json.RawMessage(`{"prompt":"p","context":"explore","timeout":999999}`)); err != nil {
+	if _, err := s.SpawnTool().Execute(WithSessionKey(context.Background(), "test/c1"), json.RawMessage(`{"name":"charac5","prompt":"p","context":"explore","timeout":999999}`)); err != nil {
 		t.Fatal(err)
 	}
 	if d := runner.deadlines[0]; d <= 23*time.Hour || d > 24*time.Hour {
@@ -190,7 +190,7 @@ func TestBackgroundCharacterSpawn(t *testing.T) {
 	t.Parallel()
 	agent := newCtxSpawnAgent()
 	h, cb := newCharacterHarness(agent)
-	res, err := h.spawner.SpawnTool().Execute(h.ctx, json.RawMessage(`{"prompt":"fix the bug","background":true,"model":"cheap"}`))
+	res, err := h.spawner.SpawnTool().Execute(h.ctx, json.RawMessage(`{"name":"charac6","prompt":"fix the bug","background":true,"model":"cheap"}`))
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
@@ -253,13 +253,13 @@ func TestBackgroundOnlyForCharacter(t *testing.T) {
 	agent := newCtxSpawnAgent()
 	h, cb := newCharacterHarness(agent)
 	for _, mode := range []string{"raw", "explore"} {
-		params, _ := json.Marshal(map[string]any{"prompt": "p", "context": mode, "background": true})
+		params, _ := json.Marshal(map[string]any{"name": "charac7", "prompt": "p", "context": mode, "background": true})
 		if _, err := h.spawner.SpawnTool().Execute(h.ctx, params); err == nil || !strings.Contains(err.Error(), "only a character spawn") {
 			t.Errorf("%s with background: err = %v, want refused", mode, err)
 		}
 	}
 	nested := WithSpawnInherit(h.ctx)
-	if _, err := h.spawner.SpawnTool().Execute(nested, json.RawMessage(`{"prompt":"p","background":true}`)); err == nil {
+	if _, err := h.spawner.SpawnTool().Execute(nested, json.RawMessage(`{"name":"charac8","prompt":"p","background":true}`)); err == nil {
 		t.Error("a background spawn started another background spawn")
 	}
 	if len(cb.created) != 0 {
@@ -307,7 +307,7 @@ func TestCharacterSpawnRecordPersistsMode(t *testing.T) {
 		d.CharacterBranch = cb.create
 		d.PrepareCharacterBranch = cb.prepare
 	})
-	res, err := h.spawner.SpawnTool().Execute(h.ctx, json.RawMessage(`{"prompt":"p","background":true,"model":"m1"}`))
+	res, err := h.spawner.SpawnTool().Execute(h.ctx, json.RawMessage(`{"name":"charac9","prompt":"p","background":true,"model":"m1"}`))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -354,7 +354,7 @@ func TestToolTable_SpawnWiresProviderRouting(t *testing.T) {
 	if spawn == nil {
 		t.Fatal("spawn tool not registered on the API path")
 	}
-	if _, err := spawn.Execute(context.Background(), json.RawMessage(`{"prompt":"test","context":"raw"}`)); err != nil {
+	if _, err := spawn.Execute(context.Background(), json.RawMessage(`{"name":"routing","prompt":"test","context":"raw"}`)); err != nil {
 		t.Fatalf("spawn execute: %v", err)
 	}
 

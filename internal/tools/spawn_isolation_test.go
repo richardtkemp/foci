@@ -29,6 +29,7 @@ func TestSpawnRawCreatesTempDir(t *testing.T) {
 	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
+		"name":    "isolat1",
 		"prompt":  "test",
 		"context": "raw",
 	})
@@ -78,6 +79,7 @@ func TestSpawnRawIsolationWritesToTempDir(t *testing.T) {
 	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
+		"name":    "isolat2",
 		"prompt":  "test",
 		"context": "raw",
 	})
@@ -142,6 +144,7 @@ func TestSpawnRawIsolationBlocksAbsolutePath(t *testing.T) {
 	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
+		"name":    "isolat3",
 		"prompt":  "test",
 		"context": "raw",
 	})
@@ -188,6 +191,7 @@ func TestSpawnRawIsolationBlocksTraversal(t *testing.T) {
 	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
+		"name":    "isolat4",
 		"prompt":  "test",
 		"context": "raw",
 	})
@@ -244,6 +248,7 @@ func TestSpawnRawFileListMultiple(t *testing.T) {
 	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
+		"name":    "isolat5",
 		"prompt":  "test",
 		"context": "raw",
 	})

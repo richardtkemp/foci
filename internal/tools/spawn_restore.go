@@ -90,7 +90,7 @@ func (s *Spawner) RestoreSpawns() {
 			s.deliver(rec.Parent, rec.ID, rec.Result)
 			continue
 		}
-		label := fmt.Sprintf("%s (%s)", rec.ID, rec.Description)
+		label := fmt.Sprintf("%s (%s)", rec.ID, recInfo(rec).Label())
 		// The agent the spawn runs as: this one, or another for a
 		// cross-agent spawn (#2662).
 		host := s.hostOf(recInfo(rec))
@@ -107,8 +107,8 @@ func (s *Spawner) RestoreSpawns() {
 			// The messages it kept for its spawner head the report, as
 			// they would have headed its result (#2677).
 			s.deliver(rec.Parent, rec.ID, keptMessagesHead(rec.ID, tr.takeKept(rec.Parent, rec.ID))+fmt.Sprintf(
-				"[SPAWN RESULT] Branch %s (spawn %s) was lost in a foci restart and could not be resumed: %s. Its task was:\n\n%s",
-				rec.BranchKey, rec.ID, reason, rec.Prompt))
+				"%s was lost in a foci restart and could not be resumed: %s. Its task was:\n\n%s",
+				spawnResultHead(recInfo(rec).Label(), rec.BranchKey, rec.ID), reason, rec.Prompt))
 			report(rec.Parent).lost = append(report(rec.Parent).lost, label+": "+reason)
 			continue
 		}
@@ -195,7 +195,8 @@ func (s *Spawner) resumeAfterRestart(host *Spawner, agent SpawnAgent, rec spawnR
 
 	if s.deps.Observer != nil {
 		shown := running
-		shown.Description = "(resumed after restart) " + running.Description
+		// The prefix goes in front of its name, which the app shows.
+		shown.Name = "(resumed after restart) " + running.Label()
 		s.deps.Observer.SpawnStarted(rec.Parent, shown, texts[0])
 	}
 	_, _ = s.runBackground(context.Background(), agent, rec.Parent, running, texts, spawnCtx, cancel, "")
@@ -208,7 +209,7 @@ func recInfo(rec spawnRecord) RunningSpawn {
 		mode = spawnModeCharacter
 	}
 	return RunningSpawn{
-		ID: rec.ID, BranchKey: rec.BranchKey, Description: rec.Description,
+		ID: rec.ID, BranchKey: rec.BranchKey, Name: rec.Name, Description: rec.Description,
 		Model: rec.Model, Started: rec.Started,
 		Character: rec.Character, SpawnModel: rec.SpawnModel,
 		Mode: mode, Agent: rec.Agent, SpawnerUnattended: rec.SpawnerUnattended,

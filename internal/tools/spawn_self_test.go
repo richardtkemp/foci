@@ -75,7 +75,7 @@ func TestAPICharacterSpawnOwnIdentity(t *testing.T) {
 		Client: newTestAnthropicClient(server.URL, "test-token"), Registry: reg, AgentID: "clutch",
 		FallbackModel: spawnModel, FallbackFormat: "anthropic", MaxToolLoops: func() int { return 5 },
 	}
-	params, _ := json.Marshal(map[string]string{"prompt": "who are you?", "context": "character"})
+	params, _ := json.Marshal(map[string]string{"name": "self1", "prompt": "who are you?", "context": "character"})
 	if _, err := NewSpawner(deps, nil).SpawnTool().Execute(WithSessionKey(context.Background(), parent), params); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}

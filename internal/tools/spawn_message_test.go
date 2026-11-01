@@ -93,7 +93,7 @@ func TestSendToSpawnerFromBackgroundSpawn(t *testing.T) {
 	s = NewSpawner(SpawnDeps{AgentID: "msgbg", MaxInherit: 1, Notifier: notifier, Tracker: NewSpawnTracker(), CharacterBranch: cb.create},
 		func() SpawnAgent { return agent })
 	ctx := WithSessionKey(context.Background(), "msgbg/imain")
-	if _, err := s.SpawnTool().Execute(ctx, json.RawMessage(`{"prompt":"job","background":true}`)); err != nil {
+	if _, err := s.SpawnTool().Execute(ctx, json.RawMessage(`{"name":"messag1","prompt":"job","background":true}`)); err != nil {
 		t.Fatal(err)
 	}
 	first := recv(t, got, "the spawn's message")
@@ -134,7 +134,7 @@ func TestSendToSpawnerFromCrossAgentBackgroundSpawn(t *testing.T) {
 	registerTestSpawner(t, caller)
 	registerTestSpawner(t, target)
 	ctx := WithSessionKey(context.Background(), "msgx-caller/imain")
-	if _, err := caller.SpawnTool().Execute(ctx, json.RawMessage(`{"prompt":"job","background":true,"agent":"msgx-target"}`)); err != nil {
+	if _, err := caller.SpawnTool().Execute(ctx, json.RawMessage(`{"name":"messag2","prompt":"job","background":true,"agent":"msgx-target"}`)); err != nil {
 		t.Fatal(err)
 	}
 	first := recv(t, got, "the spawn's message")
@@ -164,7 +164,7 @@ func TestSendToSpawnerFromDirectSpawnWhileCallerWaits(t *testing.T) {
 	caller := &busyAgent{busy: true}
 	s.agentFn = func() SpawnAgent { return caller }
 	ctx := WithSessionKey(context.Background(), "test/c7")
-	call := runSpawnAsync(s, ctx, `{"prompt":"job"}`)
+	call := runSpawnAsync(s, ctx, `{"name":"messag3","prompt":"job"}`)
 	req := waitBatch(t, runner)
 	if req.OnSession == nil {
 		t.Fatal("a direct batch has no OnSession hook, so its tool calls cannot find their spawn")
@@ -209,7 +209,7 @@ func TestSendToSpawnerFromDirectSpawnCallerIdle(t *testing.T) {
 	s := NewSpawner(SpawnDeps{AgentID: "msgidle", MaxInherit: 1, Notifier: notifier, Tracker: NewSpawnTracker()},
 		func() SpawnAgent { return &busyAgent{busy: false} })
 	ctx := WithSessionKey(context.Background(), "msgidle/c1")
-	res, err := s.runDirect(ctx, s, spawnModeRaw, "p", "", time.Minute, func(runCtx context.Context) (ToolResult, error) {
+	res, err := s.runDirect(ctx, s, spawnModeRaw, "d1", "p", "", time.Minute, func(runCtx context.Context) (ToolResult, error) {
 		// An API one-shot's tool calls run on the caller's session key,
 		// with the spawn in their ctx.
 		if r, err := sendToSpawner(s, runCtx, "early news"); err != nil || !strings.HasPrefix(r.Text, "Sent to your spawner") {
@@ -238,7 +238,7 @@ func TestSendToSpawnerDirectFailedAndEnded(t *testing.T) {
 		func() SpawnAgent { return &busyAgent{busy: true} })
 	ctx := WithSessionKey(context.Background(), "msgfail/c1")
 	var linked context.Context
-	_, err := s.runDirect(ctx, s, spawnModeRaw, "p", "", time.Minute, func(runCtx context.Context) (ToolResult, error) {
+	_, err := s.runDirect(ctx, s, spawnModeRaw, "d2", "p", "", time.Minute, func(runCtx context.Context) (ToolResult, error) {
 		linked = runCtx
 		if _, err := sendToSpawner(s, runCtx, "before the crash"); err != nil {
 			t.Error(err)
@@ -271,7 +271,7 @@ func TestSendToSpawnerHeldRoute(t *testing.T) {
 		}},
 		func() SpawnAgent { return agent })
 	ctx := WithSessionKey(context.Background(), "msghold/imain")
-	if _, err := s.SpawnTool().Execute(ctx, json.RawMessage(`{"prompt":"job","background":true}`)); err != nil {
+	if _, err := s.SpawnTool().Execute(ctx, json.RawMessage(`{"name":"messag4","prompt":"job","background":true}`)); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(10 * time.Second)

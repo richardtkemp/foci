@@ -28,7 +28,7 @@ func TestFormatToolCallCompact(t *testing.T) {
 		{"tmux watch", "tmux", `{"operation":"watch","name":"cc-bash","threshold_seconds":30}`, "watch cc-bash", "🪟"},
 		{"todo add", "todo", `{"action":"add","text":"buy milk"}`, "add", "☑️"},
 		{"send_to_chat", "send_to_chat", `{"text":"hello world, how are you doing today?"}`, "hello world", "📨"},
-		{"spawn", "spawn", `{"prompt":"summarize this document please"}`, "summarize this document", "🐣"},
+		{"spawn", "spawn", `{"name":"doc summariser","prompt":"summarize this document please"}`, "doc summariser", "🐣"},
 		{"memory_search", "memory_search", `{"query":"project setup"}`, "project setup", "🧠"},
 		{"unknown tool", "custom_tool", `{"foo":"bar value"}`, "bar value", "🔧"},
 	}
