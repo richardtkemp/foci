@@ -314,8 +314,8 @@ func TestKeyboardOptionsOnBuiltinCommands(t *testing.T) {
 			t.Fatal("config command should have KeyboardOptions")
 		}
 		opts := cmd.KeyboardOptions(context.Background(), cc)
-		if len(opts) != 5 {
-			t.Fatalf("got %d options, want 5", len(opts))
+		if len(opts) != 6 {
+			t.Fatalf("got %d options, want 6 (toml, table, available, get, set, unset)", len(opts))
 		}
 	})
 

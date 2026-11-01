@@ -1171,3 +1171,60 @@ func TestFormatTOMLValueScheduleRoundTrips(t *testing.T) {
 		}
 	}
 }
+
+// TestPlanSetInFile_NewKeyJoinsTheSectionsKeys pins #2716's placement: a new
+// key goes right after the section's last active key (after its whole value
+// span), not at the section's end below a trailing comment block that
+// documents something else. Live case: a new [resources] key landed under a
+// commented-out "#[[message_transforms]]" example and read as part of it.
+func TestPlanSetInFile_NewKeyJoinsTheSectionsKeys(t *testing.T) {
+	content := `[resources]
+max_procs = 4
+paths = [
+  "a",
+]
+
+# Example transforms:
+#[[message_transforms]]
+#match = "x"
+
+[sessions]
+dir = "/tmp"
+`
+	next, _, err := PlanSetInFile(content, SetTarget{Section: "resources", Key: "goroutine_monitor_enabled"}, "true")
+	if err != nil {
+		t.Fatalf("PlanSetInFile: %v", err)
+	}
+	want := `[resources]
+max_procs = 4
+paths = [
+  "a",
+]
+goroutine_monitor_enabled = true
+
+# Example transforms:
+#[[message_transforms]]
+#match = "x"
+
+[sessions]
+dir = "/tmp"
+`
+	if next != want {
+		t.Errorf("got:\n%s\nwant:\n%s", next, want)
+	}
+}
+
+// TestPlanSetInFile_NewKeyInKeylessSectionGoesAtEnd covers the fallback: a
+// section with no active key still takes the new key at its end, before the
+// trailing blank lines.
+func TestPlanSetInFile_NewKeyInKeylessSectionGoesAtEnd(t *testing.T) {
+	content := "[resources]\n# a comment\n\n[sessions]\ndir = \"/tmp\"\n"
+	next, _, err := PlanSetInFile(content, SetTarget{Section: "resources", Key: "x"}, "1")
+	if err != nil {
+		t.Fatalf("PlanSetInFile: %v", err)
+	}
+	want := "[resources]\n# a comment\nx = 1\n\n[sessions]\ndir = \"/tmp\"\n"
+	if next != want {
+		t.Errorf("got:\n%q\nwant:\n%q", next, want)
+	}
+}

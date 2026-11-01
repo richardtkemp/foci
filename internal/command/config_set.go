@@ -32,6 +32,13 @@ type ConfigSetDeps struct {
 	// neither the agent block nor the global section. nil (tests, or an
 	// unwired command set) skips that rung.
 	AgentRunningValueFn func(agentID, key string) string
+
+	// UnsetInFileFn removes an explicitly-written key (/config unset,
+	// config_unset.go) and returns its removed value; a key with no value in
+	// the file wraps config.ErrKeyNotSet. The gateway wires it like
+	// SetInFileFn: config.UnsetInFile, then the live applier. nil → unset
+	// is unavailable.
+	UnsetInFileFn func(path string, target config.SetTarget) (string, error)
 }
 
 // configSetWizard implements WizardHandler for interactive config editing.

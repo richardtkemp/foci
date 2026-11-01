@@ -79,6 +79,23 @@ type cmdRegParams struct {
 // /misc pprof or the /-/pprof admin endpoint.
 var pprofGate atomic.Bool
 
+// liveApplyConfigEdit runs the live applier for one /config set or unset
+// file edit, so a hot field takes effect without a restart. A failed apply
+// is logged, not returned: the file write already succeeded and the value
+// takes effect at the next restart.
+func liveApplyConfigEdit(target config.SetTarget) {
+	if gwLiveApply == nil {
+		return
+	}
+	section := target.Section
+	if section == "agents" { // file target → registry section
+		section = "agent"
+	}
+	if _, applyErr := gwLiveApply.Apply(section, target.Key); applyErr != nil {
+		configLog.Warnf("%s.%s written but live apply failed (takes effect on restart): %v", section, target.Key, applyErr)
+	}
+}
+
 // registerAgentCommands creates and populates the command registry for an agent.
 func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStore) (*command.Registry, command.CommandContext) {
 	cmds := command.NewRegistry()
@@ -95,14 +112,16 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		SetInFileFn: func(path string, target config.SetTarget, value string) (string, error) {
 			fm, _ := config.ParseFileMode(p.cfg.FileMode)
 			old, err := config.SetInFile(path, target, value, fm)
-			if err == nil && gwLiveApply != nil {
-				section := target.Section
-				if section == "agents" { // file target → registry section
-					section = "agent"
-				}
-				if _, applyErr := gwLiveApply.Apply(section, target.Key); applyErr != nil {
-					configLog.Warnf("%s.%s written but live apply failed (takes effect on restart): %v", section, target.Key, applyErr)
-				}
+			if err == nil {
+				liveApplyConfigEdit(target)
+			}
+			return old, err
+		},
+		UnsetInFileFn: func(path string, target config.SetTarget) (string, error) {
+			fm, _ := config.ParseFileMode(p.cfg.FileMode)
+			old, err := config.UnsetInFile(path, target, fm)
+			if err == nil {
+				liveApplyConfigEdit(target)
 			}
 			return old, err
 		},

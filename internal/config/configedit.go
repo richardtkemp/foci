@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -48,6 +49,13 @@ func (t FieldType) TypeName() string {
 	}
 }
 
+// ErrKeyNotSet is wrapped by PlanUnsetInFile (and so UnsetInFile) when the
+// key has no explicit value in the file — no assignment in its section or
+// agent block, or no such section at all. Callers that take user input
+// (/config unset) test for it with errors.Is to answer "nothing to unset"
+// instead of reporting a failure.
+var ErrKeyNotSet = errors.New("not set in the config file")
+
 // UnsetInFile removes an explicitly-set key from the TOML config file (the
 // value reverts to whatever the key inherits: the global value for an agent
 // override, else the built-in default). Same surgical, comment-preserving
@@ -84,7 +92,7 @@ func PlanUnsetInFile(content string, target SetTarget) (next, old string, err er
 	} else {
 		from, to := findSectionBounds(lines, target.Section)
 		if from < 0 {
-			return "", "", fmt.Errorf("section [%s] not found in config file", target.Section)
+			return "", "", fmt.Errorf("%s is %w (no [%s] section)", target.Key, ErrKeyNotSet, target.Section)
 		}
 		active := keyLineRe(target.Key)
 		top := topLevel(lines)
@@ -96,7 +104,7 @@ func PlanUnsetInFile(content string, target SetTarget) (next, old string, err er
 		}
 	}
 	if line < 0 {
-		return "", "", fmt.Errorf("%s is not set in the config file", target.Key)
+		return "", "", fmt.Errorf("%s is %w", target.Key, ErrKeyNotSet)
 	}
 
 	end, old, err := valueSpan(lines, line)

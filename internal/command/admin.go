@@ -53,7 +53,7 @@ func ToolsCommand() *Command {
 func ConfigCommand() *Command {
 	cmd := &Command{
 		Name:        "config",
-		Description: "Show or edit config. Subcommands: toml, table, available, get, set",
+		Description: "Show or edit config. Subcommands: toml, table, available, get, set, unset",
 		Category:    "diagnostics",
 		Subcommands: []Subcommand{
 			{
@@ -96,6 +96,17 @@ func ConfigCommand() *Command {
 						return Response{Text: "Config set is not available."}, nil
 					}
 					text, err := configSet(cc.ConfigSetDeps, req.SessionKey, req.Args)
+					return Response{Text: text}, err
+				},
+			},
+			{
+				Name:        "unset",
+				Description: "Remove a key from the config file: section.key, or <agent> <key> for a named agent's live override",
+				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+					if cc.ConfigSetDeps == nil {
+						return Response{Text: "Config unset is not available."}, nil
+					}
+					text, err := configUnset(cc.ConfigSetDeps, req.Args)
 					return Response{Text: text}, err
 				},
 			},

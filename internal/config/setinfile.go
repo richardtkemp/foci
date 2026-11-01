@@ -432,10 +432,31 @@ func replaceOrInsertKey(lines []string, from, to int, key, value string) (string
 		}
 	}
 
-	// Key not found in section — insert at end, before trailing blank lines.
-	insertAt := to
-	for insertAt > from && strings.TrimSpace(lines[insertAt-1]) == "" {
-		insertAt--
+	// Key not found in section — insert it right after the section's last
+	// active key (after that value's whole span), so it sits with the
+	// table's other keys rather than below a trailing comment block that
+	// documents something else (#2716: a new [resources] key landed under a
+	// commented-out "#[[message_transforms]]" example and read as part of
+	// it). A section with no active key falls back to its end, before
+	// trailing blank lines.
+	insertAt := -1
+	for i := from; i < to; i++ {
+		t := strings.TrimSpace(lines[i])
+		if !top[i] || t == "" || t[0] == '#' || t[0] == '[' || !strings.Contains(t, "=") {
+			continue
+		}
+		end, _, err := valueSpan(lines, i)
+		if err != nil {
+			return "", nil, err
+		}
+		insertAt = end + 1
+		i = end
+	}
+	if insertAt < 0 {
+		insertAt = to
+		for insertAt > from && strings.TrimSpace(lines[insertAt-1]) == "" {
+			insertAt--
+		}
 	}
 
 	newLine := fmt.Sprintf("%s = %s", key, value)

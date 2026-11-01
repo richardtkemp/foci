@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,14 +66,20 @@ func TestUnsetInFileRemovesKeyAndPreservesComments(t *testing.T) {
 func TestUnsetInFileErrors(t *testing.T) {
 	path := writeConfigEditFixture(t)
 
-	if _, err := UnsetInFile(path, SetTarget{Section: "notify", Key: "not_a_key"}, 0o600); err == nil {
-		t.Error("expected error unsetting a key that isn't set")
+	// An absent key and an absent section both mean "nothing to unset":
+	// they wrap ErrKeyNotSet so /config unset can say so (#2716). An unknown
+	// agent is a different failure and must NOT wrap it.
+	if _, err := UnsetInFile(path, SetTarget{Section: "notify", Key: "not_a_key"}, 0o600); !errors.Is(err, ErrKeyNotSet) {
+		t.Errorf("unset of an absent key: err = %v, want ErrKeyNotSet", err)
 	}
-	if _, err := UnsetInFile(path, SetTarget{Section: "nosuch", Key: "x"}, 0o600); err == nil {
-		t.Error("expected error for a missing section")
+	if _, err := UnsetInFile(path, SetTarget{Section: "nosuch", Key: "x"}, 0o600); !errors.Is(err, ErrKeyNotSet) {
+		t.Errorf("unset in a missing section: err = %v, want ErrKeyNotSet", err)
 	}
-	if _, err := UnsetInFile(path, SetTarget{Section: "agents", AgentID: "ghost", Key: "x"}, 0o600); err == nil {
-		t.Error("expected error for an unknown agent")
+	if _, err := UnsetInFile(path, SetTarget{Section: "agents", AgentID: "clutch", Key: "not_a_key"}, 0o600); !errors.Is(err, ErrKeyNotSet) {
+		t.Errorf("unset of an absent agent key: err = %v, want ErrKeyNotSet", err)
+	}
+	if _, err := UnsetInFile(path, SetTarget{Section: "agents", AgentID: "ghost", Key: "x"}, 0o600); err == nil || errors.Is(err, ErrKeyNotSet) {
+		t.Errorf("unset for an unknown agent: err = %v, want a non-ErrKeyNotSet error", err)
 	}
 }
 
