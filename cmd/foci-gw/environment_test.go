@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -347,5 +348,101 @@ func TestPlatformForSession(t *testing.T) {
 	// Nil index (test agents / no persistence).
 	if got := platformForSession(nil, agentID, parentKey); got != "" {
 		t.Errorf("nil index: got %q, want empty", got)
+	}
+}
+
+// #2739: the environment section says LaTeX math renders when, and only when,
+// every prerequisite holds — today, that the session is on the foci app.
+func TestWritePlatform_MathLine(t *testing.T) {
+	t.Parallel()
+	const marker = "**Math renders.**"
+	for _, tt := range []struct {
+		platform string
+		want     bool
+	}{
+		{"app", true},
+		{"telegram", false},
+		{"discord", false},
+		{"signal", false}, // unknown platform
+		{"", false},       // unknown session
+	} {
+		var b strings.Builder
+		writePlatform(&b, tt.platform, nil)
+		if got := strings.Contains(b.String(), marker); got != tt.want {
+			t.Errorf("platform %q: math line present=%v, want %v\n%s", tt.platform, got, tt.want, b.String())
+		}
+	}
+}
+
+// One agent, an app session and a Telegram session: only the app session's
+// prompt has the math line, for API and delegated agents alike (#2739).
+func TestBuildEnvironment_MathLineFollowsSessionPlatform(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{Logging: config.LoggingConfig{EventFile: "/tmp/foci.log"}}
+	for _, backend := range []string{"api", "claude-code"} {
+		acfg := config.AgentConfig{ID: "x", Workspace: "/tmp/x", Backend: backend}
+		rc := config.Resolve(cfg, acfg)
+		build := func(platform string) string {
+			if backend == "api" {
+				return buildEnvironmentAPI(acfg, "/tmp/foci.toml", cfg, rc, 0, []string{"app", "telegram"}, nil, platform)
+			}
+			return buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, rc.Permissions, 0, []string{"app", "telegram"}, nil, nil, platform)
+		}
+		if out := build("app"); !strings.Contains(out, "**Math renders.**") {
+			t.Errorf("%s: app session lacks the math line", backend)
+		}
+		for _, p := range []string{"telegram", "discord", ""} {
+			if out := build(p); strings.Contains(out, "Math renders") {
+				t.Errorf("%s: %q session has the math line", backend, p)
+			}
+		}
+		// Stable: two builds of the same session give identical text.
+		if a, b := build("app"), build("app"); a != b {
+			t.Errorf("%s: two builds of the app session's environment differ", backend)
+		}
+	}
+}
+
+// A workspace copy of platform-app.md replaces the embedded notes but not the
+// math line: it still follows the prerequisites, for the app and for others (#2739).
+func TestWritePlatform_MathLineSurvivesWorkspaceOverride(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "platform-app.md"), []byte("Custom app notes, no math here."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "platform-telegram.md"), []byte("Custom telegram notes. **Math renders.** is not ours to add."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var app strings.Builder
+	writePlatform(&app, "app", []string{dir})
+	out := app.String()
+	if !strings.Contains(out, "Custom app notes") {
+		t.Fatalf("override not used:\n%s", out)
+	}
+	if !strings.Contains(out, "**Math renders.** The app typesets") {
+		t.Errorf("app override dropped the math line:\n%s", out)
+	}
+	var again strings.Builder
+	writePlatform(&again, "app", []string{dir})
+	if again.String() != out {
+		t.Errorf("two builds with the override differ")
+	}
+
+	// An override that empties platform-app.md still leaves the math line.
+	empty := t.TempDir()
+	if err := os.WriteFile(filepath.Join(empty, "platform-app.md"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var e strings.Builder
+	writePlatform(&e, "app", []string{empty})
+	if !strings.Contains(e.String(), "## Platform") || !strings.Contains(e.String(), "**Math renders.** The app typesets") {
+		t.Errorf("empty app override lost the math line:\n%s", e.String())
+	}
+
+	var tg strings.Builder
+	writePlatform(&tg, "telegram", []string{dir})
+	if strings.Contains(tg.String(), "The app typesets") {
+		t.Errorf("telegram session got the math line:\n%s", tg.String())
 	}
 }

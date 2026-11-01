@@ -334,12 +334,44 @@ func writePlatform(b *strings.Builder, platform string, searchDirs []string) {
 	}
 	filename := "platform-" + platform + ".md"
 	notes := prompts.ResolvePrompt("", filename, prompts.Platform(platform), searchDirs...)
-	if notes == "" {
+	// The math line is written here, not in platform-app.md, so a workspace
+	// copy of that file cannot drop it or keep it past its prerequisites (#2739).
+	math := mathRenders(platform)
+	if notes == "" && !math {
 		return
 	}
 	b.WriteString("\n## Platform\n")
-	b.WriteString(notes)
-	b.WriteString("\n")
+	if notes != "" {
+		b.WriteString(notes)
+		b.WriteString("\n")
+	}
+	if math {
+		b.WriteString(mathNote)
+		b.WriteString("\n")
+	}
+}
+
+// mathNote tells the agent that LaTeX math renders (#2739). Written only when
+// mathRenders holds.
+const mathNote = "**Math renders.** The app typesets LaTeX math: `$…$` inline and `$$…$$` for display " +
+	"(on its own lines, or sharing a line). Inline math needs a non-space after the opening `$`, and a " +
+	"non-space before the closing `$` with no digit after it, so \"$5 and $10\" stays a price; write `\\$` " +
+	"for a literal dollar sign that could pair up. `\\(…\\)`, `\\[…\\]` and `\\begin{…}` outside `$$` are not rendered."
+
+// mathRenders reports whether LaTeX math in a reply renders for a session on
+// platform (#2739): every prerequisite must hold when the prompt is built.
+//
+// The prerequisites are:
+//   - the session is on the foci app. Telegram and Discord show math as text;
+//     an unknown platform may be either.
+//
+// Nothing on the server is needed: the app typesets math itself
+// (JLaTeXMath on desktop and its Android port; foci-client MathRender.kt),
+// with no server endpoint, binary or config. An app build from before math
+// shows the source until it is updated; that is not a prerequisite (Dick,
+// 2026-11-01). A server-side prerequisite added later belongs here.
+func mathRenders(platform string) bool {
+	return platform == "app"
 }
 
 // buildEnvironmentAPI generates the environment block for API agents, which
