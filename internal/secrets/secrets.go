@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"math/big"
+	"path/filepath"
 	"strings"
 )
 
@@ -43,6 +44,14 @@ var defaultBlockedPaths = []string{
 type Store struct {
 	src     *source
 	agentID string // "" is the root store; otherwise this view's agent ID
+}
+
+// PathFor is the one derivation of the secrets file path for a config file:
+// always secrets.toml beside it. The gateway's startup loader, its credential
+// reload watcher and the config check's Slack credential check
+// (internal/configcheck) must all agree on it.
+func PathFor(configPath string) string {
+	return filepath.Join(filepath.Dir(configPath), "secrets.toml")
 }
 
 // Load reads secrets from a TOML file. Returns an empty store (not error) if

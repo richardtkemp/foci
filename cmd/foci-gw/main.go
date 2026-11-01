@@ -35,6 +35,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/preload"
 	"foci/internal/procx"
+	"foci/internal/secrets"
 	"foci/internal/shellenv"
 	"foci/internal/skills"
 	"foci/internal/startup"
@@ -576,7 +577,7 @@ Subcommands:
 	go startup.RunHeartbeat(hbCtx, si.sessionIndex, startup.HeartbeatInterval)
 
 	// ========== HTTP server ==========
-	secretsPath := secretsPathFor(configPath)
+	secretsPath := secrets.PathFor(configPath)
 	var reloadCreds func() error
 	if resolver, ok := formatResolvers["anthropic"]; ok {
 		reloadCreds = resolver.GetReloadFunc(secretsPath)

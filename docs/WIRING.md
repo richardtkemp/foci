@@ -377,7 +377,7 @@ Callers of `fociroot.Dir()`: `config.ResolvePath` / `DefaultConfigPath`, the `da
 ```
 main
  ├── configapprove → config, log (agent-requested config changes, #479: validate → Approve/Deny prompt → re-check → in-place write → live apply; requests are in-memory, keyed by id, polled over /config/request)
- ├── configcheck   → config, delegator, delegator/autoapprove, delegator/pretool, execguard, procx, shellenv (the one config validity check, #2223: `Run` backs both `foci-gw -check-config` and `foci check config`, same lines and exit codes; also the config-derived auto-approve helpers the gateway's startup reports share with the preview — `AgentConsultsAllowlist`, `SubstitutableBuiltinsFor`, `ApplySubstitutabilityMode`, `IgnoredBackendConfig`)
+ ├── configcheck   → config, delegator, delegator/autoapprove, delegator/pretool, execguard, procx, secrets, shellenv (the one config validity check, #2223: `Run` backs both `foci-gw -check-config` and `foci check config`, same lines and exit codes; also the config-derived auto-approve helpers the gateway's startup reports share with the preview — `AgentConsultsAllowlist`, `SubstitutableBuiltinsFor`, `ApplySubstitutabilityMode`, `IgnoredBackendConfig`)
  ├── config        → delegator/pretool, delegator/stoprule, display, execguard, fociroot, log, modelinfo, procx, provider
  ├── sqlite        → modernc.org/sqlite (shared Open, AgentPath, MigrateFile utilities)
  ├── log           → timeutil (the event, API-call JSONL and payload files; api.db belongs to delegator/accounting, conversation storage to convo)

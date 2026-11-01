@@ -1,4 +1,4 @@
-package main
+package configcheck
 
 import (
 	"io"
@@ -23,8 +23,8 @@ func TestCheckConfig_NoSlackDoesNotReadSecrets(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "secrets.toml"), []byte("this is [ not toml"), 0644); err != nil {
 		t.Fatalf("write secrets: %v", err)
 	}
-	if got := runConfigCheck(path, io.Discard, io.Discard); got != 0 {
-		t.Errorf("runConfigCheck(no slack, malformed secrets) = %d, want 0 (secrets must not be read)", got)
+	if got := Run(path, io.Discard, io.Discard, "hint"); got != 0 {
+		t.Errorf("Run(no slack, malformed secrets) = %d, want 0 (secrets must not be read)", got)
 	}
 }
 
