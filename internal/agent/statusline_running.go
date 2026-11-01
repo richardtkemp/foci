@@ -72,14 +72,15 @@ func (a *Agent) statusBgCommands(sessionKey string) string {
 }
 
 // statusSpawns renders "spawns: N (…)" for the background spawns this session
-// started, or "". Backs the {spawns} field.
+// started, or "". Backs the {spawns} field. Each spawn is listed by its name
+// (RunningSpawn.Label, #2779), "(unnamed spawn)" for one made before names.
 func (a *Agent) statusSpawns(sessionKey string) string {
 	if a == nil {
 		return ""
 	}
 	var items []runningItem
 	for _, s := range a.spawnTracker().Running(sessionKey) {
-		items = append(items, runningItem{s.Description, s.Started})
+		items = append(items, runningItem{s.Label(), s.Started})
 	}
 	return formatRunning("spawns", items)
 }

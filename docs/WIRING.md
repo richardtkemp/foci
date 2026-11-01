@@ -1131,7 +1131,7 @@ Each user message then gets a header prepended (NOT in system prompt — that wo
 ```
 [meta] time=2026-02-21T05:30:00Z gap=3h12m model=claude-haiku-4-5 via=telegram
 [state] tasks: 2/5 → first active, todos: 3 open
-[running] subagents: 1 (review the parser 3m0s) | spawns: 1 (Find the bug 2m5s)
+[running] subagents: 1 (review the parser 3m0s) | spawns: 1 (bug-hunt 2m5s)
 [ask] ⏸ ask q1 paused — user replies routing to you as normal turns, not answering it (/resume to restore)
 ```
 

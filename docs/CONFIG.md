@@ -1135,7 +1135,7 @@ Available fields:
 | `{state}` | `tasks: … \| todos: … \| scratchpad: …` | composite; empty when all stores empty |
 | `{todos}` / `{tasks}` / `{scratchpad}` | individual labelled state part | self-omit when empty |
 | `{running}` | `subagents: … \| bg_commands: … \| spawns: …` | composite; the session's background work, each item with how long it has run; empty when nothing runs |
-| `{subagents}` / `{bg_commands}` / `{spawns}` | individual labelled part, e.g. `spawns: 1 (Find the bug 2m5s)` | self-omit when empty; at most 5 items listed, the rest counted |
+| `{subagents}` / `{bg_commands}` / `{spawns}` | individual labelled part, e.g. `spawns: 1 (bug-hunt 2m5s)` (a spawn shows by its name) | self-omit when empty; at most 5 items listed, the rest counted |
 | `{ask}` | paused-ask reminder | only while an ask is paused |
 | `{cost_raw}` | `$X` | bare value, always |
 | `{tokens_in}` / `{tokens_out}` / `{cache_read}` / `{cache_write}` | token count | bare value, always |

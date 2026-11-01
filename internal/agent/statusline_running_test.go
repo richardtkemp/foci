@@ -49,7 +49,7 @@ func TestStatuslineDefault_RunningLine(t *testing.T) {
 			{ID: "t1", Description: "review the parser", Kind: delegator.SubagentKindAgent, Started: ago(3 * time.Minute)},
 			{ID: "t2", Description: "", Command: "make test", Kind: delegator.SubagentKindCommand, Started: ago(90 * time.Second)},
 		},
-		tools.RunningSpawn{ID: "spawn-1", Description: "Find the bug", Started: ago(2 * time.Minute)},
+		tools.RunningSpawn{ID: "spawn-1", Name: "bug-hunt", Description: "Find the bug", Started: ago(2 * time.Minute)},
 	)
 	got := renderFor(a, "", "a/main")
 	lines := strings.Split(got, "\n")
@@ -59,7 +59,7 @@ func TestStatuslineDefault_RunningLine(t *testing.T) {
 	for _, want := range []string{
 		"[running] subagents: 1 (review the parser 3m",
 		"| bg_commands: 1 (make test 1m3",
-		"| spawns: 1 (Find the bug 2m",
+		"| spawns: 1 (bug-hunt 2m",
 	} {
 		if !strings.Contains(lines[1], want) {
 			t.Errorf("running line %q lacks %q", lines[1], want)
@@ -93,7 +93,7 @@ func TestStatuslineRunning_CapsItems(t *testing.T) {
 // whole default header with {default} and add its own lines (#2127).
 func TestStatuslineCustom_IncludesDefault(t *testing.T) {
 	t.Parallel()
-	a := runningAgent("a/main", nil, tools.RunningSpawn{ID: "spawn-1", Description: "dig", Started: time.Now()})
+	a := runningAgent("a/main", nil, tools.RunningSpawn{ID: "spawn-1", Name: "dig", Description: "dig into it", Started: time.Now()})
 	got := renderFor(a, "{default}\n[deploy] undeployed=3", "a/main")
 	want := renderFor(a, "", "a/main") + "\n[deploy] undeployed=3"
 	if got != want {
@@ -101,5 +101,27 @@ func TestStatuslineCustom_IncludesDefault(t *testing.T) {
 	}
 	if !strings.Contains(got, "[running] spawns: 1 (dig") {
 		t.Errorf("custom header %q lacks the default [running] line", got)
+	}
+}
+
+// TestStatuslineSpawns_ShowsName proves the spawn list shows each spawn's name,
+// not its prompt's opening (#2779), and a spawn with no name (persisted before
+// #2721) shows the "(unnamed spawn)" placeholder used elsewhere.
+func TestStatuslineSpawns_ShowsName(t *testing.T) {
+	t.Parallel()
+	a := runningAgent("a/main", nil,
+		tools.RunningSpawn{ID: "spawn-1", Name: "bug-hunt", Description: "Find the bug in the parser", Started: time.Now()},
+		tools.RunningSpawn{ID: "spawn-2", Description: "an old spawn", Started: time.Now()},
+	)
+	got := a.statusSpawns("a/main")
+	for _, want := range []string{"bug-hunt", tools.UnnamedSpawnLabel} {
+		if !strings.Contains(got, want) {
+			t.Errorf("statusSpawns = %q, lacks %q", got, want)
+		}
+	}
+	for _, unwanted := range []string{"Find the bug", "an old spawn"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("statusSpawns = %q, shows the prompt %q", got, unwanted)
+		}
 	}
 }
