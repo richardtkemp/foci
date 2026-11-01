@@ -37,6 +37,11 @@ type manifest struct {
 type backupEntry struct {
 	Orig   string `json:"orig"`
 	Backup string `json:"backup"`
+	// Config marks the foci.toml entry: restore writes it back IN PLACE
+	// (config.WriteConfigFile), so the file keeps the root:foci-secrets
+	// owner and mode the gateway requires (#479). Every other file is
+	// restored by temp-and-rename.
+	Config bool `json:"config,omitempty"`
 }
 
 type moveEntry struct {
@@ -51,7 +56,11 @@ func writeJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	return config.WriteFileAtomic(path, string(data)+"\n", 0o600)
+	data = append(data, '\n')
+	return writeFileAtomic(path, 0o600, time.Time{}, func(w io.Writer) error {
+		_, err := w.Write(data)
+		return err
+	})
 }
 
 func readManifest(dir string) (*manifest, error) {
@@ -87,32 +96,46 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	defer func() { _ = in.Close() }()
+	return writeFileAtomic(dst, info.Mode().Perm(), info.ModTime(), func(w io.Writer) error {
+		_, err := io.Copy(w, in)
+		return err
+	})
+}
+
+// writeFileAtomic replaces dst in one step: fill writes a temp file beside
+// it, which is synced, given perm (and mtime, when not zero), then renamed
+// over dst. A reader never sees a half-written file. Not for foci.toml,
+// which is written in place (config.WriteConfigFile, #479).
+func writeFileAtomic(dst string, perm os.FileMode, mtime time.Time, fill func(io.Writer) error) error {
 	tmp := dst + ".copy-tmp"
-	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm())
+	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	fail := func(err error) error {
 		_ = out.Close()
 		_ = os.Remove(tmp)
 		return err
 	}
+	if err := fill(out); err != nil {
+		return fail(err)
+	}
 	if err := out.Sync(); err != nil {
-		_ = out.Close()
-		_ = os.Remove(tmp)
-		return err
+		return fail(err)
 	}
 	if err := out.Close(); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
-	if err := os.Chmod(tmp, info.Mode().Perm()); err != nil {
+	if err := os.Chmod(tmp, perm); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
-	if err := os.Chtimes(tmp, info.ModTime(), info.ModTime()); err != nil {
-		_ = os.Remove(tmp)
-		return err
+	if !mtime.IsZero() {
+		if err := os.Chtimes(tmp, mtime, mtime); err != nil {
+			_ = os.Remove(tmp)
+			return err
+		}
 	}
 	return os.Rename(tmp, dst)
 }
@@ -163,7 +186,7 @@ func takeBackup(ctx context.Context, dir string, m *manifest, dbs []*lockedDB, c
 	if err := copyFile(configPath, filepath.Join(dir, "config", filepath.Base(configPath))); err != nil {
 		return fmt.Errorf("back up %s: %w", configPath, err)
 	}
-	m.Files = append(m.Files, backupEntry{Orig: configPath, Backup: filepath.Join("config", filepath.Base(configPath))})
+	m.Files = append(m.Files, backupEntry{Orig: configPath, Backup: filepath.Join("config", filepath.Base(configPath)), Config: true})
 	if _, err := os.Stat(sessionsOld); err == nil {
 		if err := copyTree(sessionsOld, filepath.Join(dir, "sessions")); err != nil {
 			return fmt.Errorf("back up %s: %w", sessionsOld, err)
@@ -207,6 +230,12 @@ func restoreBackup(dir string, m *manifest) error {
 	files := append([]backupEntry(nil), m.Files...)
 	sort.Slice(files, func(i, j int) bool { return files[i].Orig < files[j].Orig })
 	for _, f := range files {
+		if f.Config {
+			if err := restoreConfigInPlace(filepath.Join(dir, f.Backup), f.Orig); err != nil {
+				return fmt.Errorf("restore %s: %w", f.Orig, err)
+			}
+			continue
+		}
 		if err := copyFile(filepath.Join(dir, f.Backup), f.Orig); err != nil {
 			return fmt.Errorf("restore %s: %w", f.Orig, err)
 		}
@@ -217,6 +246,21 @@ func restoreBackup(dir string, m *manifest) error {
 		}
 	}
 	return nil
+}
+
+// restoreConfigInPlace writes the backed-up foci.toml over the live one in
+// place (config.WriteConfigFile), keeping the live file's inode, owner, group
+// and mode (#479). The backup's mode applies only if the live file is gone.
+func restoreConfigInPlace(backup, orig string) error {
+	info, err := os.Stat(backup)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(backup)
+	if err != nil {
+		return err
+	}
+	return config.WriteConfigFile(orig, string(data), info.Mode().Perm())
 }
 
 // journal records a rename in progress, so a re-run with the same arguments

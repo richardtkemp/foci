@@ -452,7 +452,7 @@ func TestLiveApply_WebhookSessionForm(t *testing.T) {
 		Agents: []config.AgentConfig{{ID: "a"}},
 	}
 	inst := &agentInstance{id: "a", ag: &agent.Agent{}, resolved: config.NewLiveValue(config.Resolve(base, base.Agents[0]))}
-	la := newLiveApply("")
+	la := newLiveApply("", nil)
 	registerLiveAppliers(la, registryOf(t, inst))
 
 	configPath := filepath.Join(t.TempDir(), "foci.toml")

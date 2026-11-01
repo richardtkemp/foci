@@ -270,7 +270,9 @@ func (rn *runner) configStep() (step, error) {
 		if string(now) != cur {
 			return fmt.Errorf("%s changed since the plan was made; nothing written", path)
 		}
-		return config.WriteFileAtomic(path, next, info.Mode().Perm())
+		// In place (#479): foci.toml is root:foci-secrets 0664, and a
+		// temp-and-rename write would replace it with a file the gateway refuses.
+		return config.WriteConfigFile(path, next, info.Mode().Perm())
 	}
 	return st, nil
 }

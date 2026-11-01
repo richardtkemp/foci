@@ -697,7 +697,7 @@ lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-cap
 	# mermaid, app and tools tests.
 	# config's UnsetInFile/SetTableArray are the same shape since #1476: the
 	# app editor (their last production caller) now goes plan -> whole-file
-	# check -> WriteFileAtomic through the Plan* cores, so the wrappers'
+	# check -> WriteConfigFile through the Plan* cores, so the wrappers'
 	# remaining callers are the config package's round-trip tests, which pin
 	# the public writer contract. MapObjectEntries likewise: the editor reads
 	# entries with the tree-based MapObjectFileEntries, and #1476 requires

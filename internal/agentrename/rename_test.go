@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"foci/internal/config"
@@ -658,5 +659,40 @@ func TestCronAndSecretsBoundaries(t *testing.T) {
 	want := "[agents.rob]\n[agents.\"rob\".tg]\n[agents.bobby.tg]\nallowed_agents = [\n  \"bobby\",\n  \"rob\", # bob\n]\ndenied_agents = ['rob']\nx = \"bob\"\n"
 	if got := rewriteSecrets(sec, "bob", "rob"); got != want {
 		t.Errorf("rewriteSecrets:\n%s\nwant\n%s", got, want)
+	}
+}
+
+// TestRenameAndRestoreKeepConfigInode (#479 × #1281): foci.toml is
+// root:foci-secrets 0664 and the gateway refuses it in any other shape, so
+// neither the rename's rewrite nor the restore may replace the file. Both must
+// write in place: the inode before the rename, after it and after the
+// restore is the same.
+func TestRenameAndRestoreKeepConfigInode(t *testing.T) {
+	f := newFixture(t)
+	inode := func() uint64 {
+		t.Helper()
+		info, err := os.Stat(f.cfgPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			t.Skip("no inode on this platform")
+		}
+		return st.Ino
+	}
+	before := inode()
+	out, err := f.run(Options{})
+	if err != nil {
+		t.Fatalf("rename: %v\n%s", err, out)
+	}
+	if got := inode(); got != before {
+		t.Fatalf("rename replaced foci.toml (inode %d -> %d); it must edit in place", before, got)
+	}
+	backup := filepath.Join(f.data, "backups", "rename-bob-rob-20261101T120000Z")
+	var rout bytes.Buffer
+	must(t, Restore(context.Background(), RestoreOptions{ConfigPath: f.cfgPath, BackupDir: backup, Yes: true, Out: &rout}))
+	if got := inode(); got != before {
+		t.Fatalf("restore replaced foci.toml (inode %d -> %d); it must write in place", before, got)
 	}
 }
