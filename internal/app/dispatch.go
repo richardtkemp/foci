@@ -169,6 +169,8 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.handleDraft(client, f)
 	case fap.PinPut:
 		h.handlePin(client, f)
+	case fap.PinsList:
+		h.handlePinsList(client)
 	case fap.ScrollPut:
 		h.handleScroll(client, f)
 	case fap.ConvPinPut:
@@ -810,6 +812,15 @@ func (h *Hub) handleDraft(client *wsClient, f fap.DraftPut) {
 // With no SessionIndex there is nowhere to fold the change into, so nothing is
 // broadcast either — a PinSync computed from an unreadable set would tell the
 // other devices to unpin everything.
+//
+// Labels (#2670) live beside the set under chatMetaPinMeta and are written in
+// the same critical section. A label is taken only when the message goes from
+// unpinned to pinned; a PinPut for a message already pinned (a re-delivery, or
+// a second device that had not seen the pin yet) leaves its label alone, so no
+// path edits a label. At that same transition the server snapshots the
+// message's snippet and send time from the frame store, so the All pins view
+// can still list the pin after the frame store trims the message. An unpin
+// drops the entry, so pinning again takes the new label.
 func (h *Hub) handlePin(client *wsClient, f fap.PinPut) {
 	if f.MessageID == "" {
 		return
@@ -831,14 +842,48 @@ func (h *Hub) handlePin(client *wsClient, f fap.PinPut) {
 		appLog.Warnf("pin %s/%s: read pins: %v", f.ConversationID, f.MessageID, err)
 		return
 	}
-	ids := applyPin(session.DecodeChatSet(stored), f.MessageID, f.Pinned)
+	old := session.DecodeChatSet(stored)
+	wasPinned := false
+	for _, id := range old {
+		if id == f.MessageID {
+			wasPinned = true
+			break
+		}
+	}
+	ids := applyPin(old, f.MessageID, f.Pinned)
 	if err := idx.SetChatMetadata(b.agentID, "app", b.chatID, chatMetaPins, session.EncodeChatSet(ids)); err != nil {
 		h.pinsMu.Unlock()
 		appLog.Warnf("pin %s/%s: write pins: %v", f.ConversationID, f.MessageID, err)
 		return
 	}
+	metaStored, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, chatMetaPinMeta)
+	if err != nil {
+		// The set is written and authoritative; fan it out unlabelled rather
+		// than leave the other devices with a stale set.
+		h.pinsMu.Unlock()
+		appLog.Warnf("pin %s/%s: read pin meta: %v", f.ConversationID, f.MessageID, err)
+		h.broadcastExcept(client, fap.PinSync{ConversationID: f.ConversationID, MessageIDs: ids})
+		return
+	}
+	meta := decodePinMeta(metaStored)
+	changed := prunePinMeta(meta, ids)
+	if f.Pinned && !wasPinned {
+		m := pinMeta{Label: normalisePinLabel(f.Label)}
+		if p, ok := h.frames.MessagePreviews(b.convID, map[string]struct{}{f.MessageID: {}})[f.MessageID]; ok {
+			m.Snippet, m.SentMs = p.Snippet, p.SentMs
+		}
+		if m != (pinMeta{}) {
+			meta[f.MessageID] = m
+			changed = true
+		}
+	}
+	if changed {
+		if err := idx.SetChatMetadata(b.agentID, "app", b.chatID, chatMetaPinMeta, encodePinMeta(meta)); err != nil {
+			appLog.Warnf("pin %s/%s: write pin meta: %v", f.ConversationID, f.MessageID, err)
+		}
+	}
 	h.pinsMu.Unlock()
-	h.broadcastExcept(client, fap.PinSync{ConversationID: f.ConversationID, MessageIDs: ids})
+	h.broadcastExcept(client, fap.PinSync{ConversationID: f.ConversationID, MessageIDs: ids, Labels: pinLabels(ids, meta)})
 }
 
 // routeCommand dispatches a slash command through the agent's command registry,

@@ -422,6 +422,8 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		ToolInvoke{InvocationID: "inv", Tool: "android", Action: "list", Args: json.RawMessage(`{}`)},
 		ConversationForeground{ConversationID: "c"},
 		PinSync{ConversationID: "c", MessageIDs: []string{"m1", "m2"}},
+		PinSync{ConversationID: "c", MessageIDs: []string{"m1"}, Labels: map[string]string{"m1": "L"}},
+		PinsAll{Conversations: []PinGroup{{ConversationID: "c", AgentID: "a", Title: "t", Pins: []PinnedMessage{{MessageID: "m", Label: "L", Snippet: "s", SentMs: 1}}}}},
 		ScrollSync{ConversationID: "c", MessageID: "m", Following: false},
 		ConvPinSync{ConversationID: "c", Pinned: true},
 		CheckboxSync{DocumentID: "b", Lines: []int{1}},
@@ -582,6 +584,51 @@ func TestDecode_PinPut_DefaultsUnpinned(t *testing.T) {
 	}
 	if f := in.Frame.(PinPut); f.Pinned {
 		t.Errorf("absent pinned decoded as %v, want false", f.Pinned)
+	}
+}
+
+// TestDecode_PinPut_Label pins the label field of a labelled pin (#2670), and
+// that an old app's frame (no label) decodes with an empty label.
+func TestDecode_PinPut_Label(t *testing.T) {
+	in, err := Decode(`{"t":"pin.put","id":"i1","d":{"conversationId":"c1","messageId":"m7","pinned":true,"label":"flight times"}}`)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if f := in.Frame.(PinPut); f.Label != "flight times" || !f.Pinned {
+		t.Errorf("decoded = %+v, want label %q", f, "flight times")
+	}
+	in, err = Decode(`{"t":"pin.put","id":"i1","d":{"conversationId":"c1","messageId":"m7","pinned":true}}`)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if f := in.Frame.(PinPut); f.Label != "" {
+		t.Errorf("old-app frame label = %q, want empty", f.Label)
+	}
+}
+
+// TestDecode_PinsList proves the payload-less all-pins request decodes, with
+// or without a "d" (#2670).
+func TestDecode_PinsList(t *testing.T) {
+	for _, w := range []string{`{"t":"pins.list","id":"i1"}`, `{"t":"pins.list","id":"i1","d":{}}`} {
+		in, err := Decode(w)
+		if err != nil {
+			t.Fatalf("decode %s: %v", w, err)
+		}
+		if _, ok := in.Frame.(PinsList); !ok {
+			t.Errorf("decode %s: frame = %T, want PinsList", w, in.Frame)
+		}
+	}
+}
+
+// TestEncode_PinSync_UnlabelledOmitsLabels: an unlabelled set's wire is the
+// same bytes an old server sent, so an old app sees nothing new (#2670).
+func TestEncode_PinSync_UnlabelledOmitsLabels(t *testing.T) {
+	w, err := Encode(PinSync{ConversationID: "c", MessageIDs: []string{"m1"}}, 1, 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(w, "labels") {
+		t.Errorf("unlabelled PinSync wire carries labels: %s", w)
 	}
 }
 

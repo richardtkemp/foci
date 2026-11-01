@@ -142,6 +142,12 @@ const (
 	// separate scalar mirror (TypeConvPinPut/TypeConvPinSync below, #2313).
 	TypePinPut  = "pin.put"
 	TypePinSync = "pin.sync"
+	// TypePinsList (app->server, payload-less) asks for every pinned message
+	// across all of the user's app chats (#2670); TypePinsAll (server->app) is
+	// the answer, sent to the asking socket only. The server answers from its
+	// own stores, so the list covers chats this device never synced.
+	TypePinsList = "pins.list"
+	TypePinsAll  = "pins.all"
 	// TypeScrollPut (app->server) mirrors where the user left a conversation
 	// (#2144); TypeScrollSync (server->app) fans it to the user's other devices
 	// and is replayed after a hello, exactly like the draft pair.
@@ -1139,10 +1145,16 @@ func (DraftSync) Type() string { return TypeDraftSync }
 // metadata set and rebroadcasts a PinSync to the user's other devices.
 // Fire-and-forget like DraftPut — not conversation-reliability-scoped (see
 // inboundConvID), so there is no ack to fold.
+//
+// Label (#2670) is the optional text the user gave the pin when they made it.
+// It is read only on the unpinned->pinned transition: a label is set once, at
+// pin time, and a PinPut for a message that is already pinned does not change
+// it. An old app omits the field, which pins with no label.
 type PinPut struct {
 	ConversationID string `json:"conversationId"`
 	MessageID      string `json:"messageId"`
 	Pinned         bool   `json:"pinned"`
+	Label          string `json:"label,omitempty"`
 }
 
 // PinSync mirrors a conversation's COMPLETE pinned-message set to a user's other
@@ -1156,12 +1168,55 @@ type PinPut struct {
 // idempotent and order-independent, and lets one frame serve both paths. An
 // empty MessageIDs is a valid "nothing is pinned here" and MUST be applied (it
 // is how an unpin reaches a device that was offline for it).
+//
+// Labels (#2670) maps a pinned message's id to its label, for the labelled
+// pins in MessageIDs only; a pin with no label has no entry. Absolute like
+// MessageIDs: a receiver sets each pinned message's label from this map and
+// clears the label of every message that is not in it. Omitted when no pin in
+// the conversation has a label, so an old app never sees it.
 type PinSync struct {
-	ConversationID string   `json:"conversationId"`
-	MessageIDs     []string `json:"messageIds"`
+	ConversationID string            `json:"conversationId"`
+	MessageIDs     []string          `json:"messageIds"`
+	Labels         map[string]string `json:"labels,omitempty"`
 }
 
 func (PinSync) Type() string { return TypePinSync }
+
+// PinsList asks the server for every pinned message across all of the user's
+// app chats, for all agents (app->server, payload-less, #2670). The server
+// answers the asking socket with one PinsAll. Not conversation-scoped.
+type PinsList struct{}
+
+// PinnedMessage is one pin in a PinsAll answer. Snippet is a short preview of
+// the message text and SentMs is when the message was sent (unix ms). The
+// server leaves out a pin whose message it can find nowhere, so neither field
+// is ever blank on the wire.
+type PinnedMessage struct {
+	MessageID string `json:"messageId"`
+	Label     string `json:"label,omitempty"`
+	Snippet   string `json:"snippet"`
+	SentMs    int64  `json:"sentMs"`
+}
+
+// PinGroup is one chat's pins in a PinsAll answer, newest message first.
+// Title is the chat's server-side alias, empty for an unnamed chat (the app
+// then uses its own name for the conversation).
+type PinGroup struct {
+	ConversationID string          `json:"conversationId"`
+	AgentID        string          `json:"agentId"`
+	Title          string          `json:"title,omitempty"`
+	Pins           []PinnedMessage `json:"pins"`
+}
+
+// PinsAll answers a PinsList (server->client, #2670): every pinned message in
+// every app chat the server holds, grouped by chat. Groups are ordered by
+// their newest pinned message, newest first; a chat with no pins is absent.
+// Conversations is never null (an empty list means nothing is pinned).
+type PinsAll struct {
+	Conversations []PinGroup `json:"conversations"`
+}
+
+func (PinsAll) Type() string { return TypePinsAll }
 
 // ScrollPut mirrors where the user left a conversation's scroll view to the
 // server (app->server, #2144). Sent on the same "leave" event as DraftPut, and

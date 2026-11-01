@@ -2012,10 +2012,21 @@ func (h *Hub) pushReads(client *wsClient) {
 // wipe them. Skipping it lets the local pins stand until the user's next pin or
 // unpin in that chat writes the key and makes the server's set authoritative.
 // It also drops one frame per conversation from every handshake.
+//
+// Each replayed set carries its labels (#2670, pinSyncFor), so a device that
+// was offline when a labelled pin was made gets the label on its next connect.
 func (h *Hub) pushPins(client *wsClient) {
-	h.pushChatScalar(client, chatMetaPins, false, func(convID, v string) fap.ServerFrame {
-		return fap.PinSync{ConversationID: convID, MessageIDs: session.DecodeChatSet(v)}
-	})
+	h.mu.RLock()
+	bindings := make([]*convBinding, 0, len(h.convs))
+	for _, b := range h.convs {
+		bindings = append(bindings, b)
+	}
+	h.mu.RUnlock()
+	for _, b := range bindings {
+		if f, ok := h.pinSyncFor(b); ok {
+			client.sendRaw(f)
+		}
+	}
 }
 
 // --- interactive prompt registry (slice 2) ---

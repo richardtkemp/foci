@@ -96,6 +96,8 @@ func decodeClient(t string, d json.RawMessage) (any, error) {
 		return Ping{}, nil
 	case TypeServerRestart:
 		return ServerRestart{}, nil
+	case TypePinsList:
+		return PinsList{}, nil
 	}
 
 	var (

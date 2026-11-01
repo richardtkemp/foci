@@ -318,6 +318,78 @@ func (s *frameStore) LastVisibleMessageID(convID string) (id string, ok bool, er
 	return d.MessageID, true, nil
 }
 
+// messagePreview is what the frame store knows about one message: the roster
+// preview of its frame (a short text snippet) and when it was first sent.
+type messagePreview struct {
+	Snippet string
+	SentMs  int64
+}
+
+// MessagePreviews finds the stored visible frames of the messages in ids
+// within convID, for the All pins view (#2670). SentMs is the time of the
+// message's FIRST frame; Snippet is the preview of its LAST one, so a message
+// re-sent in place (a notification's edit) shows its current text. A message
+// with no stored visible frame (never sent here, or trimmed by the TTL) is
+// absent from the result. A nil store, empty ids or a read error give nil.
+//
+// With one id the query is narrowed by an instr() needle on its id, so the
+// pin-time lookup does not decode the whole conversation.
+func (s *frameStore) MessagePreviews(convID string, ids map[string]struct{}) map[string]messagePreview {
+	if s == nil || len(ids) == 0 {
+		return nil
+	}
+	needle := `"messageId":"`
+	if len(ids) == 1 {
+		for id := range ids {
+			needle += id + `"`
+		}
+	}
+	rows, err := s.db.Query(
+		`SELECT wire, preview, sent_ms FROM app_frames
+		 WHERE conv_id = ? AND visible = 1 AND preview <> '' AND instr(wire, ?) > 0
+		 ORDER BY seq ASC`,
+		convID, needle,
+	)
+	if err != nil {
+		appLog.Warnf("frame store: message previews %s: %v", convID, err)
+		return nil
+	}
+	defer rows.Close() //nolint:errcheck
+	out := make(map[string]messagePreview)
+	for rows.Next() {
+		var wire, preview string
+		var sentMs int64
+		if err := rows.Scan(&wire, &preview, &sentMs); err != nil {
+			appLog.Warnf("frame store: message previews %s: scan: %v", convID, err)
+			return nil
+		}
+		var env fap.Envelope
+		if json.Unmarshal([]byte(wire), &env) != nil {
+			continue
+		}
+		var d struct {
+			MessageID string `json:"messageId"`
+		}
+		if json.Unmarshal(env.D, &d) != nil {
+			continue
+		}
+		if _, want := ids[d.MessageID]; !want {
+			continue
+		}
+		p, seen := out[d.MessageID]
+		if !seen {
+			p.SentMs = sentMs
+		}
+		p.Snippet = preview
+		out[d.MessageID] = p
+	}
+	if err := rows.Err(); err != nil {
+		appLog.Warnf("frame store: message previews %s: %v", convID, err)
+		return nil
+	}
+	return out
+}
+
 // Range returns up to limit frames with seq > fromSeq, in ascending seq order —
 // the backfill source for replayTo and GET /app/replay.
 func (s *frameStore) Range(convID string, fromSeq int64, limit int) []storedFrame {
