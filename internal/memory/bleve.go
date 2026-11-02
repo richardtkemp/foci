@@ -87,8 +87,18 @@ func buildBleveMapping() mapping.IndexMapping {
 	todoIDField.Store = true
 	todoIDField.IncludeInAll = false
 
+	// ident_parts holds the parts of the code identifiers in a todo's text
+	// (identifierParts, #2815). It is analyzed like content and goes into
+	// _all, so a plain query for one part matches; it is not stored. Only
+	// todo docs carry it. An index created before this mapping indexes the
+	// field dynamically with the same analyzer, so no rebuild is needed.
+	identPartsField := bleve.NewTextFieldMapping()
+	identPartsField.Store = false
+	identPartsField.IncludeInAll = true
+
 	docMapping := bleve.NewDocumentMapping()
 	docMapping.AddFieldMappingsAt("content", contentField)
+	docMapping.AddFieldMappingsAt(bleveIdentPartsField, identPartsField)
 	docMapping.AddFieldMappingsAt("path", pathField)
 	docMapping.AddFieldMappingsAt("source", sourceField)
 	docMapping.AddFieldMappingsAt("mtime", mtimeField)
@@ -472,6 +482,10 @@ type TodoSearchHit struct {
 	Rank   float64
 }
 
+// bleveIdentPartsField is the todo-doc field that holds the parts of the code
+// identifiers in the todo's text (see identifierParts).
+const bleveIdentPartsField = "ident_parts"
+
 // todoDocID returns the bleve document ID for a todo item.
 func todoDocID(agentID string, id int64) string {
 	return fmt.Sprintf("todo:%s:%d", agentID, id)
@@ -492,6 +506,10 @@ func (b *BleveIndex) IndexTodo(agentID string, id int64, text string, mtime floa
 		"mtime":    mtime,
 		"agent_id": agentID,
 		"todo_id":  float64(id),
+	}
+	// A search for one part of a code identifier must find the todo (#2815).
+	if parts := identifierParts(text); len(parts) > 0 {
+		doc[bleveIdentPartsField] = strings.Join(parts, " ")
 	}
 	if err := b.index.Index(todoDocID(agentID, id), doc); err != nil {
 		memoryLog.Errorf("bleve index todo: %v", err)
