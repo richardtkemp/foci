@@ -42,7 +42,7 @@ func TestFacetCommand_AppPath(t *testing.T) {
 		Sessions:    ag.Sessions,
 		Config:      &config.Config{},
 		AgentConfig: config.AgentConfig{ID: "test", Sessions: config.AgentSessionsOverride{CompactionConfig: config.CompactionConfig{FacetNoCompact: &noCompact}}},
-		MintFacetConversation: func(agentID, sessionKey string) (string, error) {
+		MintFacetConversation: func(agentID, sessionKey string, _ FirstMessage) (string, error) {
 			gotAgent, gotSession = agentID, sessionKey
 			return "conv-xyz", nil
 		},

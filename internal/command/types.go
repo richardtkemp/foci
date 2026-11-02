@@ -203,7 +203,9 @@ type CommandContext struct {
 	// and pushes the updated roster to all devices, returning the new conversation
 	// ID. Nil for transports without app conversations (telegram/discord use the
 	// secondary-bot facet pool instead). Injected by the gateway over the app hub.
-	MintFacetConversation func(agentID, sessionKey string) (convID string, err error)
+	// A non-empty first.Text is sent into the new conversation as the user's
+	// first message, as if typed there, and its turn runs on sessionKey (#2780).
+	MintFacetConversation func(agentID, sessionKey string, first FirstMessage) (convID string, err error)
 
 	// Turn cancellation (injected by platform bot)
 	StopFunc       func() // cancels the current agent turn; nil = no-op
@@ -236,6 +238,30 @@ type CommandContext struct {
 	// (keyed by Request.Source) where the agent has operators configured.
 	// Nil/empty gates nobody. See OperatorPolicies.
 	Operators OperatorPolicies
+}
+
+// FirstMessage is text that /fork and /facet send into the chat they create,
+// as the user's first message there (#2780). The zero value sends nothing.
+type FirstMessage struct {
+	Text string
+	// UserID is the sender as the new chat's transport knows them: the
+	// requesting device for an app request, "" when the command came from
+	// another transport (its user id means nothing to the app).
+	UserID string
+}
+
+// firstMessageFrom reads the first message a /fork or /facet request carries:
+// all of its argument text.
+func firstMessageFrom(req Request) FirstMessage {
+	text := strings.TrimSpace(req.Args)
+	if text == "" {
+		return FirstMessage{}
+	}
+	first := FirstMessage{Text: text}
+	if req.Source == "app" {
+		first.UserID = req.UserID
+	}
+	return first
 }
 
 // TokenCountCache caches token counting results so /context doesn't re-count every call.

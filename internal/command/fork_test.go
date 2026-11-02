@@ -25,8 +25,9 @@ func branchingManager() *agent.DelegatedManager {
 }
 
 // forkCC builds a CommandContext over a fresh store, with mgr as the agent's
-// delegated manager (nil = API agent). minted records each surfaced chat.
-func forkCC(t *testing.T, mgr *agent.DelegatedManager, minted *[]string) CommandContext {
+// delegated manager (nil = API agent). minted records each surfaced chat;
+// firsts, when non-nil, records the first message each mint was given.
+func forkCC(t *testing.T, mgr *agent.DelegatedManager, minted *[]string, firsts ...*[]FirstMessage) CommandContext {
 	t.Helper()
 	store := session.NewStore(t.TempDir())
 	return CommandContext{
@@ -34,8 +35,11 @@ func forkCC(t *testing.T, mgr *agent.DelegatedManager, minted *[]string) Command
 		Sessions:    store,
 		Config:      &config.Config{},
 		AgentConfig: config.AgentConfig{ID: "test"},
-		MintFacetConversation: func(_, sessionKey string) (string, error) {
+		MintFacetConversation: func(_, sessionKey string, first FirstMessage) (string, error) {
 			*minted = append(*minted, sessionKey)
+			for _, f := range firsts {
+				*f = append(*f, first)
+			}
 			return "conv-fork", nil
 		},
 	}
@@ -200,11 +204,11 @@ func sessionFiles(t *testing.T, cc CommandContext, key string) []string {
 	return files
 }
 
-// TestForkAtMessageRefused: a named message is never quietly replaced by a
-// fork from the end. foci has no map from an app message id to a position in
-// the conversation, so every message= is refused, naming the id, and nothing
-// is created.
-func TestForkAtMessageRefused(t *testing.T) {
+// TestForkFirstMessage: text after /fork is handed to the new chat as its
+// first message, whole and verbatim (including what used to be the refused
+// message=<id> form), on every branchable backend. The sender id rides along
+// only for an app request; with no text, nothing is sent (#2780).
+func TestForkFirstMessage(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		mgr  *agent.DelegatedManager
@@ -213,22 +217,36 @@ func TestForkAtMessageRefused(t *testing.T) {
 		{"branching delegated backend", branchingManager()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var minted []string
-			cc := forkCC(t, tc.mgr, &minted)
-			const parent = "test/c1"
-			appendHistory(t, cc.Sessions, parent, "q", "a")
-			before := sessionFiles(t, cc, parent)
-			ctx := tools.WithSessionKey(context.Background(), parent)
+			for _, c := range []struct {
+				req  Request
+				want FirstMessage
+			}{
+				{Request{Source: "app", UserID: "dev1", Args: "  look at   the logs  "}, FirstMessage{Text: "look at   the logs", UserID: "dev1"}},
+				{Request{Source: "app", UserID: "dev1", Args: "message=01HZZMSG"}, FirstMessage{Text: "message=01HZZMSG", UserID: "dev1"}},
+				{Request{Source: SourceTelegram, UserID: "5970", Args: "hello"}, FirstMessage{Text: "hello"}},
+				{Request{Source: "app", UserID: "dev1", Args: "   "}, FirstMessage{}},
+				{Request{Source: "app", UserID: "dev1"}, FirstMessage{}},
+			} {
+				var minted []string
+				var firsts []FirstMessage
+				cc := forkCC(t, tc.mgr, &minted, &firsts)
+				const parent = "test/c1"
+				appendHistory(t, cc.Sessions, parent, "q", "a")
+				ctx := tools.WithSessionKey(context.Background(), parent)
 
-			_, err := ForkCommand().Execute(ctx, Request{Source: "app", Args: "message=01HZZMSG"}, cc)
-			if err == nil || !strings.Contains(err.Error(), "01HZZMSG") {
-				t.Fatalf("err = %v, want a refusal naming the message id", err)
-			}
-			if len(minted) != 0 {
-				t.Errorf("refused fork surfaced a chat: %v", minted)
-			}
-			if after := sessionFiles(t, cc, parent); len(after) != len(before) {
-				t.Errorf("refused fork created session files: before %v after %v", before, after)
+				resp, err := ForkCommand().Execute(ctx, c.req, cc)
+				if err != nil {
+					t.Fatalf("args %q: execute: %v", c.req.Args, err)
+				}
+				if len(firsts) != 1 || firsts[0] != c.want {
+					t.Errorf("args %q (source %q): first messages = %+v, want [%+v]", c.req.Args, c.req.Source, firsts, c.want)
+				}
+				if resp.OpenConversationID != "conv-fork" {
+					t.Errorf("args %q: OpenConversationID = %q, want conv-fork", c.req.Args, resp.OpenConversationID)
+				}
+				if len(minted) == 1 && minted[0] == parent {
+					t.Errorf("args %q: minted the parent session, want a branch", c.req.Args)
+				}
 			}
 		})
 	}
@@ -249,16 +267,42 @@ func TestForkRefusedOnNonBranchingBackend(t *testing.T) {
 	}
 }
 
-func TestParseForkArgs(t *testing.T) {
-	for args, want := range map[string]string{"": "", "  ": "", "message=abc": "abc"} {
-		got, err := parseForkArgs(args)
-		if err != nil || got != want {
-			t.Errorf("parseForkArgs(%q) = %q, %v; want %q", args, got, err, want)
+// TestFacetFirstMessage: in the app, text after /facet goes to the new facet
+// chat as its first message. From a chat platform, /facet <text> is refused
+// before anything is forked or a facet bot acquired: a facet bot cannot render
+// a turn the command layer starts (#2780).
+func TestFacetFirstMessage(t *testing.T) {
+	t.Run("app", func(t *testing.T) {
+		var minted []string
+		var firsts []FirstMessage
+		cc := forkCC(t, nil, &minted, &firsts)
+		ctx := tools.WithSessionKey(context.Background(), "test/c1")
+		if _, err := FacetCommand().Execute(ctx, Request{Source: "app", UserID: "dev1", Args: "check the deploy"}, cc); err != nil {
+			t.Fatalf("execute: %v", err)
 		}
-	}
-	for _, bad := range []string{"message=", "abc", "message=a extra", "msg=abc"} {
-		if _, err := parseForkArgs(bad); err == nil {
-			t.Errorf("parseForkArgs(%q): want usage error", bad)
+		want := FirstMessage{Text: "check the deploy", UserID: "dev1"}
+		if len(firsts) != 1 || firsts[0] != want {
+			t.Errorf("first messages = %+v, want [%+v]", firsts, want)
 		}
+	})
+	for _, src := range []string{SourceTelegram, SourceDiscord} {
+		t.Run(src, func(t *testing.T) {
+			var minted []string
+			cc := forkCC(t, nil, &minted)
+			const parent = "test/c1"
+			appendHistory(t, cc.Sessions, parent, "q", "a")
+			before := sessionFiles(t, cc, parent)
+			ctx := tools.WithSessionKey(context.Background(), parent)
+			_, err := FacetCommand().Execute(ctx, Request{Source: src, Args: "check the deploy"}, cc)
+			if err == nil || !strings.Contains(err.Error(), "only in the app") {
+				t.Fatalf("err = %v, want the app-only refusal", err)
+			}
+			if len(minted) != 0 {
+				t.Errorf("refused facet surfaced a chat: %v", minted)
+			}
+			if after := sessionFiles(t, cc, parent); len(after) != len(before) {
+				t.Errorf("refused facet created session files: before %v after %v", before, after)
+			}
+		})
 	}
 }

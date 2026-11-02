@@ -28,8 +28,15 @@ func forkFacet(ctx context.Context, req Request, cc CommandContext) (Response, e
 		OrientationTemplate: orientTemplate,
 	}
 
+	first := firstMessageFrom(req)
 	if req.Source == "app" {
-		return forkFacetApp(ctx, cc, parentKey, opts)
+		return forkFacetApp(ctx, cc, parentKey, opts, first)
+	}
+	// A facet bot renders a turn only as a reply to a real platform message,
+	// and the command layer has none to give it, so a first message cannot
+	// start a turn there. Refuse before anything is forked or acquired.
+	if first.Text != "" {
+		return Response{}, fmt.Errorf("/facet <message> is supported only in the app; use /facet alone and send the message to the facet bot")
 	}
 	return forkFacetBot(ctx, cc, parentKey, opts)
 }
@@ -100,7 +107,9 @@ func forkBranch(ctx context.Context, cc CommandContext, parentKey string, opts s
 
 // forkFacetApp surfaces the facet as a new app conversation and asks the
 // requesting device to foreground it.
-func forkFacetApp(ctx context.Context, cc CommandContext, parentKey string, opts session.BranchOptions) (Response, error) {
+// A non-empty first is sent into the new conversation as the user's first
+// message (#2780).
+func forkFacetApp(ctx context.Context, cc CommandContext, parentKey string, opts session.BranchOptions, first FirstMessage) (Response, error) {
 	if cc.MintFacetConversation == nil {
 		return Response{}, fmt.Errorf("app facets not available")
 	}
@@ -108,7 +117,7 @@ func forkFacetApp(ctx context.Context, cc CommandContext, parentKey string, opts
 	if err != nil {
 		return Response{}, err
 	}
-	convID, err := cc.MintFacetConversation(cc.AgentConfig.ID, branchKey)
+	convID, err := cc.MintFacetConversation(cc.AgentConfig.ID, branchKey, first)
 	if err != nil {
 		return Response{}, fmt.Errorf("surface facet conversation: %w", err)
 	}

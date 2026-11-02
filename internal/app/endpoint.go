@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/command"
 	"foci/internal/delegator"
 	"foci/internal/fap"
 	"foci/internal/platform"
@@ -391,15 +392,16 @@ func NotifyAliasChanged(agentID, platform string, chatID int64) {
 // MintFacetConversation surfaces a facet branch to app clients via the active
 // hub (see Hub.mintFacetConversation). Injected into the command layer by the
 // gateway as CommandContext.MintFacetConversation. Errors if the app provider
-// is not running.
-func MintFacetConversation(agentID, sessionKey string) (string, error) {
+// is not running. A non-empty first.Text is sent into the new conversation as
+// the user's first message (#2780).
+func MintFacetConversation(agentID, sessionKey string, first command.FirstMessage) (string, error) {
 	activeMu.RLock()
 	h := activeHub
 	activeMu.RUnlock()
 	if h == nil {
 		return "", errors.New("app provider not running")
 	}
-	return h.mintFacetConversation(agentID, sessionKey)
+	return h.mintFacetConversation(agentID, sessionKey, first)
 }
 
 // CreateDefaultConversation creates (or reuses) a non-archived app conversation

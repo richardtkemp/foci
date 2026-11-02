@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"foci/internal/command"
@@ -20,7 +21,7 @@ func TestMintFacetConversation(t *testing.T) {
 	c := fakeClient()
 	h.clients[c] = struct{}{}
 
-	convID, err := h.mintFacetConversation("ag", "ag/cbranch")
+	convID, err := h.mintFacetConversation("ag", "ag/cbranch", command.FirstMessage{})
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -63,7 +64,7 @@ func TestMintFacetConversation_RefusesCrossAgentKey(t *testing.T) {
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
 	registerBareAgent(h, "ag")
 
-	if _, err := h.mintFacetConversation("ag", "other/cbranch"); err == nil {
+	if _, err := h.mintFacetConversation("ag", "other/cbranch", command.FirstMessage{}); err == nil {
 		t.Fatal("want error for cross-agent session key, got nil")
 	}
 }
@@ -107,5 +108,110 @@ func TestDispatchCommand_ForegroundsRequester(t *testing.T) {
 		if d.t == fap.TypeConversationForeground {
 			t.Error("conversation client received a foreground directive; focus must be requester-only")
 		}
+	}
+}
+
+// bufferedUserMessages decodes b's buffered frames and returns the user-role
+// messages among them.
+func bufferedUserMessages(t *testing.T, b *convBinding) []map[string]any {
+	t.Helper()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var out []map[string]any
+	for _, f := range b.buffer {
+		var env map[string]any
+		if err := json.Unmarshal([]byte(f.wire), &env); err != nil {
+			t.Fatalf("decode buffered frame: %v", err)
+		}
+		if env["t"] != fap.TypeMessage {
+			continue
+		}
+		body, _ := env["d"].(map[string]any)
+		if body["role"] == "user" {
+			out = append(out, body)
+		}
+	}
+	return out
+}
+
+// TestMintFacetConversation_FirstMessage: a first message is sent into the NEW
+// conversation as if typed there (#2780): a user-role echo in that conversation
+// and a turn enqueued on the branch session, driven by the app connection and
+// reconciled by the echo's id.
+func TestMintFacetConversation_FirstMessage(t *testing.T) {
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+	fa := registerFakeAgent(h, "ag")
+
+	convID, err := h.mintFacetConversation("ag", "ag/cbranch", command.FirstMessage{Text: "check the deploy", UserID: "dev1"})
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	if fa.env == nil {
+		t.Fatal("no turn enqueued for the first message")
+	}
+	env := fa.env
+	if env.SessionKey != "ag/cbranch" {
+		t.Errorf("turn session = %q, want the branch ag/cbranch", env.SessionKey)
+	}
+	if env.Text != "check the deploy" || env.UserID != "dev1" {
+		t.Errorf("turn text/user = %q/%q, want check the deploy/dev1", env.Text, env.UserID)
+	}
+	if env.Original != convID || env.Ref.ConversationID != convID {
+		t.Errorf("turn bound to conversation %v / ref %q, want %s", env.Original, env.Ref.ConversationID, convID)
+	}
+	if env.Driver == nil {
+		t.Error("turn has no driver, so its reply cannot stream to the new chat")
+	}
+	b := h.bindingForSession("ag/cbranch")
+	if b == nil || b.convID != convID {
+		t.Fatalf("binding for ag/cbranch = %v, want convID %s", b, convID)
+	}
+	msgs := bufferedUserMessages(t, b)
+	if len(msgs) != 1 {
+		t.Fatalf("user messages in the new conversation = %v, want 1", msgs)
+	}
+	if msgs[0]["text"] != "check the deploy" || msgs[0]["messageId"] != env.Ref.MessageID {
+		t.Errorf("echo = %v, want text 'check the deploy' with messageId %q (the turn's ref)", msgs[0], env.Ref.MessageID)
+	}
+}
+
+// TestMintFacetConversation_NoFirstMessage: with no text nothing is enqueued and
+// nothing is echoed; the new chat waits for the user.
+func TestMintFacetConversation_NoFirstMessage(t *testing.T) {
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+	fa := registerFakeAgent(h, "ag")
+
+	if _, err := h.mintFacetConversation("ag", "ag/cbranch", command.FirstMessage{}); err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	if fa.env != nil {
+		t.Errorf("a turn was enqueued with no first message: %+v", fa.env)
+	}
+	if msgs := bufferedUserMessages(t, h.bindingForSession("ag/cbranch")); len(msgs) != 0 {
+		t.Errorf("user messages echoed with no first message: %v", msgs)
+	}
+}
+
+// TestMintFacetConversation_FirstMessageNoAgent: a first message with no agent
+// connection to run it is refused before minting, so no empty chat is left
+// open on the user's devices.
+func TestMintFacetConversation_FirstMessageNoAgent(t *testing.T) {
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+	registerBareAgent(h, "ag") // no agentRef
+
+	if _, err := h.mintFacetConversation("ag", "ag/cbranch", command.FirstMessage{Text: "hi"}); err == nil {
+		t.Fatal("want an error with no agent to run the first message")
+	}
+	if got := h.loadOpenChats(); len(got) != 0 {
+		t.Errorf("open-set = %v after a refused mint, want empty", got)
+	}
+	if b := h.bindingForSession("ag/cbranch"); b != nil {
+		t.Errorf("a refused mint bound conversation %s", b.convID)
 	}
 }

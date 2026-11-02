@@ -79,7 +79,7 @@ func RepeatCommand() *Command {
 func FacetCommand() *Command {
 	return &Command{
 		Name:        "facet",
-		Description: "Fork session to a secondary bot",
+		Description: "Fork session to a facet; text after /facet is sent there (app only)",
 		Category:    "session",
 		// Listed only where it can run: a backend that cannot branch refuses
 		// it at run time (forkFacetBranch), so it is not offered there (#957).

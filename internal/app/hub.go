@@ -1484,7 +1484,22 @@ func (h *Hub) adoptSession(b *convBinding, sessionKey string) {
 // the other two open-set writers (see handleConversationOpenSet), so a sweep or
 // a device's replace running concurrently can neither lose this tab nor have
 // its own newer set overwritten by the mint's stale copy.
-func (h *Hub) mintFacetConversation(agentID, sessionKey string) (string, error) {
+//
+// A non-empty first.Text is then sent into the new conversation as the user's
+// first message, as if typed there (#2780): echoed as a user-role frame and
+// enqueued as a turn on sessionKey, so the turn runs in the new chat, not in the
+// chat the command came from.
+func (h *Hub) mintFacetConversation(agentID, sessionKey string, first command.FirstMessage) (string, error) {
+	// Resolve the agent connection before minting, so a first message that
+	// cannot be delivered refuses the whole request instead of leaving a new,
+	// empty chat behind.
+	var conn *appConn
+	if first.Text != "" {
+		conn = h.PrimaryBot(agentID)
+		if conn == nil || conn.agentRef == nil {
+			return "", fmt.Errorf("no app connection for agent %s to send the first message on", agentID)
+		}
+	}
 	b := h.ensureBinding(nil, agentID, fap.NewULID())
 	h.adoptSession(b, sessionKey)
 	b.mu.Lock()
@@ -1512,7 +1527,37 @@ func (h *Hub) mintFacetConversation(agentID, sessionKey string) (string, error) 
 	}
 	h.openSetMu.Unlock()
 	h.pushRosterAll()
+	if conn != nil {
+		h.sendFirstMessage(conn, b, first)
+	}
 	return b.convID, nil
+}
+
+// sendFirstMessage delivers first.Text into the freshly minted conversation b
+// the way routeUserTurn delivers a typed message: a durable user-role echo (so
+// every device shows it as the user's message), a user-activity stamp, and a
+// turn enqueued on b's session with conn as its driver.
+func (h *Hub) sendFirstMessage(conn *appConn, b *convBinding, first command.FirstMessage) {
+	msgID := fap.NewULID()
+	b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: msgID, Role: "user", Text: first.Text})
+	if conn.OnUserMessage != nil {
+		conn.OnUserMessage()
+	}
+	accepted := conn.agentRef.Enqueue(agent.Envelope{
+		SessionKey: b.key(),
+		Text:       first.Text,
+		UserID:     first.UserID,
+		ChatID:     b.chatID,
+		ReceivedAt: time.Now(),
+		Original:   b.convID,
+		Driver:     conn,
+		Ref:        delegator.InputRef{ConversationID: b.convID, MessageID: msgID},
+	})
+	if !accepted {
+		appLog.Warnf("conversation %s: first message refused by the agent inbox (session %s)", b.convID, b.key())
+		b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: fap.NewULID(), Role: "system",
+			Text: "⚠️ The first message was not delivered to the agent. Send it again here."})
+	}
 }
 
 // --- session-key + binding bookkeeping ---

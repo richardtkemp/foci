@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/command"
 	"foci/internal/fap"
 	"foci/internal/platform"
 	"foci/internal/session"
@@ -559,7 +560,7 @@ func TestSweepOpenChats_ConcurrentOpenSetNeverLost(t *testing.T) {
 			wg.Add(2)
 			go func() {
 				defer wg.Done()
-				id, err := h.mintFacetConversation("clutch", facetKey)
+				id, err := h.mintFacetConversation("clutch", facetKey, command.FirstMessage{})
 				if err != nil {
 					t.Error(err)
 				}

@@ -196,11 +196,11 @@ Manually trigger Claude Code re-authentication. Drives a `claude /login` TUI in 
 ### `/restart`
 Restart the foci service. Tries `systemctl restart foci`; falls back to SIGTERM (relies on process supervisor or Docker restart policy).
 
-### `/facet`
-Fork the current session to a secondary Telegram bot for parallel conversation. See [FACET.md](FACET.md). Listed only when the agent can branch: an API agent, or a delegated backend that can fork its conversation (Claude Code, Codex, opencode). On any other backend it is hidden and refused.
+### `/facet [message]`
+Fork the current session to a secondary Telegram bot for parallel conversation. See [FACET.md](FACET.md). Listed only when the agent can branch: an API agent, or a delegated backend that can fork its conversation (Claude Code, Codex, opencode). On any other backend it is hidden and refused. In the app, any text after `/facet` is sent into the new facet chat as your first message there, and the agent answers there. On Telegram and Discord, `/facet <text>` is refused: use `/facet` alone, then message the facet bot.
 
-### `/fork [message=<id>]`
-Fork the current conversation into a new app chat. The new chat is an ordinary chat (no orientation prompt, compaction on) whose history is the current conversation; the current chat is not changed. Works from any platform; the new chat appears in the app. Same listing rule as `/facet`. `message=<id>` (fork at a given message) is not supported yet and is refused with an error naming the id.
+### `/fork [message]`
+Fork the current conversation into a new app chat. The new chat is an ordinary chat (no orientation prompt, compaction on) whose history is the current conversation; the current chat is not changed. Works from any platform; the new chat appears in the app. Same listing rule as `/facet`. Any text after `/fork` is sent into the new chat as your first message there, as if typed in it, and the agent answers in the new chat. With no text, the new chat waits for you.
 
 ### `/secrets <subcommand>`
 Manage secrets. **CLI-only**.
