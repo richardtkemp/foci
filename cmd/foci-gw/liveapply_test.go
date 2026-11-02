@@ -470,3 +470,49 @@ func TestLiveApply_WebhookSessionForm(t *testing.T) {
 		t.Errorf("after Apply, deploy = %+v, want deploy.md with new-per-call", h)
 	}
 }
+
+// TestLiveApply_KeepsProviderPlatformDefaults proves a live apply resolves the
+// fresh config through the same provider-default layer as startup (#2749). A
+// global [display] show_tool_calls = "full" with no app-platform value leaves
+// the app at its provider default "off" at startup (the agent's app platform
+// carries the provider default, and an agent platform outranks global
+// display). Before the fix, Apply re-read foci.toml without that layer, so
+// the first live edit of any resolved field turned the app "full".
+func TestLiveApply_KeepsProviderPlatformDefaults(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "foci.toml")
+	toml := `
+[groups]
+powerful = "anthropic/claude-haiku-4-5"
+
+[display]
+show_tool_calls = "full"
+
+[[agents]]
+id = "a"
+
+[[agents.platforms]]
+id = "app"
+`
+	if err := os.WriteFile(configPath, []byte(toml), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	// Startup path: Load, then the provider-default layer main.go applies.
+	startup, err := loadGatewayConfig(configPath)
+	if err != nil {
+		t.Fatalf("loadGatewayConfig: %v", err)
+	}
+	inst := &agentInstance{id: "a", resolved: config.NewLiveValue(config.Resolve(startup, startup.Agents[0]))}
+	if got := inst.LiveConfig().PlatformDisplay("app").ShowToolCalls; got != string(config.ToolCallOff) {
+		t.Fatalf("startup PlatformDisplay(app).ShowToolCalls = %q, want %q (provider default)", got, config.ToolCallOff)
+	}
+
+	la := newLiveApply(configPath, nil)
+	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{"a": inst}))
+	if applied, err := la.Apply("display", "show_tool_calls"); !applied || err != nil {
+		t.Fatalf(`Apply("display", "show_tool_calls") = %v, %v; want true, nil`, applied, err)
+	}
+	if got := inst.LiveConfig().PlatformDisplay("app").ShowToolCalls; got != string(config.ToolCallOff) {
+		t.Errorf("after live apply PlatformDisplay(app).ShowToolCalls = %q, want %q — live reload dropped the provider default", got, config.ToolCallOff)
+	}
+}

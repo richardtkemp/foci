@@ -17,8 +17,9 @@ import (
 // (the fields carrying a `hot` struct tag — see config.ConfigField.NeedsRestart).
 // An edit to any other field is file-only, exactly as before.
 //
-// Appliers receive a FRESHLY LOADED config (the file just written), never the
-// startup config: the startup *config.Config and every ResolvedAgentConfig
+// Appliers receive a FRESHLY LOADED config (the file just written, through
+// loadGatewayConfig so provider platform defaults match startup — #2749),
+// never the startup config: the startup *config.Config and every ResolvedAgentConfig
 // stay frozen, and each applier pushes the new values into its consumers
 // through their own thread-safe update paths.
 type liveApply struct {
@@ -100,7 +101,7 @@ func (la *liveApply) Apply(section, key string) (bool, error) {
 	if err := checkConfigLoad(la.protect, la.configPath); err != nil {
 		return true, fmt.Errorf("live apply %s: %w", addr, err)
 	}
-	fresh, err := config.Load(la.configPath, delegator.RegisteredNames())
+	fresh, err := loadGatewayConfig(la.configPath)
 	if err != nil {
 		return true, fmt.Errorf("live apply %s: reload config: %w", addr, err)
 	}
@@ -410,4 +411,18 @@ func applySkillExtraDirs(ld *skills.LiveDirs, fresh *config.Config, freshAcfg co
 		return
 	}
 	ld.Set(ld.Get().WithExtra(fresh.SkillExtraDirs(freshAcfg)))
+}
+
+// loadGatewayConfig reads foci.toml the way the gateway sees it at startup:
+// config.Load, then the provider platform-default layer (each registered
+// provider's DefaultPlatformConfig, merged into every global and per-agent
+// platform). A reload that skips the second step resolves platform fields
+// differently from startup (#2749).
+func loadGatewayConfig(path string) (*config.Config, error) {
+	cfg, err := config.Load(path, delegator.RegisteredNames())
+	if err != nil {
+		return nil, err
+	}
+	config.ApplyProviderDefaults(cfg, providerPlatformDefaults)
+	return cfg, nil
 }
