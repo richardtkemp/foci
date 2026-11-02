@@ -59,7 +59,7 @@ func TestAskgwPresent_BroadcastsToCapableDevicesOnly(t *testing.T) {
 	mac, phone := askgwClient(h, "mac"), askgwClient(h, "phone")
 	old := deviceClient(h, "old")
 
-	h.presentAskgw("askgw-a1-q0", "Sudo", "Run `ls`?", askgwButtons, func(string) {})
+	h.presentAskgw("askgw-a1-q0", "Sudo", "Run `ls`?", "", askgwButtons, func(string) {})
 
 	for name, c := range map[string]*wsClient{"mac": mac, "phone": phone} {
 		frames := drain(t, c)
@@ -86,7 +86,7 @@ func TestAskgwResponse_FirstAnswerWinsAndClosesEverywhere(t *testing.T) {
 	h := newTestHub()
 	mac, phone := askgwClient(h, "mac"), askgwClient(h, "phone")
 	var got []string
-	h.presentAskgw("p1", "Sudo", "x", askgwButtons, func(d string) { got = append(got, d) })
+	h.presentAskgw("p1", "Sudo", "x", "", askgwButtons, func(d string) { got = append(got, d) })
 	drain(t, mac)
 	drain(t, phone)
 
@@ -118,7 +118,7 @@ func TestAskgwResponse_UnknownChoiceKeepsPromptPending(t *testing.T) {
 	h := newTestHub()
 	phone := askgwClient(h, "phone")
 	called := false
-	h.presentAskgw("p1", "", "x", askgwButtons, func(string) { called = true })
+	h.presentAskgw("p1", "", "x", "", askgwButtons, func(string) { called = true })
 	drain(t, phone)
 
 	h.handleAskgwResponse(phone, fap.AskgwResponse{PromptID: "p1", Data: "opt:9"})
@@ -135,8 +135,8 @@ func TestAskgwResponse_UnknownChoiceKeepsPromptPending(t *testing.T) {
 func TestAskgwResponse_CallbackPresentsNextQuestion(t *testing.T) {
 	h := newTestHub()
 	phone := askgwClient(h, "phone")
-	h.presentAskgw("q0", "", "first", askgwButtons, func(string) {
-		h.presentAskgw("q1", "", "second", askgwButtons, func(string) {})
+	h.presentAskgw("q0", "", "first", "", askgwButtons, func(string) {
+		h.presentAskgw("q1", "", "second", "", askgwButtons, func(string) {})
 	})
 	drain(t, phone)
 
@@ -152,7 +152,7 @@ func TestAskgwResponse_CallbackPresentsNextQuestion(t *testing.T) {
 func TestAskgwClose(t *testing.T) {
 	h := newTestHub()
 	phone := askgwClient(h, "phone")
-	h.presentAskgw("p1", "", "x", askgwButtons, func(string) { t.Error("callback fired on close") })
+	h.presentAskgw("p1", "", "x", "", askgwButtons, func(string) { t.Error("callback fired on close") })
 	drain(t, phone)
 
 	if !h.closeAskgw("p1") {
@@ -179,7 +179,7 @@ func TestAskgwHello_SendsPendingSetEvenWhenEmpty(t *testing.T) {
 		t.Errorf("empty hello snapshots = %v, want [[]]", s)
 	}
 
-	h.presentAskgw("p1", "", "x", askgwButtons, func(string) {})
+	h.presentAskgw("p1", "", "x", "", askgwButtons, func(string) {})
 	late := askgwClient(h, "mac")
 	drain(t, late) // the broadcast reached it already; the hello push is what is under test
 	h.pushAskgw(late)
@@ -193,7 +193,7 @@ func TestAskgwResponse_DispatchedFromWire(t *testing.T) {
 	h := newTestHub()
 	phone := askgwClient(h, "phone")
 	var got string
-	h.presentAskgw("p1", "", "x", askgwButtons, func(d string) { got = d })
+	h.presentAskgw("p1", "", "x", "", askgwButtons, func(d string) { got = d })
 	drain(t, phone)
 
 	h.dispatchInbound(phone, []byte(`{"t":"askgw.response","id":"i1","d":{"promptId":"p1","data":"opt:0"}}`))
@@ -217,7 +217,7 @@ func TestAskgwPreview(t *testing.T) {
 func TestAskgwHello_WiredIntoHelloHandler(t *testing.T) {
 	h := newTestHub()
 	askgwClient(h, "mac") // a capable device, so the prompt is shown app-wide at all
-	h.presentAskgw("p1", "", "x", askgwButtons, func(string) {})
+	h.presentAskgw("p1", "", "x", "", askgwButtons, func(string) {})
 
 	phone := deviceClient(h, "phone")
 	h.dispatchInbound(phone, []byte(`{"t":"hello","id":"i1","d":{"client":{"deviceId":"phone","app":"foci","os":"android","version":"1"},"features":["askgwPrompts"]}}`))
@@ -238,7 +238,7 @@ func TestAskgwHello_WiredIntoHelloHandler(t *testing.T) {
 // can be closed.
 func TestPresentAskgwPrompt_EntryPoints(t *testing.T) {
 	setActiveHub(nil)
-	if PresentAskgwPrompt("p1", "Sudo", "x", askgwButtons, func(string) {}) {
+	if PresentAskgwPrompt("p1", "Sudo", "x", "", askgwButtons, func(string) {}) {
 		t.Fatal("PresentAskgwPrompt with no hub = true, want false")
 	}
 	if CloseAskgwPrompt("p1") {
@@ -249,7 +249,7 @@ func TestPresentAskgwPrompt_EntryPoints(t *testing.T) {
 	setActiveHub(h)
 	t.Cleanup(func() { setActiveHub(nil) })
 	phone := askgwClient(h, "phone")
-	if !PresentAskgwPrompt("p1", "Sudo", "**Sudo**\n\nRun `ls`?", askgwButtons, func(string) {}) {
+	if !PresentAskgwPrompt("p1", "Sudo", "**Sudo**\n\nRun `ls`?", "nuc", askgwButtons, func(string) {}) {
 		t.Fatal("PresentAskgwPrompt with a hub = false")
 	}
 	frames := drain(t, phone)
@@ -258,6 +258,10 @@ func TestPresentAskgwPrompt_EntryPoints(t *testing.T) {
 	}
 	if got := frames[0].d["prompts"].([]any)[0].(map[string]any)["text"]; got != "Run `ls`?" {
 		t.Errorf("text = %q, want the embedded header stripped", got)
+	}
+	// #2800: the host the ask came from rides on the frame for the dialog.
+	if got := frames[0].d["prompts"].([]any)[0].(map[string]any)["host"]; got != "nuc" {
+		t.Errorf("host = %v, want nuc", got)
 	}
 	if !CloseAskgwPrompt("p1") {
 		t.Error("CloseAskgwPrompt(pending) = false")
@@ -270,12 +274,12 @@ func TestPresentAskgwPrompt_EntryPoints(t *testing.T) {
 // agent chat; a capable device makes it app-wide.
 func TestAskgwPresent_RefusesWhenNoCapableDevice(t *testing.T) {
 	h := newTestHub()
-	if h.presentAskgw("p1", "", "x", askgwButtons, func(string) {}) {
+	if h.presentAskgw("p1", "", "x", "", askgwButtons, func(string) {}) {
 		t.Fatal("presentAskgw with no device = true, want false (agent-chat fallback)")
 	}
 
 	old := deviceClient(h, "old")
-	if h.presentAskgw("p1", "", "x", askgwButtons, func(string) {}) {
+	if h.presentAskgw("p1", "", "x", "", askgwButtons, func(string) {}) {
 		t.Fatal("presentAskgw with only an old-build device = true, want false")
 	}
 	if s := askgwSnapshots(t, old); len(s) != 0 {
@@ -286,7 +290,7 @@ func TestAskgwPresent_RefusesWhenNoCapableDevice(t *testing.T) {
 	}
 
 	capable := askgwClient(h, "phone")
-	if !h.presentAskgw("p1", "", "x", askgwButtons, func(string) {}) {
+	if !h.presentAskgw("p1", "", "x", "", askgwButtons, func(string) {}) {
 		t.Fatal("presentAskgw with a capable device connected = false")
 	}
 	if s := askgwSnapshots(t, capable); !reflect.DeepEqual(s, [][]string{{"p1"}}) {
@@ -333,13 +337,13 @@ func TestAskgwPresent_OfflineDevicesCountOnlyWhenCapable(t *testing.T) {
 	h, sent := askgwPushHub(t)
 	h.tokens.set("oldphone", "tok-old")
 	h.tokens.setAskgw("oldphone", false)
-	if h.presentAskgw("p1", "", "x", askgwButtons, func(string) {}) {
+	if h.presentAskgw("p1", "", "x", "", askgwButtons, func(string) {}) {
 		t.Fatal("only an offline old-build device: presentAskgw = true, want false")
 	}
 
 	h.tokens.set("phone", "tok-new")
 	h.tokens.setAskgw("phone", true)
-	if !h.presentAskgw("p2", "Sudo", "x", askgwButtons, func(string) {}) {
+	if !h.presentAskgw("p2", "Sudo", "x", "", askgwButtons, func(string) {}) {
 		t.Fatal("offline capable device with a push token: presentAskgw = false")
 	}
 	deadline := time.Now().Add(5 * time.Second)
@@ -359,7 +363,7 @@ func TestAskgwPresent_OfflineCapableNeedsPush(t *testing.T) {
 	h := newTestHub() // no pusher
 	h.tokens.set("phone", "tok-new")
 	h.tokens.setAskgw("phone", true)
-	if h.presentAskgw("p1", "", "x", askgwButtons, func(string) {}) {
+	if h.presentAskgw("p1", "", "x", "", askgwButtons, func(string) {}) {
 		t.Fatal("offline capable device but no pusher: presentAskgw = true, want false")
 	}
 }

@@ -695,10 +695,15 @@ func (Reminders) Type() string { return TypeReminders }
 // (e.g. "Sudo"), Text the markdown body, Choices the buttons; each choice's
 // Data is opaque to the app and echoed verbatim.
 type AskgwPrompt struct {
-	PromptID string   `json:"promptId"`
-	Header   string   `json:"header,omitempty"`
-	Text     string   `json:"text"`
-	Choices  []Choice `json:"choices"`
+	PromptID string `json:"promptId"`
+	Header   string `json:"header,omitempty"`
+	Text     string `json:"text"`
+	// Host is the host the ask came from (#2800): foci takes it from the
+	// connection (this host's name for the Unix socket; the peer's reverse-DNS
+	// name, else its bare IP, for HTTP), never from the request body. The
+	// dialog shows it. Absent when unknown.
+	Host    string   `json:"host,omitempty"`
+	Choices []Choice `json:"choices"`
 }
 
 // AskgwPrompts carries the WHOLE list of pending askgw prompts, oldest first

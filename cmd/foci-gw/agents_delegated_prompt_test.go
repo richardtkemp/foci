@@ -436,7 +436,7 @@ func TestAskgwPresent_RefusedConnFailsClosed(t *testing.T) {
 	conn := &refuserConn{buttonStubConn: buttonStubConn{stubConn{sessionKey: "main/c77"}}}
 	logs := captureLog(t, log.WARN)
 
-	id, outcome := askgwPresentFn(oneConnMgr{conn: conn})("main", "main/c77", "ask-req", "Run sudo?", "Sudo",
+	id, outcome := askgwPresentFn(oneConnMgr{conn: conn})("main", "main/c77", "ask-req", "Run sudo?", "Sudo", "",
 		[]question.Choice{{Label: "Yes", Data: "qa:0"}}, func(string) {})
 
 	if outcome != askgw.PresentRefused || id != "" {
@@ -452,7 +452,7 @@ func TestAskgwPresent_RefusedConnFailsClosed(t *testing.T) {
 	// A connection with no session at all is a failure, not a refusal: the
 	// askgw server resolves it unavailable (the honest status for "no
 	// session"), so the two must stay distinguishable.
-	if _, outcome := askgwPresentFn(stubConnMgr{})("main", "main/c404", "ask-404", "Run sudo?", "Sudo",
+	if _, outcome := askgwPresentFn(stubConnMgr{})("main", "main/c404", "ask-404", "Run sudo?", "Sudo", "",
 		[]question.Choice{{Label: "Yes", Data: "qa:0"}}, func(string) {}); outcome != askgw.PresentFailed {
 		t.Errorf("present with no connection = %v, want PresentFailed (unavailable, not denied)", outcome)
 	}
@@ -460,7 +460,7 @@ func TestAskgwPresent_RefusedConnFailsClosed(t *testing.T) {
 	// Positive control: a capable connection presents and reports its
 	// platform message id.
 	capable := telegramLikeConn()
-	if id, outcome := askgwPresentFn(oneConnMgr{conn: capable})("main", "main/c999", "ask-ok", "Run sudo?", "Sudo",
+	if id, outcome := askgwPresentFn(oneConnMgr{conn: capable})("main", "main/c999", "ask-ok", "Run sudo?", "Sudo", "",
 		[]question.Choice{{Label: "Yes", Data: "qa:0"}}, func(string) {}); outcome != askgw.Presented || id == "" {
 		t.Errorf("present on a capable conn = (%q, %v); want (id, Presented)", id, outcome)
 	}
@@ -528,7 +528,7 @@ func TestOtherPlatformApprovalsUnaffectedBySlackSession(t *testing.T) {
 	platform.CancelInteractiveMessage("req-6-8-chatless", "done")
 
 	// An askgw ask resolves the same way.
-	if _, outcome := askgwPresentFn(mgr)("main", "main/c222", "ask-6-8", "Q?", "Q",
+	if _, outcome := askgwPresentFn(mgr)("main", "main/c222", "ask-6-8", "Q?", "Q", "",
 		[]question.Choice{{Label: "Yes", Data: "qa:0"}}, func(string) {}); outcome != askgw.Presented {
 		t.Error("askgw ask failed on a telegram connection; only refusing connections fail closed")
 	}

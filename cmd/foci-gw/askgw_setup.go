@@ -111,8 +111,8 @@ func setupAskgw(cfg *config.Config, agents *agentRegistry, connMgr platform.Conn
 }
 
 // appPromptFn shows an askgw question app-wide (app.PresentAskgwPrompt);
-// false means it was not shown.
-type appPromptFn func(id, header, text string, buttons []platform.ButtonChoice, onChoice func(data string)) bool
+// false means it was not shown. host is the ask's origin (#2800).
+type appPromptFn func(id, header, text, host string, buttons []platform.ButtonChoice, onChoice func(data string)) bool
 
 // askgwPresenter is askgw's PresentFn (#2707): the question is shown app-wide,
 // as a dialog over whatever is on screen on every app device, not posted into
@@ -122,11 +122,11 @@ type appPromptFn func(id, header, text string, buttons []platform.ButtonChoice, 
 // an empty platform msgID, so a later `notify` goes to notifyFallback: there
 // is no chat message to edit.
 func askgwPresenter(appPresent appPromptFn, chat askgw.PresentFn) askgw.PresentFn {
-	return func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, askgw.PresentOutcome) {
-		if appPresent(msgID, summary, text, askgwButtons(choices), onResponse) {
+	return func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, askgw.PresentOutcome) {
+		if appPresent(msgID, summary, text, origin, askgwButtons(choices), onResponse) {
 			return "", askgw.Presented
 		}
-		return chat(agentID, sessionKey, msgID, text, summary, choices, onResponse)
+		return chat(agentID, sessionKey, msgID, text, summary, origin, choices, onResponse)
 	}
 }
 

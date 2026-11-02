@@ -113,7 +113,10 @@ func (s *askgwPromptSet) snapshot() fap.AskgwPrompts {
 // (false, nothing registered) when no device could show the prompt — see
 // askgwReachable — so the caller posts it to the agent chat instead: an askgw
 // question (a sudo approval) must never be invisible.
-func (h *Hub) presentAskgw(id, header, text string, buttons []platform.ButtonChoice, onChoice func(data string)) bool {
+//
+// host is the host the ask came from (#2800), which the dialog shows; empty
+// when unknown.
+func (h *Hub) presentAskgw(id, header, text, host string, buttons []platform.ButtonChoice, onChoice func(data string)) bool {
 	if !h.askgwReachable() {
 		appLog.Infof("askgw: no device can show prompt %s (none connected or push-wakeable with %s), falling back to the agent chat", id, featureAskgwPrompts)
 		return false
@@ -126,7 +129,7 @@ func (h *Hub) presentAskgw(id, header, text string, buttons []platform.ButtonCho
 		choices = append(choices, fap.Choice{Label: b.Label, Data: b.Data, Row: b.Row, Description: b.Description})
 	}
 	h.askgw.put(id, &askgwPrompt{
-		frame:    fap.AskgwPrompt{PromptID: id, Header: header, Text: text, Choices: choices},
+		frame:    fap.AskgwPrompt{PromptID: id, Header: header, Text: text, Host: host, Choices: choices},
 		onChoice: onChoice,
 	})
 	h.broadcastAskgw()

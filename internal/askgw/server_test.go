@@ -31,6 +31,9 @@ func (c *capturedCallback) fire(data string) {
 	}
 }
 
+// testLocalHost is the test server's own host name: the origin of a socket ask.
+const testLocalHost = "nuc-test"
+
 func startTestServer(t *testing.T, present PresentFn, resolve ResolveSessionFn) (*Server, string) {
 	t.Helper()
 	sockPath := shortSockPath(t)
@@ -41,6 +44,7 @@ func startTestServer(t *testing.T, present PresentFn, resolve ResolveSessionFn) 
 		AllowedUIDs:    []string{uid},
 		MaxFrameBytes:  1 << 20,
 		DefaultTimeout: 0,
+		LocalHost:      testLocalHost,
 		Present:        present,
 		CancelPrompt:   func(string, string) {},
 		ResolveSession: resolve,
@@ -106,7 +110,7 @@ func expectNoFrame(t *testing.T, conn net.Conn, r *bufio.Reader) {
 
 func TestE2E_AnsweredRoundTrip(t *testing.T) {
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
 		return "", Presented
 	}
@@ -153,7 +157,7 @@ func TestE2E_AnsweredRoundTrip(t *testing.T) {
 }
 
 func TestE2E_UnavailableNoSession(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+	present := func(string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
 		t.Fatal("present should not be called")
 		return "", PresentFailed
 	}
@@ -184,7 +188,7 @@ func TestE2E_UnavailableNoSession(t *testing.T) {
 }
 
 func TestE2E_PresentFails(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+	present := func(string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
 		return "", PresentFailed
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
@@ -219,7 +223,7 @@ func TestE2E_PresentFails(t *testing.T) {
 // foci refused.
 func TestE2E_PresentRefusedDenied(t *testing.T) {
 	calls := 0
-	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+	present := func(string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
 		calls++
 		if calls == 1 {
 			return "", PresentRefused
@@ -291,7 +295,7 @@ func TestE2E_MidAskPresentFailureResolves(t *testing.T) {
 			cb := &capturedCallback{}
 			calls := 0
 			resolved := false
-			present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+			present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 				calls++
 				if calls == 1 {
 					cb.set(onResponse)
@@ -359,7 +363,7 @@ func TestE2E_Cancel(t *testing.T) {
 	var cancelMu sync.Mutex
 	cb := &capturedCallback{}
 
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
 		return "", Presented
 	}
@@ -433,7 +437,7 @@ func TestE2E_Cancel(t *testing.T) {
 
 func TestE2E_DismissedViaCancelButton(t *testing.T) {
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
 		return "", Presented
 	}
@@ -461,7 +465,7 @@ func TestE2E_DismissedViaCancelButton(t *testing.T) {
 }
 
 func TestE2E_BadProtocolRejected(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+	present := func(string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
 		return "", Presented
 	}
 	resolve := func(frameAgent string) (string, string) { return "a", "a/c" }
@@ -490,7 +494,7 @@ func TestE2E_MultiQuestion(t *testing.T) {
 	var callbacks []func(string)
 	var cbMu sync.Mutex
 
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cbMu.Lock()
 		callbacks = append(callbacks, onResponse)
 		cbMu.Unlock()
@@ -548,7 +552,7 @@ func TestE2E_ConnectionDropCancelsPending(t *testing.T) {
 	var cancelMu sync.Mutex
 	cb := &capturedCallback{}
 
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
 		return "", Presented
 	}
@@ -618,7 +622,7 @@ func TestE2E_RejectBadUID(t *testing.T) {
 	srv, err := NewServer(ServerDeps{
 		SocketPath:  sockPath,
 		AllowedUIDs: []string{"99999"},
-		Present: func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+		Present: func(string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
 			return "", Presented
 		},
 		CancelPrompt:   func(string, string) {},
@@ -658,7 +662,7 @@ func TestE2E_RejectBadUID(t *testing.T) {
 }
 
 func TestE2E_AckSentOnSuccess(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+	present := func(string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
 		return "", Presented
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
@@ -684,7 +688,7 @@ func TestE2E_AckSentOnSuccess(t *testing.T) {
 }
 
 func TestE2E_DuplicateAskID(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+	present := func(string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
 		return "", Presented
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
@@ -711,7 +715,7 @@ func TestE2E_DuplicateAskID(t *testing.T) {
 
 func TestE2E_GatewayTimeout(t *testing.T) {
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
 		return "", Presented
 	}
@@ -753,7 +757,7 @@ func TestE2E_GatewayTimeout(t *testing.T) {
 }
 
 func TestE2E_FrameTimeoutOverride(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+	present := func(string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
 		return "", Presented
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
@@ -865,7 +869,7 @@ func answerFirstQuestion(t *testing.T, conn net.Conn, r *bufio.Reader, cb *captu
 func TestE2E_NotifyEditsAnsweredMessage(t *testing.T) {
 	cb := &capturedCallback{}
 	nr := &notifyRecorder{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
 		return "platform-msg-1", Presented
 	}
@@ -952,7 +956,7 @@ func shortSockPath(t *testing.T) string {
 func TestE2E_NotifyFallsBackWhenNoPlatformMsgID(t *testing.T) {
 	cb := &capturedCallback{}
 	nr := &notifyRecorder{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
 		return "", Presented // e.g. the plain-text fallback send — no platform msgID to edit
 	}
@@ -1019,7 +1023,7 @@ func TestE2E_NotifyFallsBackWhenNoPlatformMsgID(t *testing.T) {
 
 func TestE2E_NotifyForUnknownIDIsDropped(t *testing.T) {
 	nr := &notifyRecorder{}
-	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+	present := func(string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
 		return "", Presented
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
@@ -1150,5 +1154,32 @@ var spinSink int
 func spin(n int) {
 	for j := 0; j < n*100; j++ {
 		spinSink += j
+	}
+}
+
+// #2800: an ask over the Unix socket comes from this host, so its origin is
+// the server's own host name, whatever the frame says about itself.
+func TestE2E_SocketAskOriginIsLocalHost(t *testing.T) {
+	got := make(chan string, 1)
+	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+		got <- origin
+		return "", Presented
+	}
+	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
+	_, sockPath := startTestServer(t, present, resolve)
+	conn := dialServer(t, sockPath)
+	r := bufio.NewReader(conn)
+	sendFrame(t, conn, &AskFrame{
+		Protocol:  ProtocolVersion,
+		Type:      TypeAsk,
+		ID:        "origin-sock",
+		Source:    "richards-macbook-pro",
+		Questions: makeQuestions(),
+	})
+	if ack := readFrame(t, r); ack["type"] != TypeAck {
+		t.Fatalf("expected ack, got %v", ack)
+	}
+	if o := <-got; o != testLocalHost {
+		t.Errorf("origin = %q, want %q", o, testLocalHost)
 	}
 }

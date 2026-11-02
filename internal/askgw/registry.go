@@ -36,6 +36,10 @@ type entry struct {
 	summary   string
 	arrivedAt time.Time
 
+	// origin is the host the ask came from (#2800, see PresentFn), shown with
+	// every question of the ask. Set once by handleAsk before the first one.
+	origin string
+
 	// platformMsgID is the platform-native message ID of the most recently
 	// presented question (overwritten as a multi-question ask advances), set
 	// via SetPresentedMsgID once PresentFn returns it. It is the message a

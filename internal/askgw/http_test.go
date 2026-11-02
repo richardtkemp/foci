@@ -1,6 +1,7 @@
 package askgw
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -40,7 +41,7 @@ func askBody(id string) []byte {
 
 func TestHTTPSubmitAnswerRoundTrip(t *testing.T) {
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
 		return "", Presented
 	}
@@ -49,7 +50,7 @@ func TestHTTPSubmitAnswerRoundTrip(t *testing.T) {
 	srv := newHTTPTestServer(t, present, resolve, 0)
 	tr := NewHTTPTransport(srv)
 
-	id, ok, code, msg := tr.Submit(askBody("http-1"))
+	id, ok, code, msg := tr.Submit(askBody("http-1"), "")
 	if !ok {
 		t.Fatalf("submit failed: code=%s msg=%s", code, msg)
 	}
@@ -99,17 +100,17 @@ func TestHTTPPollUnknownID(t *testing.T) {
 }
 
 func TestHTTPSubmitDuplicateID(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+	present := func(string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
 		return "", Presented
 	}
 	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
 	srv := newHTTPTestServer(t, present, resolve, 0)
 	tr := NewHTTPTransport(srv)
 
-	if _, ok, _, _ := tr.Submit(askBody("dup")); !ok {
+	if _, ok, _, _ := tr.Submit(askBody("dup"), ""); !ok {
 		t.Fatal("first submit should succeed")
 	}
-	id, ok, code, _ := tr.Submit(askBody("dup"))
+	id, ok, code, _ := tr.Submit(askBody("dup"), "")
 	if ok {
 		t.Fatal("second submit with the same id should be rejected")
 	}
@@ -127,7 +128,7 @@ func TestHTTPSubmitMalformed(t *testing.T) {
 
 	// Empty questions slice fails AskFrame.Validate() inside handleAsk.
 	body, _ := Encode(&AskFrame{Protocol: ProtocolVersion, Type: TypeAsk, ID: "bad-1"})
-	id, ok, code, msg := tr.Submit(body)
+	id, ok, code, msg := tr.Submit(body, "")
 	if ok {
 		t.Fatal("expected malformed ask to be rejected")
 	}
@@ -147,7 +148,7 @@ func TestHTTPSubmitWrongType(t *testing.T) {
 	tr := NewHTTPTransport(srv)
 
 	body, _ := Encode(&CancelFrame{Protocol: ProtocolVersion, Type: TypeCancel, ID: "c-1"})
-	_, ok, code, _ := tr.Submit(body)
+	_, ok, code, _ := tr.Submit(body, "")
 	if ok {
 		t.Fatal("expected a non-ask frame type to be rejected")
 	}
@@ -157,7 +158,7 @@ func TestHTTPSubmitWrongType(t *testing.T) {
 }
 
 func TestHTTPSubmitUnavailable(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+	present := func(string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
 		t.Fatal("present should not be called when no session resolves")
 		return "", PresentFailed
 	}
@@ -165,7 +166,7 @@ func TestHTTPSubmitUnavailable(t *testing.T) {
 	srv := newHTTPTestServer(t, present, resolve, 0)
 	tr := NewHTTPTransport(srv)
 
-	id, ok, _, _ := tr.Submit(askBody("unavail-1"))
+	id, ok, _, _ := tr.Submit(askBody("unavail-1"), "")
 	if !ok {
 		t.Fatal("submit itself should still succeed (mirrors socket ack-then-unavailable-answer)")
 	}
@@ -182,14 +183,14 @@ func TestHTTPSubmitUnavailable(t *testing.T) {
 // platform refuses (Slack until #2459 C) polls to the denial frame
 // (dismissed), the same frame the socket sends — never unavailable.
 func TestHTTPSubmitRefused(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+	present := func(string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
 		return "", PresentRefused
 	}
 	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
 	srv := newHTTPTestServer(t, present, resolve, 0)
 	tr := NewHTTPTransport(srv)
 
-	id, ok, _, _ := tr.Submit(askBody("refused-1"))
+	id, ok, _, _ := tr.Submit(askBody("refused-1"), "")
 	if !ok {
 		t.Fatal("submit itself should succeed; the denial arrives as the poll result")
 	}
@@ -204,7 +205,7 @@ func TestHTTPSubmitRefused(t *testing.T) {
 
 func TestHTTPTimeout(t *testing.T) {
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
 		return "", Presented
 	}
@@ -212,7 +213,7 @@ func TestHTTPTimeout(t *testing.T) {
 	srv := newHTTPTestServer(t, present, resolve, 30*time.Millisecond)
 	tr := NewHTTPTransport(srv)
 
-	id, ok, _, _ := tr.Submit(askBody("timeout-1"))
+	id, ok, _, _ := tr.Submit(askBody("timeout-1"), "")
 	if !ok {
 		t.Fatal("submit failed")
 	}
@@ -228,7 +229,7 @@ func TestHTTPTimeout(t *testing.T) {
 func TestHTTPCancel(t *testing.T) {
 	cb := &capturedCallback{}
 	cancelled := make(chan struct{})
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
 		return "", Presented
 	}
@@ -244,7 +245,7 @@ func TestHTTPCancel(t *testing.T) {
 	}
 	tr := NewHTTPTransport(srv)
 
-	id, ok, _, _ := tr.Submit(askBody("cancel-1"))
+	id, ok, _, _ := tr.Submit(askBody("cancel-1"), "")
 	if !ok {
 		t.Fatal("submit failed")
 	}
@@ -283,7 +284,7 @@ func TestHTTPCancel(t *testing.T) {
 
 func TestHTTPSweepAbandoned(t *testing.T) {
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
 		return "", Presented
 	}
@@ -291,7 +292,7 @@ func TestHTTPSweepAbandoned(t *testing.T) {
 	srv := newHTTPTestServer(t, present, resolve, 0)
 	tr := NewHTTPTransport(srv)
 
-	id, ok, _, _ := tr.Submit(askBody("orphan-1"))
+	id, ok, _, _ := tr.Submit(askBody("orphan-1"), "")
 	if !ok {
 		t.Fatal("submit failed")
 	}
@@ -327,7 +328,7 @@ func notifyBody(id string, exitCode int) []byte {
 func TestHTTPNotifyEditsAnsweredAsk(t *testing.T) {
 	cb := &capturedCallback{}
 	nr := &notifyRecorder{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
 		return "platform-msg-http", Presented
 	}
@@ -348,7 +349,7 @@ func TestHTTPNotifyEditsAnsweredAsk(t *testing.T) {
 	}
 	tr := NewHTTPTransport(srv)
 
-	id, ok, _, _ := tr.Submit(askBody("http-notify-1"))
+	id, ok, _, _ := tr.Submit(askBody("http-notify-1"), "")
 	if !ok {
 		t.Fatal("submit failed")
 	}
@@ -379,7 +380,7 @@ func TestHTTPNotifyEditsAnsweredAsk(t *testing.T) {
 }
 
 func TestHTTPNotifyRejectsMalformedEnvelope(t *testing.T) {
-	srv := newHTTPTestServer(t, func(string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+	srv := newHTTPTestServer(t, func(string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
 		return "", Presented
 	}, func(string) (string, string) { return "agent1", "agent1/chat1" }, 0)
 
@@ -397,5 +398,42 @@ func TestHTTPNotifyRejectsMalformedEnvelope(t *testing.T) {
 	}
 	if code != "unknown_type" {
 		t.Errorf("code = %q, want %q", code, "unknown_type")
+	}
+}
+
+// #2800: the origin an HTTP caller hands Submit (foci-gw takes it from the
+// connection) reaches PresentFn for every question of the ask.
+func TestHTTPSubmitPassesOriginToPresent(t *testing.T) {
+	cb := &capturedCallback{}
+	var mu sync.Mutex
+	var origins []string
+	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+		mu.Lock()
+		origins = append(origins, origin)
+		mu.Unlock()
+		cb.set(onResponse)
+		return "", Presented
+	}
+	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
+	tr := NewHTTPTransport(newHTTPTestServer(t, present, resolve, 0))
+
+	b, _ := Encode(&AskFrame{
+		Protocol: ProtocolVersion,
+		Type:     TypeAsk,
+		ID:       "origin-1",
+		Source:   "aisudo",
+		Questions: []AskQuestion{
+			{Key: "q1", Question: "First?", Options: []AskOption{{Label: "Yes"}, {Label: "No"}}},
+			{Key: "q2", Question: "Second?", Options: []AskOption{{Label: "Yes"}, {Label: "No"}}},
+		},
+	})
+	if _, ok, code, msg := tr.Submit(b, "richards-macbook-pro"); !ok {
+		t.Fatalf("submit failed: code=%s msg=%s", code, msg)
+	}
+	cb.fire(question.OptionData(0)) // answer q1: q2 is presented next
+	mu.Lock()
+	defer mu.Unlock()
+	if len(origins) != 2 || origins[0] != "richards-macbook-pro" || origins[1] != "richards-macbook-pro" {
+		t.Errorf("origins = %q, want the submitted origin for both questions", origins)
 	}
 }

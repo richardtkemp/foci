@@ -122,7 +122,10 @@ func NewHTTPTransport(srv *Server) *HTTPTransport {
 // questions, duplicate option labels, ...) is delegated to the same
 // handleFrame/handleAsk/AskFrame.Validate() path the socket transport uses
 // — zero duplicated validation logic.
-func (t *HTTPTransport) Submit(body []byte) (id string, ok bool, code, msg string) {
+//
+// origin is the host the request came from (see PresentFn); the caller takes
+// it from the connection, not the body.
+func (t *HTTPTransport) Submit(body []byte, origin string) (id string, ok bool, code, msg string) {
 	_, typ, envID, err := DecodeEnvelope(body)
 	if err != nil {
 		return "", false, "malformed", err.Error()
@@ -144,7 +147,7 @@ func (t *HTTPTransport) Submit(body []byte) (id string, ok bool, code, msg strin
 	t.asks[envID] = ha
 	t.mu.Unlock()
 
-	if err := t.srv.handleFrame(connID, "http", &httpConnWriter{t: t}, body); err != nil {
+	if err := t.srv.handleFrame(connID, "http", origin, &httpConnWriter{t: t}, body); err != nil {
 		t.mu.Lock()
 		delete(t.asks, envID)
 		t.mu.Unlock()

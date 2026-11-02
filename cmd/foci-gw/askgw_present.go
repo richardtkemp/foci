@@ -16,7 +16,8 @@ import (
 // requester receives the dismissal frame — no answer, nothing approved);
 // PresentFailed resolves it unavailable. Neither leaves anything pending.
 func askgwPresentFn(connMgr platform.ConnectionManager) askgw.PresentFn {
-	return func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, askgw.PresentOutcome) {
+	// origin (#2800) is shown only in the app dialog; a chat prompt is unchanged.
+	return func(agentID, sessionKey, msgID, text, summary, _ string, choices []question.Choice, onResponse func(data string)) (string, askgw.PresentOutcome) {
 		resolve := connResolver(connMgr, sessionKey, agentID)
 		conn := resolve()
 		if conn == nil {

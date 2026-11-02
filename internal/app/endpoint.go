@@ -84,15 +84,16 @@ func ExpireBatchPrompts(maxAge time.Duration) {
 // false — nothing shown — when the app provider is not running or no paired
 // device has a build that can show it (none connected with the feature, none
 // push-wakeable with it); the caller then posts to the agent chat. A device
-// that is offline sees the prompt on its next connect.
-func PresentAskgwPrompt(id, header, text string, buttons []platform.ButtonChoice, onChoice func(data string)) bool {
+// that is offline sees the prompt on its next connect. host is the host the
+// ask came from (#2800), shown in the dialog; empty when unknown.
+func PresentAskgwPrompt(id, header, text, host string, buttons []platform.ButtonChoice, onChoice func(data string)) bool {
 	activeMu.RLock()
 	h := activeHub
 	activeMu.RUnlock()
 	if h == nil {
 		return false
 	}
-	return h.presentAskgw(id, header, platform.StripEmbeddedHeader(header, text), buttons, onChoice)
+	return h.presentAskgw(id, header, platform.StripEmbeddedHeader(header, text), host, buttons, onChoice)
 }
 
 // CloseAskgwPrompt withdraws an app-wide askgw prompt (cancelled or timed out)

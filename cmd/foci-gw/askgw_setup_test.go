@@ -26,19 +26,21 @@ func TestAskgwPresenter_AppFirstThenAgentChat(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var appCalls, chatCalls int
 			var appButtons []platform.ButtonChoice
-			app := func(id, header, text string, buttons []platform.ButtonChoice, onChoice func(string)) bool {
+			var appHost string
+			app := func(id, header, text, host string, buttons []platform.ButtonChoice, onChoice func(string)) bool {
 				appCalls++
 				appButtons = buttons
+				appHost = host
 				return tc.appShows
 			}
-			chat := func(agentID, sessionKey, msgID, text, summary string, cs []question.Choice, onResponse func(string)) (string, askgw.PresentOutcome) {
+			chat := func(agentID, sessionKey, msgID, text, summary, origin string, cs []question.Choice, onResponse func(string)) (string, askgw.PresentOutcome) {
 				chatCalls++
 				if agentID != "clutch" || sessionKey != "sk" || msgID != "askgw-a1-q0" {
 					t.Errorf("chat got agent=%q session=%q msg=%q", agentID, sessionKey, msgID)
 				}
 				return "chat-msg-1", askgw.Presented
 			}
-			msgID, outcome := askgwPresenter(app, chat)("clutch", "sk", "askgw-a1-q0", "Run ls?", "Sudo", choices, func(string) {})
+			msgID, outcome := askgwPresenter(app, chat)("clutch", "sk", "askgw-a1-q0", "Run ls?", "Sudo", "richards-macbook-pro", choices, func(string) {})
 			if outcome != askgw.Presented {
 				t.Fatal("present failed")
 			}
@@ -50,6 +52,9 @@ func TestAskgwPresenter_AppFirstThenAgentChat(t *testing.T) {
 			}
 			if msgID != tc.wantMsgID {
 				t.Errorf("platform msgID = %q, want %q", msgID, tc.wantMsgID)
+			}
+			if appHost != "richards-macbook-pro" {
+				t.Errorf("app host = %q, want the ask's origin (#2800)", appHost)
 			}
 			if len(appButtons) != 2 || appButtons[1].Data != question.CancelData {
 				t.Errorf("app buttons = %+v", appButtons)

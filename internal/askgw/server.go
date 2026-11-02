@@ -41,7 +41,11 @@ const (
 // message in place once the ask is answered. PresentRefused vs PresentFailed
 // decides how the ask resolves (denied vs unavailable), so a platform that
 // refuses approvals must say so, not just fail.
-type PresentFn func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (platformMsgID string, outcome PresentOutcome)
+//
+// origin is the host the ask came from (#2800), taken from the connection,
+// never from the frame: this host's own name for the Unix socket, the peer's
+// reverse-DNS name or bare IP for HTTP. Empty when unknown.
+type PresentFn func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (platformMsgID string, outcome PresentOutcome)
 
 type CancelFn func(msgID, finalText string)
 
@@ -66,6 +70,9 @@ type Server struct {
 	defaultTimeout time.Duration
 	group          string
 
+	// localHost names this host: the origin of every Unix-socket ask (#2800).
+	localHost string
+
 	registry *Registry
 
 	present        PresentFn
@@ -85,6 +92,10 @@ type ServerDeps struct {
 	MaxFrameBytes  int
 	DefaultTimeout time.Duration
 	Group          string
+
+	// LocalHost is the origin shown for a Unix-socket ask (#2800). Empty
+	// means os.Hostname().
+	LocalHost string
 
 	Present        PresentFn
 	CancelPrompt   CancelFn
@@ -111,7 +122,12 @@ func NewServer(deps ServerDeps) (*Server, error) {
 	if maxBytes <= 0 {
 		maxBytes = 1 << 20
 	}
+	localHost := deps.LocalHost
+	if localHost == "" {
+		localHost, _ = os.Hostname()
+	}
 	return &Server{
+		localHost:      localHost,
 		socketPath:     deps.SocketPath,
 		allowedUIDs:    uidSet,
 		maxFrameBytes:  maxBytes,
@@ -158,6 +174,10 @@ func (s *Server) Start() error {
 	askgwLog.Infof("listening on %s (allowed UIDs: %v)", s.socketPath, uids)
 	return nil
 }
+
+// LocalHost is the origin this server gives a Unix-socket ask (#2800); an
+// HTTP transport uses it for a loopback peer, which is this host too.
+func (s *Server) LocalHost() string { return s.localHost }
 
 func (s *Server) Close() {
 	s.closeMu.Lock()
@@ -229,7 +249,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		if len(line) == 0 {
 			continue
 		}
-		if err := s.handleFrame(connID, client, cw, line); err != nil {
+		if err := s.handleFrame(connID, client, s.localHost, cw, line); err != nil {
 			askgwLog.Warnf("conn=%d: %v", connID, err)
 			if ef, ok := err.(*frameError); ok {
 				_ = cw.WriteFrame(ErrorFrame{
@@ -275,7 +295,9 @@ func (e *frameError) Fatal() *frameError { e.fatal = true; return e }
 
 // handleFrame dispatches one inbound frame. client names the transport and
 // caller ("socket uid=N" / "http") for the lifecycle log lines only.
-func (s *Server) handleFrame(connID uint64, client string, cw connWriter, line []byte) error {
+// handleFrame handles one frame from a connection. origin is the host the
+// connection comes from (see PresentFn).
+func (s *Server) handleFrame(connID uint64, client, origin string, cw connWriter, line []byte) error {
 	proto, typ, id, err := DecodeEnvelope(line)
 	if err != nil {
 		return errFrame("", "malformed", err.Error()).Fatal()
@@ -286,7 +308,7 @@ func (s *Server) handleFrame(connID uint64, client string, cw connWriter, line [
 
 	switch typ {
 	case TypeAsk:
-		return s.handleAsk(connID, client, cw, id, line)
+		return s.handleAsk(connID, client, origin, cw, id, line)
 	case TypeCancel:
 		return s.handleCancel(connID, id, line)
 	case TypeNotify:
@@ -298,7 +320,7 @@ func (s *Server) handleFrame(connID uint64, client string, cw connWriter, line [
 	}
 }
 
-func (s *Server) handleAsk(connID uint64, client string, cw connWriter, id string, line []byte) error {
+func (s *Server) handleAsk(connID uint64, client, origin string, cw connWriter, id string, line []byte) error {
 	ask, err := DecodeAsk(line)
 	if err != nil {
 		return errFrame(id, "malformed", err.Error())
@@ -311,8 +333,8 @@ func (s *Server) handleAsk(connID uint64, client string, cw connWriter, id strin
 	// never answered left no trace until its DEBUG timeout line hours later.
 	summary := askSummary(ask)
 	timeout := s.frameTimeout(ask)
-	askgwLog.Infof("ask arrived id=%s conn=%d via=%s source=%q agent=%q questions=%d timeout=%s summary=%q",
-		id, connID, client, ask.Source, ask.Agent, len(ask.Questions), formatTimeout(timeout), summary)
+	askgwLog.Infof("ask arrived id=%s conn=%d via=%s origin=%q source=%q agent=%q questions=%d timeout=%s summary=%q",
+		id, connID, client, origin, ask.Source, ask.Agent, len(ask.Questions), formatTimeout(timeout), summary)
 
 	agentID, sessionKey := s.resolveSession(ask.Agent)
 	if sessionKey == "" {
@@ -330,6 +352,7 @@ func (s *Server) handleAsk(connID uint64, client string, cw connWriter, id strin
 	if err != nil {
 		return errFrame(id, "rejected", err.Error())
 	}
+	e.origin = origin
 
 	switch outcome := s.presentQuestion(e, connID, id, firstIdx); outcome {
 	case Presented:
@@ -367,7 +390,7 @@ func (s *Server) presentQuestion(e *entry, connID uint64, askID string, idx int)
 		summary = "Question"
 	}
 
-	platformMsgID, outcome := s.present(e.agentID, e.sessionKey, msgID, text, summary, choices, func(data string) {
+	platformMsgID, outcome := s.present(e.agentID, e.sessionKey, msgID, text, summary, e.origin, choices, func(data string) {
 		s.onAnswer(connID, askID, data)
 	})
 	if outcome != Presented {

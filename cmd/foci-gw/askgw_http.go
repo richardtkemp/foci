@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -56,7 +57,9 @@ func setupAskgwHTTP(ctx context.Context, cfg *config.Config, mux *http.ServeMux,
 	t := askgw.NewHTTPTransport(srv)
 	go t.RunSweeper(ctx)
 
-	mux.HandleFunc("/askgw/ask", handleAskgwSubmit(t, maxBytes))
+	mux.HandleFunc("/askgw/ask", handleAskgwSubmit(t, maxBytes, func(r *http.Request) string {
+		return askgwOrigin(r.Context(), r.RemoteAddr, srv.LocalHost(), net.DefaultResolver.LookupAddr)
+	}))
 	mux.HandleFunc("/askgw/ask/", handleAskgwPollOrCancel(t))
 	mux.HandleFunc("/askgw/notify", handleAskgwNotify(srv, maxBytes))
 
@@ -109,7 +112,9 @@ func handleAskgwNotify(srv *askgw.Server, maxBytes int64) http.HandlerFunc {
 // immediately once the question is presented to chat (mirrors the socket's
 // `ack`) — it does NOT wait for a human answer; poll GET /askgw/ask/{id}
 // for that.
-func handleAskgwSubmit(t *askgw.HTTPTransport, maxBytes int64) http.HandlerFunc {
+//
+// origin names the host the request came from (#2800, see askgwOrigin).
+func handleAskgwSubmit(t *askgw.HTTPTransport, maxBytes int64, origin func(*http.Request) string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -126,7 +131,7 @@ func handleAskgwSubmit(t *askgw.HTTPTransport, maxBytes int64) http.HandlerFunc 
 			return
 		}
 
-		id, ok, code, msg := t.Submit(body)
+		id, ok, code, msg := t.Submit(body, origin(r))
 		w.Header().Set("Content-Type", "application/json")
 		if !ok {
 			status := http.StatusBadRequest
@@ -207,4 +212,44 @@ func handleAskgwCancel(w http.ResponseWriter, t *askgw.HTTPTransport, id string)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"id": id, "status": askgw.StatusCancelled})
+}
+
+// askgwOriginLookupTimeout bounds the reverse-DNS lookup in askgwOrigin. The
+// POST waits for it before its 202, and a LAN peer's name may be unknown to
+// every resolver.
+const askgwOriginLookupTimeout = time.Second
+
+// askgwOrigin names the host an HTTP ask came from (#2800), for the app
+// dialog. It is taken from the connection's peer address, never from the
+// request body: every aisudo host sends the same source and the same API key,
+// and nothing between it and foci rewrites the peer address. A loopback peer
+// is this host (localHost). Otherwise it is the first label of the peer's
+// reverse-DNS name (a Tailscale MagicDNS name such as
+// richards-macbook-pro.tailnet.ts.net shows as richards-macbook-pro), or the
+// bare IP when no name resolves in time.
+func askgwOrigin(ctx context.Context, remoteAddr, localHost string, lookupAddr func(context.Context, string) ([]string, error)) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return host
+	}
+	if ip.IsLoopback() && localHost != "" {
+		return localHost
+	}
+	ctx, cancel := context.WithTimeout(ctx, askgwOriginLookupTimeout)
+	defer cancel()
+	names, err := lookupAddr(ctx, ip.String())
+	if err != nil {
+		askgwLog.Debugf("origin: no reverse DNS for %s: %v", ip, err)
+		return ip.String()
+	}
+	for _, n := range names {
+		if label, _, _ := strings.Cut(strings.TrimSuffix(n, "."), "."); label != "" {
+			return label
+		}
+	}
+	return ip.String()
 }
