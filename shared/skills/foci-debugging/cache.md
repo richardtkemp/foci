@@ -18,6 +18,6 @@ sqlite3 -readonly ~/data/api.db "SELECT c.billed_at, c.cost_usd, t.class, t.coun
 Then get the two system prompts and diff them:
 
 - **Direct API:** both calls' `.request.system[]` from the payload log (jq in `api-cost.md`).
-- **Claude Code / opencode:** foci hands the prompt over once, at launch. With `[tracing]` on, the first turn after a launch or a prompt change exports a `system_prompt` event to Langfuse with the full text and its hash; later turns carry only the hash. A new hash between the two calls means the prompt changed. Read Langfuse with the `langfuse-v4-api` skill. Also check `foci.log` for `compaction reload gate: ... reason=prompt-changed` (DEBUG) and for restarts.
+- **Claude Code / opencode:** foci hands the prompt over once, at launch. With `[tracing]` on, the first turn after a launch or prompt change exports a `system_prompt` event (full text + hash) to Langfuse (skill `langfuse-v4-api`); later turns carry only the hash, so a new hash = a changed prompt. Also grep `foci.log` for `reason=prompt-changed` (DEBUG) and restarts.
 
 For a guided, step-by-step analysis use the **`cache-diagnosis`** skill.
