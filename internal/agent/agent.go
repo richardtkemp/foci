@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"foci/internal/usagehold"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -185,7 +186,19 @@ type Agent struct {
 	ReloadSystemFn                func() ([]provider.SystemBlock, int)    // reloads skills/extra blocks; returns new blocks + count; nil = no-op
 	TurnLimit                     *TurnLimiter                            // per-agent cap on concurrent user turns across all its sessions; nil = unlimited (#2281)
 	GlobalTurnLimit               *TurnLimiter                            // gateway-wide cap shared by every agent (one pointer, built once in main); nil = unlimited
-	TurnQueuedNotifyFunc          func(sessionKey, text string)           // fired (in its own goroutine) when a user turn must wait for a turn-limit slot; nil = no queued notice
+	UsageHoldRegistry             *usagehold.Registry                     // account-wide usage hold (#2491); nil = usagehold.Default
+	UsageHoldNotifyFunc           func(text string)                       // posts a usage-hold start/end notice in the agent's default chat (#2491); nil = none
+	UsageHoldChangeFunc           []func(usagehold.Change)                // further reactions to a usage-hold phase change (#2491)
+	usageHold                     usageHoldState
+
+	// Restart restore of held input (#2491, usage_hold_store.go).
+	// UsageHeldDriver drives a restored held message; UsageHeldInjectRestore
+	// rebuilds a restored held injection. Nil = that input waits for a later
+	// start.
+	UsageHeldDriver        func(sessionKey string) Driver
+	UsageHeldInjectRestore func(sessionKey string, d DurableInject, id string)
+
+	TurnQueuedNotifyFunc func(sessionKey, text string) // fired (in its own goroutine) when a user turn must wait for a turn-limit slot; nil = no queued notice
 
 	platforms  map[string]platform.Sender // per-agent platforms (telegram, discord, etc.); key = platform name
 	platformMu sync.RWMutex               // protects platforms map access

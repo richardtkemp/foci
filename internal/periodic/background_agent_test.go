@@ -13,20 +13,22 @@ import (
 // Runner literal. Unset fields use benign defaults that reproduce the old
 // nil-closure degradation (Branch=false, CanFire=allowed, SessionKey="", etc.).
 type fakeBackgroundAgent struct {
-	branchFn         func(branchType, parentKey, promptText string, noCompact bool) bool
-	branchCtxFn      func(ctx context.Context, branchType, parentKey, promptText string, noCompact bool) bool
-	hasActiveWorkFn  func() int
-	isTurnInFlightFn func(parentBase string) bool
-	sessionKeyFn     func() string
-	canFireFn        func(ctx context.Context, sessionKey string) (bool, string)
-	rateLimitedFn    func(sessionKey string) (bool, string)
-	runBatchFn       func(ctx context.Context, req delegator.BatchRequest) (string, error)
-	resetFn          func(ctx context.Context, sessionKey string) error
-	cleanupFn        func(ctx context.Context, retentionDays int) int
-	lastTurnEndFn    func(sessionKey string) time.Time
-	contextUsageFn   func(sessionKey string) (fill, limit int)
-	quietBlockedFn   func(sessionKey string) string
-	quietCompactFn   func(ctx context.Context, sessionKey string) error
+	branchFn    func(branchType, parentKey, promptText string, noCompact bool) bool
+	branchCtxFn func(ctx context.Context, branchType, parentKey, promptText string, noCompact bool) bool
+	// keepaliveRateLimitedFn: nil = the same answer as RateLimited.
+	keepaliveRateLimitedFn func(sessionKey string) (bool, string)
+	hasActiveWorkFn        func() int
+	isTurnInFlightFn       func(parentBase string) bool
+	sessionKeyFn           func() string
+	canFireFn              func(ctx context.Context, sessionKey string) (bool, string)
+	rateLimitedFn          func(sessionKey string) (bool, string)
+	runBatchFn             func(ctx context.Context, req delegator.BatchRequest) (string, error)
+	resetFn                func(ctx context.Context, sessionKey string) error
+	cleanupFn              func(ctx context.Context, retentionDays int) int
+	lastTurnEndFn          func(sessionKey string) time.Time
+	contextUsageFn         func(sessionKey string) (fill, limit int)
+	quietBlockedFn         func(sessionKey string) string
+	quietCompactFn         func(ctx context.Context, sessionKey string) error
 }
 
 func (f *fakeBackgroundAgent) Branch(ctx context.Context, branchType, parentKey, promptText string, noCompact bool) bool {
@@ -37,6 +39,13 @@ func (f *fakeBackgroundAgent) Branch(ctx context.Context, branchType, parentKey,
 		return f.branchFn(branchType, parentKey, promptText, noCompact)
 	}
 	return false
+}
+
+func (f *fakeBackgroundAgent) KeepaliveRateLimited(sessionKey string) (bool, string) {
+	if f.keepaliveRateLimitedFn != nil {
+		return f.keepaliveRateLimitedFn(sessionKey)
+	}
+	return f.RateLimited(sessionKey)
 }
 
 func (f *fakeBackgroundAgent) HasActiveWork() int {

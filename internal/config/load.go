@@ -219,6 +219,14 @@ func decodeConfig(data []byte, path string, knownBackends []string) (*Config, er
 	// Collect unknown config keys for the caller to log after logging is
 	// fully initialised (the early log init gets rotated away on startup).
 	cfg.UndefinedKeys = UnknownKeys(md, cfg.Groups.Groups, agentGroupNames)
+	// [usage_hold] is global only (#2491, Dick 2026-11-02): the hold is per
+	// account, not per agent, so a per-agent copy is refused rather than
+	// ignored.
+	for _, k := range cfg.UndefinedKeys {
+		if strings.HasPrefix(k, "agents.usage_hold") {
+			return nil, fmt.Errorf("%s: [usage_hold] is global only; set it at the top level, not under [[agents]]", k)
+		}
+	}
 
 	// Record where the config came from (config editing writes back to it).
 	cfg.SourcePath = path

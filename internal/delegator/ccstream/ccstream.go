@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"foci/internal/usagehold"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -217,9 +218,10 @@ type Backend struct {
 	// message, or a get_context_usage response. A confirmed set_model clears
 	// it (the old id is stale) until one of those restates the new one. Read
 	// for TurnResult.Model and LiveModel.
-	lastModel  string
-	lastUsage  *TokenUsage        // per-call usage from last assistant message
-	rlThrottle *RateLimitThrottle // OnRateLimit throttle; shared per agent (agentThrottle)
+	lastModel     string
+	lastUsage     *TokenUsage              // per-call usage from last assistant message
+	onUsageWindow func(ev usagehold.Event) // HostHooks.OnUsageWindow (#2491)
+	rlThrottle    *RateLimitThrottle       // OnRateLimit throttle; shared per agent (agentThrottle)
 
 	// prevModelUsage is this process's previous result's modelUsage, for the
 	// monotonic check (checkModelUsageMonotonic); nil until its first result.

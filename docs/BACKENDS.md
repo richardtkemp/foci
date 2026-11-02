@@ -596,8 +596,11 @@ Notes:
     clause is parsed), and a structured `rate_limit_event` with `status=rejected` for
     `five_hour` or `seven_day` (reset = its `resetsAt`, #2488). A warning event
     (`allowed_warning`) only notifies. Reply text is never read (#1238). opencode: a retry
-    status naming a usage or rate limit; opencode reports no per-window usage. No backend yet
-    holds work at a usage percentage before the limit (#2491, open).
+    status naming a usage or rate limit; opencode reports no per-window usage. codex: the
+    reached signal, and each live update also reports its windows to the usage hold. ccstream
+    and codex hold work at `[usage_hold] threshold` (default 98%) before the limit, account-wide
+    (`HostHooks.OnUsageWindow` → `Agent.ObserveUsage` → `internal/usagehold`, #2491); opencode
+    does not, as it reports no usage percentage (open gap).
 
 
 ### Parity evidence

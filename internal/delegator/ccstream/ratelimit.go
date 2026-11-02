@@ -11,6 +11,7 @@ import (
 
 	"foci/internal/ratelimit"
 	"foci/internal/timeutil"
+	"foci/internal/usagehold"
 )
 
 // fireRateLimited invokes the rate-limit warning hook if one is registered,
@@ -21,6 +22,27 @@ func (b *Backend) fireRateLimited(detail string) {
 	if b.onRateLimited != nil {
 		b.onRateLimited(b.startOpts.SessionKey, detail)
 	}
+}
+
+// reportUsageWindow feeds one rate_limit_event to the account-wide usage hold
+// (#2491): the five-hour and weekly windows, with their use, whether they are
+// rejected, and when they reset. Every event is reported, "allowed" ones too:
+// an event under the threshold is what clears its window.
+func (b *Backend) reportUsageWindow(info RateLimitInfo) {
+	if b.onUsageWindow == nil || (info.RateLimitType != "five_hour" && info.RateLimitType != "seven_day") {
+		return
+	}
+	ev := usagehold.Event{Window: info.RateLimitType, Reached: info.Status == "rejected"}
+	if info.Utilization != nil {
+		ev.Util, ev.HasUtil = *info.Utilization, true
+	}
+	if info.ResetsAt != nil {
+		ev.ResetAt = time.Unix(int64(*info.ResetsAt), 0)
+	}
+	if !ev.HasUtil && !ev.Reached {
+		return // nothing to judge the window by
+	}
+	b.onUsageWindow(ev)
 }
 
 // fireSessionLimit invokes the session-limit hook if one is registered.

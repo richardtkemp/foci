@@ -133,7 +133,7 @@ func (a *Agent) requestIdleEvictions() {
 func (a *Agent) tryEvictInbox(inb *sessionInbox) bool {
 	// Worker-confined state first: only the worker (or a test with none)
 	// calls this.
-	if len(inb.held) > 0 {
+	if len(inb.held) > 0 || len(inb.usageHeld) > 0 || inb.usageResume.Load() {
 		return false
 	}
 	inb.pendMu.Lock()

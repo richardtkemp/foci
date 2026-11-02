@@ -513,6 +513,8 @@ func deliverToSessionChatThen(
 ) {
 	if agent.UserInputFromContext(ctx) {
 		opts = append([]injectOption{asUserInput(message)}, opts...)
+	} else if d := sessionChatDurable(trigger, message, askReqID, after); d != nil {
+		opts = append([]injectOption{func(env *agent.Envelope) { env.Inject.Durable = d }}, opts...)
 	}
 	enqueueInject(ag, sessionKey, trigger, askReqID, func() {
 		// The chit (if any) fires with the turn it precedes, never at enqueue
@@ -550,6 +552,32 @@ func deliverToSessionChatThen(
 			logInjectionError(trigger, err, "error for session %s", sessionKey)
 		}
 	}, opts...)
+}
+
+// durableSessionChat is the DurableInject kind of a deliverToSessionChat
+// injection: Text and Trigger rebuild it (#2491).
+const durableSessionChat = "session_chat"
+
+// sessionChatDurable is the serialisable form of a deliverToSessionChat
+// injection, so a usage hold that parks it can keep it across a restart
+// (#2491), or nil when it must not have one: an injection with a completion
+// hook or an ask id is tied to live state, and a redelivery, a restart
+// changelog and a remind fire each have their own durable record already
+// (re-sending them after a restart would run them twice).
+func sessionChatDurable(trigger, message, askReqID string, after func(error)) *agent.DurableInject {
+	if after != nil || askReqID != "" {
+		return nil
+	}
+	switch trigger {
+	case agent.TriggerRedelivery, "restart", "scheduled_wake":
+		return nil
+	}
+	return &agent.DurableInject{Kind: durableSessionChat, Trigger: trigger, Text: message}
+}
+
+// withUsageHeldID marks an injection as the restored copy of held input id.
+func withUsageHeldID(id string) injectOption {
+	return func(env *agent.Envelope) { env.SetUsageHeldID(id) }
 }
 
 // wakeTurnDone returns the completion hook for wake id's turn: it dismisses the

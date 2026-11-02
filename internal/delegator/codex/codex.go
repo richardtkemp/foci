@@ -12,6 +12,7 @@ package codex
 
 import (
 	"context"
+	"foci/internal/usagehold"
 	"os/exec"
 	"strings"
 	"sync"
@@ -78,6 +79,7 @@ type Backend struct {
 	// agent's rate-limit gate, pausing periodic/background work (ratelimits.go
 	// gateSignal).
 	onRateLimited   func(signal ratelimit.Signal)
+	onUsageWindow   func(ev usagehold.Event) // HostHooks.OnUsageWindow (#2491)
 	model           string
 	launchModel     string
 	catalogueModels []string
@@ -507,6 +509,7 @@ func (b *Backend) SetHostHooks(h delegator.HostHooks) {
 	b.mu.Lock()
 	b.onRateLimitNotice = h.OnRateLimitNotice
 	b.onRateLimited = h.EngageRateLimit
+	b.onUsageWindow = h.OnUsageWindow
 	b.mu.Unlock()
 }
 

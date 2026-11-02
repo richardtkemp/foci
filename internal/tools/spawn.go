@@ -58,6 +58,44 @@ type SpawnCacheReporter interface {
 	CacheExpiry(sessionKey string, at time.Time) time.Time
 }
 
+// UsageHoldRefuser is the optional agent side of the usage hold (#2491): a
+// non-empty reason while the agent's account holds or stops, when no spawn
+// may start and spawn_send may not reach one. *agent.Agent implements it.
+type UsageHoldRefuser interface {
+	UsageHoldRefusal() string
+}
+
+// UsageHoldPauser is the optional agent side of a spawn's pause in a usage
+// hold (#2491 requirement 3, H9). *agent.Agent implements it.
+type UsageHoldPauser interface {
+	// UsageHoldTurn registers one turn on key that a hold start interrupts
+	// (key then enters the paused set as kind); done reports whether it did.
+	UsageHoldTurn(ctx context.Context, key, kind string) (context.Context, func() (interrupted bool))
+	// UsageHoldActive reports whether the account holds or stops now.
+	UsageHoldActive() bool
+	// WaitUsageLift blocks until the account is open (false: ctx ended).
+	WaitUsageLift(ctx context.Context) bool
+	// UsageHoldPause adds key to (on) or removes it from the paused set the
+	// keepalive warm set reads.
+	UsageHoldPause(key, kind string, on bool)
+}
+
+// agentOrNil is the spawner's agent, nil when it has no agent getter.
+func (s *Spawner) agentOrNil() SpawnAgent {
+	if s == nil || s.agentFn == nil {
+		return nil
+	}
+	return s.agentFn()
+}
+
+// usageHoldRefusal is agent's hold reason, "" when it may spawn.
+func usageHoldRefusal(agent SpawnAgent) string {
+	if r, ok := agent.(UsageHoldRefuser); ok && agent != nil {
+		return r.UsageHoldRefusal()
+	}
+	return ""
+}
+
 // SpawnSteerer is the optional agent side of spawn_send (#2523): fold text
 // into the turn running on sessionKey now, as a typed mid-turn message does.
 // False when it could not (no turn in flight, or a backend without live
@@ -576,6 +614,10 @@ func (s *Spawner) SpawnTool() *Tool {
 			}
 			if p.Background && p.Context != spawnModeCharacter && p.Context != spawnModeClone {
 				return ToolResult{}, fmt.Errorf("background: only a character spawn can run in the background (a clone always does); %s returns its result directly", p.Context)
+			}
+			// The usage hold (#2491): no new spawn while the account holds.
+			if msg := usageHoldRefusal(host.agentOrNil()); msg != "" {
+				return TextResult("NOT started: " + msg), nil
 			}
 			background := p.Context == spawnModeClone || p.Background
 			timeout := resolveSpawnTimeout(p.Timeout, background)
@@ -1438,7 +1480,7 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 
 	var result string
 	var runErr error
-	var stopped, interrupted bool
+	var stopped, interrupted, holdCold bool
 	var dropped int
 	signal := make(chan struct{})
 	go func() {
@@ -1446,12 +1488,15 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 		runCtx := turnevent.WithSteerer(spawnCtx, turnevent.SteererFunc(func() []string {
 			return tr.drainPending(parent, id)
 		}))
+		pauser, _ := agent.(UsageHoldPauser)
 		for {
-			buf := turnevent.NewBufferSink()
-			sink := &spawnTextSink{BufferSink: buf, obs: obs, tracker: tr, parent: parent, id: id}
-			runErr = agent.HandleMessage(turnevent.WithSink(runCtx, sink), branchKey, texts, nil)
-			result = buf.FinalText()
-			next, done, wasStopped, cut, n := tr.finishOrNext(parent, id, runErr != nil || spawnCtx.Err() != nil)
+			step := s.runSpawnStep(agent, pauser, runCtx, spawnCtx, parent, id, branchKey, texts)
+			if step.resume {
+				texts = step.texts
+				continue
+			}
+			runErr, result, holdCold = step.err, step.result, step.cold
+			next, done, wasStopped, cut, n := tr.finishOrNext(parent, id, runErr != nil || spawnCtx.Err() != nil || holdCold)
 			if done {
 				stopped, interrupted, dropped = wasStopped, cut, n
 				break
@@ -1474,6 +1519,9 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 			spawnLog.Infof("spawn=%s branch=%s cut short by shutdown — left for the next process to resume", id, branchKey)
 			close(signal)
 			return
+		case holdCold:
+			tr.setOutcome(parent, id, "stopped")
+			tr.appendLog(parent, id, "error", spawnHoldColdText)
 		case stopped:
 			tr.setOutcome(parent, id, "stopped")
 		case runErr != nil:
@@ -1496,6 +1544,9 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 		NotifyMessage: func() string {
 			if interrupted {
 				return ""
+			}
+			if holdCold {
+				return spawnResultHead(running.Label(), branchKey, id) + " " + spawnHoldColdText
 			}
 			return s.resultMessage(parent, id, branchKey, stopped, runErr, result, dropped)
 		},
@@ -1590,7 +1641,7 @@ func buildSpawnContext(ctx context.Context, timeout time.Duration, branchKey str
 	} else {
 		baseCtx = ctx
 	}
-	spawnCtx, cancel := context.WithTimeout(baseCtx, timeout)
+	spawnCtx, cancel := withSpawnClock(baseCtx, timeout)
 	spawnCtx = WithSpawnInherit(spawnCtx)
 	spawnCtx = WithSessionKey(spawnCtx, branchKey)
 	return spawnCtx, cancel

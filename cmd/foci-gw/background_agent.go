@@ -75,6 +75,14 @@ func (b *backgroundAgent) RateLimited(sessionKey string) (bool, string) {
 	return b.inst.ag.SessionRateLimited(sessionKey)
 }
 
+func (b *backgroundAgent) KeepaliveRateLimited(sessionKey string) (bool, string) {
+	// The same L2 override as RateLimited: a locked state blocks keepalive too.
+	if s := b.inst.testCanFireOverride.Load(); s != nil {
+		return !s.allowed, s.reason
+	}
+	return b.inst.ag.KeepaliveRateLimited(sessionKey)
+}
+
 func (b *backgroundAgent) RunBatch(ctx context.Context, req delegator.BatchRequest) (string, error) {
 	if b.inst.ag.DelegatedManager == nil {
 		return "", nil
@@ -129,4 +137,16 @@ func (b *backgroundAgent) QuietCompact(ctx context.Context, sessionKey string) e
 		return fmt.Errorf("%w: %s", periodic.ErrQuietCompactionRefused, refused.Reason)
 	}
 	return err
+}
+
+// UsageHoldPaused is the sessions the usage hold paused (#2491): keepalive
+// warms them during the hold, and the hold's compaction considers them.
+func (b *backgroundAgent) UsageHoldPaused() map[string]string {
+	return b.inst.ag.UsageHoldPaused()
+}
+
+// WaitTurnIdle waits for the session's turn to end (the in-flight signal):
+// the hold's compaction waits on it for the turns the hold interrupted.
+func (b *backgroundAgent) WaitTurnIdle(ctx context.Context, sessionKey string) bool {
+	return b.inst.ag.WaitTurnIdle(ctx, sessionKey)
 }

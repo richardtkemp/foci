@@ -1311,6 +1311,14 @@ All platform fields from `[[platforms]]` can be overridden per-agent via `[[agen
 | `http_timeout` | duration | `60s` | `[voice]` | Timeout for outbound STT/TTS HTTP calls (replaces the previously-unbounded `http.DefaultClient`). |
 | `http_max_response_bytes` | int | `67108864` | `[voice]` | Max STT/TTS HTTP response body read (via `io.LimitReader`), guarding against an unbounded upstream. |
 
+### Usage hold (`[usage_hold]`, global only)
+
+When a Claude Code or Codex usage window (Claude Code: the 5-hour and 7-day windows; Codex: its primary and secondary windows) reaches the threshold, every agent on that account (all Claude Code agents are one account, all Codex agents another) holds: only keepalives and reminders (foci_remind fires) run. Your messages, cron sends, webhooks, agent-to-agent messages and periodic work wait; each held message is answered with a "held until" note, and at the end the waiting messages of a conversation run as one turn. New spawns and spawn_send are refused. When the backend reports the limit as reached, keepalives and reminders stop too. Each window clears on its own, at its reset time or when a report for that window is under the threshold. Each agent posts a notice in its default chat when the hold starts and when it ends. The state survives a restart. There is no per-agent setting: `[agents.usage_hold]` fails config load.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `threshold` | int | `98` | Usage percentage (1 to 100) at which the account holds. Live-appliable: the next usage report uses the new value. |
+
 ### Keepalive (`[keepalive]` / `[[agents.keepalive]]`)
 
 Cache keepalive timer. Fires a lightweight branch session to keep the prompt cache warm. For Anthropic, the interval defaults to 55 minutes (just under the 1-hour cache TTL). For OpenAI and DeepSeek models, keepalive is auto-detected by developer name — these developers have a 5-minute prompt cache TTL, so keepalive fires every ~4m45s. Keepalive yields to a running quiet-hours or pre-cold compaction (see [Compaction & Sessions](#compaction--sessions)): re-warming a full context that is about to be compacted is the exact waste that trigger exists to remove.

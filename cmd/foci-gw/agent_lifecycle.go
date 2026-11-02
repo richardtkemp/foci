@@ -243,6 +243,19 @@ var agentRestorePhases = []func(*agentInstance){
 			dm.RestoreUndelivered()
 		}
 	},
+	// Put back the input a usage hold had parked (#2491): it waits for the
+	// lift again, or runs now if the hold lifted while foci was down. After
+	// RestoreUndelivered, so input the backend already had runs first.
+	func(inst *agentInstance) {
+		inst.ag.RestoreUsageHeld()
+	},
+	// Resume the background-work turns a usage hold had paused (#2491): each
+	// waits for the lift, then goes on with the resume line on its session.
+	func(inst *agentInstance) {
+		inst.ag.RestorePausedBackground(func(ctx context.Context, pb agent.PausedBackground) {
+			resumePausedBackground(inst, ctx, pb)
+		})
+	},
 	// Tell each agent about asks that expired across the restart (#1894). The
 	// ask tool's restore runs inside setupAgent, before the agent is
 	// registered (so agentResolverFn can't route to it) and before its inbox

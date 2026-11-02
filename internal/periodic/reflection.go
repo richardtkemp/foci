@@ -196,6 +196,12 @@ func (r *Runner) maybeReflection() {
 // No-op if the runner has no agent/index, the session isn't due, or no reflection
 // prompt resolves.
 func (r *Runner) ReflectSessionIfDue(sessionKey string) {
+	r.reflectSession(context.Background(), sessionKey)
+}
+
+// reflectSession is ReflectSessionIfDue under ctx (the usage hold's
+// reflection before its compaction carries the hold's permit, #2491).
+func (r *Runner) reflectSession(ctx context.Context, sessionKey string) {
 	if r == nil || r.agent == nil || r.sessionIndex == nil {
 		return
 	}
@@ -215,7 +221,7 @@ func (r *Runner) ReflectSessionIfDue(sessionKey string) {
 	}
 
 	winStart := time.Now()
-	if r.agent.Branch(context.Background(), "reflection", sessionKey, promptText, true) {
+	if r.agent.Branch(ctx, "reflection", sessionKey, promptText, true) {
 		r.sessionIndex.StampReflection(sessionKey, winStart)
 	}
 

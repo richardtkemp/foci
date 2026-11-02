@@ -323,12 +323,20 @@ func (s *sharedTurnOps) LogConversationRecv(ts *TurnState) {
 	if redeliveryFromContext(ts.Ctx) != nil {
 		return
 	}
+	// A usage hold's resume line (#2491) is input from foci, not the user.
+	texts := ts.Texts
+	if n := hiddenLeadingTexts(ts.Ctx); n > 0 {
+		if n >= len(texts) {
+			return
+		}
+		texts = texts[n:]
+	}
 	recordTurnEntry(ts.Trigger, convo.Entry{
 		Direction: "recv",
 		UserID:    ts.Meta.UserID,
 		Username:  ts.Meta.Username,
 		ChatID:    chatID,
-		Text:      strings.Join(ts.Texts, "\n"),
+		Text:      strings.Join(texts, "\n"),
 		Session:   ts.SessionKey,
 	})
 }

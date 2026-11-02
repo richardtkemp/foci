@@ -80,6 +80,12 @@ func wireAgentPlatformCallbacks(
 		})
 	}
 
+	// Usage hold (#2491): each agent posts its own start/end notice in its
+	// default chat.
+	ag.UsageHoldNotifyFunc = func(text string) {
+		route.NotifySessionChat(connMgr, acfg.ID, defaultSessionKeyFor(ag, acfg.ID), text)
+	}
+
 	// Rate limit — broadcast to every surface
 	ag.RateLimitFunc.Add(func(resetTime time.Time) {
 		broadcastNotify(fmt.Sprintf("⚡ Rate limited (resets %s).", resetTime.Format(time.Kitchen)))

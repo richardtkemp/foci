@@ -50,6 +50,7 @@ import (
 	"foci/internal/session"
 	"foci/internal/turn"
 	"foci/internal/turnevent"
+	"foci/internal/usagehold"
 )
 
 // Envelope is a session-resolved, platform-neutral message ready for the
@@ -126,6 +127,14 @@ type Envelope struct {
 	// ones the worker had not yet pulled into the batch (#2337) — see
 	// sessionInbox.stopThrough.
 	enqSeq uint64
+
+	// usageHeldID names this input in the session's stored held list while a
+	// usage hold parks it (#2491, usage_hold_store.go); set on a copy restored
+	// after a restart. usageResume marks the hidden "resume what you were
+	// doing" line of a turn the hold interrupted: it heads the session's
+	// folded turn at lift and no client shows it.
+	usageHeldID string
+	usageResume bool
 }
 
 // EnvelopeFromQueuedMessage builds the Envelope for a turn driven by a queued
@@ -159,6 +168,13 @@ func EnvelopeFromQueuedMessage(sk string, qm platform.QueuedMessage, driver Driv
 // platform coupling leaks into the agent package.
 type InjectMeta struct {
 	Trigger string
+	// HoldPermit lets the injection run through a usage HOLD (#2491): the
+	// reflection and compaction the hold itself starts. A stop still holds it.
+	HoldPermit bool
+	// Durable is the injection's serialisable form, nil when it has none. A
+	// usage hold that parks a Durable injection stores it, so it survives a
+	// restart (usage_hold_store.go).
+	Durable *DurableInject
 	Run     func()
 	// AskReqID names the foci_ask this injection is the RESULT of (empty for a
 	// proactive injection that no ask produced). Ask-deferral is keyed to it:
@@ -352,6 +368,19 @@ type sessionInbox struct {
 	pendMu  sync.Mutex
 	pending []Envelope
 
+	// usageHeld are the user messages the usage hold parked (#2491), in
+	// arrival order; usageRelease is the tail of a released set, taken into
+	// the batch its head starts. Worker-confined.
+	usageHeld    []Envelope
+	usageRelease []Envelope
+	// usageResume is set when a usage hold interrupted this session's turn:
+	// the worker parks the hidden resume line at the head of usageHeld at
+	// its next loop top (takeUsageResume). usageKick wakes an idle worker for
+	// it. Neither goes through ch, so the resume line is never queued input
+	// that a compaction guard or a steer could see.
+	usageResume atomic.Bool
+	usageKick   chan struct{}
+
 	// busy is >0 while the worker is inside a turn (driveOnce for a user
 	// batch, Inject.Run for an injection) — NOT during the waits around it.
 	// holdActive reads it cross-goroutine to keep a turn the worker itself
@@ -403,10 +432,11 @@ type sessionInbox struct {
 
 func newSessionInbox(sk string, lg *log.ComponentLogger) *sessionInbox {
 	inb := &sessionInbox{
-		sk:       sk,
-		ch:       make(chan Envelope, inboxChanSize),
-		evictReq: make(chan struct{}, 1),
-		log:      lg,
+		sk:        sk,
+		ch:        make(chan Envelope, inboxChanSize),
+		evictReq:  make(chan struct{}, 1),
+		usageKick: make(chan struct{}, 1),
+		log:       lg,
 	}
 	inb.touch()
 	return inb
@@ -760,6 +790,22 @@ func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 		}
 	}
 
+	// Usage hold (#2491): a user message must not steer into, answer for or
+	// cancel the plan of the turn running now (a keepalive, a remind fire,
+	// or one being interrupted). It goes to the worker, which parks it. A
+	// held message restored after a restart never steers either: it runs as
+	// its own turn, which takes it off the restart store.
+	if a.usageHoldsTrigger("user", false) || env.usageHeldID != "" {
+		env.enqSeq = inb.enqSeq.Add(1)
+		select {
+		case inb.ch <- env:
+			return true
+		default:
+			a.logger().Warnf("inbox: queue full for sk=%s during a usage hold, dropping message (%dB)", env.SessionKey, len(env.Text))
+			return false
+		}
+	}
+
 	isActive := a.sessionTurnActive(inb, env.SessionKey)
 	// Compaction hold (#856): a /compact turn is rewriting CC's transcript.
 	// Steering or folding a message now makes CC absorb the raw text into the
@@ -1053,7 +1099,7 @@ func (a *Agent) EnqueueInjectWait(ctx context.Context, sessionKey, trigger strin
 	refused := make(chan struct{})
 	accepted := a.Enqueue(Envelope{
 		SessionKey: sessionKey,
-		Inject: &InjectMeta{Trigger: trigger, Run: func() {
+		Inject: &InjectMeta{Trigger: trigger, HoldPermit: usagehold.Permitted(ctx), Run: func() {
 			defer close(done)
 			run()
 		}, Refused: func() { close(refused) }},
@@ -1265,6 +1311,10 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 		if !a.releaseHeld(ctx, inb) {
 			return
 		}
+		a.takeUsageResume(inb)
+		if !a.releaseUsageHeld(ctx, inb) {
+			return
+		}
 		if len(inb.held) > 0 {
 			a.ensureHeldWatch(ctx, inb)
 		} else {
@@ -1288,9 +1338,18 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 		if inb.heldWatch != nil {
 			openCh = inb.heldWatch.open
 		}
+		var usageCh <-chan struct{}
+		if len(inb.usageHeld) > 0 {
+			usageCh = a.usageHoldChanged()
+		}
 		select {
 		case <-ctx.Done():
 			return
+		case <-usageCh:
+			// The usage hold changed: the loop top releases what it may.
+		case <-inb.usageKick:
+			// A usage hold interrupted this session: the loop top parks
+			// its resume line.
 		case <-openCh:
 			// Gate signalled open — a hint. Drop the watch (it is spent: one
 			// result per watch) and loop: releaseHeld re-checks the head
@@ -1346,6 +1405,13 @@ func (a *Agent) handleDequeued(ctx context.Context, inb *sessionInbox, env Envel
 	// session's injection, so counting them would deadlock at small limits.
 	if env.Inject != nil {
 		return a.dispatchInject(ctx, inb, env)
+	}
+	// The account-wide usage hold (#2491): a user message waits — the sender
+	// is told — and runs at lift, folded with the session's other held
+	// messages into one turn (releaseUsageHeld).
+	if a.usageHoldsTrigger("user", false) {
+		a.parkUsageHeld(inb, env)
+		return true
 	}
 	// A login is owed (#2384): if this user turn ends with no new
 	// attempt started, the credential works again, so the pending
@@ -1406,6 +1472,7 @@ func (a *Agent) takeQueuedUsers(inb *sessionInbox) []Envelope {
 // response, #1932's dispatch into a dead credential).
 func (a *Agent) userTurnGatesClosed(sk string) bool {
 	return a.reloginHoldClosed() ||
+		a.usageHoldsTrigger("user", false) ||
 		(a.IsTurnInFlight(sk) && !a.IsInFlightDelivering(sk)) ||
 		a.IsCompacting(sk)
 }
@@ -1422,6 +1489,16 @@ func (a *Agent) waitUserTurnGates(ctx context.Context, sk string) bool {
 	// previous slot wait was in flight.
 	if !a.waitReloginGate(ctx, sk) {
 		return false
+	}
+	// Usage hold (#2491): a user turn (an ask answer, a redelivery, a batch
+	// whose hold closed while it queued) waits for the lift.
+	for a.usageHoldsTrigger("user", false) {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-a.usageHoldChanged():
+		case <-time.After(a.gatePollInterval()):
+		}
 	}
 	// Sink-delivery gate (TODO #767): if a turn is currently in
 	// flight on this session base AND its sink does NOT deliver to
@@ -1498,7 +1575,9 @@ func (a *Agent) waitUserTurnGates(ctx context.Context, sk string) bool {
 // turns driveAndDrainOrphans builds from orphan steers and late arrivals,
 // and the post-batch injections run without holding it.
 func (a *Agent) runUserBatch(ctx context.Context, inb *sessionInbox, env Envelope) (keepGoing bool) {
-	batch := []Envelope{env}
+	batch := append([]Envelope{env}, inb.takeUsageRelease()...)
+	// Held input that runs now leaves the restart store (#2491).
+	a.forgetUsageHeld(batch...)
 	var notified bool
 	var release turnSlotRelease
 	for {
@@ -1546,7 +1625,10 @@ func (a *Agent) runUserBatch(ctx context.Context, inb *sessionInbox, env Envelop
 	// enqueued after a still-queued injection). Injections are never folded
 	// in — an inject has no Driver and no Text, so its Run would never fire —
 	// they stay on the worker's queue, in their place, and run after it.
-	batch = append(batch, a.takeQueuedUsers(inb)...)
+	if extra := a.takeQueuedUsers(inb); len(extra) > 0 {
+		a.forgetUsageHeld(extra...)
+		batch = append(batch, extra...)
+	}
 	steerer := turnevent.SteererFunc(inb.drainSteerTexts)
 	a.driveAndDrainOrphans(workerCtx, inb, batch, steerer, env)
 	inb.turnActive.Store(false)
@@ -1802,6 +1884,8 @@ func (a *Agent) runInject(inb *sessionInbox, env Envelope) {
 			a.logger().Errorf("inbox: inject panic sk=%s trigger=%s: %v", inb.sk, env.Inject.Trigger, r)
 		}
 	}()
+	// A stored held injection runs now: it leaves the restart store (#2491).
+	a.forgetUsageHeld(env)
 	if env.Inject.Run != nil {
 		// busy marks the injected turn itself (see sessionInbox.busy): the
 		// Run closure drives a whole HandleMessage turn synchronously.
@@ -2136,6 +2220,15 @@ func (a *Agent) driveAndDrainOrphans(ctx context.Context, inb *sessionInbox, bat
 	router := a.sessionRouter(inb.sk)
 	a.driveOnce(ctx, inb, batch, steerer, router, driver)
 	for {
+		// A usage hold that started during the turn (#2491) holds the
+		// follow-ups: buffered steers are parked as held messages, and the
+		// worker parks what is still queued.
+		if a.usageHoldsTrigger("user", false) {
+			for _, env := range buildFollowUp(seed, inb.drainSteer(), nil) {
+				a.parkUsageHeld(inb, env)
+			}
+			return
+		}
 		orphans := inb.drainSteer()
 		inb.pushPending(inb.drainAvailable()...)
 		var extras []Envelope

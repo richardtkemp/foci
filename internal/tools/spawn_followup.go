@@ -83,6 +83,9 @@ func (s *Spawner) send(ctx context.Context, idOrBranch, message string, timeoutS
 		return ToolResult{}, fmt.Errorf("spawn_send: agent not available")
 	}
 
+	if msg := usageHoldRefusal(agent); msg != "" {
+		return TextResult(fmt.Sprintf("NOT delivered to spawn %s: %s", snap.ID, msg)), nil
+	}
 	if snap.Running {
 		if st, ok := agent.(SpawnSteerer); ok && st.SteerTurn(ctx, snap.BranchKey, text) {
 			tr.appendLog(parent, snap.ID, "message", "(steered into the running turn) "+message)

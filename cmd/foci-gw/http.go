@@ -505,10 +505,46 @@ func deliverBufferedQueued(inst *agentInstance, connMgr platform.ConnectionManag
 			log.NewComponentLogger(logTag).Errorf("async error: %v", err)
 		}
 	}
-	return inst.ag.Enqueue(agent.Envelope{
+	env := agent.Envelope{
 		SessionKey: sessionKey,
-		Inject:     &agent.InjectMeta{Trigger: agent.TriggerFromContext(ctx), Run: run},
-	})
+		Inject:     &agent.InjectMeta{Trigger: agent.TriggerFromContext(ctx), Run: run, Durable: httpAsyncDurable(ctx, text, logTag, silent, policy)},
+	}
+	if id := usageHeldIDFromContext(ctx); id != "" {
+		env.SetUsageHeldID(id)
+	}
+	return inst.ag.Enqueue(env)
+}
+
+// durableHTTPAsync is the DurableInject kind of an async HTTP send or webhook
+// (deliverBufferedQueued); Args carry its log tag, silence and route policy.
+const durableHTTPAsync = "http_async"
+
+// httpAsyncDurable is the serialisable form of an async /send or /webhook
+// turn, so a usage hold that parks it keeps it across a restart (#2491). A
+// branch turn runs on a fork that does not outlive the process, and a
+// deferred send keeps its own sweep row: neither gets one.
+func httpAsyncDurable(ctx context.Context, text, logTag string, silent bool, policy route.Policy) *agent.DurableInject {
+	if logTag != "http" {
+		return nil
+	}
+	args := map[string]string{"log_tag": logTag, "policy": string(policy)}
+	if silent {
+		args["silent"] = "true"
+	}
+	return &agent.DurableInject{Kind: durableHTTPAsync, Trigger: agent.TriggerFromContext(ctx), Text: text, Args: args}
+}
+
+// usageHeldIDKey carries the id of restored held input into
+// deliverBufferedQueued (#2491).
+type usageHeldIDKey struct{}
+
+func withUsageHeldIDContext(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, usageHeldIDKey{}, id)
+}
+
+func usageHeldIDFromContext(ctx context.Context) string {
+	id, _ := ctx.Value(usageHeldIDKey{}).(string)
+	return id
 }
 
 // heldReasonBackgroundWork is the async 202 receipt's "held" value: the target

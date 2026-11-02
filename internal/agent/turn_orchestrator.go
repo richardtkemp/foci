@@ -57,6 +57,13 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 		a.logger().Infof("session=%s system turn (trigger=%q) not started: shutting down", ts.SessionKey, ts.Trigger)
 		return "", err
 	}
+	// Usage hold backstop (#2491): a periodic turn that reaches the backend
+	// directly (a fork-mode branch never passes the inbox) does not start in
+	// a hold unless the hold started it; a keepalive does not start in a stop.
+	if err := a.usageHoldRefusesTurn(ts); err != nil {
+		a.logger().Infof("session=%s %s turn not started: %v", ts.SessionKey, ts.Trigger, err)
+		return "", err
+	}
 	// markInFlight is the sole in-flight tracker; it covers both API and
 	// delegated transports. Session keys are stable identities: a facet/branch
 	// (a 'b' child on its own backend, an independent conversation) has its own

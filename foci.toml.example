@@ -728,6 +728,13 @@ bind = "127.0.0.1"
 # can_run_background = "background_ok.sh"  # executable run before each background op; exit 0 = allowed, non-zero = skip (empty = always allowed)
 # force_in_session = false                 # run in an independent session instead of a backend fork
 
+# ─── Usage hold (global only) ────────────────────────────────────────
+# When a Claude Code or Codex usage window reaches this percentage, every agent on
+# that account pauses all work except keepalives and reminders until the window
+# resets or drops below it. No per-agent setting.
+# [usage_hold]
+# threshold = 98                          # 1-100; live-appliable
+
 # ─── Global Keepalive ────────────────────────────────────────────────
 # [keepalive]
 # enabled = false

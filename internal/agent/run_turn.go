@@ -132,6 +132,11 @@ func (a *Agent) RunTurn(
 		ctx = WithHumanSource(ctx)
 	}
 	ctx = WithInputRefs(ctx, batchInputRefs(batch))
+	// The hidden resume line a usage hold folds in front of held messages
+	// (#2491) reaches the model but no client: the conversation record skips it.
+	if n := leadingUsageResume(batch); n > 0 {
+		ctx = withHiddenLeadingTexts(ctx, n)
+	}
 
 	// Collect texts and attachments across the batch. Group-chat messages
 	// gain sender attribution so downstream logs and prompts know who said

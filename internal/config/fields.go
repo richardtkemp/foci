@@ -145,6 +145,7 @@ var globalSections = map[string]reflect.Type{
 	"background":       reflect.TypeOf(BackgroundConfig{}),
 	"reflection":       reflect.TypeOf(ReflectionConfig{}),
 	"debug":            reflect.TypeOf(DebugConfig{}),
+	"usage_hold":       reflect.TypeOf(UsageHoldConfig{}),
 	"logging":          reflect.TypeOf(LoggingConfig{}),
 	"memory":           reflect.TypeOf(MemoryConfig{}),
 	"http":             reflect.TypeOf(HTTPConfig{}),

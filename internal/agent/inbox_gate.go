@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"foci/internal/log"
+	"foci/internal/usagehold"
 )
 
 // injectGatePollInterval is the backstop tick for the inject gate's wait loop.
@@ -141,6 +142,11 @@ func (a *Agent) injectHeld(env Envelope) bool {
 	if a.ShuttingDown() || !injectGateApplies(env.Inject) {
 		return false
 	}
+	// The usage hold (#2491) holds every system inject but a keepalive, a
+	// foci_remind fire and the hold's own turns; a stop holds them all.
+	if a.usageHoldsTrigger(env.Inject.Trigger, env.Inject.HoldPermit) {
+		return true
+	}
 	if isKeepaliveTrigger(env.Inject.Trigger) {
 		return a.adoptedRunActive(env.SessionKey)
 	}
@@ -174,7 +180,7 @@ func (a *Agent) waitInjectGate(ctx context.Context, sk string) bool {
 // runs the moment that run ends even while other background work is still
 // outstanding (#2233 review F1).
 func (a *Agent) waitHeldGate(ctx context.Context, env Envelope) bool {
-	if env.Inject == nil || !isKeepaliveTrigger(env.Inject.Trigger) {
+	if env.Inject == nil || (!isKeepaliveTrigger(env.Inject.Trigger) && !a.usageHoldsTrigger(env.Inject.Trigger, env.Inject.HoldPermit)) {
 		return a.waitInjectGate(ctx, env.SessionKey)
 	}
 	return a.gateWaitLoop(ctx, env.SessionKey, "adopted_run", func() bool {
@@ -340,7 +346,12 @@ func (a *Agent) dispatchInject(ctx context.Context, inb *sessionInbox, env Envel
 		a.runInject(inb, env)
 		return true
 	}
-	if injectGateApplies(env.Inject) && (a.injectHeld(env) || heldSiblingPins(inb.held, env)) {
+	if injectGateApplies(env.Inject) && (a.injectHeld(env) || (heldSiblingPins(inb.held, env) && !a.usageHoldPassesPast(env))) {
+		// An injection a usage hold parks is stored when it has a
+		// serialisable form, so it survives a restart (#2491).
+		if env.Inject.Durable != nil && a.usageHoldPhase() != usagehold.Open {
+			a.storeUsageHeld(&env)
+		}
 		inb.held = append(inb.held, env)
 		inb.heldGen++
 		a.ensureHeldWatch(ctx, inb)
@@ -401,7 +412,7 @@ func (a *Agent) releaseHeld(ctx context.Context, inb *sessionInbox) bool {
 	kept := make([]Envelope, 0, len(inb.held))
 	ok := true
 	for i, env := range inb.held {
-		if a.injectHeld(env) || heldSiblingPins(kept, env) {
+		if a.injectHeld(env) || (heldSiblingPins(kept, env) && !a.usageHoldPassesPast(env)) {
 			kept = append(kept, env)
 			continue
 		}

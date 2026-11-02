@@ -125,6 +125,11 @@ func (g *RateLimitGate) DrainQueue() []QueuedItem {
 // DrainRateLimitQueue checks if any rate limit gates have opened, and replays
 // queued messages through HandleMessage. Called from keepalive tick.
 func (a *Agent) DrainRateLimitQueue(ctx context.Context) {
+	// Expire usage-hold windows past their reset (#2491), so a hold lifts at
+	// its reset time even when no usage event arrives.
+	if a.UsageAccount() != "" {
+		a.usageRegistry().Tick(time.Now())
+	}
 	a.rateLimitGatesMu.RLock()
 	gates := make(map[string]*RateLimitGate, len(a.rateLimitGates))
 	for endpoint, gate := range a.rateLimitGates {
@@ -238,7 +243,26 @@ func (a *Agent) SessionRateLimited(sessionKey string) (limited bool, reason stri
 	if lim, until := gate.IsLimited(); lim {
 		return true, rateLimitedText(endpoint, until)
 	}
+	// The account-wide usage hold (#2491): no periodic work but keepalive
+	// during a hold, nothing during a stop.
+	if blocked, reason := a.UsageHoldBlocks(false); blocked {
+		return true, reason
+	}
 	return false, ""
+}
+
+// KeepaliveRateLimited is SessionRateLimited for keepalive: the endpoint gate
+// and a usage STOP block it; a usage HOLD does not — keepalives are what a
+// hold keeps running (#2491).
+func (a *Agent) KeepaliveRateLimited(sessionKey string) (limited bool, reason string) {
+	if sessionKey == "" {
+		return true, "no session key"
+	}
+	endpoint := a.resolveEndpoint(sessionKey)
+	if lim, until := a.getOrCreateRateLimitGate(endpoint).IsLimited(); lim {
+		return true, rateLimitedText(endpoint, until)
+	}
+	return a.UsageHoldBlocks(true)
 }
 
 // engageRateLimit is the single gate-closing path for API and delegated

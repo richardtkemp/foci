@@ -46,6 +46,18 @@ const (
 	// every tracked backend write and trimmed as the backend confirms each
 	// one (#2050, agent/delivery_store.go).
 	MetaKeyCCUndelivered = "cc_undelivered"
+	// MetaKeyUsageHeld holds the input a usage hold (#2491) parked on the
+	// session, as a JSON array in arrival order: the user messages (texts,
+	// attachments, sender), the hidden resume line of an interrupted turn,
+	// and the system injections that have a serialisable form. Written as
+	// each is parked and trimmed as each runs (agent/usage_hold_store.go), so
+	// held input survives a restart.
+	MetaKeyUsageHeld = "usage_held"
+	// MetaKeyUsageHoldPaused marks a background-work (todo) turn a usage
+	// hold interrupted (#2491) on the session it ran on, as a JSON
+	// agent.PausedBackground: set while it is paused, cleared once it runs on.
+	// A restart resumes it from here (agent/usage_hold_background.go).
+	MetaKeyUsageHoldPaused = "usage_hold_paused"
 	// MetaKeyQuietCompactedAt holds the RFC3339Nano time of the session's
 	// last quiet-hours compaction ATTEMPT that passed the guards, written by
 	// the periodic runner (#2218) — the anchor for the once-per-window and
@@ -105,6 +117,8 @@ var SessionMetadataKeys = []SessionMetadataKey{
 	{Key: MetaKeyStreamOutput},
 	{Key: MetaKeyDisplayWidth},
 	{Key: MetaKeyCCUndelivered},
+	{Key: MetaKeyUsageHeld},
+	{Key: MetaKeyUsageHoldPaused},
 	{Key: MetaKeyQuietCompactedAt},
 	{Key: MetaKeyPrecoldCompactedAt},
 }

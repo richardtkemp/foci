@@ -290,6 +290,9 @@ func (cfg *Config) Validate(knownBackends []string) error {
 	// Validate the turn-limit keys (#2281): negative values fail at either
 	// level; a non-negative agent-level max_concurrent_turns_all_agents is
 	// dead config (the key is global-only) and only warns.
+	if t := cfg.UsageHold.Threshold; t != nil && (*t < 1 || *t > 100) {
+		return fmt.Errorf("[usage_hold] threshold = %d: must be 1 to 100 (a usage percentage)", *t)
+	}
 	if err := validateBehaviorTurnLimits(cfg); err != nil {
 		return err
 	}

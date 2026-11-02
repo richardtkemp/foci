@@ -86,6 +86,7 @@ func (b *Backend) SetHostHooks(h delegator.HostHooks) {
 	b.onRateLimited = h.OnRateLimitNotice
 	b.onModelFallback = h.OnModelFallbackNotice
 	b.onSessionLimit = h.EngageRateLimit
+	b.onUsageWindow = h.OnUsageWindow
 	b.preToolRules = h.PreToolRules
 	b.stopRules = h.StopRules
 }

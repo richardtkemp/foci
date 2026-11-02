@@ -97,6 +97,9 @@ type BackgroundAgent interface {
 	// rate-limited. The shared gate for every model-calling scheduler
 	// (keepalive/reflection/consolidation/reset); does NOT run can_run_background.
 	RateLimited(sessionKey string) (limited bool, reason string)
+	// KeepaliveRateLimited is RateLimited for keepalive: a usage hold does
+	// not block it, a usage stop does (#2491).
+	KeepaliveRateLimited(sessionKey string) (limited bool, reason string)
 	// LastTurnEnd returns the wall-clock moment the most recent turn under
 	// the session key finished (zero if none is recorded). Read by
 	// quiet-hours compaction's idle guard (#2218).
@@ -155,6 +158,10 @@ type Runner struct {
 	// baked into this resolver, so it hot-reloads). nil = no app chats
 	// (default session only).
 	openChatSessionsFn func() []string
+
+	// holdIdleTimeout bounds the wait for a session's interrupted turn to end
+	// before the hold's compaction (#2491); 0 = defaultHoldIdleTimeout.
+	holdIdleTimeout time.Duration
 
 	// quietCfg is the resolved quiet-hours compaction trigger (#2218).
 	// Window "" = off. Installed at construction and by applySettings.
@@ -579,6 +586,18 @@ func (r *Runner) checkRateLimit(sessionKey string) (skip string) {
 		return ""
 	}
 	if limited, reason := r.agent.RateLimited(sessionKey); limited {
+		return reason
+	}
+	return ""
+}
+
+// checkKeepaliveRateLimit is checkRateLimit for keepalive (#2491): it lets a
+// keepalive through a usage hold.
+func (r *Runner) checkKeepaliveRateLimit(sessionKey string) (skip string) {
+	if r.agent == nil {
+		return ""
+	}
+	if limited, reason := r.agent.KeepaliveRateLimited(sessionKey); limited {
 		return reason
 	}
 	return ""

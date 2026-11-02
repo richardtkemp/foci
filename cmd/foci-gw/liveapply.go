@@ -118,6 +118,10 @@ func (la *liveApply) Apply(section, key string) (bool, error) {
 var (
 	liveApplyLoggingAddrs = []string{"logging.level"}
 
+	// The usage-hold threshold (#2491): global only, read from the raw
+	// config into the process-wide usagehold.Default.
+	liveApplyUsageHoldAddrs = []string{"usage_hold.threshold"}
+
 	// Extra skill dirs (#2657): a derived handle — each agent's
 	// *skills.LiveDirs, read at every skill reload (session start) and every
 	// reflection snapshot. The shared dir and skills_dir stay restart-only.
@@ -275,6 +279,11 @@ var (
 func registerLiveAppliers(la *liveApply, agents *agentRegistry) {
 	la.register(liveApplyLoggingAddrs, func(fresh *config.Config) error {
 		log.SetLevel(log.ParseLevel(fresh.Logging.Level))
+		return nil
+	})
+
+	la.register(liveApplyUsageHoldAddrs, func(fresh *config.Config) error {
+		applyUsageHoldThreshold(fresh)
 		return nil
 	})
 

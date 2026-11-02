@@ -101,3 +101,30 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 		r.agent.Branch(context.Background(), "background", parentKey, promptText, true)
 	}()
 }
+
+// RunBackgroundWork runs run as the agent's background work: under the same
+// run flag and end stamp as a scheduled pass, so no other background work
+// starts while it runs. It is how a background-work turn a usage hold paused
+// across a restart resumes (#2491). False (run not started) when background
+// work is already running.
+func (r *Runner) RunBackgroundWork(run func()) bool {
+	r.mu.Lock()
+	if r.backgroundRunning {
+		r.mu.Unlock()
+		return false
+	}
+	r.backgroundRunning = true
+	r.mu.Unlock()
+	go func() {
+		defer func() {
+			ended := time.Now()
+			r.saveTimer(timerBackgroundEnded, ended)
+			r.mu.Lock()
+			r.backgroundRunning = false
+			r.lastBackgroundEnded = ended
+			r.mu.Unlock()
+		}()
+		run()
+	}()
+	return true
+}

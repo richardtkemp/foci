@@ -248,6 +248,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		// rate-limit gate so background/periodic work pauses until the window
 		// resets; the gate's own hooks notify the user.
 		EngageRateLimit: ag.EngageRateLimit,
+		OnUsageWindow:   ag.ObserveUsage,
 		PreToolRules:    preToolRules,
 		StopRules:       stopRules,
 	}
@@ -432,6 +433,10 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			}
 		},
 	}
+	// The account-wide usage hold (#2491): this agent follows its backend's
+	// account from now on.
+	wireUsageHeldRestore(ag, p.ctx, connMgr, agentID)
+	ag.StartUsageHold()
 
 	return finalizeParams{
 		bootstrap:     bs,

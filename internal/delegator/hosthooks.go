@@ -4,6 +4,7 @@ import (
 	"foci/internal/delegator/pretool"
 	"foci/internal/delegator/stoprule"
 	"foci/internal/ratelimit"
+	"foci/internal/usagehold"
 )
 
 // HostHooks are the gateway's callbacks into a delegated backend: what the
@@ -33,6 +34,12 @@ type HostHooks struct {
 	// EngageRateLimit engages the agent's rate-limit gate on a hard limit
 	// (Claude Code's session limit, opencode's rejected usage limit).
 	EngageRateLimit func(signal ratelimit.Signal)
+
+	// OnUsageWindow reports one usage window of the account (#2491): its use,
+	// whether its limit is reached, and when it resets. The agent feeds it to
+	// the account-wide usage hold (internal/usagehold). Claude Code reports
+	// its rate_limit_event windows, codex its primary and secondary windows.
+	OnUsageWindow func(ev usagehold.Event)
 
 	// PreToolRules is the live source of the PreToolUse deny rules, read at
 	// every session start. Honoured by a backend declaring CapPreToolRules.

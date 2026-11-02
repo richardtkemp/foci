@@ -12,6 +12,7 @@ import (
 	"foci/internal/delegator"
 	"foci/internal/ratelimit"
 	"foci/internal/timeutil"
+	"foci/internal/usagehold"
 )
 
 // ratelimits.go — the account's Codex usage allowance.
@@ -476,6 +477,7 @@ func (b *Backend) onRateLimitsUpdated(params json.RawMessage) {
 	now := timeutil.Now()
 	st := b.rateLimits()
 	b.deliverRateLimitNotices(st.apply(p.RateLimits, now))
+	b.reportUsageWindows(p.RateLimits)
 	// The startup read (seedRateLimits) never closes the gate: the gate's
 	// deadline survives a foci restart on its own, and re-closing it would
 	// re-broadcast the "rate limited" notice on every restart. A live update
@@ -489,6 +491,41 @@ func (b *Backend) onRateLimitsUpdated(params json.RawMessage) {
 			fn(*sig)
 		}
 	}
+}
+
+// reportUsageWindows feeds one live bucket update to the account-wide usage
+// hold (#2491): each window's use and reset, and the bucket's reached signal
+// as a window of its own (cleared when an update carries none).
+func (b *Backend) reportUsageWindows(snap rateLimitSnapshot) {
+	b.mu.Lock()
+	fn := b.onUsageWindow
+	b.mu.Unlock()
+	if fn == nil {
+		return
+	}
+	id := snap.LimitID
+	if id == "" {
+		id = "codex"
+	}
+	var soonest time.Time
+	for name, w := range map[string]*rateLimitWindow{"primary": snap.Primary, "secondary": snap.Secondary} {
+		if w == nil {
+			continue
+		}
+		ev := usagehold.Event{Window: "codex " + id + " " + name, Util: w.UsedPercent / 100, HasUtil: true}
+		if w.ResetsAt != nil {
+			ev.ResetAt = time.Unix(*w.ResetsAt, 0)
+			if w.UsedPercent >= 100 && (soonest.IsZero() || ev.ResetAt.Before(soonest)) {
+				soonest = ev.ResetAt
+			}
+		}
+		fn(ev)
+	}
+	reached := usagehold.Event{Window: "codex " + id + " reached", HasUtil: true}
+	if snap.RateLimitReachedType != nil && *snap.RateLimitReachedType != "" {
+		reached = usagehold.Event{Window: reached.Window, Reached: true, ResetAt: soonest}
+	}
+	fn(reached)
 }
 
 // seedRateLimits reads the current allowance once at startup so the status

@@ -14,6 +14,7 @@ import (
 	"foci/internal/relogin"
 	"foci/internal/route"
 	"foci/internal/session"
+	"foci/internal/usagehold"
 	"foci/internal/warnings"
 	"foci/internal/workspace"
 	"foci/shared/prompts"
@@ -327,6 +328,14 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		NotifySkillChangeText: func(sessionKey, text string) {
 			route.NotifySessionChat(p.connMgr, agentID, sessionKey, text)
 		},
+	})
+	// At a usage hold start (#2491) the runner reflects and compacts the
+	// sessions worth it before the hold (requirement 8).
+	holdRunner := runner
+	inst.ag.UsageHoldChangeFunc = append(inst.ag.UsageHoldChangeFunc, func(c usagehold.Change) {
+		if c.From == usagehold.Open && c.To.Phase == usagehold.Hold {
+			holdRunner.UsageHoldStarted(c.To.LiftAt)
+		}
 	})
 	runner.Start(p.ctx)
 	inst.kaRunner = runner

@@ -307,6 +307,7 @@ Subcommands:
 
 	// ========== Sessions & State ==========
 	si := initSessions(cfg)
+	setupUsageHold(cfg, si.sessionIndex)
 	defer si.cleanup()
 
 	// ========== Memory system ==========

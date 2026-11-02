@@ -10,6 +10,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/periodic"
 	"foci/internal/session"
+	"foci/internal/usagehold"
 )
 
 // BranchDoneFunc is called after a branch session completes, receiving the
@@ -93,6 +94,12 @@ func buildBranchFunc(
 // the inbox does not start.
 func handleDelegatedBranch(callCtx context.Context, ag *agent.Agent, agentID, branchType, parentKey, promptText, orientTemplate string, ctx context.Context) bool {
 	turnCtx := agent.WithTrigger(ctx, branchType)
+	// The reflection a usage hold starts itself (#2491) carries the hold's
+	// permit on callCtx; ctx (the gateway's) does not, so carry it over.
+	permitted := usagehold.Permitted(callCtx)
+	if permitted {
+		turnCtx = usagehold.WithPermit(turnCtx)
+	}
 	// interruptOnCallerDone stops the backend turn on key when callCtx ends
 	// before the returned stop func runs.
 	interruptOnCallerDone := func(key string) (stop func() bool) {
@@ -105,6 +112,9 @@ func handleDelegatedBranch(callCtx context.Context, ag *agent.Agent, agentID, br
 	}
 	waitCtx, stopWait := boundToCaller(ctx, callCtx)
 	defer stopWait()
+	if permitted {
+		waitCtx = usagehold.WithPermit(waitCtx)
+	}
 
 	// injectInPlace runs one turn on the parent's existing session. Used both
 	// for the RunInPlace strategy and as the BranchForkBackend fallback.
@@ -114,17 +124,28 @@ func handleDelegatedBranch(callCtx context.Context, ag *agent.Agent, agentID, br
 	// semantics.
 	injectInPlace := func() bool {
 		log.NewComponentLogger(branchType).Infof("[%s] delegated: injecting into main session %s", agentID, parentKey)
-		var turnErr error
-		if err := ag.EnqueueInjectWait(waitCtx, parentKey, branchType, func() {
-			if callCtx.Err() != nil {
-				turnErr = context.Cause(callCtx) // the caller gave up while this waited
-				return
+		var injectErr error
+		// The pause of a hold-interrupted background turn (#2491) waits
+		// outside the inbox: each turn is its own injection, so the parent's
+		// inbox worker is never blocked for the length of the hold.
+		turnErr := runHoldResumable(ag, waitCtx, branchType, parentKey, strategyInPlace, promptText, func(hctx context.Context, text string) error {
+			var runErr error
+			if err := ag.EnqueueInjectWait(waitCtx, parentKey, branchType, func() {
+				if callCtx.Err() != nil {
+					runErr = context.Cause(callCtx) // the caller gave up while this waited
+					return
+				}
+				stop := interruptOnCallerDone(parentKey)
+				defer stop()
+				runErr = ag.HandleMessage(withContextOf(turnCtx, hctx), parentKey, []string{text}, nil)
+			}); err != nil {
+				injectErr = err
+				return err
 			}
-			stop := interruptOnCallerDone(parentKey)
-			defer stop()
-			turnErr = ag.HandleMessage(turnCtx, parentKey, []string{promptText}, nil)
-		}); err != nil {
-			log.NewComponentLogger(branchType).Warnf("[%s] session=%s inject error: %v", agentID, parentKey, err)
+			return runErr
+		})
+		if injectErr != nil {
+			log.NewComponentLogger(branchType).Warnf("[%s] session=%s inject error: %v", agentID, parentKey, injectErr)
 			return false
 		}
 		if errors.Is(turnErr, agent.ErrKeepaliveSkipped) {
@@ -164,10 +185,18 @@ func handleDelegatedBranch(callCtx context.Context, ag *agent.Agent, agentID, br
 		// close the forked backend after the turn so its CC process doesn't leak
 		// until the idle reaper. The cloned transcript file is left for the daily
 		// ephemeral-session GC (it outlives this process). Parent is untouched.
-		defer ag.DelegatedManager.ResetSession(branchKey)
+		// A fork a usage hold left paused when foci stops keeps its resume
+		// id, so the next process resumes it (#2491).
+		defer func() {
+			if !ag.PausedBackgroundRecorded(branchKey) {
+				ag.DelegatedManager.ResetSession(branchKey)
+			}
+		}()
 		stop := interruptOnCallerDone(branchKey)
 		defer stop()
-		if err := ag.HandleMessage(turnCtx, branchKey, []string{promptText}, nil); err != nil {
+		if err := runHoldResumable(ag, turnCtx, branchType, branchKey, strategyFork, promptText, func(hctx context.Context, text string) error {
+			return ag.HandleMessage(hctx, branchKey, []string{text}, nil)
+		}); err != nil {
 			log.NewComponentLogger(branchType).Warnf("[%s] session=%s turn error: %v", agentID, branchKey, err)
 			return false
 		}
@@ -185,7 +214,9 @@ func handleDelegatedBranch(callCtx context.Context, ag *agent.Agent, agentID, br
 
 		stop := interruptOnCallerDone(sessionKey)
 		defer stop()
-		if err := ag.HandleMessage(turnCtx, sessionKey, []string{promptText}, nil); err != nil {
+		if err := runHoldResumable(ag, turnCtx, branchType, sessionKey, strategyIndependent, promptText, func(hctx context.Context, text string) error {
+			return ag.HandleMessage(hctx, sessionKey, []string{text}, nil)
+		}); err != nil {
 			log.NewComponentLogger(branchType).Warnf("[%s] session=%s turn error: %v", agentID, sessionKey, err)
 			return false
 		}

@@ -251,8 +251,8 @@ func (r *Runner) keepaliveTargetsAt(interval time.Duration, now time.Time) (read
 			why = "already running on " + sk
 			continue // one keepalive per session at a time (#2487)
 		}
-		if skip := r.checkRateLimit(sk); skip != "" {
-			continue // endpoint rate-limited — don't warm into a cap
+		if skip := r.checkKeepaliveRateLimit(sk); skip != "" {
+			continue // endpoint rate-limited or usage stopped — don't warm into a cap
 		}
 		if !r.keepaliveUserIdleAllows(sk, now, maxIdle) {
 			continue // no human touched this session within max_user_idle — let it expire
@@ -270,6 +270,12 @@ func (r *Runner) keepaliveTargetsAt(interval time.Duration, now time.Time) (read
 		}
 		ready = append(ready, sk)
 	}
+	// The sessions a usage hold paused (#2491): warmed during the hold only.
+	have := make(map[string]bool, len(candidates))
+	for _, sk := range candidates {
+		have[sk] = true
+	}
+	ready = append(ready, r.holdPausedKeepaliveTargets(interval, now, have)...)
 	return ready, why
 }
 
