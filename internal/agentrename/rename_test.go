@@ -385,7 +385,7 @@ func TestRenameBackupRestores(t *testing.T) {
 		}
 	}
 	var rout bytes.Buffer
-	must(t, Restore(context.Background(), RestoreOptions{ConfigPath: f.cfgPath, BackupDir: backup, Yes: true, Out: &rout}))
+	must(t, Restore(context.Background(), RestoreOptions{ConfigPath: f.cfgPath, BackupDir: backup, Yes: true, Out: &rout, Priv: f.priv}))
 	diffHashes(t, before, hashTree(t, f.root, skip...))
 	if !strings.Contains(rout.String(), "crontab.before") {
 		t.Errorf("restore does not say how to put the crontab back:\n%s", rout.String())
@@ -474,12 +474,18 @@ func TestRenamePrivilegedEditsMatchTheShownDiff(t *testing.T) {
 			}
 		}
 	}
-	var sawTee, sawCron bool
+	var sawTee, sawCfgTee, sawCron bool
 	for _, c := range f.priv.calls {
 		sawTee = sawTee || (c[0] == "tee" && c[1] == f.secretsPath)
+		sawCfgTee = sawCfgTee || (c[0] == "tee" && c[1] == f.cfgPath)
 		sawCron = sawCron || (c[0] == "crontab" && c[2] == "foci")
 	}
-	if !sawTee || !sawCron {
+	// #2784: foci.toml is root:foci-secrets (#479) and the foci user may not
+	// write it, so its edit is a [sudo] step like secrets.toml.
+	if !strings.Contains(out, "[sudo] config "+f.cfgPath) {
+		t.Errorf("the foci.toml step is not marked [sudo] in the plan:\n%s", out)
+	}
+	if !sawTee || !sawCfgTee || !sawCron {
 		t.Errorf("privileged edits did not go through sudo: %v", f.priv.calls)
 	}
 	if info, _ := os.Stat(f.secretsPath); info.Mode().Perm() != 0o660 {
@@ -494,18 +500,28 @@ func TestRenamePrivilegedDeclinedIsPending(t *testing.T) {
 	f := newFixture(t)
 	f.priv.decline = true
 	secBefore, _ := os.ReadFile(f.secretsPath)
+	cfgBefore, _ := os.ReadFile(f.cfgPath)
 	cronBefore := f.cron.content
 	out, err := f.run(Options{})
 	if !errors.Is(err, ErrPending) {
 		t.Fatalf("err = %v, want ErrPending\n%s", err, out)
 	}
-	for _, want := range []string{"PENDING  secrets", "PENDING  crontab", "sudo sed -i -E", "sudo crontab -u foci " + filepath.Join(f.data, "backups", "rename-bob-rob-20261101T120000Z", "crontab.after")} {
+	bdir := filepath.Join(f.data, "backups", "rename-bob-rob-20261101T120000Z")
+	cfgAfter := filepath.Join(bdir, "foci.toml.after")
+	for _, want := range []string{"PENDING  config", "PENDING  secrets", "PENDING  crontab", "sudo sed -i -E", "sudo crontab -u foci " + filepath.Join(bdir, "crontab.after"), "sudo cp " + cfgAfter + " " + f.cfgPath} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
 	}
 	if sec, _ := os.ReadFile(f.secretsPath); string(sec) != string(secBefore) || f.cron.content != cronBefore {
 		t.Error("a declined privileged edit changed a file")
+	}
+	if cfg, _ := os.ReadFile(f.cfgPath); string(cfg) != string(cfgBefore) {
+		t.Error("a declined foci.toml step changed foci.toml")
+	}
+	// The manual command's source holds the planned foci.toml.
+	if planned, err := os.ReadFile(cfgAfter); err != nil || !strings.Contains(string(planned), `id = "rob"`) {
+		t.Errorf("%s does not hold the planned foci.toml: %v", cfgAfter, err)
 	}
 	if n := queryInt(t, filepath.Join(f.data, "state.db"), `SELECT count(*) FROM session_index WHERE agent_id='rob'`); n != 4 {
 		t.Errorf("the non-privileged steps did not complete: %d", n)
@@ -518,6 +534,9 @@ func TestRenamePrivilegedDeclinedIsPending(t *testing.T) {
 	}
 	if sec, _ := os.ReadFile(f.secretsPath); !strings.Contains(string(sec), "[agents.rob.telegram]") || !strings.Contains(f.cron.content, "-a rob hello") {
 		t.Error("the retry did not apply the pending edits")
+	}
+	if cfg, _ := os.ReadFile(f.cfgPath); !strings.Contains(string(cfg), `id = "rob"`) {
+		t.Error("the retry did not apply the pending foci.toml edit")
 	}
 }
 
@@ -691,8 +710,54 @@ func TestRenameAndRestoreKeepConfigInode(t *testing.T) {
 	}
 	backup := filepath.Join(f.data, "backups", "rename-bob-rob-20261101T120000Z")
 	var rout bytes.Buffer
-	must(t, Restore(context.Background(), RestoreOptions{ConfigPath: f.cfgPath, BackupDir: backup, Yes: true, Out: &rout}))
+	must(t, Restore(context.Background(), RestoreOptions{ConfigPath: f.cfgPath, BackupDir: backup, Yes: true, Out: &rout, Priv: f.priv}))
 	if got := inode(); got != before {
 		t.Fatalf("restore replaced foci.toml (inode %d -> %d); it must write in place", before, got)
+	}
+}
+
+// TestRestoreConfigThroughSudo (#2784): the restore writes foci.toml back
+// through sudo too (the foci user may not write it). Declined, every other
+// file is still restored, and the output gives the manual command.
+func TestRestoreConfigThroughSudo(t *testing.T) {
+	f := newFixture(t)
+	cfgBefore, _ := os.ReadFile(f.cfgPath)
+	out, err := f.run(Options{})
+	if err != nil {
+		t.Fatalf("rename: %v\n%s", err, out)
+	}
+	backup := filepath.Join(f.data, "backups", "rename-bob-rob-20261101T120000Z")
+	f.priv.decline = true
+	f.priv.calls = nil
+	var rout bytes.Buffer
+	err = Restore(context.Background(), RestoreOptions{ConfigPath: f.cfgPath, BackupDir: backup, Yes: true, Out: &rout, Priv: f.priv})
+	if !errors.Is(err, ErrPending) {
+		t.Fatalf("declined restore: err = %v, want ErrPending\n%s", err, rout.String())
+	}
+	want := "sudo cp " + filepath.Join(backup, "config", "foci.toml") + " " + f.cfgPath
+	if !strings.Contains(rout.String(), want) {
+		t.Errorf("restore output lacks %q:\n%s", want, rout.String())
+	}
+	if n := queryInt(t, filepath.Join(f.data, "state.db"), `SELECT count(*) FROM session_index WHERE agent_id='bob'`); n != 4 {
+		t.Errorf("state.db not restored when the foci.toml write was declined: %d", n)
+	}
+	if cfg, _ := os.ReadFile(f.cfgPath); string(cfg) == string(cfgBefore) {
+		t.Error("a declined restore wrote foci.toml")
+	}
+	// Approved: foci.toml goes back through sudo tee.
+	f.priv.decline = false
+	rout.Reset()
+	if err := Restore(context.Background(), RestoreOptions{ConfigPath: f.cfgPath, BackupDir: backup, Yes: true, Out: &rout, Priv: f.priv}); err != nil {
+		t.Fatalf("restore: %v\n%s", err, rout.String())
+	}
+	if cfg, _ := os.ReadFile(f.cfgPath); string(cfg) != string(cfgBefore) {
+		t.Error("restore did not put foci.toml back")
+	}
+	var sawCfgTee bool
+	for _, c := range f.priv.calls {
+		sawCfgTee = sawCfgTee || (c[0] == "tee" && c[1] == f.cfgPath)
+	}
+	if !sawCfgTee {
+		t.Errorf("restore did not write foci.toml through sudo: %v", f.priv.calls)
 	}
 }

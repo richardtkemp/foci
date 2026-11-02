@@ -14,8 +14,8 @@ import (
 )
 
 // cmdRenameAgent implements `foci rename-agent OLD NEW` (#1281): an offline
-// rename of an agent id across foci.toml, every database, the sessions tree,
-// the search index, optionally the workspace, and — through sudo approval —
+// rename of an agent id across every database, the sessions tree, the search
+// index, optionally the workspace, and — through sudo approval — foci.toml,
 // secrets.toml and the crontab. `--restore DIR` undoes a rename from its
 // backup. It never talks to the gateway: the gateway must be stopped.
 func cmdRenameAgent(args []string, stdin io.Reader, stdout io.Writer) error {
@@ -108,7 +108,7 @@ need sudo), asks for confirmation, backs up every file it changes, then:
      workspace's .data/*.db), each all-or-nothing
   3. moves the workspace search index aside (rebuilt at the next start)
   4. with --move-workspace: moves ~/OLD to ~/NEW and Claude Code's project folder
-  5. edits foci.toml (id, master_agent, [askgw] default_agent, agent lists,
+  5. [sudo] edits foci.toml (id, master_agent, [askgw] default_agent, agent lists,
      explicit bot = "OLD" so the agent keeps its bots; keeps the workspace
      path unless --move-workspace)
   6. [sudo] edits secrets.toml ([agents.OLD.*] tables, allowed/denied_agents)

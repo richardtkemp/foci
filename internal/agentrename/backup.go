@@ -11,8 +11,6 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
-
-	"foci/internal/config"
 )
 
 // manifest describes one rename's backup: what was copied from where, and
@@ -38,7 +36,7 @@ type backupEntry struct {
 	Orig   string `json:"orig"`
 	Backup string `json:"backup"`
 	// Config marks the foci.toml entry: restore writes it back IN PLACE
-	// (config.WriteConfigFile), so the file keeps the root:foci-secrets
+	// through sudo tee (#2784), so the file keeps the root:foci-secrets
 	// owner and mode the gateway requires (#479). Every other file is
 	// restored by temp-and-rename.
 	Config bool `json:"config,omitempty"`
@@ -105,7 +103,7 @@ func copyFile(src, dst string) error {
 // writeFileAtomic replaces dst in one step: fill writes a temp file beside
 // it, which is synced, given perm (and mtime, when not zero), then renamed
 // over dst. A reader never sees a half-written file. Not for foci.toml,
-// which is written in place (config.WriteConfigFile, #479).
+// which is written in place through sudo tee (#479, #2784).
 func writeFileAtomic(dst string, perm os.FileMode, mtime time.Time, fill func(io.Writer) error) error {
 	tmp := dst + ".copy-tmp"
 	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
@@ -203,7 +201,10 @@ func takeBackup(ctx context.Context, dir string, m *manifest, dbs []*lockedDB, c
 // copies every backed-up file and tree over its original path. A database's
 // stale -wal/-shm beside the restored file is removed (the copy is a whole
 // database). The caller has checked that the gateway is stopped.
-func restoreBackup(dir string, m *manifest) error {
+//
+// The foci.toml entry goes to writeConfig(backup, orig) instead: the caller
+// writes it through sudo (#2784). A writeConfig error stops the restore.
+func restoreBackup(dir string, m *manifest, writeConfig func(backup, orig string) error) error {
 	for i := len(m.Moves) - 1; i >= 0; i-- {
 		mv := m.Moves[i]
 		_, toErr := os.Stat(mv.To)
@@ -231,7 +232,7 @@ func restoreBackup(dir string, m *manifest) error {
 	sort.Slice(files, func(i, j int) bool { return files[i].Orig < files[j].Orig })
 	for _, f := range files {
 		if f.Config {
-			if err := restoreConfigInPlace(filepath.Join(dir, f.Backup), f.Orig); err != nil {
+			if err := writeConfig(filepath.Join(dir, f.Backup), f.Orig); err != nil {
 				return fmt.Errorf("restore %s: %w", f.Orig, err)
 			}
 			continue
@@ -246,21 +247,6 @@ func restoreBackup(dir string, m *manifest) error {
 		}
 	}
 	return nil
-}
-
-// restoreConfigInPlace writes the backed-up foci.toml over the live one in
-// place (config.WriteConfigFile), keeping the live file's inode, owner, group
-// and mode (#479). The backup's mode applies only if the live file is gone.
-func restoreConfigInPlace(backup, orig string) error {
-	info, err := os.Stat(backup)
-	if err != nil {
-		return err
-	}
-	data, err := os.ReadFile(backup)
-	if err != nil {
-		return err
-	}
-	return config.WriteConfigFile(orig, string(data), info.Mode().Perm())
 }
 
 // journal records a rename in progress, so a re-run with the same arguments

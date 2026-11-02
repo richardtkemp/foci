@@ -1,7 +1,7 @@
 // Package agentrename renames a foci agent's id across everything that holds
-// it (#1281): foci.toml, every SQLite store, the sessions tree, the per-agent
-// search index, optionally the workspace directory, and — through sudo
-// approval — secrets.toml and the crontab. It runs offline (the gateway
+// it (#1281): every SQLite store, the sessions tree, the per-agent search
+// index, optionally the workspace directory, and — through sudo approval —
+// foci.toml (root-owned since #479; #2784), secrets.toml and the crontab. It runs offline (the gateway
 // stopped), shows a plan, backs up every file it changes, and resumes after a
 // partial failure. docs/WIRING.md "Renaming an agent" describes the order.
 package agentrename

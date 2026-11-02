@@ -224,10 +224,16 @@ func (rn *runner) configRename() config.AgentRename {
 	return ar
 }
 
-// configStep plans the foci.toml edit and checks the result loads.
+// configStep plans the foci.toml edit and checks the result loads. It is a
+// [sudo] step like secrets.toml (#2784): foci.toml is root:foci-secrets 0664
+// (#479) and the foci user may not write it. The write is `sudo tee`, which
+// truncates and rewrites the existing file in place, so it keeps its inode,
+// owner, group and mode (a temp-and-rename write would replace it with a file
+// the gateway refuses). The planned content is also saved in the backup as
+// foci.toml.after, the source of the manual command for a PENDING step.
 func (rn *runner) configStep() (step, error) {
 	path := rn.cfg.SourcePath
-	st := step{id: stepConfig, title: "config " + path}
+	st := step{id: stepConfig, sudo: true, title: "config " + path}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return st, err
@@ -258,9 +264,12 @@ func (rn *runner) configStep() (step, error) {
 			st.detail = append(st.detail, fmt.Sprintf("  %s:%d: %s", filepath.Base(path), r.Line, r.Text))
 		}
 	}
+	after := filepath.Join(rn.backup, filepath.Base(path)+".after")
+	st.manual = func() []string {
+		return []string{fmt.Sprintf("sudo cp %s %s   # cp onto the existing file keeps its owner, group and mode", after, path)}
+	}
 	st.run = func() error {
-		info, err := os.Stat(path)
-		if err != nil {
+		if err := os.WriteFile(after, []byte(next), 0o600); err != nil {
 			return err
 		}
 		now, err := os.ReadFile(path)
@@ -270,9 +279,15 @@ func (rn *runner) configStep() (step, error) {
 		if string(now) != cur {
 			return fmt.Errorf("%s changed since the plan was made; nothing written", path)
 		}
-		// In place (#479): foci.toml is root:foci-secrets 0664, and a
-		// temp-and-rename write would replace it with a file the gateway refuses.
-		return config.WriteConfigFile(path, next, info.Mode().Perm())
+		if _, err := rn.o.Priv.Run([]string{"tee", path}, []byte(next)); err != nil {
+			return err
+		}
+		if got, err := os.ReadFile(path); err != nil {
+			return err
+		} else if string(got) != next {
+			return fmt.Errorf("%s does not hold the planned content after the write", path)
+		}
+		return nil
 	}
 	return st, nil
 }
