@@ -74,7 +74,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				},
 				"query": {
 					"type": "string",
-					"description": "Search query — full-text with stemming; may also be given positionally. Any part of a code identifier matches (FociRepository.seedReliabilityFromDb is found by seedReliabilityFromDb or reliability)"
+					"description": "Search query — full-text with stemming; may also be given positionally. Any part of a code identifier matches (FociRepository.seedReliabilityFromDb is found by seedReliabilityFromDb or reliability). A \"double-quoted phrase\" matches those words in order, and those hits come first"
 				},
 				"limit": {
 					"type": "integer",

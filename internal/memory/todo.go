@@ -694,6 +694,7 @@ func (s *TodoStore) searchBleve(agentID, query string, opts *TodoSearchOpts) ([]
 	// Load full items from SQLite by ID, maintaining bleve's order.
 	// Filter by status, tag, and priority during load.
 	items := make([]TodoItem, 0, len(hits))
+	exact := map[int64]bool{} // exact-phrase hits (#2816) stay ahead of a post-sort
 	for _, hit := range hits {
 		item, err := s.Get(agentID, hit.TodoID)
 		if err != nil {
@@ -709,11 +710,18 @@ func (s *TodoStore) searchBleve(agentID, query string, opts *TodoSearchOpts) ([]
 			continue
 		}
 		items = append(items, *item)
+		if hit.Exact {
+			exact[item.ID] = true
+		}
 	}
 
-	// Post-sort for sort orders bleve can't handle.
+	// Post-sort for sort orders bleve can't handle, within each tier: the
+	// exact-phrase hits stay first.
 	if needsPostSort {
 		sortTodoItems(items, opts.Sort, opts.Reverse)
+		sort.SliceStable(items, func(i, j int) bool {
+			return exact[items[i].ID] && !exact[items[j].ID]
+		})
 	}
 
 	// Apply limit.

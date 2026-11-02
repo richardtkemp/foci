@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -477,9 +478,12 @@ func (b *BleveIndex) BackfillConversations(dbPath string) (int, error) {
 
 // TodoSearchHit is a single todo search result from bleve, carrying the
 // per-agent todo ID and relevance rank for subsequent SQLite lookup.
+// Exact is true when the query had quoted phrases and this todo contains
+// every one of them (#2816); such hits come before all others.
 type TodoSearchHit struct {
 	TodoID int64
 	Rank   float64
+	Exact  bool
 }
 
 // bleveIdentPartsField is the todo-doc field that holds the parts of the code
@@ -532,6 +536,12 @@ func (b *BleveIndex) RemoveTodo(agentID string, id int64) {
 // sortOrder controls ordering: "" or "relevance" sorts by score (default),
 // "newest" by mtime descending, "oldest" by mtime ascending.
 // limit caps the number of results (0 uses default of 10).
+//
+// A double-quoted part of the query is a phrase (#2816): `"statement is
+// closed"` finds the todos holding those words next to each other, in order,
+// and returns them first (Exact), before the todos that only match the words
+// loosely. Each tier is ordered by sortOrder. An unbalanced quote is an
+// ordinary character, as before.
 func (b *BleveIndex) SearchTodos(agentID, queryStr, sortOrder string, limit int) ([]TodoSearchHit, error) {
 	if strings.TrimSpace(queryStr) == "" {
 		return nil, nil
@@ -542,24 +552,68 @@ func (b *BleveIndex) SearchTodos(agentID, queryStr, sortOrder string, limit int)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Build the text query. If all terms are negated (e.g. "-android"),
-	// bleve's QueryStringQuery returns nothing because there are no positive
-	// terms to match against. Detect this and use MatchAll + BooleanQuery
-	// must-not instead.
-	var textQuery query.Query
+	phrases, rest := splitQuotedPhrases(queryStr)
+	looseStr := queryStr
+	if len(phrases) > 0 {
+		// The loose tier matches the phrase words anywhere, plus the rest.
+		looseStr = strings.Join(append(slices.Clone(phrases), rest), " ")
+	}
+	loose := todoTextQuery(looseStr)
+	if len(phrases) == 0 {
+		return b.searchTodosLocked(agentID, loose, sortOrder, limit, false)
+	}
+
+	exactParts := []query.Query{loose}
+	for _, ph := range phrases {
+		pq := bleve.NewMatchPhraseQuery(ph)
+		pq.SetField(bleveContentField)
+		exactParts = append(exactParts, pq)
+	}
+	exact, err := b.searchTodosLocked(agentID, bleve.NewConjunctionQuery(exactParts...), sortOrder, limit, true)
+	if err != nil {
+		return nil, err
+	}
+	looseHits, err := b.searchTodosLocked(agentID, loose, sortOrder, limit, false)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[int64]bool, len(exact))
+	for _, h := range exact {
+		seen[h.TodoID] = true
+	}
+	hits := exact
+	for _, h := range looseHits {
+		if len(hits) >= limit {
+			break
+		}
+		if !seen[h.TodoID] {
+			hits = append(hits, h)
+		}
+	}
+	return hits, nil
+}
+
+// todoTextQuery builds the text part of a todo search. If all terms are
+// negated (e.g. "-android"), bleve's QueryStringQuery returns nothing because
+// there are no positive terms to match against, so that case uses MatchAll +
+// BooleanQuery must-not instead.
+func todoTextQuery(queryStr string) query.Query {
 	if neg, terms := allNegatedTerms(queryStr); neg {
 		bq := bleve.NewBooleanQuery()
 		bq.AddMust(bleve.NewMatchAllQuery())
 		for _, term := range terms {
 			mq := bleve.NewMatchQuery(term)
-			mq.SetField("content")
+			mq.SetField(bleveContentField)
 			bq.AddMustNot(mq)
 		}
-		textQuery = bq
-	} else {
-		textQuery = bleve.NewQueryStringQuery(sanitizeBleveQuery(queryStr))
+		return bq
 	}
+	return bleve.NewQueryStringQuery(sanitizeBleveQuery(queryStr))
+}
 
+// searchTodosLocked runs textQuery restricted to agentID's todos and returns
+// up to limit hits, each marked exact. Caller holds b.mu.
+func (b *BleveIndex) searchTodosLocked(agentID string, textQuery query.Query, sortOrder string, limit int, exact bool) ([]TodoSearchHit, error) {
 	// Filter: source = "todo"
 	sourceQuery := query.NewTermQuery("todo")
 	sourceQuery.SetField("source")
@@ -594,9 +648,35 @@ func (b *BleveIndex) SearchTodos(agentID, queryStr, sortOrder string, limit int)
 		hits = append(hits, TodoSearchHit{
 			TodoID: int64(todoID),
 			Rank:   hit.Score,
+			Exact:  exact,
 		})
 	}
 	return hits, nil
+}
+
+// splitQuotedPhrases returns the double-quoted phrases in q and the text
+// outside them. Quotes pair left to right; a final unpaired quote and the
+// text after it stay in rest unchanged. Empty or blank phrases are dropped.
+func splitQuotedPhrases(q string) (phrases []string, rest string) {
+	var out strings.Builder
+	for {
+		open := strings.IndexByte(q, '"')
+		if open < 0 {
+			break
+		}
+		closing := strings.IndexByte(q[open+1:], '"')
+		if closing < 0 {
+			break
+		}
+		out.WriteString(q[:open])
+		out.WriteByte(' ')
+		if ph := strings.TrimSpace(q[open+1 : open+1+closing]); ph != "" {
+			phrases = append(phrases, ph)
+		}
+		q = q[open+1+closing+1:]
+	}
+	out.WriteString(q)
+	return phrases, strings.TrimSpace(out.String())
 }
 
 // allNegatedTerms checks whether a query string consists entirely of negated
