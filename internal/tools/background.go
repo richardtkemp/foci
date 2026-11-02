@@ -37,6 +37,12 @@ type BackgroundParams struct {
 	// turn takes it, #2589). An empty message is never delivered either way.
 	Deliver func(msg string)
 
+	// ID, when set, is the Background ID the pending result and the
+	// notification carry instead of a generated 3-word one: a caller whose
+	// work already has a handle its other tools accept (a spawn's name,
+	// #2807) passes it, so the agent is never shown an ID nothing accepts.
+	ID string
+
 	// Cleanup is called after async delivery completes (optional).
 	Cleanup func()
 
@@ -84,8 +90,13 @@ func RunInBackground(ctx context.Context, p BackgroundParams) (ToolResult, error
 		}
 	}
 
-	// Generate a 3-word ID to correlate the pending result with the later notification.
-	if bgID, err := secrets.GeneratePassphrase(3); err == nil && bgID != "" {
+	// A Background ID correlates the pending result with the later
+	// notification: the caller's, else a generated 3-word one.
+	bgID := p.ID
+	if bgID == "" {
+		bgID, _ = secrets.GeneratePassphrase(3)
+	}
+	if bgID != "" {
 		p.PendingResult.Text += "\nBackground ID: " + bgID
 		origNotify := p.NotifyMessage
 		p.NotifyMessage = func() string {

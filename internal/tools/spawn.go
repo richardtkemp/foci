@@ -1552,8 +1552,21 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 		},
 		Deliver:       func(msg string) { s.deliver(parent, id, msg) },
 		Cleanup:       s.slots.release,
+		ID:            spawnBackgroundID(running),
 		PendingResult: TextResult(pendingResult),
 	})
+}
+
+// spawnBackgroundID is the Background ID a background spawn prints: its name,
+// which spawn_send, spawn_status and spawn_stop accept (#2807). A spawn with
+// no name (a record from before names, #2721) or a name the one-line ID
+// cannot carry as typed (a line break or a run of spaces, which lookup
+// matches exactly) prints its id instead: every printed ID resolves.
+func spawnBackgroundID(running RunningSpawn) string {
+	if running.Name != "" && oneLine(running.Name) == running.Name {
+		return running.Name
+	}
+	return running.ID
 }
 
 // spawnResultHead opens every [SPAWN RESULT]: the spawn's name (label), its
