@@ -45,8 +45,14 @@ func TestInboxEvict_IdleWorkerExitsAndKeyRecreates(t *testing.T) {
 	a.SetTurnObserver(d.recordBatch)
 
 	a.Enqueue(Envelope{SessionKey: "test/s", Text: "one", Driver: d})
-	mustWait(t, "first turn", func() bool { return d.NumCalls() == 1 })
+	// Take the inbox now, while the first message keeps it busy: with a 5 ms
+	// idle limit it can be evicted before a lookup made after the turn ends,
+	// which returned nil and panicked below on a fast host (CI, 6127687ca).
 	first := a.lookupInbox("test/s")
+	if first == nil {
+		t.Fatal("Enqueue should have created the session's inbox")
+	}
+	mustWait(t, "first turn", func() bool { return d.NumCalls() == 1 })
 	mustWait(t, "eviction", func() bool { return inboxCount(a) == 0 && a.inboxWorkers.Load() == 0 })
 	first.evictMu.RLock()
 	evicted := first.evicted
