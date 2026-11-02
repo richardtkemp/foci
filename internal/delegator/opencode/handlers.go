@@ -116,7 +116,7 @@ func (b *Backend) handleEvent(ev rawEvent) {
 			log.NewComponentLogger(b.logComponent()).Warnf("handlers: decode permission.replied: %v", err)
 			return
 		}
-		b.onPermissionReplied(p.SessionID, p.PermissionID, p.Response)
+		b.onPermissionReplied(p.SessionID, p.id(), p.reply())
 
 	case EventServerConnected:
 		// Already logged by Server.route; no per-Backend action.

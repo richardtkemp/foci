@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -253,19 +254,27 @@ func (b *Backend) checkAutoApprove(pp pendingPermission) (approved bool, vetoRea
 }
 
 // onPermissionReplied handles a permission.replied SSE event. opencode
-// emits this when the user responds out-of-band (e.g. via the TUI).
-// We treat it as a cancel of OUR prompt UI: fire the cancel listeners
-// (so the platform disables the orphaned inline keyboard) and remove
-// from the registry so the drain hook fires.
+// emits it for every settled request: foci's own reply, a reply from
+// elsewhere (e.g. the TUI), and each sibling ask a reject or always settled
+// along with the one answered (live 1.17.15, #2751). A request foci is
+// answering itself resolves quietly. Anything else is a cancel of OUR prompt
+// UI: fire the cancel listeners (so the platform disables the orphaned inline
+// keyboard) and remove from the registry so the drain hook fires.
 func (b *Backend) onPermissionReplied(sessionID, permissionID, response string) {
+	b.permMu.Lock()
+	pp, ok := b.pendingPerms[permissionID]
+	own := ok && pp.answering
+	delete(b.pendingPerms, permissionID)
+	b.permMu.Unlock()
+
+	if own {
+		b.outstanding.Resolve(permissionID)
+		return
+	}
 	// Cancel fires cancel listeners + removes from registry + fires
 	// onEmpty if empty. The reason tells listeners this was an
 	// out-of-band reply, not a user-initiated cancel.
 	b.outstanding.Cancel(permissionID, "replied out-of-band")
-
-	b.permMu.Lock()
-	delete(b.pendingPerms, permissionID)
-	b.permMu.Unlock()
 
 	log.NewComponentLogger(b.logComponent()).Debugf("permission %s replied out-of-band (session=%s): %s", permissionID, sessionID, response)
 }
@@ -301,16 +310,34 @@ func (b *Backend) RespondToPermission(permID string, d delegator.PermissionDecis
 	var group []pendingPermission
 	for id, ex := range b.pendingPerms {
 		if id == root || ex.aliasOf == root {
+			ex.answering = true
 			group = append(group, *ex)
 		}
 	}
 	b.permMu.Unlock()
 
 	// Reply to every member with the same decision. Resolve/delete only the
-	// members that succeed, so a failed POST leaves that one tracked.
+	// members that succeed, so a failed POST leaves that one tracked. A 404
+	// means opencode no longer holds the request: a reject or always on one
+	// member settles every sibling ask it covers (live 1.17.15, #2751), so the
+	// aliases are usually gone by the time their POST lands. That is settled,
+	// not failed.
 	var firstErr error
 	for _, member := range group {
 		if err := b.sendPermissionReply(member, allow, remember); err != nil {
+			if errors.Is(err, errPermissionNotFound) {
+				log.NewComponentLogger(b.logComponent()).Debugf("permission %s already settled by opencode: %v", member.id, err)
+				b.outstanding.Resolve(member.id)
+				b.permMu.Lock()
+				delete(b.pendingPerms, member.id)
+				b.permMu.Unlock()
+				continue
+			}
+			b.permMu.Lock()
+			if ex, ok := b.pendingPerms[member.id]; ok {
+				ex.answering = false
+			}
+			b.permMu.Unlock()
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -323,6 +350,23 @@ func (b *Backend) RespondToPermission(permID string, d delegator.PermissionDecis
 		b.permMu.Unlock()
 	}
 	return firstErr
+}
+
+// errPermissionNotFound marks a reply opencode refused with HTTP 404: it no
+// longer holds that request (already answered, or settled by a sibling's
+// reject/always). Live 1.17.15 body: {"_tag":"PermissionNotFoundError",...}.
+var errPermissionNotFound = errors.New("permission not found")
+
+// replyStatusErr turns a reply POST's HTTP status into an error, wrapping
+// errPermissionNotFound for a 404 so callers can treat it as settled.
+func replyStatusErr(what string, status int) error {
+	if status == http.StatusNotFound {
+		return fmt.Errorf("%s: HTTP %d: %w", what, status, errPermissionNotFound)
+	}
+	if status >= 400 {
+		return fmt.Errorf("%s: HTTP %d", what, status)
+	}
+	return nil
 }
 
 // sendPermissionReply POSTs a single permission decision to opencode, choosing
@@ -382,10 +426,7 @@ func (b *Backend) replyPermissionNextMessage(requestID, reply, message string) e
 		return fmt.Errorf("POST /permission/%s/reply: %w", requestID, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("POST /permission/%s/reply: HTTP %d", requestID, resp.StatusCode)
-	}
-	return nil
+	return replyStatusErr(fmt.Sprintf("POST /permission/%s/reply", requestID), resp.StatusCode)
 }
 
 // postPermissionResponse POSTs the user's decision to opencode.
@@ -408,10 +449,7 @@ func (b *Backend) postPermissionResponse(permID, response string, remember bool)
 		return fmt.Errorf("POST /permissions/%s: %w", permID, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("POST /permissions/%s: HTTP %d", permID, resp.StatusCode)
-	}
-	return nil
+	return replyStatusErr(fmt.Sprintf("POST /permissions/%s", permID), resp.StatusCode)
 }
 
 // ---------------------------------------------------------------------------

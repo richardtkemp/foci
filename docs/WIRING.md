@@ -1134,7 +1134,7 @@ The opencode backend drives OpenCode as a coding agent via its HTTP server API. 
 | `session.error` (MessageAbortedError) | `onSessionError` → `failInFlightTurn` | completes the aborted turn (steer abort-drain turn 1) |
 | `permission.updated` | `onPermissionUpdated` | `permPromptFn` (Allow/Deny/Always) |
 | `permission.updated` (type:question) | `handleQuestionPermission` | `permPromptFn` (option buttons) |
-| `permission.replied` | `onPermissionReplied` | cancel-listener fanout |
+| `permission.replied` | `onPermissionReplied` | quiet resolve if foci is answering it, else cancel-listener fanout (1.17.x shape `{requestID, reply}`; also fires for siblings a reject/always settled, #2751) |
 
 **Divergences from ccstream:**
 

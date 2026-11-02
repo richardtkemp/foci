@@ -410,10 +410,31 @@ type eventPermissionUpdated struct {
 	Permission Permission `json:"permission"`
 }
 
+// eventPermissionReplied is permission.replied. opencode 1.17.x sends
+// {sessionID, requestID, reply} (live 1.17.15, #2751); the legacy
+// permission.updated model sent {sessionID, permissionID, response}.
 type eventPermissionReplied struct {
 	SessionID    string `json:"sessionID"`
+	RequestID    string `json:"requestID"`
+	Reply        string `json:"reply"`
 	PermissionID string `json:"permissionID"`
 	Response     string `json:"response"`
+}
+
+// id returns the replied request's id, whichever shape carried it.
+func (p eventPermissionReplied) id() string {
+	if p.RequestID != "" {
+		return p.RequestID
+	}
+	return p.PermissionID
+}
+
+// reply returns the reply value, whichever shape carried it.
+func (p eventPermissionReplied) reply() string {
+	if p.Reply != "" {
+		return p.Reply
+	}
+	return p.Response
 }
 
 type eventSessionIdle struct {

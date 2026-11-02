@@ -44,4 +44,10 @@ type pendingPermission struct {
 	// the whole group. An alias is still Registered in `outstanding` (opencode
 	// genuinely blocks on it), it just doesn't get its own prompt.
 	aliasOf string
+	// answering is set while RespondToPermission is POSTing foci's own reply.
+	// opencode echoes every reply as permission.replied, and the echo can land
+	// before the POST returns; onPermissionReplied must then resolve quietly,
+	// not fire the cancel listeners that rewrite the user's answered prompt as
+	// "cancelled" (#2751).
+	answering bool
 }
