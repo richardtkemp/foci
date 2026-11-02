@@ -167,7 +167,7 @@ func TestWriteMemorySearch(t *testing.T) {
 func TestWritePlatform(t *testing.T) {
 	t.Parallel()
 	var tg strings.Builder
-	writePlatform(&tg, "telegram", nil)
+	writePlatform(&tg, "telegram", nil, false)
 	out := tg.String()
 	if !strings.Contains(out, "## Platform") || !strings.Contains(out, "Telegram") {
 		t.Errorf("telegram platform block missing header/content:\n%s", out)
@@ -175,14 +175,14 @@ func TestWritePlatform(t *testing.T) {
 
 	// Unknown platform with no embedded default → no section.
 	var unknown strings.Builder
-	writePlatform(&unknown, "signal", nil)
+	writePlatform(&unknown, "signal", nil, false)
 	if unknown.Len() != 0 {
 		t.Errorf("unknown platform should emit nothing, got:\n%s", unknown.String())
 	}
 
 	// Empty platform (unknown session) → no section.
 	var empty strings.Builder
-	writePlatform(&empty, "", nil)
+	writePlatform(&empty, "", nil, false)
 	if empty.Len() != 0 {
 		t.Errorf("empty platform should emit nothing, got:\n%s", empty.String())
 	}
@@ -367,9 +367,58 @@ func TestWritePlatform_MathLine(t *testing.T) {
 		{"", false},       // unknown session
 	} {
 		var b strings.Builder
-		writePlatform(&b, tt.platform, nil)
+		writePlatform(&b, tt.platform, nil, false)
 		if got := strings.Contains(b.String(), marker); got != tt.want {
 			t.Errorf("platform %q: math line present=%v, want %v\n%s", tt.platform, got, tt.want, b.String())
+		}
+	}
+}
+
+// The mermaid line appears only on an app session whose server can render.
+func TestWritePlatform_MermaidLine(t *testing.T) {
+	t.Parallel()
+	const marker = "**Diagrams render.**"
+	for _, tt := range []struct {
+		platform  string
+		canRender bool
+		want      bool
+	}{
+		{"app", true, true},
+		{"app", false, false},
+		{"telegram", true, false},
+		{"discord", true, false},
+		{"", true, false},
+	} {
+		var b strings.Builder
+		writePlatform(&b, tt.platform, nil, tt.canRender)
+		if got := strings.Contains(b.String(), marker); got != tt.want {
+			t.Errorf("platform %q canRender=%v: mermaid line present=%v, want %v\n%s", tt.platform, tt.canRender, got, tt.want, b.String())
+		}
+	}
+}
+
+// mermaidRenders follows the app's configured mermaid_cmd: off or a missing
+// command means no line; an executable means the line, on app sessions only.
+func TestMermaidRenders_FollowsConfiguredCmd(t *testing.T) {
+	t.Parallel()
+	exe := filepath.Join(t.TempDir(), "fake-mmdc")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgWith := func(cmd string) *config.Config {
+		return &config.Config{DataDir: t.TempDir(), Platforms: []config.PlatformConfig{{ID: "app", App: &config.AppSpecific{MermaidCmd: cmd}}}}
+	}
+	for _, tt := range []struct {
+		platform, cmd string
+		want          bool
+	}{
+		{"app", exe, true},
+		{"app", "off", false},
+		{"app", "/no/such/mmdc", false},
+		{"telegram", exe, false},
+	} {
+		if got := mermaidRenders(tt.platform, cfgWith(tt.cmd)); got != tt.want {
+			t.Errorf("platform %q cmd %q: mermaidRenders=%v, want %v", tt.platform, tt.cmd, got, tt.want)
 		}
 	}
 }
@@ -415,7 +464,7 @@ func TestWritePlatform_MathLineSurvivesWorkspaceOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	var app strings.Builder
-	writePlatform(&app, "app", []string{dir})
+	writePlatform(&app, "app", []string{dir}, false)
 	out := app.String()
 	if !strings.Contains(out, "Custom app notes") {
 		t.Fatalf("override not used:\n%s", out)
@@ -424,7 +473,7 @@ func TestWritePlatform_MathLineSurvivesWorkspaceOverride(t *testing.T) {
 		t.Errorf("app override dropped the math line:\n%s", out)
 	}
 	var again strings.Builder
-	writePlatform(&again, "app", []string{dir})
+	writePlatform(&again, "app", []string{dir}, false)
 	if again.String() != out {
 		t.Errorf("two builds with the override differ")
 	}
@@ -435,13 +484,13 @@ func TestWritePlatform_MathLineSurvivesWorkspaceOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	var e strings.Builder
-	writePlatform(&e, "app", []string{empty})
+	writePlatform(&e, "app", []string{empty}, false)
 	if !strings.Contains(e.String(), "## Platform") || !strings.Contains(e.String(), "**Math renders.** The app typesets") {
 		t.Errorf("empty app override lost the math line:\n%s", e.String())
 	}
 
 	var tg strings.Builder
-	writePlatform(&tg, "telegram", []string{dir})
+	writePlatform(&tg, "telegram", []string{dir}, false)
 	if strings.Contains(tg.String(), "The app typesets") {
 		t.Errorf("telegram session got the math line:\n%s", tg.String())
 	}

@@ -329,7 +329,7 @@ func writeBackend(b *strings.Builder, backend string, searchDirs []string) {
 // prompt file (user-editable via searchDirs, embedded default otherwise) for the
 // messaging platform this session runs on (telegram/app/discord). No section is
 // emitted if the platform is empty (unknown session) or no file resolves.
-func writePlatform(b *strings.Builder, platform string, searchDirs []string) {
+func writePlatform(b *strings.Builder, platform string, searchDirs []string, diagramsRender bool) {
 	if platform == "" {
 		return
 	}
@@ -338,7 +338,8 @@ func writePlatform(b *strings.Builder, platform string, searchDirs []string) {
 	// The math line is written here, not in platform-app.md, so a workspace
 	// copy of that file cannot drop it or keep it past its prerequisites (#2739).
 	math := mathRenders(platform)
-	if notes == "" && !math {
+	diagrams := platform == "app" && diagramsRender
+	if notes == "" && !math && !diagrams {
 		return
 	}
 	b.WriteString("\n## Platform\n")
@@ -350,6 +351,25 @@ func writePlatform(b *strings.Builder, platform string, searchDirs []string) {
 		b.WriteString(mathNote)
 		b.WriteString("\n")
 	}
+	if diagrams {
+		b.WriteString(mermaidNote)
+		b.WriteString("\n")
+	}
+}
+
+// mermaidNote tells the agent that mermaid diagrams render in the app. Written
+// only for an app session whose server can render (mermaidRenders), the same
+// way and for the same reason as mathNote.
+const mermaidNote = "**Diagrams render.** A ```mermaid fenced block is shown in the app as a rendered " +
+	"diagram (the server renders it to an image). Use one where a flow, sequence or structure reads better " +
+	"drawn than written. If the diagram has a syntax error, the app shows its source."
+
+// mermaidRenders reports whether a ```mermaid block in a reply renders for a
+// session on platform: the session is on the app, and the server's renderer
+// (the one /app/render/mermaid and send_to_chat share) can run. Checked when
+// the prompt is built.
+func mermaidRenders(platform string, cfg *config.Config) bool {
+	return platform == "app" && sendToChatMermaid(cfg).Available()
 }
 
 // mathNote tells the agent that LaTeX math renders (#2739). Written only when
@@ -382,7 +402,7 @@ func buildEnvironmentAPI(acfg config.AgentConfig, configPath string, cfg *config
 	writeEnvironmentCore(&b, acfg, configPath, cfg, rc, activePlatforms, crontabCount)
 
 	writeBackend(&b, acfg.Backend, searchDirs)
-	writePlatform(&b, sessionPlatform, searchDirs)
+	writePlatform(&b, sessionPlatform, searchDirs, mermaidRenders(sessionPlatform, cfg))
 	writeMemorySearch(&b, acfg, rc)
 	writeAPIConfig(&b, acfg, cfg, rc)
 
@@ -405,7 +425,7 @@ func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *
 	writeEnvironmentCore(&b, acfg, configPath, cfg, rc, activePlatforms, crontabCount)
 
 	writeBackend(&b, acfg.Backend, searchDirs)
-	writePlatform(&b, sessionPlatform, searchDirs)
+	writePlatform(&b, sessionPlatform, searchDirs, mermaidRenders(sessionPlatform, cfg))
 	writeMemorySearch(&b, acfg, rc)
 	writeShellTools(&b, shellTools)
 

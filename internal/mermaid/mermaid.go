@@ -136,6 +136,17 @@ func (m *Renderer) cachePath(src, theme, background string) string {
 // background (Transparent or White), rendering it if it is not already
 // cached. The file belongs to the cache: read or copy it, never modify it;
 // it may be pruned by a later render.
+// Available reports whether a render can run now: the command is not "off"
+// and resolves on the daemon's trusted PATH, the same lookup run uses. It does
+// not start mmdc, so a broken browser still fails at render time.
+func (m *Renderer) Available() bool {
+	if m == nil || m.cmd == DisabledCmd {
+		return false
+	}
+	_, err := procx.LookPath(procx.Trusted, m.cmd)
+	return err == nil
+}
+
 func (m *Renderer) Render(ctx context.Context, src, theme, background string) (string, error) {
 	if m.cmd == DisabledCmd {
 		return "", ErrUnavailable

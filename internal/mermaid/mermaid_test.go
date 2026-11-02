@@ -75,3 +75,35 @@ func TestRender_BackgroundIsPartOfTheCacheKey(t *testing.T) {
 		t.Errorf("leftover part files: %v", parts)
 	}
 }
+
+// Available is false for "off" and for a command that does not resolve, and
+// true for an executable path — without running it.
+func TestAvailable(t *testing.T) {
+	t.Parallel()
+	exe := filepath.Join(t.TempDir(), "fake-mmdc")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	notExec := filepath.Join(t.TempDir(), "plain")
+	if err := os.WriteFile(notExec, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		cmd  string
+		want bool
+	}{
+		{DisabledCmd, false},
+		{"/no/such/mmdc", false},
+		{"no-such-mermaid-cli-xyz", false},
+		{notExec, false},
+		{exe, true},
+	} {
+		if got := New(t.TempDir(), tt.cmd, "").Available(); got != tt.want {
+			t.Errorf("cmd %q: Available()=%v, want %v", tt.cmd, got, tt.want)
+		}
+	}
+	var nilR *Renderer
+	if nilR.Available() {
+		t.Error("nil renderer: Available()=true")
+	}
+}
