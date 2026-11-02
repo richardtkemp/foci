@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os/user"
 	"regexp"
 	"strconv"
 	"strings"
@@ -355,12 +356,17 @@ func pinAgentPlatformBot(lines []string, agentID, platformID, bot string) ([]str
 }
 
 // RenameAgentCommand is the command line that renames agent oldID, as the
-// places that refuse an id edit (the app config editor) tell the user.
+// places that refuse an id edit (the app config editor) tell the user: a run
+// as root for the user this process (the gateway) runs as (#2786).
 func RenameAgentCommand(oldID string) string {
 	if oldID == "" {
 		oldID = "<old-id>"
 	}
-	return "foci rename-agent " + oldID + " <new-id>"
+	name := "<gateway user>"
+	if u, err := user.Current(); err == nil {
+		name = u.Username
+	}
+	return "sudo foci rename-agent " + oldID + " <new-id> --user " + name
 }
 
 // DefaultReplayStoreFile is the app's durable replay-frame DB file, relative

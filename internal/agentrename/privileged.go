@@ -46,18 +46,23 @@ func (s SudoRunner) Run(argv []string, stdin []byte) ([]byte, error) {
 	return out, nil
 }
 
-// CrontabIO reads the current user's crontab (no privilege needed to read
+// CrontabIO reads the crontab the rename edits (no privilege needed to read
 // one's own). An absent crontab reads as "".
 type CrontabIO interface {
 	Read() (string, error)
 }
 
-// SystemCrontab reads with `crontab -l`.
-type SystemCrontab struct{}
+// SystemCrontab reads with `crontab -l`: the current user's crontab, or
+// User's (`crontab -l -u User`, which needs root) when User is set.
+type SystemCrontab struct{ User string }
 
 // Read implements CrontabIO.
-func (SystemCrontab) Read() (string, error) {
-	cmd := procx.Spawn(context.Background(), procx.Operator, "crontab", "-l")
+func (c SystemCrontab) Read() (string, error) {
+	args := []string{"-l"}
+	if c.User != "" {
+		args = append(args, "-u", c.User)
+	}
+	cmd := procx.Spawn(context.Background(), procx.Operator, "crontab", args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

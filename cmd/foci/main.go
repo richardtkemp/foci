@@ -706,7 +706,7 @@ Commands:
   pair [host]          Mint a single-use Android pairing key (-a for agent)
   debug session <key>  Tail a session file with formatted output
   pretool list|test    Check PreToolUse rules against the config (see foci pretool -h)
-  rename-agent OLD NEW Rename an agent id everywhere, gateway stopped (see foci rename-agent -h)
+  rename-agent OLD NEW Rename an agent id everywhere, gateway stopped, as root (see foci rename-agent -h)
   check config|nudge   Check the config file or an agent's nudge-rules.json, read-only (see foci check -h)
   config show|get|set|unset|wait
                        Read the config, or ask the user to approve a change to it (see foci config -h)

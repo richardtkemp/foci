@@ -46,9 +46,10 @@ func branchFilesToRewrite(dir string, r ids) ([]string, error) {
 // branch_meta parent_key of every moved file. Each part is idempotent, so a
 // resumed run finishes a half-done step: the move is skipped once done, and
 // a file already rewritten no longer matches. onMove records the move in the
-// backup manifest before it happens. failAfter > 0 (tests) fails the step
+// backup manifest before it happens. In a root run each rewritten file
+// gets the owner of the file it replaced (#2786). failAfter > 0 (tests) fails the step
 // after that many file rewrites.
-func sessionsStep(oldDir, newDir string, r ids, onMove func(from, to string) error, failAfter int) error {
+func sessionsStep(oldDir, newDir string, r ids, own *ownership, onMove func(from, to string) error, failAfter int) error {
 	if _, err := os.Stat(oldDir); err == nil {
 		if _, err := os.Stat(newDir); err == nil {
 			return errors.New(newDir + " and " + oldDir + " both exist; refusing to merge session trees")
@@ -70,8 +71,18 @@ func sessionsStep(oldDir, newDir string, r ids, onMove func(from, to string) err
 		if failAfter > 0 && i == failAfter {
 			return errors.New("simulated failure in the sessions-tree step")
 		}
-		if _, err := session.RewriteBranchParent(f, r.rewriteKey); err != nil {
+		info, err := os.Lstat(f)
+		if err != nil {
 			return err
+		}
+		changed, err := session.RewriteBranchParent(f, r.rewriteKey)
+		if err != nil {
+			return err
+		}
+		if changed { // a new file (temp-and-rename): give it the old one's owner
+			if err := own.keep(f, info); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

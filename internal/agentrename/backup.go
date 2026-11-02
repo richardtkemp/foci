@@ -49,13 +49,13 @@ type moveEntry struct {
 
 const manifestName = "manifest.json"
 
-func writeJSON(path string, v any) error {
+func (ow *ownership) writeJSON(path string, v any) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
 	data = append(data, '\n')
-	return writeFileAtomic(path, 0o600, time.Time{}, func(w io.Writer) error {
+	return ow.writeFileAtomic(path, 0o600, time.Time{}, func(w io.Writer) error {
 		_, err := w.Write(data)
 		return err
 	})
@@ -74,19 +74,19 @@ func readManifest(dir string) (*manifest, error) {
 }
 
 // recordMove appends a move to the manifest on disk.
-func recordMove(dir string, m *manifest, from, to string) error {
+func (ow *ownership) recordMove(dir string, m *manifest, from, to string) error {
 	m.Moves = append(m.Moves, moveEntry{From: from, To: to})
-	return writeJSON(filepath.Join(dir, manifestName), m)
+	return ow.writeJSON(filepath.Join(dir, manifestName), m)
 }
 
 // copyFile copies src to dst byte for byte, keeping mode and mtime. dst's
 // directory is created.
-func copyFile(src, dst string) error {
+func (ow *ownership) copyFile(src, dst string) error {
 	info, err := os.Stat(src)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+	if err := ow.mkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return err
 	}
 	in, err := os.Open(src)
@@ -94,7 +94,7 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	defer func() { _ = in.Close() }()
-	return writeFileAtomic(dst, info.Mode().Perm(), info.ModTime(), func(w io.Writer) error {
+	return ow.writeFileAtomic(dst, info.Mode().Perm(), info.ModTime(), func(w io.Writer) error {
 		_, err := io.Copy(w, in)
 		return err
 	})
@@ -102,9 +102,10 @@ func copyFile(src, dst string) error {
 
 // writeFileAtomic replaces dst in one step: fill writes a temp file beside
 // it, which is synced, given perm (and mtime, when not zero), then renamed
-// over dst. A reader never sees a half-written file. Not for foci.toml,
-// which is written in place through sudo tee (#479, #2784).
-func writeFileAtomic(dst string, perm os.FileMode, mtime time.Time, fill func(io.Writer) error) error {
+// over dst. A reader never sees a half-written file. In a root run the temp
+// file first gets dst's owner (a new dst: the install owner, #2786). Not for
+// foci.toml, which is written in place through sudo tee (#479, #2784).
+func (ow *ownership) writeFileAtomic(dst string, perm os.FileMode, mtime time.Time, fill func(io.Writer) error) error {
 	tmp := dst + ".copy-tmp"
 	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
@@ -135,11 +136,15 @@ func writeFileAtomic(dst string, perm os.FileMode, mtime time.Time, fill func(io
 			return err
 		}
 	}
+	if err := ow.like(tmp, dst); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
 	return os.Rename(tmp, dst)
 }
 
 // copyTree copies every regular file under src to the same relative path under dst.
-func copyTree(src, dst string) error {
+func (ow *ownership) copyTree(src, dst string) error {
 	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -153,12 +158,12 @@ func copyTree(src, dst string) error {
 			if err != nil {
 				return err
 			}
-			return os.MkdirAll(filepath.Join(dst, rel), info.Mode().Perm()|0o700)
+			return ow.mkdirAll(filepath.Join(dst, rel), info.Mode().Perm()|0o700)
 		}
 		if !d.Type().IsRegular() {
 			return nil
 		}
-		return copyFile(p, filepath.Join(dst, rel))
+		return ow.copyFile(p, filepath.Join(dst, rel))
 	})
 }
 
@@ -167,8 +172,8 @@ func copyTree(src, dst string) error {
 // whole, consistent database), foci.toml and the agent's sessions tree. It
 // writes the manifest last-but-not-least: a failure leaves an incomplete
 // backup dir and nothing else changed.
-func takeBackup(ctx context.Context, dir string, m *manifest, dbs []*lockedDB, configPath, sessionsOld string) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+func (ow *ownership) takeBackup(ctx context.Context, dir string, m *manifest, dbs []*lockedDB, configPath, sessionsOld string) error {
+	if err := ow.mkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create backup dir: %w", err)
 	}
 	for i, l := range dbs {
@@ -176,24 +181,24 @@ func takeBackup(ctx context.Context, dir string, m *manifest, dbs []*lockedDB, c
 			return err
 		}
 		rel := filepath.Join("db", fmt.Sprintf("%02d-%s", i, filepath.Base(l.path)))
-		if err := copyFile(l.path, filepath.Join(dir, rel)); err != nil {
+		if err := ow.copyFile(l.path, filepath.Join(dir, rel)); err != nil {
 			return fmt.Errorf("back up %s: %w", l.path, err)
 		}
 		m.Files = append(m.Files, backupEntry{Orig: l.path, Backup: rel})
 	}
-	if err := copyFile(configPath, filepath.Join(dir, "config", filepath.Base(configPath))); err != nil {
+	if err := ow.copyFile(configPath, filepath.Join(dir, "config", filepath.Base(configPath))); err != nil {
 		return fmt.Errorf("back up %s: %w", configPath, err)
 	}
 	m.Files = append(m.Files, backupEntry{Orig: configPath, Backup: filepath.Join("config", filepath.Base(configPath)), Config: true})
 	if _, err := os.Stat(sessionsOld); err == nil {
-		if err := copyTree(sessionsOld, filepath.Join(dir, "sessions")); err != nil {
+		if err := ow.copyTree(sessionsOld, filepath.Join(dir, "sessions")); err != nil {
 			return fmt.Errorf("back up %s: %w", sessionsOld, err)
 		}
 		m.Trees = append(m.Trees, backupEntry{Orig: sessionsOld, Backup: "sessions"})
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	return writeJSON(filepath.Join(dir, manifestName), m)
+	return ow.writeJSON(filepath.Join(dir, manifestName), m)
 }
 
 // restoreBackup puts back the state the manifest recorded: it reverses every
@@ -204,14 +209,14 @@ func takeBackup(ctx context.Context, dir string, m *manifest, dbs []*lockedDB, c
 //
 // The foci.toml entry goes to writeConfig(backup, orig) instead: the caller
 // writes it through sudo (#2784). A writeConfig error stops the restore.
-func restoreBackup(dir string, m *manifest, writeConfig func(backup, orig string) error) error {
+func (ow *ownership) restoreBackup(dir string, m *manifest, writeConfig func(backup, orig string) error) error {
 	for i := len(m.Moves) - 1; i >= 0; i-- {
 		mv := m.Moves[i]
 		_, toErr := os.Stat(mv.To)
 		_, fromErr := os.Stat(mv.From)
 		switch {
 		case toErr == nil && errors.Is(fromErr, fs.ErrNotExist):
-			if err := os.MkdirAll(filepath.Dir(mv.From), 0o755); err != nil {
+			if err := ow.mkdirAll(filepath.Dir(mv.From), 0o755); err != nil {
 				return err
 			}
 			if err := os.Rename(mv.To, mv.From); err != nil {
@@ -224,7 +229,7 @@ func restoreBackup(dir string, m *manifest, writeConfig func(backup, orig string
 		}
 	}
 	for _, t := range m.Trees {
-		if err := copyTree(filepath.Join(dir, t.Backup), t.Orig); err != nil {
+		if err := ow.copyTree(filepath.Join(dir, t.Backup), t.Orig); err != nil {
 			return fmt.Errorf("restore %s: %w", t.Orig, err)
 		}
 	}
@@ -237,7 +242,7 @@ func restoreBackup(dir string, m *manifest, writeConfig func(backup, orig string
 			}
 			continue
 		}
-		if err := copyFile(filepath.Join(dir, f.Backup), f.Orig); err != nil {
+		if err := ow.copyFile(filepath.Join(dir, f.Backup), f.Orig); err != nil {
 			return fmt.Errorf("restore %s: %w", f.Orig, err)
 		}
 		for _, side := range []string{"-wal", "-shm"} {

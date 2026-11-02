@@ -154,14 +154,14 @@ func (rn *runner) crontabStep() step {
 	}
 	st.run = func() error {
 		before := filepath.Join(rn.backup, "crontab.before")
-		if err := os.WriteFile(before, []byte(cur), 0o600); err != nil {
+		if err := rn.own.writeFile(before, []byte(cur)); err != nil {
 			return err
 		}
-		if err := os.WriteFile(after, []byte(next), 0o600); err != nil {
+		if err := rn.own.writeFile(after, []byte(next)); err != nil {
 			return err
 		}
 		rn.man.Crontab = "crontab.before"
-		if err := writeJSON(filepath.Join(rn.backup, manifestName), rn.man); err != nil {
+		if err := rn.own.writeJSON(filepath.Join(rn.backup, manifestName), rn.man); err != nil {
 			return err
 		}
 		now, err := rn.o.Crontab.Read()

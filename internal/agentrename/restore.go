@@ -22,9 +22,13 @@ type RestoreOptions struct {
 	In          io.Reader
 	Out         io.Writer
 	Interactive bool
-	// Priv writes foci.toml back (default sudo): the foci user may not
-	// write the root:foci-secrets file (#479, #2784).
+	// Priv writes foci.toml back (default sudo; DirectRunner when Owner is
+	// set): the foci user may not write the root:foci-secrets file (#479, #2784).
 	Priv Privileged
+	// Owner: the command runs as root (#2786); see Options.Owner.
+	Owner *Owner
+
+	fakeOwners ownerFS // tests: simulated chown and owners (a root run without root)
 }
 
 // Restore puts back the state a rename's backup recorded (the gateway must be
@@ -38,12 +42,19 @@ func Restore(ctx context.Context, o RestoreOptions) error {
 	if o.Out == nil {
 		o.Out = io.Discard
 	}
+	if o.Priv == nil && o.Owner != nil {
+		o.Priv = DirectRunner{}
+	}
 	if o.Priv == nil {
 		o.Priv = SudoRunner{}
 	}
 	cfg, err := config.Load(o.ConfigPath, o.Backends)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+	own := newOwnership(o.Owner, o.fakeOwners)
+	if err := own.checkDataDir(config.ResolvePath(cfg.DataDir)); err != nil {
+		return err
 	}
 	m, err := readManifest(o.BackupDir)
 	if err != nil {
@@ -68,6 +79,9 @@ func Restore(ctx context.Context, o RestoreOptions) error {
 			return err
 		}
 		l.close()
+		if err := own.sidecars(f.Orig); err != nil {
+			return err
+		}
 	}
 
 	pr := &printer{w: o.Out}
@@ -112,7 +126,7 @@ func Restore(ctx context.Context, o RestoreOptions) error {
 		}
 		return nil
 	}
-	if err := restoreBackup(o.BackupDir, m, writeConfig); err != nil {
+	if err := own.restoreBackup(o.BackupDir, m, writeConfig); err != nil {
 		return err
 	}
 	// An unfinished rename's journal belongs to the state just undone.
@@ -124,7 +138,11 @@ func Restore(ctx context.Context, o RestoreOptions) error {
 	}
 	pr.println("\nRestored. Not reversed by this command:")
 	if m.Crontab != "" {
-		pr.printf("  - the crontab: sudo crontab -u <user> %s\n", filepath.Join(o.BackupDir, m.Crontab))
+		cronUser := "<user>"
+		if o.Owner != nil {
+			cronUser = o.Owner.User
+		}
+		pr.printf("  - the crontab: sudo crontab -u %s %s\n", cronUser, filepath.Join(o.BackupDir, m.Crontab))
 	}
 	pr.printf("  - secrets.toml (if its step ran): sudo sed -i -E '%s' %s\n",
 		secretsSedScript(m.New, m.Old), filepath.Join(filepath.Dir(cfg.SourcePath), "secrets.toml"))

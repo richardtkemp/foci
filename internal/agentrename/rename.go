@@ -60,8 +60,15 @@ type Options struct {
 	Interactive bool
 	Priv        Privileged
 	Crontab     CrontabIO
-	CrontabUser string // whose crontab the privileged step installs (default: the current user)
-	Now         func() time.Time
+	CrontabUser string // whose crontab the privileged step installs (default: Owner's user, else the current user)
+	// Owner is set when the command runs as root (#2786, RootRun): the
+	// privileged steps then write directly (Priv defaults to DirectRunner,
+	// Crontab reads Owner's crontab), and every file the run creates or
+	// replaces gets the owner a run as Owner.User would leave.
+	Owner *Owner
+	Now   func() time.Time
+
+	fakeOwners ownerFS // tests: simulated chown and owners (a root run without root)
 
 	failSessionsAfter int    // tests: the sessions-tree step fails after N file rewrites
 	failDB            string // tests: this database step fails just before its commit
@@ -95,6 +102,7 @@ type runner struct {
 	locks    map[string]*lockedDB
 	lockList []*lockedDB
 	out      *printer
+	own      *ownership
 }
 
 // printer writes the command's output and keeps the first write error.
@@ -123,6 +131,17 @@ func Run(ctx context.Context, o Options) error {
 	if o.Out == nil {
 		o.Out = io.Discard
 	}
+	if o.Owner != nil {
+		if o.Priv == nil {
+			o.Priv = DirectRunner{}
+		}
+		if o.Crontab == nil {
+			o.Crontab = SystemCrontab{User: o.Owner.User}
+		}
+		if o.CrontabUser == "" {
+			o.CrontabUser = o.Owner.User
+		}
+	}
 	if o.Priv == nil {
 		o.Priv = SudoRunner{}
 	}
@@ -133,8 +152,12 @@ func Run(ctx context.Context, o Options) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	rn := &runner{ctx: ctx, o: o, cfg: cfg, r: ids{o.Old, o.New}, out: &printer{w: o.Out}, locks: map[string]*lockedDB{}}
-	defer rn.closeDBs()
+	rn := &runner{ctx: ctx, o: o, cfg: cfg, r: ids{o.Old, o.New}, out: &printer{w: o.Out}, locks: map[string]*lockedDB{},
+		own: newOwnership(o.Owner, o.fakeOwners)}
+	defer func() { _ = rn.closeDBs() }()
+	if err := rn.own.checkDataDir(config.ResolvePath(cfg.DataDir)); err != nil {
+		return err
+	}
 
 	rn.jpath = cfg.DataPath(journalName)
 	if rn.jr, err = readJournal(rn.jpath); err != nil {
@@ -355,16 +378,27 @@ func (rn *runner) lockAll(specs []dbSpec) error {
 		}
 		rn.locks[s.path] = l
 		rn.lockList = append(rn.lockList, l)
+		// Opening may have created a -wal (root run: as root).
+		if err := rn.own.sidecars(s.path); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func (rn *runner) closeDBs() {
+// closeDBs releases every database lock. In a root run it then gives any
+// -wal/-shm/-journal left beside a database the database's owner.
+func (rn *runner) closeDBs() error {
+	var first error
 	for _, l := range rn.lockList {
 		l.close()
+		if err := rn.own.sidecars(l.path); err != nil && first == nil {
+			first = err
+		}
 	}
 	rn.lockList = nil
 	rn.locks = map[string]*lockedDB{}
+	return first
 }
 
 // checkNewUnused refuses when any store already holds rows for the new id.
@@ -417,7 +451,7 @@ func (rn *runner) confirm(q string) error {
 	return nil
 }
 
-func (rn *runner) saveJournal() error { return writeJSON(rn.jpath, rn.jr) }
+func (rn *runner) saveJournal() error { return rn.own.writeJSON(rn.jpath, rn.jr) }
 
 // execute runs the steps in order. A failing step stops the run, except a
 // privileged one, which is reported PENDING with its manual commands.
@@ -429,7 +463,9 @@ func (rn *runner) execute(steps []step) error {
 			continue
 		}
 		if s.closeDBs {
-			rn.closeDBs()
+			if err := rn.closeDBs(); err != nil {
+				return err
+			}
 		}
 		if s.n == 0 && !s.always {
 			rn.jr.Done[s.id] = true
@@ -457,6 +493,9 @@ func (rn *runner) execute(steps []step) error {
 		if err := rn.saveJournal(); err != nil {
 			return err
 		}
+	}
+	if err := rn.closeDBs(); err != nil {
+		return err
 	}
 	rn.printChecklist()
 	if len(pending) > 0 {

@@ -1471,7 +1471,7 @@ Fields that only exist per-agent in `[[agents]]`. These have no global equivalen
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `id` | string | `""` | Agent identifier. Used in session keys (`ID/c{chatID}`), every database, the sessions tree (`data/sessions/ID`), the default workspace and bot name, and crontab lines. **Read-only in the app config editor**: an edit of `agent.id` is refused with the command to run instead. To rename an agent, stop the gateway and run `foci rename-agent OLD NEW` (see `foci rename-agent -h` and "Renaming an agent" below). |
+| `id` | string | `""` | Agent identifier. Used in session keys (`ID/c{chatID}`), every database, the sessions tree (`data/sessions/ID`), the default workspace and bot name, and crontab lines. **Read-only in the app config editor**: an edit of `agent.id` is refused with the command to run instead. To rename an agent, stop the gateway and run `sudo foci rename-agent OLD NEW --user <gateway user>` (see `foci rename-agent -h` and "Renaming an agent" below). |
 | `default_platform` | string | `""` | Per-agent override of the global `default_platform` (see top-level keys). |
 | `name` | string | capitalised `id` | Human-readable name (e.g. `"Clutch"`). Defaults to capitalised agent ID (e.g. `clutch` → `Clutch`). Used in `/voice` WebSocket agent list. |
 | `emoji` | string | `""` | Emoji for agent (e.g. `"🥔"`). Used in `/voice` WebSocket agent list. |
@@ -1595,16 +1595,20 @@ weight = 1.0
 
 ### Renaming an agent
 
-The agent id cannot be changed by editing it: `foci.toml`'s `id` line is one of many places that hold it. Stop the gateway, then run:
+The agent id cannot be changed by editing it: `foci.toml`'s `id` line is one of many places that hold it. Stop the gateway, then run it as root, naming the user the gateway runs as (`foci` on a Linux install):
 
 ```
-foci rename-agent OLD NEW --plan          # show what would change; changes nothing
-foci rename-agent OLD NEW                 # back up, then rename (asks for confirmation)
-foci rename-agent OLD NEW --move-workspace  # also move ~/OLD to ~/NEW
-foci rename-agent --restore <backup-dir>  # undo, from the backup the rename printed
+sudo foci rename-agent OLD NEW --user foci --plan            # show what would change; changes nothing
+sudo foci rename-agent OLD NEW --user foci                   # back up, then rename (asks for confirmation)
+sudo foci rename-agent OLD NEW --user foci --move-workspace  # also move ~/OLD to ~/NEW
+sudo foci rename-agent --restore <backup-dir> --user foci    # undo, from the backup the rename printed
 ```
 
-The command refuses while the gateway runs. It edits `foci.toml` for you: the agent's `id`, `master_agent`, `[askgw] default_agent` and agent lists name the new id; the agent keeps its workspace directory through an explicit `workspace = "<old path>"` (unless `--move-workspace`), and keeps its Telegram/Discord bots through an explicit `bot = "OLD"` where the bot name was the id default. It also renames the `[agents.OLD.*]` tables and `allowed_agents`/`denied_agents` entries in `secrets.toml` and the `foci … -a OLD` crontab lines. The `foci.toml`, `secrets.toml` and crontab edits each go through sudo approval (`foci.toml` is root-owned, so the foci user cannot write it); a declined or failed sudo step is reported PENDING with the commands to run by hand. `--restore` also writes `foci.toml` back through sudo. Moving the workspace changes the working directory of every backend session, so a Claude Code / opencode / codex session that cannot be found under the new folder starts fresh. Turn ids change, so a Langfuse re-export creates new traces for the agent's old turns. Restart the gateway afterwards.
+The command refuses while the gateway runs. It edits `foci.toml` for you: the agent's `id`, `master_agent`, `[askgw] default_agent` and agent lists name the new id; the agent keeps its workspace directory through an explicit `workspace = "<old path>"` (unless `--move-workspace`), and keeps its Telegram/Discord bots through an explicit `bot = "OLD"` where the bot name was the id default. It also renames the `[agents.OLD.*]` tables and `allowed_agents`/`denied_agents` entries in `secrets.toml` and the `foci … -a OLD` lines of the user's crontab.
+
+**Why root:** `foci.toml`, `secrets.toml` and the crontab need root to write. As root the command writes them directly, in place (each keeps its owner, group and mode), and every other file it writes (databases, sessions, the backup and journal) keeps the owner, group and mode of the file it replaces; new files go to `--user`. So the gateway can use all of it after the restart. `--user` defaults to `$SUDO_USER`; that user's home is the install root unless `FOCI_HOME` is set, and the command refuses, naming what to pass, when that user does not own the install root or the config is not under it. Run as the gateway's user instead (no sudo), those three edits each go through sudo approval and a declined or failed one is reported PENDING with the commands to run by hand; on a host whose sudo approvals travel through foci (aisudo) no approval can arrive while the gateway is stopped, so they always end PENDING. `--restore` writes `foci.toml` back the same way.
+
+Moving the workspace changes the working directory of every backend session, so a Claude Code / opencode / codex session that cannot be found under the new folder starts fresh. Turn ids change, so a Langfuse re-export creates new traces for the agent's old turns. Restart the gateway afterwards.
 
 ## Coding Agent Backends
 
