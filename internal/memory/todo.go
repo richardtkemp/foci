@@ -365,6 +365,9 @@ func buildListFilter(status string, tags []string, priority string) (string, []a
 	case "active":
 		// Exclude terminal statuses (done, dropped).
 		clause.WriteString(` AND status NOT IN ('done', 'dropped')`)
+	case "closed":
+		// Only terminal statuses (#2817).
+		clause.WriteString(` AND status IN ('done', 'dropped')`)
 	default:
 		clause.WriteString(` AND status = ?`)
 		args = append(args, status)
@@ -631,7 +634,7 @@ func (s *TodoStore) Get(agentID string, id int64) (*TodoItem, error) {
 
 // TodoSearchOpts controls filtering, sorting, and limiting of search results.
 type TodoSearchOpts struct {
-	Status   string   // "open", "started", "done", "dropped", "active" (excludes done/dropped), "" (no filter)
+	Status   string   // "open", "started", "done", "dropped", "active" (excludes done/dropped), "closed" (done or dropped), "" (no filter)
 	Sort     string   // "relevance" (default), "created", "updated", "closed", "priority"
 	Reverse  bool     // reverse sort direction (default false = descending/highest first)
 	Limit    int      // max results (0 = default 10)
@@ -783,6 +786,8 @@ func matchesStatusFilter(status, filter string) bool {
 		return true
 	case "active":
 		return status != "done" && status != "dropped"
+	case "closed":
+		return status == "done" || status == "dropped"
 	default:
 		return status == filter
 	}

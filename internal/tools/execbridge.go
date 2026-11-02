@@ -866,9 +866,9 @@ var todoActions = []struct {
 	PositionalID bool
 }{
 	{"add", "add <text> | --text TEXT | [<title>] --body TEXT  [--title TEXT] [--priority high|medium|low] [--tag TAGS]   (alias: create; with --body, bare words are the title; the title is prepended in bold)", "--text --body --title --priority --tag", false},
-	{"list", "list [--tag T] [--status open|done|dropped|all] [--priority P] [--sort F] [--reverse] [--limit N] [--truncate N] [--format jsonl|md]", "--tag --status --priority --sort --reverse --limit --truncate --format", false},
+	{"list", "list [--tag T] [--status active|open|started|closed|done|dropped|all] [--priority P] [--sort F] [--reverse] [--limit N] [--truncate N] [--format jsonl|md]", "--tag --status --priority --sort --reverse --limit --truncate --format", false},
 	{"list-all", "list-all [--tag T] [--priority P] [--sort F] [--reverse] [--limit N] [--truncate N] [--format jsonl|md]", "--tag --priority --sort --reverse --limit --truncate --format", false},
-	{"search", "search <query> [--sort F] [--reverse] [--limit N] [--truncate N] [--format jsonl|md]   (query may also be given as --query TEXT; a double-quoted phrase matches those words in order and ranks first; --truncate: chars per item, default 300 unpiped / none piped, 0 = none)", "--query --sort --reverse --limit --truncate --format", false},
+	{"search", "search <query> [--status S] [--sort F] [--reverse] [--limit N] [--truncate N] [--format jsonl|md]   (query may also be given as --query TEXT; --status takes the list values and defaults to all; a double-quoted phrase matches those words in order and ranks first; --truncate: chars per item, default 300 unpiped / none piped, 0 = none)", "--query --status --sort --reverse --limit --truncate --format", false},
 	{"get", "get <id> [--format jsonl|md]   (alias: show; or --id N)", "--id --format", true},
 	{"complete", "complete <id> [--reason|--notes|--note|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --note --text", true},
 	{"drop", "drop <id> [--reason|--notes|--note|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --note --text", true},

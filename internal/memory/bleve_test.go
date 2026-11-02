@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1067,6 +1068,15 @@ func TestBleveTodoSearchStatusFilter(t *testing.T) {
 		t.Errorf("active filter: expected todo #1, got #%d", items[0].ID)
 	}
 
+	// Closed filter (#2817) — done and dropped, not open
+	items, err = ts.Search(agentID, "server", &TodoSearchOpts{Status: "closed"})
+	if err != nil {
+		t.Fatalf("Search (closed): %v", err)
+	}
+	if got := todoIDs(items); !slices.Contains(got, 2) || !slices.Contains(got, 3) || len(got) != 2 {
+		t.Errorf("closed filter: got %v, want todos #2 and #3", todoIDs(items))
+	}
+
 	// Specific status filter — only done
 	items, err = ts.Search(agentID, "server", &TodoSearchOpts{Status: "done"})
 	if err != nil {
@@ -1392,4 +1402,12 @@ func TestBleveBackfillSurvivesReindex(t *testing.T) {
 	if results[0].Source != "conversation" {
 		t.Errorf("source = %q, want 'conversation'", results[0].Source)
 	}
+}
+
+func todoIDs(items []TodoItem) []int64 {
+	ids := make([]int64, 0, len(items))
+	for _, it := range items {
+		ids = append(ids, it.ID)
+	}
+	return ids
 }

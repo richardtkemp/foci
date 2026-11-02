@@ -133,7 +133,7 @@ func TestTodoHelpFlagActionsPinned(t *testing.T) {
 	help := generateHelpText(NewTodoTool(store, "agent-help"))
 	for _, pin := range []struct{ flag, want string }{
 		{"--text", "[actions: add, complete, drop, edit]"},
-		{"--status", "[actions: list]"},
+		{"--status", "[actions: list, search]"},
 	} {
 		line := helpFlagLine(t, help, pin.flag)
 		if !strings.HasSuffix(line, pin.want) {

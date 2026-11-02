@@ -70,7 +70,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				},
 				"status": {
 					"type": "string",
-					"description": "Filter by status; default is active (excludes done/dropped). Values: 'open', 'started', 'done', 'dropped', 'active', 'all'"
+					"description": "Filter by status. Values: 'active' (open or started), 'open', 'started', 'closed' (done or dropped), 'done', 'dropped', 'all'. Default: active for list, all for search. An unknown value is rejected"
 				},
 				"query": {
 					"type": "string",
@@ -140,7 +140,10 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				if err != nil {
 					return ToolResult{}, err
 				}
-				status := normalizeStatusFilter(p.Status)
+				status, err := normalizeStatusFilter(p.Status)
+				if err != nil {
+					return ToolResult{}, err
+				}
 				return todoMarkJSONL(jsonl)(todoList(store, agentID, status, p.Tag, p.Priority, p.Sort, p.Reverse, p.Limit, jsonl, todoTruncateFor(ctx, p.Truncate)))
 			case "search":
 				jsonl, err := todoWantsJSONL(ctx)
@@ -441,7 +444,10 @@ func todoSearch(store *memory.TodoStore, agentID, query, status, sort string, re
 		return ToolResult{}, fmt.Errorf("query is required for search")
 	}
 	// Normalize status filter for search (same aliases as list).
-	statusFilter := normalizeStatusFilter(status)
+	statusFilter, err := normalizeStatusFilter(status)
+	if err != nil {
+		return ToolResult{}, err
+	}
 	// normalizeStatusFilter returns "active" for empty — but for search
 	// we default to no filter (search all statuses) unless explicitly set.
 	if status == "" {
@@ -661,28 +667,32 @@ func jsonLine(v any) string {
 	return b.String()
 }
 
-// normalizeStatusFilter maps status filter aliases to canonical values for list.
-// Returns "active" for empty/unrecognized (excludes done/dropped).
-// Returns empty string for "all" (show everything).
-// "closed" is deliberately not mapped — it's ambiguous (could mean done or dropped).
-func normalizeStatusFilter(s string) string {
+// normalizeStatusFilter maps status filter aliases to canonical values for
+// list and search. Returns "active" for empty (excludes done/dropped) and the
+// empty string for "all" (show everything). As a FILTER "closed" means done
+// or dropped (#2817); it is only ambiguous as a target state (normalizeState).
+// An unknown value is an error: it used to pass through and match nothing,
+// so a typo read as "No <typo> todos."
+func normalizeStatusFilter(s string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "all":
-		return ""
+		return "", nil
 	case "active":
-		return "active"
+		return "active", nil
+	case "closed":
+		return "closed", nil
 	case "open", "reopen", "reopened":
-		return "open"
+		return "open", nil
 	case "started", "in_progress", "in-progress", "wip", "working":
-		return "started"
+		return "started", nil
 	case "done", "complete", "completed":
-		return "done"
+		return "done", nil
 	case "dropped", "drop", "cancelled", "canceled":
-		return "dropped"
+		return "dropped", nil
 	case "":
-		return "active"
+		return "active", nil
 	default:
-		return s
+		return "", fmt.Errorf("unknown status %q; valid: active, open, started, closed, done, dropped, all", s)
 	}
 }
 

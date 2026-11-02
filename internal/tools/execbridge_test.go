@@ -2563,11 +2563,10 @@ func TestTodoHelpFlagActionsDerivedFromAllowlist(t *testing.T) {
 	store := newTestTodoStore(t)
 	help := generateHelpText(NewTodoTool(store, "agent-help"))
 
-	// The ticket's case: --status belongs to `list` alone — NOT to search
-	// (which rejects it), and not to list-all, which IS list with status=all
-	// and would render the flag meaningless.
-	if !strings.Contains(help, "[actions: list]") {
-		t.Errorf("--status must be annotated as list-only\n%s", help)
+	// --status belongs to list and search (#2817), not to list-all, which IS
+	// list with status=all and would render the flag meaningless.
+	if !strings.Contains(help, "[actions: list, search]") {
+		t.Errorf("--status must be annotated as list and search\n%s", help)
 	}
 	// Every flag's annotation must match the allowlist exactly.
 	for _, line := range strings.Split(help, "\n") {

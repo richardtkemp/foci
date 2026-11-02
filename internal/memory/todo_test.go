@@ -195,6 +195,29 @@ func TestTodoListFilterByStatus(t *testing.T) {
 	}
 }
 
+func TestTodoListFilterClosed(t *testing.T) {
+	// "closed" is done or dropped (#2817); it used to match nothing.
+	store := newTestTodoStore(t)
+	store.Add("agent1", "open", "medium", "")
+	id2, _ := store.Add("agent1", "done", "medium", "")
+	id3, _ := store.Add("agent1", "dropped", "medium", "")
+	id4, _ := store.Add("agent1", "started", "medium", "")
+	store.Complete("agent1", id2, "finished")
+	store.Transition("agent1", id3, "dropped", "no")
+	store.Transition("agent1", id4, "started", "")
+
+	closed, err := store.List("agent1", "closed", nil, "", "id", true, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(closed) != 2 || closed[0].ID != id2 || closed[1].ID != id3 {
+		t.Errorf("closed = %v, want [%d %d]", todoIDs(closed), id2, id3)
+	}
+	if n, err := store.CountList("agent1", "closed", nil, ""); err != nil || n != 2 {
+		t.Errorf("CountList(closed) = %d, %v; want 2", n, err)
+	}
+}
+
 func TestTodoListFilterActive(t *testing.T) {
 	// Verifies the "active" status filter excludes done and dropped items, returning only open and started todos.
 	store := newTestTodoStore(t)

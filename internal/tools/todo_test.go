@@ -1038,12 +1038,18 @@ func TestNormalizeStatusFilter(t *testing.T) {
 		{"completed", "done"},
 		{"dropped", "dropped"},
 		{"cancelled", "dropped"},
+		{"closed", "closed"},
+		{"Closed", "closed"},
 	}
 	for _, tt := range tests {
-		got := normalizeStatusFilter(tt.input)
-		if got != tt.want {
-			t.Errorf("normalizeStatusFilter(%q) = %q, want %q", tt.input, got, tt.want)
+		got, err := normalizeStatusFilter(tt.input)
+		if err != nil || got != tt.want {
+			t.Errorf("normalizeStatusFilter(%q) = %q, %v; want %q", tt.input, got, err, tt.want)
 		}
+	}
+	// An unknown value used to pass through and match nothing (#2817).
+	if got, err := normalizeStatusFilter("clsoed"); err == nil {
+		t.Errorf("normalizeStatusFilter(typo) = %q, nil; want an error", got)
 	}
 }
 
