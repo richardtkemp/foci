@@ -437,3 +437,79 @@ func TestInvokeTool_PrefersMostRecentlyConnectedDevice(t *testing.T) {
 		}
 	}
 }
+
+// TestInvokeTool_NoSocketVsNoCapableSocket (#2802): with no app socket at all
+// the error is ErrNoConnectedDevice; with only a desktop it is ErrNoLiveDevice
+// but NOT ErrNoConnectedDevice, so the tool can tell "open the app" apart
+// from "no phone can do this".
+func TestInvokeTool_NoSocketVsNoCapableSocket(t *testing.T) {
+	h := newTestHub()
+	registerBareAgent(h, "ag")
+	_, err := h.InvokeTool(context.Background(), "ag", "client", "location", nil)
+	if !errors.Is(err, ErrNoConnectedDevice) {
+		t.Fatalf("no sockets: err = %v, want ErrNoConnectedDevice", err)
+	}
+	if !errors.Is(err, ErrNoLiveDevice) {
+		t.Fatalf("ErrNoConnectedDevice must also be ErrNoLiveDevice, got %v", err)
+	}
+
+	helloClient(t, h, "mac", "Mac OS X 15.5", "interactiveBatch")
+	_, err = h.InvokeTool(context.Background(), "ag", "client", "location", nil)
+	if !errors.Is(err, ErrNoLiveDevice) || errors.Is(err, ErrNoConnectedDevice) {
+		t.Fatalf("desktop only: err = %v, want ErrNoLiveDevice and not ErrNoConnectedDevice", err)
+	}
+	if h.CanRunTool("client") {
+		t.Error("CanRunTool(client) = true with only a desktop connected")
+	}
+}
+
+// TestInvokeTool_ClientToolGoesToAdvertisingPhone (#2802): the client tool
+// reaches only a phone that advertised tool:client — never the desktop, and
+// never a legacy phone that knows only the Tasker bridge.
+func TestInvokeTool_ClientToolGoesToAdvertisingPhone(t *testing.T) {
+	h := newTestHub()
+	registerBareAgent(h, "ag")
+	phone := helloClient(t, h, "pixel", "Android 15", "interactiveBatch", featureToolPrefix+"client")
+	legacy := helloClient(t, h, "old", "Android 14", "interactiveBatch")
+	desktop := helloClient(t, h, "mac", "Mac OS X 15.5", "interactiveBatch")
+	if !h.CanRunTool("client") || !h.CanRunTool("android") {
+		t.Fatal("CanRunTool: want client and android both runnable")
+	}
+	for i := 0; i < 10; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		errc := make(chan error, 1)
+		go func() {
+			_, err := h.InvokeTool(ctx, "ag", "client", "clipboard", json.RawMessage(`{"text":"x"}`))
+			errc <- err
+		}()
+		var got *wsClient
+		deadline := time.After(time.Second)
+	wait:
+		for {
+			for _, c := range []*wsClient{phone, legacy, desktop} {
+				select {
+				case wire := <-c.send:
+					var env struct {
+						T string `json:"t"`
+					}
+					_ = json.Unmarshal(wire, &env)
+					if env.T == fap.TypeToolInvoke {
+						got = c
+						break wait
+					}
+				default:
+				}
+			}
+			select {
+			case <-deadline:
+				break wait
+			case <-time.After(5 * time.Millisecond):
+			}
+		}
+		cancel()
+		<-errc
+		if got != phone {
+			t.Fatalf("run %d: tool.invoke for client did not go to the advertising phone", i)
+		}
+	}
+}

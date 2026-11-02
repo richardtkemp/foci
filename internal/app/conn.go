@@ -156,8 +156,13 @@ func (c *appConn) InvokeTool(ctx context.Context, tool, action string, args json
 	return c.hub.InvokeTool(ctx, c.agentID, tool, action, args)
 }
 
+// CanRunTool reports whether a live device can run tool (tools.AppToolProber).
+func (c *appConn) CanRunTool(tool string) bool { return c.hub.CanRunTool(tool) }
+
+var _ tools.AppToolProber = (*appConn)(nil)
+
 // Compile-time guard: *appConn MUST satisfy tools.AppInvoker, because the
-// app_android tool resolves its invoker via a runtime conn.(tools.AppInvoker)
+// client tool resolves its invoker via a runtime conn.(tools.AppInvoker)
 // assertion (cmd/foci-gw/tool_table.go). A signature drift (e.g. a mirror
 // return type) would silently fail that assertion at runtime and leave the tool
 // reporting "no device connected" — this line turns that into a build error.

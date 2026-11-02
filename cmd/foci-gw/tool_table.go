@@ -456,10 +456,13 @@ var toolTable = []toolEntry{
 				}))
 		}},
 
-	{name: "app_android", paths: pathBoth,
+	// client (shell: foci_client): agents act on the user's phone — alarms,
+	// timers, calls, contacts, clipboard, links, location, ring, and the Tasker
+	// bridge that was app_android (#2802).
+	{name: "client", paths: pathBoth,
 		enabled: func(d *toolDeps) bool { return d.p.cfg.Platform("app") != nil },
 		build: func(d *toolDeps) *tools.Tool {
-			return tools.NewAppAndroidTool(func() (tools.AppInvoker, bool) {
+			return tools.NewClientTool(func() (tools.AppInvoker, bool) {
 				conn := d.connMgr.Primary(d.p.acfg.ID)
 				if conn == nil {
 					return nil, false
@@ -485,7 +488,7 @@ var toolTable = []toolEntry{
 	// close_session: the agent closes the app chat it is running in, the same
 	// open-set removal as the user's Close chat (#2573), optionally marking it
 	// read at the turn's end (mark_read, #2592). Gated like
-	// app_android: there is no open/closed state without the app platform.
+	// client: there is no open/closed state without the app platform.
 	{name: "close_session", paths: pathBoth,
 		enabled: func(d *toolDeps) bool { return d.p.cfg.Platform("app") != nil },
 		build: func(d *toolDeps) *tools.Tool {

@@ -42,7 +42,7 @@ func TestToolTable_PerPathSets(t *testing.T) {
 		"bitwarden_unlock", "mcp", "send_to_chat", "send_to_session",
 		"ask", "spawn", "spawn_send", "spawn_status", "spawn_stop", "send_to_spawner",
 		"depth_fanout", "depth_report", "depth_claims", "depth_status",
-		"remind", "app_android",
+		"remind", "client",
 		"set_session_alias", "close_session", "whoami",
 	}
 	wantExec := []string{
@@ -50,7 +50,7 @@ func TestToolTable_PerPathSets(t *testing.T) {
 		"memory_search", "todo", "send_to_chat", "send_to_session",
 		"ask", "spawn", "spawn_send", "spawn_status", "spawn_stop", "send_to_spawner",
 		"depth_fanout", "depth_report", "depth_claims", "depth_status",
-		"remind", "app_android",
+		"remind", "client",
 		"set_session_alias", "close_session", "whoami",
 	}
 
@@ -408,4 +408,30 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// TestToolTable_AppAndroidReplacedByClient (#2802): app_android (and so the
+// foci_app_android shell function) is gone; its successor client is on both
+// paths and exported to the exec bridge as foci_client.
+func TestToolTable_AppAndroidReplacedByClient(t *testing.T) {
+	t.Parallel()
+	var client *toolEntry
+	for i, e := range toolTable {
+		if e.name == "app_android" {
+			t.Fatal("toolTable still has an app_android row")
+		}
+		if e.name == "client" {
+			client = &toolTable[i]
+		}
+	}
+	if client == nil {
+		t.Fatal("toolTable has no client row")
+	}
+	if client.paths != pathBoth {
+		t.Errorf("client paths = %v, want pathBoth", client.paths)
+	}
+	tool := client.build(&toolDeps{})
+	if tool.Name != "client" || !tool.ExecExport {
+		t.Errorf("client tool Name=%q ExecExport=%v, want client/true", tool.Name, tool.ExecExport)
+	}
 }

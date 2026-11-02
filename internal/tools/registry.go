@@ -39,6 +39,16 @@ type Tool struct {
 	// single-element only. Used by the schema-driven generic generator.
 	Positional []string
 
+	// RestParam names an array-of-strings schema parameter that collects
+	// every bare argument after the single Positional one, each word kept
+	// as its own element (shell quoting preserved). Without it, extra bare
+	// args are space-joined into the positional. Used by sub-actioned tools
+	// whose arguments differ per action (`foci_client set_alarm 07:30
+	// "label"` → action="set_alarm", args=["07:30","label"]); the tool maps
+	// the words onto its named parameters per action. Requires exactly one
+	// Positional.
+	RestParam string
+
 	// StdinParam declares which schema parameter consumes stdin when no
 	// explicit value is provided and stdin is not a TTY. Used by tools
 	// that accept piped content (send_to_chat, summary).

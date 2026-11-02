@@ -697,6 +697,9 @@ func generateHelpText(t *Tool) string {
 		for _, p := range pos {
 			fmt.Fprintf(&b, " <%s>", p)
 		}
+		if t.RestParam != "" {
+			fmt.Fprintf(&b, " [%s...]", t.RestParam)
+		}
 		b.WriteString(" [flags...]")
 
 		// Arguments section: positionals carry descriptions in the schema
@@ -1811,6 +1814,9 @@ func generateGenericShellFunc(t *Tool) string {
 	// concatenate into "a b", which is indistinguishable from a typo.
 	if len(positional) == 1 {
 		fmt.Fprintf(&b, "  local __foci_%s_via=\"\"\n", positional[0])
+		if t.RestParam != "" {
+			b.WriteString("  local __foci_rest=()\n")
+		}
 	}
 
 	// Flag-parsing while-loop. Positional params still get a --flag arm so
@@ -1865,6 +1871,14 @@ func generateGenericShellFunc(t *Tool) string {
 	case 0:
 		b.WriteString("      *)\n        echo \"error: unexpected positional argument: $1\" >&2\n        return 1 ;;\n")
 	case 1:
+		if t.RestParam != "" {
+			// The first bare word is the positional (unless it came as a
+			// flag); every later one is its own element of the rest array.
+			p := positional[0]
+			fmt.Fprintf(&b, "      *)\n        if [ -z \"$__foci_%s_via\" ]; then __foci_%s_via=pos; %s=\"$1\"; else __foci_rest+=(\"$1\"); fi; shift ;;\n",
+				p, p, p)
+			break
+		}
 		// Multi-word join — matches existing query/prompt UX.
 		p := positional[0]
 		fmt.Fprintf(&b, "      *)\n        if [ \"$__foci_%s_via\" = flag ]; then echo \"error: %s was already given as --%s; use --%s OR the positional form, not both\" >&2; return 1; fi\n        __foci_%s_via=pos; %s=\"$%s $1\"; shift ;;\n",
@@ -1877,9 +1891,23 @@ func generateGenericShellFunc(t *Tool) string {
 	b.WriteString("    esac\n  done\n")
 
 	// Trim leading space from joined single-positional.
-	if len(positional) == 1 {
+	if len(positional) == 1 && t.RestParam == "" {
 		p := positional[0]
 		fmt.Fprintf(&b, "  %s=\"${%s# }\"\n", p, p)
+	}
+	// Rest words → a JSON array of strings, one element per word. Built with
+	// --arg per word (not jq --args), so a word that looks like a jq option
+	// ("-c", "-5") stays data.
+	if t.RestParam != "" && len(positional) == 1 {
+		r := t.RestParam
+		fmt.Fprintf(&b,
+			"  if [ ${#__foci_rest[@]} -gt 0 ]; then\n"+
+				"    if [ -n \"$%[1]s\" ]; then echo \"error: %[1]s was given as --%[2]s and as bare words; use one form\" >&2; return 1; fi\n"+
+				"    %[1]s='[]'\n"+
+				"    local __foci_w\n"+
+				"    for __foci_w in \"${__foci_rest[@]}\"; do %[1]s=\"$(printf '%%s' \"$%[1]s\" | jq -c --arg v \"$__foci_w\" '. + [$v]')\" || return 1; done\n"+
+				"  fi\n",
+			r, strings.ReplaceAll(r, "_", "-"))
 	}
 
 	// Stdin-to-tempfile for filepath params: `--file -` reads the attachment

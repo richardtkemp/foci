@@ -13,7 +13,7 @@ import (
 // names delegated backends see. Claude Code / opencode built-in tools (Bash,
 // Read, ...) are not foci tools and are not covered.
 var FociToolNames = []string{
-	"app_android", "ask", "bitwarden_search", "bitwarden_unlock", "browser",
+	"ask", "bitwarden_search", "bitwarden_unlock", "browser", "client",
 	"close_session", "depth_claims", "depth_fanout", "depth_report",
 	"depth_status", "edit", "http_request", "mcp", "memory_search", "read",
 	"remind", "scratchpad", "send_to_chat", "send_to_session",

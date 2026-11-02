@@ -3,18 +3,24 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"sync"
 	"time"
 
 	"foci/internal/fap"
+	"foci/internal/tools"
 )
 
 // ErrNoLiveDevice is returned by InvokeTool when no connected app device can
-// run the requested tool (none connected, or only ones without that handler). The tool surfaces this verbatim so the agent
-// can decide whether to retry, ask the user to open the app, or fall back.
-var ErrNoLiveDevice = errors.New("app: no connected device can run this tool")
+// run the requested tool (none connected, or only ones without that handler).
+// The sentinel lives in the tools package (tools.ErrNoCapableDevice) so the
+// tool layer, which cannot import app, can tell it apart from the others.
+var ErrNoLiveDevice = tools.ErrNoCapableDevice
+
+// ErrNoConnectedDevice is the narrower case of ErrNoLiveDevice where no app
+// socket is live at all (no phone and no desktop). It wraps ErrNoLiveDevice, so
+// errors.Is(err, ErrNoLiveDevice) still holds for it (#2802).
+var ErrNoConnectedDevice = tools.ErrNoAppDevice
 
 // pendingToolCall is a waiting InvokeTool caller, keyed by InvocationID.
 // The result channel is buffered (1) so a late completion arriving after the
@@ -83,6 +89,9 @@ func (r *toolCallRegistry) deliver(res fap.ToolResult) bool {
 func (h *Hub) InvokeTool(ctx context.Context, agentID, tool, action string, args json.RawMessage) (fap.ToolResult, error) {
 	client := h.clientForTool(tool)
 	if client == nil {
+		if len(h.snapshotClients()) == 0 {
+			return fap.ToolResult{}, ErrNoConnectedDevice
+		}
 		return fap.ToolResult{}, ErrNoLiveDevice
 	}
 
@@ -169,6 +178,11 @@ func (h *Hub) clientForTool(tool string) *wsClient {
 	}
 	return best
 }
+
+// CanRunTool reports whether any live socket can run tool. The foci_client
+// tool uses it to tell a phone with an app too old for an action apart from no
+// phone at all (#2802).
+func (h *Hub) CanRunTool(tool string) bool { return h.clientForTool(tool) != nil }
 
 // deliverToolResult is called from the inbound dispatcher when a ToolResult
 // frame arrives. Routes to the waiting InvokeTool caller if any.
