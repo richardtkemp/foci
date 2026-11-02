@@ -29,7 +29,7 @@ func convPinHub(t *testing.T) (*Hub, *session.SessionIndex) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42, sessionKey: "clutch/c42"}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "clutch/c42")
 	return h, idx
 }
 
@@ -130,9 +130,9 @@ func TestHandleConvPin_IgnoresUnknownConversation(t *testing.T) {
 //     a state (and must not panic the replay).
 func TestPushConvPins_ReplaysStoredPins(t *testing.T) {
 	h, idx := convPinHub(t)
-	h.convs["c2"] = &convBinding{convID: "c2", agentID: "clutch", chatID: 43}
-	h.convs["c3"] = &convBinding{convID: "c3", agentID: "clutch", chatID: 44}
-	h.convs["c4"] = &convBinding{convID: "c4", agentID: "clutch", chatID: 45}
+	h.convs["c2"] = withIdent(&convBinding{convID: "c2", chatID: 43}, "clutch", "")
+	h.convs["c3"] = withIdent(&convBinding{convID: "c3", chatID: 44}, "clutch", "")
+	h.convs["c4"] = withIdent(&convBinding{convID: "c4", chatID: 45}, "clutch", "")
 	_ = idx.SetChatMetadata("clutch", "app", 42, chatMetaConvPinned, "1")
 	_ = idx.SetChatMetadata("clutch", "app", 43, chatMetaConvPinned, "0")
 	_ = idx.SetChatMetadata("clutch", "app", 45, chatMetaConvPinned, "yes")
@@ -188,9 +188,9 @@ func TestHello_SeedsConvPinsToReconnectingDevice(t *testing.T) {
 func TestConversationPinned_ThreeStates(t *testing.T) {
 	h, idx := convPinHub(t)
 	_ = idx.SetChatMetadata("clutch", "app", 42, chatMetaConvPinned, "1")
-	h.convs["c2"] = &convBinding{convID: "c2", agentID: "clutch", chatID: 43}
+	h.convs["c2"] = withIdent(&convBinding{convID: "c2", chatID: 43}, "clutch", "")
 	_ = idx.SetChatMetadata("clutch", "app", 43, chatMetaConvPinned, "0")
-	h.convs["c3"] = &convBinding{convID: "c3", agentID: "clutch", chatID: 44}
+	h.convs["c3"] = withIdent(&convBinding{convID: "c3", chatID: 44}, "clutch", "")
 	// c3: never written.
 
 	if pinned, known, err := h.conversationPinned(h.convs["c1"]); err != nil || !pinned || !known {
@@ -204,7 +204,7 @@ func TestConversationPinned_ThreeStates(t *testing.T) {
 	}
 
 	bare := newTestHub() // no SessionIndex at all
-	if pinned, known, err := bare.conversationPinned(&convBinding{convID: "c1", agentID: "clutch", chatID: 42}); err != nil || pinned || known {
+	if pinned, known, err := bare.conversationPinned(withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "")); err != nil || pinned || known {
 		t.Errorf("conversationPinned with no session index = %v/%v/%v, want false/false", pinned, known, err)
 	}
 }

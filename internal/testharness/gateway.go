@@ -205,6 +205,12 @@ type HarnessOptions struct {
 	// fault can be in place for the gateway's boot-time getMe (e.g. a
 	// persistent getMe 502 to hold Telegram's background connect failing).
 	BeforeSpawn func(*TelegramStub)
+	// FakeCrontab puts a fake `crontab` first on the gateway's PATH, so a
+	// test that reaches the crontab (an agent rename, #2787) can never read
+	// or write the real crontab of the user running the tests. It keeps the
+	// crontab in a file (FakeCrontabPath): `crontab -l` prints it (absent:
+	// "no crontab", exit 1, as the real one), `crontab -` replaces it.
+	FakeCrontab bool
 }
 
 // Harness drives one foci-gw subprocess against a Telegram stub. Tests
@@ -624,6 +630,14 @@ func (h *Harness) spawnGateway() error {
 	if h.opts.BackendReadyTimeout > 0 {
 		cmd.Env = append(cmd.Env, "FOCI_BACKEND_READY_TIMEOUT="+h.opts.BackendReadyTimeout.String())
 	}
+	if h.opts.FakeCrontab {
+		dir, err := h.writeFakeCrontab()
+		if err != nil {
+			cancel()
+			return err
+		}
+		cmd.Env = append(cmd.Env, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
 	// Always override HOME for the spawned foci-gw to a directory inside
 	// THIS test's own temp tree — never the real host home.
 	//
@@ -832,6 +846,42 @@ func (h *Harness) SocketPath() string { return h.gwSock }
 // with. Tests use it to seed JSONL session files, mutate permissions,
 // or read foci's persisted state.
 func (h *Harness) DataDir() string { return h.dataDir }
+
+// FakeCrontabPath is the file the FakeCrontab option keeps the crontab in.
+func (h *Harness) FakeCrontabPath() string {
+	return filepath.Join(h.tempDir, "fake-crontab-data", "crontab.txt")
+}
+
+// writeFakeCrontab writes the fake `crontab` script and returns its dir. The
+// crontab file's path is baked into the script: the gateway may start it
+// with a scrubbed environment.
+func (h *Harness) writeFakeCrontab() (string, error) {
+	dir := filepath.Join(h.tempDir, "fake-crontab")
+	for _, d := range []string{dir, filepath.Dir(h.FakeCrontabPath())} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return "", fmt.Errorf("fake crontab: %w", err)
+		}
+	}
+	script := fmt.Sprintf(`#!/bin/sh
+# Fake crontab for L2 tests (HarnessOptions.FakeCrontab).
+f=%q
+case "$1" in
+-l) if [ -f "$f" ]; then cat "$f"; else echo "no crontab for test" >&2; exit 1; fi ;;
+-) cat > "$f" ;;
+*) echo "fake crontab: unsupported arguments: $*" >&2; exit 2 ;;
+esac
+`, h.FakeCrontabPath())
+	if err := os.WriteFile(filepath.Join(dir, "crontab"), []byte(script), 0o555); err != nil {
+		return "", fmt.Errorf("fake crontab: %w", err)
+	}
+	// Read-only, like a system bin dir: the gateway refuses a PATH entry it
+	// can write (the script stays replaceable only by chmod, as for the test).
+	if err := os.Chmod(dir, 0o555); err != nil { //nolint:gosec // G302: a bin dir must be searchable; read-only is the point
+		return "", fmt.Errorf("fake crontab: %w", err)
+	}
+	h.t.Cleanup(func() { _ = os.Chmod(dir, 0o755) }) //nolint:gosec // G302: writable again so TempDir cleanup can remove it
+	return dir, nil
+}
 
 // LogsDir returns the on-disk logs directory foci-gw was configured
 // with. Tests use it to assert on log files (foci.log, etc.) when the

@@ -100,7 +100,7 @@ func toolTurnConn(t *testing.T, client func(*Hub) *wsClient, configured, overrid
 // runToolTurn drives one turn with two OVERLAPPING calls (t2 completes first).
 func runToolTurn(t *testing.T, conn *appConn, b *convBinding) {
 	t.Helper()
-	sink, cleanup := conn.NewTurnSink(agent.Envelope{SessionKey: b.sessionKey})
+	sink, cleanup := conn.NewTurnSink(agent.Envelope{SessionKey: b.key()})
 	if sink == nil {
 		t.Fatal("nil sink for a live binding")
 	}
@@ -241,7 +241,7 @@ func TestAppSink_ToolCalls_SizeBoundsAndUTF8(t *testing.T) {
 	args := `{"x":"` + strings.Repeat("a", toolCallArgsMax-7) + "€€€" + `"}`
 	result := strings.Repeat("b", toolCallResultMax-2) + strings.Repeat("😀", 5)
 
-	sink, cleanup := conn.NewTurnSink(agent.Envelope{SessionKey: b.sessionKey})
+	sink, cleanup := conn.NewTurnSink(agent.Envelope{SessionKey: b.key()})
 	sink.Emit(context.Background(), turnevent.ToolCall{ID: "t1", Name: "write", Args: json.RawMessage(args)})
 	sink.Emit(context.Background(), turnevent.ToolResult{ID: "t1", Name: "write", Output: result})
 	cleanup()
@@ -303,7 +303,7 @@ func TestAppSink_ToolCalls_Redacted(t *testing.T) {
 	conn.redact = func(s string) string { return strings.ReplaceAll(s, "hunter2hunter2", "[REDACTED]") }
 	gh := "ghp_" + strings.Repeat("A", 36)
 
-	sink, cleanup := conn.NewTurnSink(agent.Envelope{SessionKey: b.sessionKey})
+	sink, cleanup := conn.NewTurnSink(agent.Envelope{SessionKey: b.key()})
 	sink.Emit(context.Background(), turnevent.ToolCall{ID: "t1", Name: "exec", Args: json.RawMessage(`{"command":"echo hunter2hunter2 ` + gh + `"}`)})
 	sink.Emit(context.Background(), turnevent.ToolResult{ID: "t1", Name: "exec", Output: "hunter2hunter2 " + gh})
 	cleanup()

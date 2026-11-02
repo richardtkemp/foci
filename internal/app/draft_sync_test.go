@@ -28,7 +28,7 @@ func TestHandleDraft_PersistsAndFansOutToOtherClients(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42, sessionKey: "clutch/c42"}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "clutch/c42")
 
 	sender := fakeClient()
 	other := fakeClient()
@@ -56,7 +56,7 @@ func TestHandleDraft_EmptyTextClears(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "")
 	_ = idx.SetChatMetadata("clutch", "app", 42, "draft", "stale")
 
 	other := fakeClient()
@@ -79,8 +79,8 @@ func TestPushDrafts_ReplaysStoredDraft(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
-	h.convs["c2"] = &convBinding{convID: "c2", agentID: "clutch", chatID: 43}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "")
+	h.convs["c2"] = withIdent(&convBinding{convID: "c2", chatID: 43}, "clutch", "")
 	_ = idx.SetChatMetadata("clutch", "app", 42, "draft", "resume me")
 	_ = idx.SetChatMetadata("clutch", "app", 43, "draft", "")
 

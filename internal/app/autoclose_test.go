@@ -38,7 +38,7 @@ func sweepHub(t *testing.T, bag map[string]string) (*Hub, *session.SessionIndex)
 // sweepBinding installs a durable binding whose last visible frame is age old
 // (age 0 leaves lastActMs at 0 — "no visible message yet").
 func sweepBinding(h *Hub, id string, age time.Duration, now time.Time) *convBinding {
-	b := &convBinding{convID: id, agentID: "clutch", chatID: chatIDForConv(id), sessionKey: session.NewChatSessionKey("clutch", chatIDForConv(id))}
+	b := withIdent(&convBinding{convID: id, chatID: chatIDForConv(id)}, "clutch", session.NewChatSessionKey("clutch", chatIDForConv(id)))
 	if age > 0 {
 		b.lastActMs = now.Add(-age).UnixMilli()
 	}

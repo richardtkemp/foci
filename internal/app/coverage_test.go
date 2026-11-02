@@ -403,7 +403,7 @@ func TestDispatchCommand_EmitsResponseParts(t *testing.T) {
 		},
 	})
 	conn := &appConn{hub: h, agentID: "ag", commands: reg}
-	b := &convBinding{convID: "c1", sessionKey: "ag/c1", clients: map[*wsClient]struct{}{fakeClientFor(h): {}}}
+	b := withIdent(&convBinding{convID: "c1", clients: map[*wsClient]struct{}{fakeClientFor(h): {}}}, "", "ag/c1")
 	h.dispatchCommand(nil, conn, b, command.Request{Name: "ping"})
 
 	got := drain(t, b.snapshotClient())
@@ -450,7 +450,7 @@ func TestDispatchCommand_EchoesUserCommandWithArgs(t *testing.T) {
 		},
 	})
 	conn := &appConn{hub: h, agentID: "ag", commands: reg}
-	b := &convBinding{convID: "c1", sessionKey: "ag/c1", clients: map[*wsClient]struct{}{fakeClientFor(h): {}}}
+	b := withIdent(&convBinding{convID: "c1", clients: map[*wsClient]struct{}{fakeClientFor(h): {}}}, "", "ag/c1")
 	h.dispatchCommand(nil, conn, b, command.Request{Name: "plan", Args: "paint a room"})
 
 	got := drain(t, b.snapshotClient())
@@ -477,7 +477,7 @@ func TestClientHello_RepliesRosterRegistersTokenAndResumes(t *testing.T) {
 	c := fakeClientFor(h)
 
 	// Pre-existing durable conversation with buffered frames seq 1..3.
-	b := &convBinding{convID: "c1", agentID: "ag", sessionKey: "ag/c1", clients: map[*wsClient]struct{}{c: {}}, seen: map[string]struct{}{}}
+	b := withIdent(&convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}, seen: map[string]struct{}{}}, "ag", "ag/c1")
 	h.convs["c1"] = b
 	for i := 0; i < 3; i++ {
 		b.send(fap.Activity{ConversationID: "c1", Kind: "typing"})

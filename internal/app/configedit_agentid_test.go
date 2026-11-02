@@ -27,11 +27,11 @@ func TestConfigPut_AgentIDIsReadOnly(t *testing.T) {
 		h.handleConfigPut(c, fap.ConfigPut{Scope: "clutch", Section: section, Key: "id", Value: "renamed"})
 		schema := lastConfigSchema(t, c)
 		msg, _ := schema["error"].(string)
-		if !strings.Contains(msg, "read-only") || !strings.Contains(msg, "foci rename-agent clutch <new-id>") {
+		if !strings.Contains(msg, "read-only") || !strings.Contains(msg, "/agents rename clutch <new-id>") {
 			t.Errorf("put %s.id: error = %q, want the read-only refusal naming the rename command", section, msg)
 		}
 		h.handleConfigUnset(c, fap.ConfigUnset{Scope: "clutch", Section: section, Key: "id"})
-		if msg, _ := lastConfigSchema(t, c)["error"].(string); !strings.Contains(msg, "foci rename-agent clutch") {
+		if msg, _ := lastConfigSchema(t, c)["error"].(string); !strings.Contains(msg, "/agents rename clutch") {
 			t.Errorf("unset %s.id: error = %q", section, msg)
 		}
 	}

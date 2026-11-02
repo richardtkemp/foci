@@ -644,6 +644,22 @@ type AgentStarter interface {
 	StartAgent(ctx context.Context, agentID string)
 }
 
+// AgentStopper is implemented by connection managers that can stop ONE
+// agent's connections while every other agent's run on: the live stop of an
+// agent (#2787). StopAgent returns once that agent's connections have ended.
+type AgentStopper interface {
+	StopAgent(agentID string)
+}
+
+// AgentRenamer is implemented by connection managers that hold durable
+// per-conversation state naming an agent (the app hub's conversation
+// bindings): RenameAgent re-points that state from agent old to agent new,
+// rewriting each session key with rewriteKey, while neither agent runs
+// (the live rename, #2787).
+type AgentRenamer interface {
+	RenameAgent(old, new string, rewriteKey func(string) string)
+}
+
 // PrimaryConnectNotifier is implemented by connection managers whose primary
 // connection may attach after startup because it connects in the background
 // (#2043). See Messaging.WhenPrimaryConnected.
@@ -1084,6 +1100,33 @@ func (m *Messaging) StartAgent(ctx context.Context, agentID string) {
 	for _, p := range m.providers {
 		if s, ok := p.ConnectionManager().(AgentStarter); ok {
 			s.StartAgent(ctx, agentID)
+		}
+	}
+}
+
+// StopAgent stops one agent's connections on every platform (#2787): its
+// bots end (and are waited for), and the app hub forgets its connection. The
+// agent's durable conversation state stays. Every other agent runs on.
+func (m *Messaging) StopAgent(agentID string) {
+	if m == nil {
+		return
+	}
+	for _, p := range m.providers {
+		if s, ok := p.ConnectionManager().(AgentStopper); ok {
+			s.StopAgent(agentID)
+		}
+	}
+}
+
+// RenameAgent re-points every platform's durable per-conversation state from
+// agent old to agent new (#2787); see AgentRenamer.
+func (m *Messaging) RenameAgent(old, new string, rewriteKey func(string) string) {
+	if m == nil {
+		return
+	}
+	for _, p := range m.providers {
+		if r, ok := p.ConnectionManager().(AgentRenamer); ok {
+			r.RenameAgent(old, new, rewriteKey)
 		}
 	}
 }

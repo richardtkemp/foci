@@ -209,10 +209,15 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 			tgTimeoutSeconds = 0
 		}
 
-		// Poll in a goroutine so we can select on ctx.Done()
+		// Poll in a goroutine so we can select on ctx.Done(). The request
+		// carries ctx too, so a cancel closes the long-poll instead of
+		// leaving it open on Telegram's side for up to tgTimeoutSeconds: a
+		// live-stopped agent's renamed successor polls with the same token
+		// at once, and Telegram refuses a second concurrent poll (409
+		// Conflict, #2787).
 		ch := make(chan updateResult, 1)
 		go func() {
-			updates, err := b.api.GetUpdates(&gotgbot.GetUpdatesOpts{
+			updates, err := b.api.GetUpdatesWithContext(ctx, &gotgbot.GetUpdatesOpts{
 				Offset:         offset,
 				Timeout:        tgTimeoutSeconds,
 				AllowedUpdates: []string{"message", "callback_query"},

@@ -5,37 +5,37 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 
 	_ "modernc.org/sqlite" // the driver every foci database uses
 )
 
-// lockedDB is one SQLite file opened for the rename and held under an
-// EXCLUSIVE lock for as long as the command runs. Taking that lock is also
-// the "is anything else using this file?" probe: every foci database runs in
-// WAL mode, and an open WAL connection — the gateway's, or any other
-// process's, even idle — holds a lock that refuses ours. Holding it keeps any
-// writer out until the command closes the file.
-type lockedDB struct {
+// dbHandle is one SQLite file opened for the rename, on one connection.
+// The rename runs inside the gateway (#2787), so every shared database
+// (state, api, app frames, deferred sends) is also open in the gateway's own
+// pools, with other agents writing to it. The handle is an ordinary WAL
+// connection: no exclusive locking mode, a long busy timeout so a write
+// waits behind another agent's instead of failing, and IMMEDIATE
+// transactions, so a step's transaction takes the write lock when it begins
+// (a deferred one that reads first could not upgrade past a concurrent
+// writer). No journal-mode pragma is set, so a database (opencode's or
+// codex's, in a move) is never converted, and a plan-only run changes no
+// byte.
+type dbHandle struct {
 	path string
 	db   *sql.DB
 	conn *sql.Conn
 }
 
-// errInUse marks a database another process has open.
-var errInUse = errors.New("in use by another process")
-
-// lockDB opens path (which must exist; nothing is created) on one connection
-// with locking_mode=EXCLUSIVE and takes the lock at once. No journal-mode
-// pragma is set, so a database is never converted (a plan-only run must not
-// change a byte). busy_timeout(0): a held lock is reported now, not waited on.
-func lockDB(ctx context.Context, path string) (*lockedDB, error) {
+// openDB opens path, which must exist (nothing is created).
+func openDB(ctx context.Context, path string) (*dbHandle, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
 	esc := strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(path)
-	db, err := sql.Open("sqlite", "file:"+esc+"?mode=rw&_pragma=busy_timeout(0)&_pragma=locking_mode(EXCLUSIVE)")
+	db, err := sql.Open("sqlite", "file:"+esc+"?mode=rw&_txlock=immediate&_pragma=busy_timeout(30000)")
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
@@ -45,36 +45,24 @@ func lockDB(ctx context.Context, path string) (*lockedDB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
-	if _, err := conn.ExecContext(ctx, "BEGIN EXCLUSIVE"); err != nil {
-		_ = conn.Close()
-		_ = db.Close()
-		if strings.Contains(err.Error(), "locked") || strings.Contains(err.Error(), "busy") {
-			return nil, fmt.Errorf("%s: %w (%v)", path, errInUse, err)
-		}
-		return nil, fmt.Errorf("lock %s: %w", path, err)
-	}
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		_ = conn.Close()
-		_ = db.Close()
-		return nil, fmt.Errorf("lock %s: %w", path, err)
-	}
-	return &lockedDB{path: path, db: db, conn: conn}, nil
+	return &dbHandle{path: path, db: db, conn: conn}, nil
 }
 
-// checkpoint folds the WAL into the main file, so a byte copy of the main
-// file is the whole database.
-func (l *lockedDB) checkpoint(ctx context.Context) error {
-	var busy, logFrames, done int
-	if err := l.conn.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &logFrames, &done); err != nil {
-		return fmt.Errorf("checkpoint %s: %w", l.path, err)
+// backupTo writes a consistent copy of the whole database to dst (VACUUM
+// INTO: an online snapshot, safe while other connections write).
+func (l *dbHandle) backupTo(ctx context.Context, dst string) error {
+	// A backup step that failed part-way is re-run whole: VACUUM INTO
+	// refuses an existing file.
+	if err := os.Remove(dst); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
 	}
-	if busy != 0 {
-		return fmt.Errorf("checkpoint %s: database busy", l.path)
+	if _, err := l.conn.ExecContext(ctx, "VACUUM INTO ?", dst); err != nil {
+		return fmt.Errorf("back up %s: %w", l.path, err)
 	}
 	return nil
 }
 
-func (l *lockedDB) close() {
+func (l *dbHandle) close() {
 	if l == nil {
 		return
 	}
@@ -83,14 +71,14 @@ func (l *lockedDB) close() {
 }
 
 // hasColumn reports whether table.col exists (older files may predate a column).
-func (l *lockedDB) hasColumn(ctx context.Context, table, col string) (bool, error) {
+func (l *dbHandle) hasColumn(ctx context.Context, table, col string) (bool, error) {
 	var n int
 	err := l.conn.QueryRowContext(ctx,
 		`SELECT count(*) FROM pragma_table_info(?) WHERE name = ?`, table, col).Scan(&n)
 	return n > 0, err
 }
 
-// queryer is what a rule reads and writes through: the locked connection for
+// queryer is what a rule reads and writes through: the handle's connection for
 // counting, the step's transaction for applying.
 type queryer interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
@@ -133,7 +121,7 @@ type rule struct {
 func (u rule) label() string { return u.table + "." + u.col }
 
 // present reports whether the rule's table and column exist in the file.
-func (u rule) present(ctx context.Context, l *lockedDB) (bool, error) {
+func (u rule) present(ctx context.Context, l *dbHandle) (bool, error) {
 	return l.hasColumn(ctx, u.table, u.col)
 }
 

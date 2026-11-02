@@ -24,10 +24,10 @@ func TestSpawnObserver_LabelsSpawnByName(t *testing.T) {
 	b.attach(client)
 
 	const prompt = "Todo #9: WRITE THE SPEC for the parser rewrite"
-	SpawnObserver{}.SpawnStarted(b.sessionKey, tools.RunningSpawn{
+	SpawnObserver{}.SpawnStarted(b.key(), tools.RunningSpawn{
 		ID: "spawn-1", Name: "spec\n  writer", Description: prompt, Model: "opus",
 	}, prompt)
-	SpawnObserver{}.SpawnStarted(b.sessionKey, tools.RunningSpawn{ID: "spawn-2", Description: "an old task"}, "an old task")
+	SpawnObserver{}.SpawnStarted(b.key(), tools.RunningSpawn{ID: "spawn-2", Description: "an old task"}, "an old task")
 
 	var labels []string
 	for _, f := range drain(t, client) {

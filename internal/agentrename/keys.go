@@ -28,6 +28,15 @@ func (r ids) rewriteKey(s string) (string, bool) {
 	return r.new + s[len(r.old):], true
 }
 
+// RewriteSessionKey is the key rule the disk rename applies, for in-memory
+// state that holds session keys (the app hub's conversation bindings, #2787):
+// key with agent old renamed to new when it is a session key of old, else
+// key unchanged.
+func RewriteSessionKey(old, new, key string) string {
+	out, _ := ids{old, new}.rewriteKey(key)
+	return out
+}
+
 // rewriteValue rewrites a stored value that holds session keys: a value that
 // is itself a key (rewriteKey), or a JSON object/array, in which every string
 // — and every object member name — that is a key of agent old is rewritten.

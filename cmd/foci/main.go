@@ -535,11 +535,10 @@ func main() {
 		return
 	}
 	if os.Args[1] == "rename-agent" {
-		if err := cmdRenameAgent(os.Args[2:], os.Stdin, os.Stdout); err != nil {
-			fmt.Fprintf(os.Stderr, "rename-agent: %v\n", err)
-			os.Exit(1)
-		}
-		return
+		// The rename runs inside the gateway now (#2787), started by a
+		// slash command; the offline command is gone.
+		fmt.Fprintln(os.Stderr, "rename-agent: the rename now runs inside the running gateway. Send /agents rename OLD NEW in chat or the app, or run: foci command \"/agents rename OLD NEW\" (that asks the owner to approve it).")
+		os.Exit(2)
 	}
 	if os.Args[1] == "check" {
 		os.Exit(cmdCheck(os.Args[2:], os.Stdout, os.Stderr))
@@ -706,7 +705,6 @@ Commands:
   pair [host]          Mint a single-use Android pairing key (-a for agent)
   debug session <key>  Tail a session file with formatted output
   pretool list|test    Check PreToolUse rules against the config (see foci pretool -h)
-  rename-agent OLD NEW Rename an agent id everywhere, gateway stopped, as root (see foci rename-agent -h)
   check config|nudge   Check the config file or an agent's nudge-rules.json, read-only (see foci check -h)
   config show|get|set|unset|wait
                        Read the config, or ask the user to approve a change to it (see foci config -h)

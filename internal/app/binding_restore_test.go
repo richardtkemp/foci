@@ -113,7 +113,7 @@ func TestDeliverBinding_UnresolvablePinFallsBack(t *testing.T) {
 	if err := idx.SetDefaultChat("clutch", "app", 12345); err != nil {
 		t.Fatal(err)
 	}
-	live := &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
+	live := withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "")
 	h.convs["c1"] = live
 
 	b, via := h.deliverBinding("clutch")
@@ -161,16 +161,16 @@ func TestHandleConversationArchive(t *testing.T) {
 	now := time.Now().UnixMilli()
 	s.insert(frameWrite{convID: "c1", agentID: "clutch", seq: 1, wire: "w", sentMs: now, visible: true})
 
-	b := &convBinding{convID: "c1", agentID: "clutch", chatID: 42, sessionKey: "clutch/c42"}
+	b := withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "clutch/c42")
 	h.convs["c1"] = b
-	h.bySession[b.sessionKey] = b
+	h.bySession[b.key()] = b
 
 	// Archive: flag set, binding + frames retained.
 	h.handleConversationArchive(fakeClient(), fap.ConversationArchive{ConversationID: "c1", Archived: true})
 	if !idx.ArchivedChatsForAgent("clutch", "app")[42] {
 		t.Error("archive must set the is_archived flag for chatID 42")
 	}
-	if h.convs["c1"] == nil || h.bySession[b.sessionKey] == nil {
+	if h.convs["c1"] == nil || h.bySession[b.key()] == nil {
 		t.Error("archive must NOT drop the binding (flag-based, not destructive)")
 	}
 	if len(s.RestorableConvs()) != 1 {
@@ -201,7 +201,7 @@ func TestHandleConversationArchive_RefusesDefault(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42, sessionKey: "clutch/c42"}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "clutch/c42")
 	if err := idx.SetDefaultChat("clutch", "app", 42); err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +229,7 @@ func TestHandleConversationArchive_RefusesDefault(t *testing.T) {
 	}
 
 	// A non-default conversation still archives.
-	h.convs["c2"] = &convBinding{convID: "c2", agentID: "clutch", chatID: 43}
+	h.convs["c2"] = withIdent(&convBinding{convID: "c2", chatID: 43}, "clutch", "")
 	h.handleConversationArchive(c, fap.ConversationArchive{ConversationID: "c2", Archived: true})
 	if !idx.ArchivedChatsForAgent("clutch", "app")[43] {
 		t.Error("non-default conversation must archive normally")
@@ -245,8 +245,8 @@ func TestAgentRoster_MarksArchivedConversation(t *testing.T) {
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
 	registerBareAgent(h, "ag")
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "ag", chatID: 42}
-	h.convs["c2"] = &convBinding{convID: "c2", agentID: "ag", chatID: 99}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "ag", "")
+	h.convs["c2"] = withIdent(&convBinding{convID: "c2", chatID: 99}, "ag", "")
 	if err := idx.SetArchivedChat("ag", "app", 99, true); err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +284,7 @@ func TestAgentRoster_MarksArchivedConversation(t *testing.T) {
 func TestAgentRoster_CacheExpiryIsLiveNotCached(t *testing.T) {
 	h := newTestHub()
 	registerFakeAgent(h, "ag") // fakeAgent.CacheExpiryMs reports time.Now()+5m
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "ag", sessionKey: "ag/c1", cacheExpiryMs: 0}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", cacheExpiryMs: 0}, "ag", "ag/c1")
 
 	roster := h.agentRoster()
 	if len(roster) != 1 || len(roster[0].Conversations) != 1 {
@@ -313,7 +313,7 @@ func TestConvBindingFieldCensus(t *testing.T) {
 	// binding is built — nothing to rehydrate because construction always
 	// supplies it fresh.
 	constructorSupplied := map[string]bool{
-		"convID": true, "sessionKey": true, "agentID": true, "chatID": true,
+		"convID": true, "ident": true, "chatID": true, // ident: agent + session key, set by ensureBinding (setIdent)
 		"replayDepth": true, "replayTTL": true, "store": true,
 		"notifyOffline": true, "seq": true, "seen": true,
 	}

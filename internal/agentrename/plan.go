@@ -20,7 +20,7 @@ func (rn *runner) plan(specs []dbSpec) ([]step, error) {
 		steps = append(steps, step{
 			id: stepBackup, always: true,
 			title:  "back up the databases, foci.toml and the sessions tree",
-			detail: []string{"to " + rn.backup, fmt.Sprintf("%d database(s), foci.toml, %s", len(rn.lockList), filepath.Join(rn.p.SessionsDir, rn.o.Old))},
+			detail: []string{"to " + rn.backup, fmt.Sprintf("%d database(s), foci.toml, %s", len(rn.dbList), filepath.Join(rn.p.SessionsDir, rn.o.Old))},
 			run:    rn.runBackup,
 		})
 	}
@@ -42,13 +42,13 @@ func (rn *runner) plan(specs []dbSpec) ([]step, error) {
 	ss.n += len(files)
 	ss.detail = append(ss.detail, fmt.Sprintf("rewrite branch_meta parent_key in %d branch file(s) (gzip kept)", len(files)))
 	ss.run = func() error {
-		return sessionsStep(oldDir, newDir, rn.r, rn.own, func(from, to string) error { return rn.own.recordMove(rn.backup, rn.man, from, to) }, rn.o.failSessionsAfter)
+		return sessionsStep(oldDir, newDir, rn.r, func(from, to string) error { return recordMove(rn.backup, rn.man, from, to) }, rn.o.failSessionsAfter)
 	}
 	steps = append(steps, ss)
 
 	// 3. Databases.
 	for _, s := range specs {
-		l := rn.locks[s.path]
+		l := rn.dbs[s.path]
 		if l == nil {
 			continue
 		}
@@ -65,10 +65,10 @@ func (rn *runner) plan(specs []dbSpec) ([]step, error) {
 		steps = append(steps, step{
 			id: stepBleve, n: 1, closeDBs: true,
 			title:  "search index " + bleve,
-			detail: []string{"move it into the backup; the gateway rebuilds it at startup, with the new id on every todo"},
+			detail: []string{"move it into the backup; the new agent's start rebuilds it, with the new id on every todo"},
 			run: func() error {
 				to := filepath.Join(rn.backup, "search.bleve")
-				if err := rn.own.recordMove(rn.backup, rn.man, bleve, to); err != nil {
+				if err := recordMove(rn.backup, rn.man, bleve, to); err != nil {
 					return err
 				}
 				return os.Rename(bleve, to)
@@ -88,7 +88,7 @@ func (rn *runner) plan(specs []dbSpec) ([]step, error) {
 	}
 	steps = append(steps, cs)
 
-	// 7, 8. Privileged.
+	// 7, 8. secrets.toml and the crontab.
 	if s, ok, err := rn.secretsStep(); err != nil {
 		return nil, err
 	} else if ok {
@@ -99,7 +99,7 @@ func (rn *runner) plan(specs []dbSpec) ([]step, error) {
 }
 
 // dbStep counts a database's changes and builds its all-or-nothing step.
-func (rn *runner) dbStep(s dbSpec, l *lockedDB) (step, error) {
+func (rn *runner) dbStep(s dbSpec, l *dbHandle) (step, error) {
 	st := step{id: s.id, title: "database " + s.path}
 	var live []rule
 	for _, u := range s.rules {
@@ -127,7 +127,7 @@ func (rn *runner) dbStep(s dbSpec, l *lockedDB) (step, error) {
 // applyDB rewrites one database in one transaction: every rule or none.
 // Foreign keys are deferred to the commit, so turns.turn_id and
 // api_calls.turn_id change together and the commit refuses a broken pair.
-func (rn *runner) applyDB(s dbSpec, l *lockedDB, rules []rule) error {
+func (rn *runner) applyDB(s dbSpec, l *dbHandle, rules []rule) error {
 	ctx := rn.ctx
 	if s.fk {
 		if _, err := l.conn.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
@@ -163,10 +163,7 @@ func (rn *runner) applyDB(s dbSpec, l *lockedDB, rules []rule) error {
 
 // runBackup takes the backup and starts the journal: from here on a re-run resumes.
 func (rn *runner) runBackup() error {
-	if err := rn.own.takeBackup(rn.ctx, rn.backup, rn.man, rn.lockList, rn.cfg.SourcePath, filepath.Join(rn.p.SessionsDir, rn.o.Old)); err != nil {
-		return err
-	}
-	return nil
+	return takeBackup(rn.ctx, rn.backup, rn.man, rn.dbList, rn.cfg.SourcePath, filepath.Join(rn.p.SessionsDir, rn.o.Old))
 }
 
 // workspaceStep moves the workspace and the Claude Code project folder of its cwd.
@@ -194,7 +191,7 @@ func (rn *runner) workspaceStep() step {
 			if _, err := os.Stat(mv[1]); err == nil {
 				return fmt.Errorf("%s already exists", mv[1])
 			}
-			if err := rn.own.recordMove(rn.backup, rn.man, mv[0], mv[1]); err != nil {
+			if err := recordMove(rn.backup, rn.man, mv[0], mv[1]); err != nil {
 				return err
 			}
 			if err := os.Rename(mv[0], mv[1]); err != nil {
@@ -224,16 +221,12 @@ func (rn *runner) configRename() config.AgentRename {
 	return ar
 }
 
-// configStep plans the foci.toml edit and checks the result loads. It is a
-// [sudo] step like secrets.toml (#2784): foci.toml is root:foci-secrets 0664
-// (#479) and the foci user may not write it. The write is `sudo tee`, which
-// truncates and rewrites the existing file in place, so it keeps its inode,
-// owner, group and mode (a temp-and-rename write would replace it with a file
-// the gateway refuses). The planned content is also saved in the backup as
-// foci.toml.after, the source of the manual command for a PENDING step.
+// configStep plans the foci.toml edit and checks the result loads. The
+// gateway writes foci.toml in place (config.WriteConfigFile), so it keeps
+// the root:foci-secrets owner and mode the gateway requires (#479).
 func (rn *runner) configStep() (step, error) {
 	path := rn.cfg.SourcePath
-	st := step{id: stepConfig, sudo: true, title: "config " + path}
+	st := step{id: stepConfig, title: "config " + path}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return st, err
@@ -264,14 +257,7 @@ func (rn *runner) configStep() (step, error) {
 			st.detail = append(st.detail, fmt.Sprintf("  %s:%d: %s", filepath.Base(path), r.Line, r.Text))
 		}
 	}
-	after := filepath.Join(rn.backup, filepath.Base(path)+".after")
-	st.manual = func() []string {
-		return []string{fmt.Sprintf("sudo cp %s %s   # cp onto the existing file keeps its owner, group and mode", after, path)}
-	}
 	st.run = func() error {
-		if err := rn.own.writeFile(after, []byte(next)); err != nil {
-			return err
-		}
 		now, err := os.ReadFile(path)
 		if err != nil {
 			return err
@@ -279,15 +265,11 @@ func (rn *runner) configStep() (step, error) {
 		if string(now) != cur {
 			return fmt.Errorf("%s changed since the plan was made; nothing written", path)
 		}
-		if _, err := rn.o.Priv.Run([]string{"tee", path}, []byte(next)); err != nil {
+		info, err := os.Stat(path)
+		if err != nil {
 			return err
 		}
-		if got, err := os.ReadFile(path); err != nil {
-			return err
-		} else if string(got) != next {
-			return fmt.Errorf("%s does not hold the planned content after the write", path)
-		}
-		return nil
+		return config.WriteConfigFile(path, next, info.Mode().Perm())
 	}
 	return st, nil
 }
@@ -311,21 +293,13 @@ func (rn *runner) printPlan(steps []step, resume bool) {
 	} else {
 		rn.out.printf("Rename agent %q to %q (%s).\n", rn.o.Old, rn.o.New, mode)
 	}
-	if rn.o.Owner != nil {
-		rn.out.printf("\nPlan (running as root for user %s: the steps marked [sudo] write directly, with no approval; every file written keeps its owner, new ones go to %s):\n", rn.o.Owner.User, rn.o.Owner.User)
-	} else {
-		rn.out.println("\nPlan (steps marked [sudo] go through sudo approval):")
-	}
+	rn.out.println("\nPlan:")
 	i := 0
 	for _, s := range steps {
 		if rn.jr.Done[s.id] {
 			continue
 		}
 		i++
-		tag := ""
-		if s.sudo {
-			tag = "[sudo] "
-		}
 		count := fmt.Sprintf("%d change(s)", s.n)
 		if s.n == 0 && !s.always {
 			count = "nothing to change"
@@ -333,7 +307,7 @@ func (rn *runner) printPlan(steps []step, resume bool) {
 		if s.always {
 			count = ""
 		}
-		rn.out.printf("%3d. %s%s", i, tag, s.title)
+		rn.out.printf("%3d. %s", i, s.title)
 		if count != "" {
 			rn.out.printf(" — %s", count)
 		}

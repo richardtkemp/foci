@@ -169,6 +169,8 @@ type CommandContext struct {
 
 	// Agent listing (dynamic — returns current running agents)
 	AgentListFn func() []AgentInfo
+	// AgentRenameFn carries out /agents rename (#2787); nil = unavailable.
+	AgentRenameFn AgentRenameFn
 
 	// Stores
 	LastMessageStore *LastMessageStore

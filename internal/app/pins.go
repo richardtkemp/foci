@@ -140,14 +140,14 @@ func (h *Hub) pinSyncFor(b *convBinding) (fap.PinSync, bool) {
 	if idx == nil {
 		return fap.PinSync{}, false
 	}
-	stored, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, chatMetaPins)
+	stored, err := idx.GetChatMetadata(b.agent(), "app", b.chatID, chatMetaPins)
 	if err != nil || stored == "" {
 		return fap.PinSync{}, false
 	}
 	ids := session.DecodeChatSet(stored)
 	f := fap.PinSync{ConversationID: b.convID, MessageIDs: ids}
 	if len(ids) > 0 {
-		if m, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, chatMetaPinMeta); err == nil {
+		if m, err := idx.GetChatMetadata(b.agent(), "app", b.chatID, chatMetaPinMeta); err == nil {
 			f.Labels = pinLabels(ids, decodePinMeta(m))
 		} else {
 			// The set is readable and authoritative; send it unlabelled rather
@@ -183,7 +183,7 @@ func (h *Hub) handlePinsList(client *wsClient) {
 
 	newest := map[string]int64{}
 	for _, b := range bindings {
-		stored, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, chatMetaPins)
+		stored, err := idx.GetChatMetadata(b.agent(), "app", b.chatID, chatMetaPins)
 		if err != nil {
 			appLog.Warnf("pins list %s: read pins: %v", b.convID, err)
 			continue
@@ -192,7 +192,7 @@ func (h *Hub) handlePinsList(client *wsClient) {
 		if len(ids) == 0 {
 			continue
 		}
-		metaStored, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, chatMetaPinMeta)
+		metaStored, err := idx.GetChatMetadata(b.agent(), "app", b.chatID, chatMetaPinMeta)
 		if err != nil {
 			appLog.Warnf("pins list %s: read pin meta: %v", b.convID, err)
 		}
@@ -203,7 +203,7 @@ func (h *Hub) handlePinsList(client *wsClient) {
 		}
 		live := h.frames.MessagePreviews(b.convID, want)
 
-		g := fap.PinGroup{ConversationID: b.convID, AgentID: b.agentID, Title: h.aliasFor(b)}
+		g := fap.PinGroup{ConversationID: b.convID, AgentID: b.agent(), Title: h.aliasFor(b)}
 		for _, id := range ids {
 			m := meta[id]
 			p := fap.PinnedMessage{MessageID: id, Label: m.Label, Snippet: m.Snippet, SentMs: m.SentMs}

@@ -46,7 +46,11 @@ type agentInstance struct {
 	tmuxClearAll     func()                                         // clears tmux tool state (watches, owned sessions)
 	tmuxWatchCount   func() int                                     // returns number of active tmux watches
 	kaRunner         *periodic.Runner                               // keepalive & background work timer
-	mcpManager       *mcpkg.Manager                                 // nil if no MCP servers configured
+	// cancel ends the agent's own context, the parent of every goroutine
+	// its build started (periodic runner, warning dispatchers, notifiers):
+	// the live stop of this one agent (#2787). nil for a test instance.
+	cancel     context.CancelFunc
+	mcpManager *mcpkg.Manager // nil if no MCP servers configured
 	// suggestionSender posts server-originated suggestions (#1321). Built in
 	// shared.finalize with an empty registry — no concrete suggestion ships yet —
 	// so this is the exposure point for the first call site (the SR
@@ -132,8 +136,10 @@ type setupParams struct {
 	// foci.toml, live (#963). nil = no live start (the wizard then says to
 	// /restart).
 	startAgentFn func(agentID string) ([]string, error)
-	connMgr      platform.ConnectionManager
-	plat         *platform.Messaging
+	// renameAgentFn carries out /agents rename (#2787). nil = unavailable.
+	renameAgentFn command.AgentRenameFn
+	connMgr       platform.ConnectionManager
+	plat          *platform.Messaging
 }
 
 // setupAgent wires up a single agent with its own tools, commands, bootstrap, and bot.

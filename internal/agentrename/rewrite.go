@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -13,56 +12,20 @@ import (
 	"foci/internal/procx"
 )
 
-// Privileged runs a command with root privileges through the host's real
-// approval flow (sudo; on an aisudo host the approver taps approve/deny).
-// stdin is fed to the command; its stdout is returned. Nothing here embeds a
-// password or bypasses the approval: a declined or failed approval is an
-// error, which the rename reports as a PENDING step.
-type Privileged interface {
-	Run(argv []string, stdin []byte) ([]byte, error)
-}
-
-// SudoRunner is the production Privileged: it runs `<Bin> argv...`. Bin is
-// resolved on this process's PATH (default "sudo"). The approval prompt, if
-// any, goes to the terminal on stderr.
-type SudoRunner struct{ Bin string }
-
-// Run implements Privileged.
-func (s SudoRunner) Run(argv []string, stdin []byte) ([]byte, error) {
-	bin := s.Bin
-	if bin == "" {
-		bin = "sudo"
-	}
-	cmd := procx.Spawn(context.Background(), procx.Operator, bin, argv...)
-	// sudo stays in the terminal's foreground process group (Spawn puts a
-	// child in its own group), so a password prompt on /dev/tty can read.
-	cmd.SysProcAttr.Setpgid = false
-	cmd.Stdin = bytes.NewReader(stdin)
-	cmd.Stderr = os.Stderr
-	out, err := cmd.Output()
-	if err != nil {
-		return out, fmt.Errorf("%s %s: %w", bin, strings.Join(argv, " "), err)
-	}
-	return out, nil
-}
-
-// CrontabIO reads the crontab the rename edits (no privilege needed to read
-// one's own). An absent crontab reads as "".
+// CrontabIO reads and installs the crontab the rename edits: the gateway
+// user's own, which is the user that installs foci's cron jobs (no privilege
+// is needed for either). An absent crontab reads as "".
 type CrontabIO interface {
 	Read() (string, error)
+	Install(content string) error
 }
 
-// SystemCrontab reads with `crontab -l`: the current user's crontab, or
-// User's (`crontab -l -u User`, which needs root) when User is set.
-type SystemCrontab struct{ User string }
+// SystemCrontab is the production CrontabIO: `crontab -l` and `crontab -`.
+type SystemCrontab struct{}
 
 // Read implements CrontabIO.
-func (c SystemCrontab) Read() (string, error) {
-	args := []string{"-l"}
-	if c.User != "" {
-		args = append(args, "-u", c.User)
-	}
-	cmd := procx.Spawn(context.Background(), procx.Operator, "crontab", args...)
+func (SystemCrontab) Read() (string, error) {
+	cmd := procx.Spawn(context.Background(), procx.Operator, "crontab", "-l")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -74,6 +37,18 @@ func (c SystemCrontab) Read() (string, error) {
 		return "", fmt.Errorf("crontab -l: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	return string(out), nil
+}
+
+// Install implements CrontabIO.
+func (SystemCrontab) Install(content string) error {
+	cmd := procx.Spawn(context.Background(), procx.Operator, "crontab", "-")
+	cmd.Stdin = strings.NewReader(content)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("crontab -: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
 }
 
 // rewriteSecrets returns secrets.toml content with every exact reference to
@@ -125,14 +100,6 @@ func splitComment(line string) (code, comment string) {
 		}
 	}
 	return line, ""
-}
-
-// secretsSedScript is the GNU sed program a person runs by hand for a pending
-// secrets.toml step: the same header and one-line list rewrites as
-// rewriteSecrets (a multi-line list must be edited by hand).
-func secretsSedScript(old, new string) string {
-	o := regexp.QuoteMeta(old)
-	return fmt.Sprintf(`s/^([[:space:]]*\[[[:space:]]*agents\.)("?)%s("?)([[:space:]]*[].])/\1\2%s\3\4/; /^[[:space:]]*(allowed|denied)_agents[[:space:]]*=/ s/"%s"/"%s"/g`, o, new, o, new)
 }
 
 // cronAgentFlag matches an exact agent reference on a foci command line:

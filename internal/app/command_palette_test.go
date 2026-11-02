@@ -26,13 +26,10 @@ func paletteHub(t *testing.T, agentID, convID string, chatID int64) (*Hub, *conv
 	h.agentOrder = append(h.agentOrder, agentID)
 
 	c := fakeClientFor(h)
-	b := &convBinding{
-		convID:     convID,
-		sessionKey: agentID + "/c" + convID,
-		agentID:    agentID,
-		chatID:     chatID,
-		clients:    map[*wsClient]struct{}{c: {}},
-	}
+	b := withIdent(&convBinding{
+		convID:  convID,
+		chatID:  chatID,
+		clients: map[*wsClient]struct{}{c: {}}}, agentID, agentID+"/c"+convID)
 	h.convs[convID] = b
 	h.clients[c] = struct{}{}
 	return h, b, c
@@ -97,13 +94,10 @@ func TestPushRoster_DoesNotBroadcastPalettesToOtherConversations(t *testing.T) {
 
 	// A second conversation belonging to a DIFFERENT device.
 	theirs := fakeClientFor(h)
-	other := &convBinding{
-		convID:     "c2",
-		sessionKey: "ag/c2",
-		agentID:    "ag",
-		chatID:     43,
-		clients:    map[*wsClient]struct{}{theirs: {}},
-	}
+	other := withIdent(&convBinding{
+		convID:  "c2",
+		chatID:  43,
+		clients: map[*wsClient]struct{}{theirs: {}}}, "ag", "ag/c2")
 	h.convs["c2"] = other
 	h.clients[theirs] = struct{}{}
 

@@ -80,4 +80,4 @@ The command prints one line and exits 0 only for the first:
 
 ## /config set over HTTP
 
-`foci command "/config set k=v"` (or `/config unset`) from your shell does not write either: it creates the same approval request and replies at once with the request id. Follow it with `foci config wait <id>`. The `/config set` wizard, `/agents new` and `/android` write foci.toml and can only be started from chat.
+`foci command "/config set k=v"` (or `/config unset`) from your shell does not write either: it creates the same approval request and replies at once with the request id. Follow it with `foci config wait <id>`. The `/config set` wizard, `/agents new` and `/android` write foci.toml and can only be started from chat. `foci command "/agents rename OLD NEW"` sends the user an Approve/Deny prompt for the rename (with its plan); nothing changes unless they approve.

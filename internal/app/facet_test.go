@@ -82,7 +82,7 @@ func TestDispatchCommand_ForegroundsRequester(t *testing.T) {
 	})
 	conn := &appConn{hub: h, agentID: "ag", commands: reg}
 	convClient := fakeClientFor(h)
-	b := &convBinding{convID: "c1", sessionKey: "ag/c1", clients: map[*wsClient]struct{}{convClient: {}}}
+	b := withIdent(&convBinding{convID: "c1", clients: map[*wsClient]struct{}{convClient: {}}}, "", "ag/c1")
 	requester := fakeClientFor(h)
 
 	h.dispatchCommand(requester, conn, b, command.Request{Name: "facet", Source: "app"})

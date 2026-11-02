@@ -75,6 +75,21 @@ func (a *ConnectionManagerAdapter[B]) StartAgent(ctx context.Context, agentID st
 		s.StartAgent(ctx, agentID)
 	}
 }
+
+// StopAgent forwards to the source when it can stop one agent (AgentStopper).
+func (a *ConnectionManagerAdapter[B]) StopAgent(agentID string) {
+	if s, ok := a.source.(AgentStopper); ok {
+		s.StopAgent(agentID)
+	}
+}
+
+// RenameAgent forwards to the source when it holds per-conversation agent
+// state (AgentRenamer).
+func (a *ConnectionManagerAdapter[B]) RenameAgent(old, new string, rewriteKey func(string) string) {
+	if r, ok := a.source.(AgentRenamer); ok {
+		r.RenameAgent(old, new, rewriteKey)
+	}
+}
 func (a *ConnectionManagerAdapter[B]) Wait() { a.source.Wait() }
 func (a *ConnectionManagerAdapter[B]) HasFacet(agentID string) bool {
 	return a.source.HasFacet(agentID)

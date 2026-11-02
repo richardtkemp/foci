@@ -687,6 +687,13 @@ func buildWakeScheduler(
 			case <-wakeCtx.Done():
 				// wakeCancelFn already claimed the entry.
 				_ = reminderStore.Dismiss(id)
+			case <-ctx.Done():
+				// The agent stopped (a live stop, #2787) or the process is
+				// exiting: the wake's row stays pending, and the next start
+				// of the agent schedules it again from the store.
+				if c, ok := take(id); ok {
+					c()
+				}
 			}
 		}()
 		return nil

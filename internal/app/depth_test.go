@@ -59,7 +59,7 @@ func withDepthCtl(t *testing.T) *fakeDepthCtl {
 // registerLeaf registers branch as a leaf of root and returns its binding.
 func registerLeaf(t *testing.T, h *Hub, root *convBinding, branch, leafID, title string) *convBinding {
 	t.Helper()
-	convID, err := h.registerDepthLeaf(root.sessionKey, branch, leafID, title, "")
+	convID, err := h.registerDepthLeaf(root.key(), branch, leafID, title, "")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestDepthLeafConversation_OwnStream(t *testing.T) {
 	client := fakeClientFor(h)
 	h.addClient(client)
 	root := h.ensureBinding(client, agentID, "conv-root")
-	branch := root.sessionKey + "/b1"
+	branch := root.key() + "/b1"
 	lb := registerLeaf(t, h, root, branch, "leaf-1", "Point A")
 	drain(t, client) // the roster push
 
@@ -141,7 +141,7 @@ func TestDepthLeafConversation_RosterAndDelivery(t *testing.T) {
 	registerFakeAgent(h, "ag")
 	root := h.ensureBinding(nil, "ag", "conv-root")
 	root.send(fap.ServerMessage{ConversationID: "conv-root", MessageID: "m0", Role: "agent", Text: "older"})
-	lb := registerLeaf(t, h, root, root.sessionKey+"/b1", "leaf-1", "A")
+	lb := registerLeaf(t, h, root, root.key()+"/b1", "leaf-1", "A")
 	lb.send(fap.ServerMessage{ConversationID: lb.convID, MessageID: "m1", Role: "agent", Text: "newer"})
 
 	var seen bool
@@ -173,7 +173,7 @@ func TestDepthLeafView_StreamedTurnReportsFinalText(t *testing.T) {
 	h := newTestHub()
 	ctl := withDepthCtl(t)
 	root := h.ensureBinding(nil, "ag", "conv-root")
-	branch := root.sessionKey + "/b1"
+	branch := root.key() + "/b1"
 	registerLeaf(t, h, root, branch, "leaf-1", "A")
 	conn := &appConn{hub: h, agentID: "ag"}
 	sink, cleanup := conn.NewTurnSink(agent.Envelope{SessionKey: branch})
@@ -200,7 +200,7 @@ func TestDepthRouteUserTurn_ToLeaf(t *testing.T) {
 	c := fakeClientFor(h)
 	h.addClient(c)
 	root := h.ensureBinding(c, "ag", "conv-1")
-	branch := root.sessionKey + "/b9"
+	branch := root.key() + "/b9"
 	lb := registerLeaf(t, h, root, branch, "leaf-9", "Nine")
 	drain(t, c)
 
@@ -232,10 +232,10 @@ func TestDepthActions_ReachController(t *testing.T) {
 	h.dispatchInbound(c, []byte(`{"v":1,"t":"depth.dismiss","id":"e2","seq":2,"d":{"conversationId":"conv-1","leafId":"leaf-2"}}`))
 	ctl.mu.Lock()
 	defer ctl.mu.Unlock()
-	if len(ctl.acks) != 1 || ctl.acks[0] != root.sessionKey+"|leaf-1" {
+	if len(ctl.acks) != 1 || ctl.acks[0] != root.key()+"|leaf-1" {
 		t.Errorf("acks = %v", ctl.acks)
 	}
-	if len(ctl.dismiss) != 1 || ctl.dismiss[0] != root.sessionKey+"|leaf-2" {
+	if len(ctl.dismiss) != 1 || ctl.dismiss[0] != root.key()+"|leaf-2" {
 		t.Errorf("dismiss = %v", ctl.dismiss)
 	}
 }
@@ -248,12 +248,12 @@ func TestDepthLeaf_ReregisterUnregisterAndGuards(t *testing.T) {
 	ctl := withDepthCtl(t)
 	root := h.ensureBinding(nil, "ag", "conv-root")
 	other := h.ensureBinding(nil, "ag", "conv-other")
-	if _, err := h.registerDepthLeaf(root.sessionKey, other.sessionKey, "leaf-x", "X", ""); err == nil {
+	if _, err := h.registerDepthLeaf(root.key(), other.key(), "leaf-x", "X", ""); err == nil {
 		t.Fatal("a session with its own conversation was made a leaf")
 	}
-	branch := root.sessionKey + "/b2"
+	branch := root.key() + "/b2"
 	lb := registerLeaf(t, h, root, branch, "leaf-2", "Two")
-	again, err := h.registerDepthLeaf(root.sessionKey, branch, "leaf-2", "Two, retitled", "")
+	again, err := h.registerDepthLeaf(root.key(), branch, "leaf-2", "Two, retitled", "")
 	if err != nil || again != lb.convID {
 		t.Fatalf("re-register = %q, %v; want the same conversation %s", again, err, lb.convID)
 	}
@@ -284,7 +284,7 @@ func TestDepthLeaf_SeedsFeaturesFromRoot(t *testing.T) {
 	c := fakeClient()
 	c.features = featureSet([]string{featureInteractiveBatch})
 	root.attach(c)
-	lb := registerLeaf(t, h, root, root.sessionKey+"/b1", "leaf-1", "A")
+	lb := registerLeaf(t, h, root, root.key()+"/b1", "leaf-1", "A")
 	if !lb.supportsFeature(featureInteractiveBatch) {
 		t.Fatal("leaf conversation does not carry the root's batch capability")
 	}
@@ -298,14 +298,14 @@ func TestDepthLeaf_RestartRehydratesFromChatMetadata(t *testing.T) {
 	h1 := newTestHub()
 	h1.deps = platform.ProviderDeps{SessionIndex: idx}
 	root := h1.ensureBinding(nil, "ag", "conv-root")
-	branch := root.sessionKey + "/b1"
+	branch := root.key() + "/b1"
 	lb := registerLeaf(t, h1, root, branch, "leaf-1", "A")
 
 	h2 := newTestHub()
 	h2.deps = platform.ProviderDeps{SessionIndex: idx}
 	b := h2.ensureBinding(nil, "ag", lb.convID)
-	if b.sessionKey != branch || !b.isDepthLeaf() || b.info().DepthRootID != "conv-root" {
-		t.Fatalf("restored leaf: session %q, depthRoot %q; want %q under conv-root", b.sessionKey, b.info().DepthRootID, branch)
+	if b.key() != branch || !b.isDepthLeaf() || b.info().DepthRootID != "conv-root" {
+		t.Fatalf("restored leaf: session %q, depthRoot %q; want %q under conv-root", b.key(), b.info().DepthRootID, branch)
 	}
 	if v, _ := idx.GetChatMetadata("ag", "app", b.chatID, "registered"); v != "" {
 		t.Errorf("leaf chat registered = %q, want no row: a leaf is not a routable chat", v)
@@ -321,9 +321,9 @@ func TestDepthLeaf_FollowsRootArchive(t *testing.T) {
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
 	root := h.ensureBinding(nil, "ag", "conv-root")
 	other := h.ensureBinding(nil, "ag", "conv-other")
-	l1 := registerLeaf(t, h, root, root.sessionKey+"/b1", "leaf-1", "A")
-	l2 := registerLeaf(t, h, root, root.sessionKey+"/b2", "leaf-2", "B")
-	lo := registerLeaf(t, h, other, other.sessionKey+"/b1", "leaf-o", "O")
+	l1 := registerLeaf(t, h, root, root.key()+"/b1", "leaf-1", "A")
+	l2 := registerLeaf(t, h, root, root.key()+"/b2", "leaf-2", "B")
+	lo := registerLeaf(t, h, other, other.key()+"/b1", "leaf-o", "O")
 
 	archived := func(b *convBinding) bool { return idx.ArchivedChatsForAgent("ag", "app")[b.chatID] }
 
@@ -357,7 +357,7 @@ func TestDepthLeaf_RegisteredUnderArchivedRootIsArchived(t *testing.T) {
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
 	root := h.ensureBinding(nil, "ag", "conv-root")
 	h.handleConversationArchive(fakeClient(), fap.ConversationArchive{ConversationID: "conv-root", Archived: true})
-	lb := registerLeaf(t, h, root, root.sessionKey+"/b1", "leaf-1", "A")
+	lb := registerLeaf(t, h, root, root.key()+"/b1", "leaf-1", "A")
 	if !idx.ArchivedChatsForAgent("ag", "app")[lb.chatID] {
 		t.Fatal("a leaf registered under an archived root must be archived")
 	}

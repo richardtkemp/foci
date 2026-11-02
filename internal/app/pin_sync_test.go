@@ -54,7 +54,7 @@ func TestHandlePin_PersistsAndFansOutToOtherClients(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42, sessionKey: "clutch/c42"}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "clutch/c42")
 
 	sender := fakeClient()
 	other := fakeClient()
@@ -81,7 +81,7 @@ func TestHandlePin_SecondPinAccumulates(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "")
 	other := fakeClient()
 	h.clients[other] = struct{}{}
 
@@ -100,7 +100,7 @@ func TestHandlePin_UnpinClearsAndStillFansOut(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "")
 	_ = idx.SetChatMetadata("clutch", "app", 42, chatMetaPins, `["m7"]`)
 
 	other := fakeClient()
@@ -144,7 +144,7 @@ func TestHandlePin_EmptyMessageIDIsIgnored(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "")
 	_ = idx.SetChatMetadata("clutch", "app", 42, chatMetaPins, `["m7"]`)
 
 	h.handlePin(fakeClient(), fap.PinPut{ConversationID: "c1", MessageID: "", Pinned: true})
@@ -162,7 +162,7 @@ func TestHandlePin_ConcurrentTogglesKeepBoth(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "")
 
 	var wg sync.WaitGroup
 	for _, id := range []string{"m1", "m2", "m3", "m4"} {
@@ -198,9 +198,9 @@ func TestPushPins_ReplaysStoredSet(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
-	h.convs["c2"] = &convBinding{convID: "c2", agentID: "clutch", chatID: 43}
-	h.convs["c3"] = &convBinding{convID: "c3", agentID: "clutch", chatID: 44}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "")
+	h.convs["c2"] = withIdent(&convBinding{convID: "c2", chatID: 43}, "clutch", "")
+	h.convs["c3"] = withIdent(&convBinding{convID: "c3", chatID: 44}, "clutch", "")
 	_ = idx.SetChatMetadata("clutch", "app", 42, chatMetaPins, `["m1","m9"]`)
 	_ = idx.SetChatMetadata("clutch", "app", 43, chatMetaPins, session.EncodeChatSet(nil))
 
@@ -237,7 +237,7 @@ func TestHello_SeedsPinsToReconnectingDevice(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "")
 	_ = idx.SetChatMetadata("clutch", "app", 42, chatMetaPins, `["m7"]`)
 
 	mac := fakeClient()

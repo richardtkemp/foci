@@ -135,6 +135,14 @@ func RegisterSpawner(agentID string, s *Spawner) {
 	spawnersMu.Unlock()
 }
 
+// UnregisterSpawner forgets agentID's Spawner (the live stop of one agent,
+// #2787).
+func UnregisterSpawner(agentID string) {
+	spawnersMu.Lock()
+	delete(spawners, agentID)
+	spawnersMu.Unlock()
+}
+
 // SpawnBranchOwner is BranchOwner on the registered Spawner of branchKey's
 // agent; ok is false when the agent has none or branchKey is not a spawn.
 func SpawnBranchOwner(branchKey string) (owner string, ok bool) {

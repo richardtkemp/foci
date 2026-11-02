@@ -57,8 +57,9 @@ type cmdRegParams struct {
 	skillRegistry *skills.Registry
 
 	// Cross-agent
-	agentListFn  func() []command.AgentInfo
-	startAgentFn func(agentID string) ([]string, error) // /agents new live start (#963); nil = none
+	agentListFn   func() []command.AgentInfo
+	startAgentFn  func(agentID string) ([]string, error) // /agents new live start (#963); nil = none
+	renameAgentFn command.AgentRenameFn                  // /agents rename live rename (#2787); nil = none
 
 	// Platform
 	plat              *platform.Messaging
@@ -216,6 +217,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		BitwardenStore:        p.bwStore,
 		BitwardenEnabled:      p.cfg.Bitwarden.Enabled,
 		AgentListFn:           p.agentListFn,
+		AgentRenameFn:         p.renameAgentFn,
 		LastMessageStore:      lastMsgStore,
 		TodoStore:             p.todoStore,
 		ConfigSetDeps:         configSetDeps,

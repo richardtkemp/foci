@@ -227,10 +227,10 @@ func (h *Hub) resolveDeadPrompt(b *convBinding, promptID string, ph promptHistor
 	}
 
 	delivered := false
-	if conn := h.PrimaryBot(b.agentID); conn != nil && conn.routeLateAnswer != nil && raw != nil {
+	if conn := h.PrimaryBot(b.agent()); conn != nil && conn.routeLateAnswer != nil && raw != nil {
 		delivered = conn.routeLateAnswer(tools.LateAnswer{
 			PromptID:   promptID,
-			SessionKey: b.sessionKey,
+			SessionKey: b.key(),
 			AskedAt:    ph.askedAt,
 			Questions:  lateQuestions(ph.asked),
 			Answers:    raw,

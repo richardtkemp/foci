@@ -27,7 +27,7 @@ func TestDeliverAgentMessage_BoundSessionGetsFrameWithFromFields(t *testing.T) {
 	client := fakeClient()
 	b.attach(client)
 
-	DeliverAgentMessage(b.sessionKey, tools.AgentOrigin{SessionKey: "clutch/c111", AgentID: "clutch", Text: "what changed overnight?"})
+	DeliverAgentMessage(b.key(), tools.AgentOrigin{SessionKey: "clutch/c111", AgentID: "clutch", Text: "what changed overnight?"})
 
 	got := drain(t, client)
 	if len(got) != 1 || got[0].t != fap.TypeExternalPrompt {
@@ -109,7 +109,7 @@ func TestDeliverExternalPrompt_FrameCarriesNoFromKeys(t *testing.T) {
 	client := fakeClient()
 	b.attach(client)
 
-	DeliverExternalPrompt(b.sessionKey, "sent from the CLI")
+	DeliverExternalPrompt(b.key(), "sent from the CLI")
 
 	got := drain(t, client)
 	if len(got) != 1 || got[0].t != fap.TypeExternalPrompt {

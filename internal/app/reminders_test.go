@@ -73,7 +73,7 @@ func TestReminders_WakeShowsOnItsOwnChatAndTracksState(t *testing.T) {
 	drain(t, cb)
 	drain(t, co)
 
-	id, err := rs.AddWake("ag", a.sessionKey, "check the build", "30m")
+	id, err := rs.AddWake("ag", a.key(), "check the build", "30m")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestReminders_WakeShowsOnItsOwnChatAndTracksState(t *testing.T) {
 	}
 
 	// Fired, then held behind background work.
-	rs.MarkWakeFired(id, a.sessionKey)
+	rs.MarkWakeFired(id, a.key())
 	if g := reminderLists(t, ca); len(g) != 1 || g[0][0]["state"] != memory.WakeStateFired {
 		t.Fatalf("after fire = %v, want state fired", g)
 	}
@@ -157,10 +157,10 @@ func TestReminders_WakeFromALeafShowsOnTheLeaf(t *testing.T) {
 	client := fakeClientFor(h)
 	h.addClient(client)
 	root := h.ensureBinding(client, "ag", "conv-root")
-	lb := registerLeaf(t, h, root, root.sessionKey+"/b1", "leaf-1", "Point A")
+	lb := registerLeaf(t, h, root, root.key()+"/b1", "leaf-1", "Point A")
 	drain(t, client)
 
-	id, err := rs.AddWake("ag", lb.sessionKey, "check the leaf", "30m")
+	id, err := rs.AddWake("ag", lb.key(), "check the leaf", "30m")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,19 +211,19 @@ func TestReminders_ClosedLeafWakeShowsOnItsNewOwner(t *testing.T) {
 	client := fakeClientFor(h)
 	h.addClient(client)
 	root := h.ensureBinding(client, "ag", "conv-root")
-	lb := registerLeaf(t, h, root, root.sessionKey+"/b1", "leaf-1", "Point A")
+	lb := registerLeaf(t, h, root, root.key()+"/b1", "leaf-1", "Point A")
 	handedOver := false
 	prev := wakeOwner
 	wakeOwner = func(sk string) string {
-		if handedOver && sk == lb.sessionKey {
-			return root.sessionKey
+		if handedOver && sk == lb.key() {
+			return root.key()
 		}
 		return sk
 	}
 	t.Cleanup(func() { wakeOwner = prev })
 	drain(t, client)
 
-	id, err := rs.AddWake("ag", lb.sessionKey, "check the leaf", "30m")
+	id, err := rs.AddWake("ag", lb.key(), "check the leaf", "30m")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +278,7 @@ func TestReminders_RosterSeedsThePushCache(t *testing.T) {
 	// A wake that was pending before the "restart": set with the hook off, so
 	// no frame records it in the cache.
 	rs.SetOnChange(nil)
-	idA, err := rs.AddWake("ag", a.sessionKey, "pending across restart", "30m")
+	idA, err := rs.AddWake("ag", a.key(), "pending across restart", "30m")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +294,7 @@ func TestReminders_RosterSeedsThePushCache(t *testing.T) {
 	drain(t, cb)
 
 	// A change on chat B only.
-	if _, err := rs.AddWake("ag", b.sessionKey, "on b", "1h"); err != nil {
+	if _, err := rs.AddWake("ag", b.key(), "on b", "1h"); err != nil {
 		t.Fatal(err)
 	}
 	if g := reminderLists(t, ca); len(g) != 0 {

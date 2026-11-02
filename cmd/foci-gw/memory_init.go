@@ -85,7 +85,8 @@ type memorySystem struct {
 	agents         map[string]agentMemory
 	agentFTS5      map[string]*memory.Index      // per-agent mode
 	agentBleve     map[string]*memory.BleveIndex // per-agent mode
-	closers        []io.Closer
+	closers        []io.Closer                   // shared indices
+	agentClosers   map[string][]io.Closer        // each agent's stores and own indices: removeAgent closes them alone (#2787)
 	reindexStagger time.Duration
 	closed         bool
 	backfillWG     sync.WaitGroup
@@ -112,10 +113,37 @@ func (m *memorySystem) cleanup() {
 	m.mu.Lock()
 	closers := m.closers
 	m.closers = nil
+	perAgent := m.agentClosers
+	m.agentClosers = map[string][]io.Closer{}
 	m.mu.Unlock()
-	for i := len(closers) - 1; i >= 0; i-- {
-		_ = closers[i].Close()
+	for _, cs := range perAgent {
+		closeAll(cs)
 	}
+	closeAll(closers)
+}
+
+// closeAll closes cs in reverse order of opening.
+func closeAll(cs []io.Closer) {
+	for i := len(cs) - 1; i >= 0; i-- {
+		_ = cs[i].Close()
+	}
+}
+
+// removeAgent takes one agent out of the running memory system and closes
+// its stores and own indices: the live stop of that agent (#2787), after its
+// turns and backends have ended. Its rows in a SHARED index stay (they are
+// rows in a file every agent uses). A background backfill of its index still
+// running fails on the closed index and logs it.
+func (m *memorySystem) removeAgent(id string) {
+	m.mu.Lock()
+	delete(m.agents, id)
+	delete(m.agentFTS5, id)
+	delete(m.agentBleve, id)
+	closers := m.agentClosers[id]
+	delete(m.agentClosers, id)
+	m.mu.Unlock()
+	m.convReader.RemoveAgent(id)
+	closeAll(closers)
 }
 
 // openAgentStores creates an agent's standalone memory stores (reminder,
@@ -205,9 +233,14 @@ func parseMemoryDuration(s, label string) (time.Duration, error) {
 
 // startBackend registers b for cleanup, starts watching and sweeping, and
 // kicks off an async initial reindex, staggered after the indices before it.
-func (m *memorySystem) startBackend(label string, b memoryBackend, debounce, sweepInterval time.Duration) {
+// owner is the agent whose own index b is ("" for a shared one).
+func (m *memorySystem) startBackend(owner, label string, b memoryBackend, debounce, sweepInterval time.Duration) {
 	m.mu.Lock()
-	m.closers = append(m.closers, b)
+	if owner == "" {
+		m.closers = append(m.closers, b)
+	} else {
+		m.agentClosers[owner] = append(m.agentClosers[owner], b)
+	}
 	stagger := m.reindexStagger
 	m.reindexStagger += reindexStaggerStep
 	m.mu.Unlock()
@@ -236,7 +269,7 @@ func (m *memorySystem) startBackend(label string, b memoryBackend, debounce, swe
 // buildBackends creates the FTS5 and/or bleve backend for a set of sources
 // using the resolved memory settings. dbPath and blevePath must be fully
 // resolved absolute paths.
-func (m *memorySystem) buildBackends(label string, sources map[string]memory.SourceConfig, dbPath, blevePath string, rm config.ResolvedMemorySearch) (map[string]memory.Searcher, *memory.Index, *memory.BleveIndex, error) {
+func (m *memorySystem) buildBackends(owner, label string, sources map[string]memory.SourceConfig, dbPath, blevePath string, rm config.ResolvedMemorySearch) (map[string]memory.Searcher, *memory.Index, *memory.BleveIndex, error) {
 	backends := make(map[string]memory.Searcher)
 	var fts5Idx *memory.Index
 	var bleveIdx *memory.BleveIndex
@@ -257,7 +290,7 @@ func (m *memorySystem) buildBackends(label string, sources map[string]memory.Sou
 		}
 		idx.SetTemporalDecay(rm.TemporalDecay, rm.DecayHalfLife, rm.DecayBoost, rm.EvergreenPatterns) // #352
 		idx.SetSearchLimit(rm.SearchLimit)
-		m.startBackend(fmt.Sprintf("FTS5 (%s)", label), idx, debounce, sweepInterval)
+		m.startBackend(owner, fmt.Sprintf("FTS5 (%s)", label), idx, debounce, sweepInterval)
 		backends["fts5"] = idx
 		fts5Idx = idx
 	}
@@ -269,7 +302,7 @@ func (m *memorySystem) buildBackends(label string, sources map[string]memory.Sou
 		}
 		bidx.SetTemporalDecay(rm.TemporalDecay, rm.DecayHalfLife, rm.DecayBoost, rm.EvergreenPatterns) // #352
 		bidx.SetSearchLimit(rm.SearchLimit)
-		m.startBackend(fmt.Sprintf("bleve (%s)", label), bidx, debounce, sweepInterval)
+		m.startBackend(owner, fmt.Sprintf("bleve (%s)", label), bidx, debounce, sweepInterval)
 		backends["bleve"] = bidx
 		bleveIdx = bidx
 	}
@@ -287,6 +320,7 @@ func (m *memorySystem) buildAgentIndex(cfg *config.Config, acfg config.AgentConf
 	}
 	rm := resolvedMemorySettings(cfg, acfg)
 	backends, fts5Idx, bleveIdx, err := m.buildBackends(
+		acfg.ID,
 		fmt.Sprintf("agent %s", acfg.ID),
 		combined,
 		config.AgentDataPath(acfg.Workspace, "memory.db"),
@@ -413,7 +447,7 @@ func (m *memorySystem) addAgent(cfg *config.Config, acfg config.AgentConfig) (no
 		return "", fmt.Errorf("memory stores for %s already open", acfg.ID)
 	}
 	m.agents[acfg.ID] = am
-	m.closers = append(m.closers, closers...)
+	m.agentClosers[acfg.ID] = append(m.agentClosers[acfg.ID], closers...)
 	m.mu.Unlock()
 
 	if !m.enabled {
@@ -428,7 +462,7 @@ func (m *memorySystem) addAgent(cfg *config.Config, acfg config.AgentConfig) (no
 			m.mu.Lock()
 			delete(m.agents, acfg.ID)
 			m.mu.Unlock()
-			// The stores stay in closers; they close at shutdown with the rest.
+			// The stores stay in agentClosers; they close at shutdown with the rest.
 			return "", err
 		}
 		// Add under mu: cleanup sets closed under mu before it Waits, so an
@@ -464,6 +498,7 @@ func initMemorySystem(cfg *config.Config) *memorySystem {
 		agents:         make(map[string]agentMemory),
 		agentFTS5:      make(map[string]*memory.Index),
 		agentBleve:     make(map[string]*memory.BleveIndex),
+		agentClosers:   make(map[string][]io.Closer),
 	}
 
 	// Build global source map from [memory] config
@@ -482,7 +517,7 @@ func initMemorySystem(cfg *config.Config) *memorySystem {
 			log.Fatalf("main", "%v", err)
 		}
 		m.agents[acfg.ID] = am
-		m.closers = append(m.closers, closers...)
+		m.agentClosers[acfg.ID] = closers
 	}
 
 	if !m.enabled {
@@ -503,7 +538,7 @@ func initMemorySystem(cfg *config.Config) *memorySystem {
 		// Shared indices — no agent overrides memory settings.
 		// Resolve from global config (empty agent = no overrides).
 		rm := resolvedMemorySettings(cfg, config.AgentConfig{})
-		backends, fts5Idx, bleveIdx, err := m.buildBackends("shared", m.globalSources, cfg.DataPath("memory.db"), cfg.DataPath("search.bleve"), rm)
+		backends, fts5Idx, bleveIdx, err := m.buildBackends("", "shared", m.globalSources, cfg.DataPath("memory.db"), cfg.DataPath("search.bleve"), rm)
 		if err != nil {
 			log.Fatalf("main", "%v", err)
 		}

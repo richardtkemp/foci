@@ -104,8 +104,8 @@ func TestOpenSessionsForAgent_FromPersistedOpenSet(t *testing.T) {
 	h.storeOpenChats([]string{"cA", "cB", "cGhost"})
 
 	got := h.OpenSessionsForAgent("ag")
-	if len(got) != 1 || got[0] != bAg.sessionKey {
-		t.Fatalf("OpenSessionsForAgent(ag) = %v, want [%s]", got, bAg.sessionKey)
+	if len(got) != 1 || got[0] != bAg.key() {
+		t.Fatalf("OpenSessionsForAgent(ag) = %v, want [%s]", got, bAg.key())
 	}
 }
 

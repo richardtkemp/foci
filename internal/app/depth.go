@@ -83,10 +83,10 @@ func (l *leafView) observe(b *convBinding, frame fap.ServerFrame) {
 		return
 	}
 	if isText {
-		ctl.LeafText(b.sessionKey, text)
+		ctl.LeafText(b.key(), text)
 	}
 	if busyChanged {
-		ctl.LeafBusy(b.sessionKey, busy)
+		ctl.LeafBusy(b.key(), busy)
 	}
 }
 
@@ -181,10 +181,10 @@ func (h *Hub) registerDepthLeaf(rootKey, branchKey, leafID, title, convID string
 		// Written BEFORE ensureBinding, so sessionKeyForChat resolves the branch
 		// key from session_key and never writes registered=true: a leaf is not a
 		// routable chat (DefaultSessionKeyForAgentOn filters on that row).
-		_ = idx.SetChatMetadata(root.agentID, "app", chatID, "session_key", branchKey)
-		_ = idx.SetChatMetadata(root.agentID, "app", chatID, chatMetaDepthRoot, root.convID)
+		_ = idx.SetChatMetadata(root.agent(), "app", chatID, "session_key", branchKey)
+		_ = idx.SetChatMetadata(root.agent(), "app", chatID, chatMetaDepthRoot, root.convID)
 	}
-	b := h.ensureBinding(nil, root.agentID, convID)
+	b := h.ensureBinding(nil, root.agent(), convID)
 	root.mu.Lock()
 	rootFeatures := make(map[string]struct{}, len(root.features))
 	for f := range root.features {
@@ -199,8 +199,8 @@ func (h *Hub) registerDepthLeaf(rootKey, branchKey, leafID, title, convID string
 	}
 	b.depthRoot = root.convID
 	b.leaf = &leafView{rootConv: root.convID, id: leafID, title: title}
-	derived := b.sessionKey
-	b.sessionKey = branchKey
+	derived := b.key()
+	b.setIdent(b.agent(), branchKey)
 	b.mu.Unlock()
 	h.mu.Lock()
 	if derived != branchKey && h.bySession[derived] == b {
@@ -237,7 +237,7 @@ func (h *Hub) depthLeavesOf(root *convBinding) []*convBinding {
 	h.mu.RUnlock()
 	var out []*convBinding
 	for _, b := range all {
-		if b == root || b.agentID != root.agentID {
+		if b == root || b.agent() != root.agent() {
 			continue
 		}
 		b.mu.Lock()
@@ -261,13 +261,13 @@ func (h *Hub) syncDepthLeavesArchived(root *convBinding, archived bool) int {
 	if len(leaves) == 0 {
 		return 0
 	}
-	set := idx.ArchivedChatsForAgent(root.agentID, "app")
+	set := idx.ArchivedChatsForAgent(root.agent(), "app")
 	n := 0
 	for _, l := range leaves {
 		if set[l.chatID] == archived {
 			continue
 		}
-		if err := idx.SetArchivedChat(l.agentID, "app", l.chatID, archived); err != nil {
+		if err := idx.SetArchivedChat(l.agent(), "app", l.chatID, archived); err != nil {
 			appLog.Warnf("archive depth leaf %s with root %s (archived=%v): %v", l.convID, root.convID, archived, err)
 			continue
 		}
@@ -286,12 +286,12 @@ func (h *Hub) syncLeafArchived(root, leaf *convBinding) bool {
 	if idx == nil {
 		return false
 	}
-	set := idx.ArchivedChatsForAgent(root.agentID, "app")
+	set := idx.ArchivedChatsForAgent(root.agent(), "app")
 	want := set[root.chatID]
 	if set[leaf.chatID] == want {
 		return false
 	}
-	if err := idx.SetArchivedChat(leaf.agentID, "app", leaf.chatID, want); err != nil {
+	if err := idx.SetArchivedChat(leaf.agent(), "app", leaf.chatID, want); err != nil {
 		appLog.Warnf("archive depth leaf %s with root %s (archived=%v): %v", leaf.convID, root.convID, want, err)
 		return false
 	}
@@ -352,9 +352,9 @@ func (h *Hub) handleDepthAction(client *wsClient, convID, leafID string, ack boo
 	}
 	var err error
 	if ack {
-		err = ctl.Ack(b.sessionKey, leafID)
+		err = ctl.Ack(b.key(), leafID)
 	} else {
-		err = ctl.Dismiss(b.sessionKey, leafID)
+		err = ctl.Dismiss(b.key(), leafID)
 	}
 	if err != nil {
 		client.sendRaw(fap.ErrorFrame{ConversationID: convID, Code: "depth_refused", Message: err.Error()})

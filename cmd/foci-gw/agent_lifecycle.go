@@ -11,10 +11,12 @@ import (
 	"time"
 
 	"foci/internal/agent"
+	"foci/internal/agentrename"
 	"foci/internal/app"
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/convo"
+	"foci/internal/delegator"
 	"foci/internal/execguard"
 	"foci/internal/platform"
 	"foci/internal/provision"
@@ -51,6 +53,12 @@ type agentEnv struct {
 	// startAgentFn is the `/agents new` wizard's live start
 	// (liveAgentStarter.Start); nil until main has built the starter.
 	startAgentFn func(agentID string) ([]string, error)
+	// renameAgentFn is /agents rename's live rename (#2787); nil until main
+	// has built the starter.
+	renameAgentFn command.AgentRenameFn
+	// gracefulTimeout bounds how long a live stop waits for the agent's
+	// in-flight turns ([http] graceful_shutdown_timeout, as at shutdown).
+	gracefulTimeout time.Duration
 }
 
 // ensureAgentWorkspace creates the agent's workspace directories that the
@@ -84,6 +92,10 @@ func (e *agentEnv) buildAgent(acfg config.AgentConfig) *agentInstance {
 	}
 
 	am := e.mem.forAgent(acfg.ID)
+	// The agent's own context: everything its build starts runs under it,
+	// so a live stop of this agent ends it all (#2787) while the gateway
+	// context, and every other agent, runs on.
+	actx, cancel := context.WithCancel(e.ctx)
 	inst := setupAgent(setupParams{
 		acfg:            acfg,
 		cfg:             e.cfg,
@@ -107,16 +119,19 @@ func (e *agentEnv) buildAgent(acfg config.AgentConfig) *agentInstance {
 		globalTurnLimit: e.globalTurnLimit,
 		liveSessions:    e.liveSessions,
 		startTime:       e.startTime,
-		ctx:             e.ctx,
+		ctx:             actx,
 		agentListFn:     e.agentListFn,
 		agentResolverFn: e.agentResolverFn,
 		startAgentFn:    e.startAgentFn,
+		renameAgentFn:   e.renameAgentFn,
 		connMgr:         e.connMgr,
 		plat:            e.plat,
 	})
 	if inst == nil {
+		cancel()
 		return nil
 	}
+	inst.cancel = cancel
 
 	// Restore per-session model/effort/thinking/etc. overrides for every
 	// session (root AND branch) that has persisted metadata. Querying
@@ -142,7 +157,7 @@ func (e *agentEnv) buildAgent(acfg config.AgentConfig) *agentInstance {
 		connMgr:               e.connMgr,
 		sessionIndex:          e.si.sessionIndex,
 		todoStore:             am.todos,
-		ctx:                   e.ctx,
+		ctx:                   actx,
 		resolveEndpointClient: e.clients.ResolveEndpointClient,
 	})
 
@@ -303,6 +318,17 @@ type liveAgentStarter struct {
 	// push, the restore phases.
 	start func(inst *agentInstance)
 
+	// The live stop and rename (#2787, agent_rename_live.go). teardown stops
+	// one unregistered agent (agentEnv.stopLive); renameDisk is the disk
+	// rename (agentrename.Run); renamePlatforms re-points the platforms'
+	// per-conversation state (Messaging.RenameAgent); renameNote is a reply
+	// hint about the agent to rename ("" for none).
+	teardown        func(inst *agentInstance)
+	renameDisk      func(ctx context.Context, o agentrename.Options) error
+	renamePlatforms func(old, new string)
+	renameNote      func(old string) string
+
+	// mu serialises every live start, stop and rename.
 	mu     sync.Mutex
 	closed bool
 }
@@ -320,9 +346,19 @@ func (s *liveAgentStarter) Start(id string) ([]string, error) {
 	if s.closed {
 		return nil, errShuttingDown
 	}
+	return s.startAt(id, -1)
+}
+
+// startAt is Start under s.mu, with the agent placed at slot in the agent
+// order (-1: at the end). A live rename starts the new id in the old one's
+// slot, so the default (first) agent stays the default.
+func (s *liveAgentStarter) startAt(id string, slot int) ([]string, error) {
 	if err := s.agents.reserve(id); err != nil {
 		return nil, err
 	}
+	// id runs again under its own name: a rename recorded under it (an
+	// earlier agent renamed away from id) no longer applies.
+	gwAgentRenames.forget(id)
 	published := false
 	defer func() {
 		if !published {
@@ -347,7 +383,7 @@ func (s *liveAgentStarter) Start(id string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := s.agents.commit(inst); err != nil {
+	if err := s.agents.commitAt(inst, slot); err != nil {
 		return nil, err
 	}
 	published = true
@@ -386,6 +422,14 @@ func newLiveAgentStarter(e *agentEnv, agents *agentRegistry, load func() (*confi
 			}
 			warnHook.install()
 		},
+		teardown: func(inst *agentInstance) {
+			e.stopLive(inst, e.gracefulTimeout)
+		},
+		renameDisk: renameDiskFn(e.configPath, delegator.RegisteredNames()),
+		renamePlatforms: func(old, new string) {
+			e.plat.RenameAgent(old, new, renameKeyFn(old, new))
+		},
+		renameNote: sharedFacetNote(e.cfg, agents),
 	}
 }
 

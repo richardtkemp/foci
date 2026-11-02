@@ -116,7 +116,7 @@ func TestPushNotify_SkipsLeafOfViewedRoot(t *testing.T) {
 	p, rec := newRecordingPusher(t, tk)
 	h.pusher = p
 	root := h.ensureBinding(nil, "ag", "c1")
-	leafConv, err := h.registerDepthLeaf(root.sessionKey, root.sessionKey+"/b1", "leaf-1", "A", "")
+	leafConv, err := h.registerDepthLeaf(root.key(), root.key()+"/b1", "leaf-1", "A", "")
 	if err != nil {
 		t.Fatal(err)
 	}

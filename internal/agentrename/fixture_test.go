@@ -84,45 +84,24 @@ type fixture struct {
 	root, data, cfgPath   string
 	secretsPath, sessions string
 	cron                  *fakeCron
-	priv                  *fakePriv
 }
 
-type fakeCron struct{ content string }
+// fakeCron is the crontab: Install replaces content, or fails when fail is set.
+type fakeCron struct {
+	content  string
+	fail     bool
+	installs int
+}
 
 func (c *fakeCron) Read() (string, error) { return c.content, nil }
 
-// fakePriv stands in for sudo: it records every command and runs the few the
-// rename uses (cat, tee, crontab -u U -) without privileges; decline makes
-// every call fail like a declined approval.
-type fakePriv struct {
-	decline bool
-	cron    *fakeCron
-	calls   [][]string
-}
-
-func (f *fakePriv) Run(argv []string, stdin []byte) ([]byte, error) {
-	f.calls = append(f.calls, argv)
-	if f.decline {
-		return nil, errors.New("sudo: request declined by the approver")
+func (c *fakeCron) Install(content string) error {
+	if c.fail {
+		return errors.New("crontab: simulated install failure")
 	}
-	switch {
-	case argv[0] == "cat" && len(argv) == 2:
-		return os.ReadFile(argv[1])
-	case argv[0] == "tee" && len(argv) == 2:
-		fh, err := os.OpenFile(argv[1], os.O_WRONLY|os.O_TRUNC, 0)
-		if err != nil {
-			return nil, err
-		}
-		_, err = fh.Write(stdin)
-		if cerr := fh.Close(); err == nil {
-			err = cerr
-		}
-		return stdin, err
-	case argv[0] == "crontab" && len(argv) == 4 && argv[1] == "-u" && argv[3] == "-":
-		f.cron.content = string(stdin)
-		return nil, nil
-	}
-	return nil, fmt.Errorf("fake sudo: unexpected command %v", argv)
+	c.installs++
+	c.content = content
+	return nil
 }
 
 func must(t *testing.T, err error) {
@@ -165,25 +144,6 @@ func newFixture(t *testing.T) *fixture {
 	return newFixtureAt(t, t.TempDir())
 }
 
-// shortRoot is a temp root short enough for a Unix socket path inside it
-// (macOS caps a socket path at 104 bytes; the test temp dirs are longer).
-func shortRoot(t *testing.T) string {
-	const sockRel = "/data/foci-gw.sock"
-	for _, base := range []string{os.TempDir(), "/tmp"} {
-		dir, err := os.MkdirTemp(base, "ar")
-		if err != nil {
-			continue
-		}
-		t.Cleanup(func() { _ = os.RemoveAll(dir) })
-		real, err := filepath.EvalSymlinks(dir)
-		must(t, err)
-		if len(real)+len(sockRel) < 100 {
-			return real
-		}
-	}
-	return t.TempDir() // the socket case skips itself if the path is too long
-}
-
 func newFixtureAt(t *testing.T, root string) *fixture {
 	for k, v := range map[string]string{
 		"FOCI_HOME": root, "HOME": root, "FOCI_CONFIG": "",
@@ -197,7 +157,6 @@ func newFixtureAt(t *testing.T, root string) *fixture {
 		cfgPath: filepath.Join(root, "config", "foci.toml"), secretsPath: filepath.Join(root, "config", "secrets.toml")}
 	f.sessions = filepath.Join(f.data, "sessions")
 	f.cron = &fakeCron{content: fmt.Sprintf(fixtureCrontab, root)}
-	f.priv = &fakePriv{cron: f.cron}
 	writeFile(t, f.cfgPath, []byte(fmt.Sprintf(fixtureConfig, root)))
 	writeFile(t, f.secretsPath, []byte(fixtureSecrets))
 	must(t, os.Chmod(f.secretsPath, 0o660))
@@ -334,12 +293,7 @@ func (f *fixture) run(o Options) (string, error) {
 		o.Old, o.New = "bob", "rob"
 	}
 	o.Out = &out
-	o.Priv = f.priv
 	o.Crontab = f.cron
-	o.CrontabUser = "foci"
-	if !o.PlanOnly && !o.Interactive {
-		o.Yes = true
-	}
 	o.Now = func() time.Time { return time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC) }
 	err := Run(context.Background(), o)
 	return out.String(), err

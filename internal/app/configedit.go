@@ -537,5 +537,5 @@ func (h *Hub) buildConfigSchema(errMsg string) fap.ConfigSchema {
 // agentIDReadOnlyError is the editor's refusal of an agent-id edit: it names
 // the rename command for the agent in scope.
 func agentIDReadOnlyError(scope string) error {
-	return fmt.Errorf("the agent id is read-only here: changing it would orphan the agent's sessions, databases, bots and cron jobs. To rename an agent, stop the gateway and run: %s", config.RenameAgentCommand(scope))
+	return fmt.Errorf("the agent id is read-only here: changing it would orphan the agent's sessions, databases, bots and cron jobs. To rename an agent, send: %s", config.RenameAgentCommand(scope))
 }

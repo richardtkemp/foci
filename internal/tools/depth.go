@@ -1635,6 +1635,15 @@ func registerDepthManager(agentID string, m *DepthManager) {
 	depthMgrMu.Unlock()
 }
 
+// UnregisterDepthManager forgets agentID's depth manager: the live stop of
+// that agent (#2787). Its trees stay on disk; the agent's next start (the
+// renamed agent's, after a live rename) rebuilds them (DepthRestore).
+func UnregisterDepthManager(agentID string) {
+	depthMgrMu.Lock()
+	delete(depthMgrs, agentID)
+	depthMgrMu.Unlock()
+}
+
 // InDepthLeaf reports whether sessionKey is a leaf of a depth tree (open or
 // reported; the root chat is not a leaf). A leaf's chat belongs to the tree,
 // so tools that act on "this chat" check it (#2623: close_session).

@@ -128,7 +128,7 @@ func (h *Hub) sendWizardStep(s *wizardSession, promptText string, media *fap.Wiz
 	s.step = *q
 	s.answering = false
 	h.wizardMu.Unlock()
-	h.persistWizardSessions(s.b.agentID)
+	h.persistWizardSessions(s.b.agent())
 	s.b.send(fap.WizardStep{
 		ConversationID: s.b.convID,
 		WizardID:       s.id,
@@ -235,7 +235,7 @@ func (h *Hub) endWizard(s *wizardSession, status, text string) {
 		delete(h.wizardByScope, s.scope)
 	}
 	h.wizardMu.Unlock()
-	h.persistWizardSessions(s.b.agentID)
+	h.persistWizardSessions(s.b.agent())
 	s.b.send(fap.WizardEnd{ConversationID: s.b.convID, WizardID: s.id, Status: status, Text: text})
 	appLog.Debugf("wizard ended (conv=%s): id=%s status=%s", s.b.convID, s.id, status)
 }
@@ -263,7 +263,7 @@ func (h *Hub) persistWizardSessions(agentID string) {
 	h.wizardMu.Lock()
 	saved := make(map[string]persistedWizardSession)
 	for id, s := range h.wizards {
-		if s.b.agentID != agentID {
+		if s.b.agent() != agentID {
 			continue
 		}
 		saved[id] = persistedWizardSession{

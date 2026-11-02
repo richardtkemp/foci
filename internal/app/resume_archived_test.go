@@ -22,14 +22,11 @@ func TestResumeConversations_SkipsArchivedButStaysAttached(t *testing.T) {
 	h.deps = platform.ProviderDeps{SessionIndex: newTestIndex(t)}
 
 	mkBinding := func(convID string, chatID int64, seqs ...int64) *convBinding {
-		b := &convBinding{
-			convID:     convID,
-			sessionKey: "ag/" + convID,
-			agentID:    "ag",
-			chatID:     chatID,
-			seen:       map[string]struct{}{},
-			clients:    map[*wsClient]struct{}{},
-		}
+		b := withIdent(&convBinding{
+			convID:  convID,
+			chatID:  chatID,
+			seen:    map[string]struct{}{},
+			clients: map[*wsClient]struct{}{}}, "ag", "ag/"+convID)
 		for _, sq := range seqs {
 			b.buffer = append(b.buffer, bufferedFrame{seq: sq, wire: mkWire(t, convID, sq), sent: time.Now()})
 			b.seq = sq

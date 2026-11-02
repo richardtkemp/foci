@@ -936,7 +936,7 @@ func TestAppConn_NewTurnSink_VoiceModeAttachmentEndToEnd(t *testing.T) {
 	b.attach(client)
 
 	conn := &appConn{hub: h, agentID: agentID, tts: &mockVoiceTTS{data: []byte("synth-bytes")}}
-	sink, cleanup := conn.NewTurnSink(agent.Envelope{SessionKey: b.sessionKey})
+	sink, cleanup := conn.NewTurnSink(agent.Envelope{SessionKey: b.key()})
 	if sink == nil {
 		t.Fatal("NewTurnSink returned a nil sink for a live binding")
 	}
@@ -975,11 +975,11 @@ func TestAppConn_NewTurnSink_VoiceModeAttachmentEndToEnd(t *testing.T) {
 func TestSendToSession_EmitsMessageFrame(t *testing.T) {
 	h := newTestHub()
 	c := fakeClient()
-	b := &convBinding{convID: "c1", sessionKey: "ag/c7", clients: map[*wsClient]struct{}{c: {}}}
-	h.bySession[b.sessionKey] = b
+	b := withIdent(&convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}, "", "ag/c7")
+	h.bySession[b.key()] = b
 
 	conn := &appConn{hub: h, agentID: "ag"}
-	if err := conn.SendToSession(b.sessionKey, "hi there"); err != nil {
+	if err := conn.SendToSession(b.key(), "hi there"); err != nil {
 		t.Fatal(err)
 	}
 	got := drain(t, c)
@@ -997,15 +997,15 @@ func TestSendToSession_EmitsMessageFrame(t *testing.T) {
 func TestEditableMessage_SendThenEditInPlace(t *testing.T) {
 	h := newTestHub()
 	c := fakeClient()
-	b := &convBinding{convID: "c1", sessionKey: "ag/c7", clients: map[*wsClient]struct{}{c: {}}}
-	h.bySession[b.sessionKey] = b
+	b := withIdent(&convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}, "", "ag/c7")
+	h.bySession[b.key()] = b
 
 	var conn platform.SessionMessageEditor = &appConn{hub: h, agentID: "ag"}
-	id, err := conn.SendEditableToSession(b.sessionKey, "link one")
+	id, err := conn.SendEditableToSession(b.key(), "link one")
 	if err != nil || id == "" {
 		t.Fatalf("SendEditableToSession = %q, %v", id, err)
 	}
-	if err := conn.EditSessionMessage(b.sessionKey, id, "link two"); err != nil {
+	if err := conn.EditSessionMessage(b.key(), id, "link two"); err != nil {
 		t.Fatal(err)
 	}
 	got := drain(t, c)
@@ -1030,7 +1030,7 @@ func TestSendToSession_FallsBackToDefaultChat(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := fakeClient()
-	def := &convBinding{convID: "cdef", sessionKey: "ag/cdef/9", agentID: "ag", chatID: 42, clients: map[*wsClient]struct{}{c: {}}}
+	def := withIdent(&convBinding{convID: "cdef", chatID: 42, clients: map[*wsClient]struct{}{c: {}}}, "ag", "ag/cdef/9")
 	h.convs[def.convID] = def
 
 	conn := &appConn{hub: h, agentID: "ag"}
@@ -1060,7 +1060,7 @@ func TestSendToSession_MisdeliveryBannerShapeAndBlindSendUnwrapped(t *testing.T)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
 	c := fakeClient()
-	def := &convBinding{convID: "cland", sessionKey: "ag/cland", agentID: "ag", chatID: 7, clients: map[*wsClient]struct{}{c: {}}}
+	def := withIdent(&convBinding{convID: "cland", chatID: 7, clients: map[*wsClient]struct{}{c: {}}}, "ag", "ag/cland")
 	h.convs[def.convID] = def
 	conn := &appConn{hub: h, agentID: "ag"}
 
@@ -1096,7 +1096,7 @@ func TestSendToSession_StaleDefaultFallsToLatest(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := fakeClient()
-	other := &convBinding{convID: "cother", sessionKey: "ag/c99", agentID: "ag", chatID: 99, clients: map[*wsClient]struct{}{c: {}}}
+	other := withIdent(&convBinding{convID: "cother", chatID: 99, clients: map[*wsClient]struct{}{c: {}}}, "ag", "ag/c99")
 	h.convs[other.convID] = other
 
 	conn := &appConn{hub: h, agentID: "ag"}
@@ -1165,8 +1165,8 @@ func TestDeliverBinding_SkipsArchived(t *testing.T) {
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
 
-	live := &convBinding{convID: "clive", sessionKey: "ag/c42", agentID: "ag", chatID: 42, lastActMs: 1000}
-	arch := &convBinding{convID: "carch", sessionKey: "ag/c99", agentID: "ag", chatID: 99, lastActMs: 2000}
+	live := withIdent(&convBinding{convID: "clive", chatID: 42, lastActMs: 1000}, "ag", "ag/c42")
+	arch := withIdent(&convBinding{convID: "carch", chatID: 99, lastActMs: 2000}, "ag", "ag/c99")
 	h.convs[live.convID] = live
 	h.convs[arch.convID] = arch
 	if err := idx.SetArchivedChat("ag", "app", 99, true); err != nil {
@@ -1209,8 +1209,8 @@ func TestNotifyUnbound_TargetsDefaultConversationOnly(t *testing.T) {
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
 	cDef, cOther := fakeClient(), fakeClient()
-	def := &convBinding{convID: "cdef", sessionKey: "ag/c42", agentID: "ag", chatID: 42, clients: map[*wsClient]struct{}{cDef: {}}}
-	other := &convBinding{convID: "cother", sessionKey: "ag/c99", agentID: "ag", chatID: 99, clients: map[*wsClient]struct{}{cOther: {}}}
+	def := withIdent(&convBinding{convID: "cdef", chatID: 42, clients: map[*wsClient]struct{}{cDef: {}}}, "ag", "ag/c42")
+	other := withIdent(&convBinding{convID: "cother", chatID: 99, clients: map[*wsClient]struct{}{cOther: {}}}, "ag", "ag/c99")
 	h.convs[def.convID] = def
 	h.convs[other.convID] = other
 	if err := idx.SetDefaultChat("ag", "app", 42); err != nil {
@@ -1232,11 +1232,11 @@ func TestNotifyUnbound_TargetsDefaultConversationOnly(t *testing.T) {
 func TestSendToSession_SilentSuppressed(t *testing.T) {
 	h := newTestHub()
 	c := fakeClient()
-	b := &convBinding{convID: "c1", sessionKey: "ag/c7", clients: map[*wsClient]struct{}{c: {}}}
-	h.bySession[b.sessionKey] = b
+	b := withIdent(&convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}, "", "ag/c7")
+	h.bySession[b.key()] = b
 
 	conn := &appConn{hub: h, agentID: "ag"}
-	_ = conn.SendToSession(b.sessionKey, "  [[NO_RESPONSE]]  ")
+	_ = conn.SendToSession(b.key(), "  [[NO_RESPONSE]]  ")
 	if got := drain(t, c); len(got) != 0 {
 		t.Fatalf("silent send must emit nothing, got %v", types(got))
 	}
@@ -1299,10 +1299,10 @@ func boundConn(t *testing.T) (*Hub, *wsClient, *convBinding, *appConn) {
 	h := newTestHub()
 	c := fakeClient()
 	c.hub = h
-	b := &convBinding{convID: "c1", sessionKey: "ag/c7", clients: map[*wsClient]struct{}{c: {}}, chatID: 7}
-	h.bySession[b.sessionKey] = b
+	b := withIdent(&convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}, chatID: 7}, "", "ag/c7")
+	h.bySession[b.key()] = b
 	c.convByID["c1"] = b
-	conn := &appConn{hub: h, agentID: "ag", bound: b.sessionKey}
+	conn := &appConn{hub: h, agentID: "ag", bound: b.key()}
 	return h, c, b, conn
 }
 
@@ -2697,7 +2697,7 @@ func TestConversationOpen_AdoptsNamedSession(t *testing.T) {
 	for _, bb := range h.convs {
 		b = bb
 	}
-	if b == nil || b.sessionKey != sk {
+	if b == nil || b.key() != sk {
 		t.Fatalf("adopted sessionKey = %v, want %q", b, sk)
 	}
 	if h.bySession[sk] != b {
@@ -2754,7 +2754,7 @@ func TestServePushRegister_UpdatesToken(t *testing.T) {
 func TestServeHistory_ReportsSeqHighWater(t *testing.T) {
 	h := newTestHub()
 	d := h.devices.pair("dev", "")
-	b := &convBinding{convID: "c1", agentID: "ag", sessionKey: "ag/c1", seq: 42, seen: map[string]struct{}{}}
+	b := withIdent(&convBinding{convID: "c1", seq: 42, seen: map[string]struct{}{}}, "ag", "ag/c1")
 	h.convs["c1"] = b
 
 	req := httptest.NewRequest(http.MethodGet, "/app/history?conversationId=c1", nil)
@@ -2851,12 +2851,12 @@ func TestSendTextWithButtons_SetsExpiresAt(t *testing.T) {
 
 func TestAdoptSession_RejectsForeignAgentKey(t *testing.T) {
 	h := newTestHub()
-	b := &convBinding{convID: "c1", agentID: "ag", sessionKey: "ag/c1", seen: map[string]struct{}{}}
+	b := withIdent(&convBinding{convID: "c1", seen: map[string]struct{}{}}, "ag", "ag/c1")
 	h.convs["c1"] = b
 	h.bySession["ag/c1"] = b
 	h.adoptSession(b, "other/iwork") // belongs to a different agent
-	if b.sessionKey != "ag/c1" {
-		t.Errorf("foreign-agent key must be rejected, sessionKey = %q", b.sessionKey)
+	if b.key() != "ag/c1" {
+		t.Errorf("foreign-agent key must be rejected, sessionKey = %q", b.key())
 	}
 }
 

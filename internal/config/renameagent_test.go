@@ -116,7 +116,7 @@ id = "bobby"
 	if len(refs) != 2 || refs[0].Line != 1 || refs[1].Line != 6 {
 		t.Errorf("FindPathRefs = %+v, want lines 1 and 6", refs)
 	}
-	if !strings.Contains(RenameAgentCommand("bob"), "foci rename-agent bob <new-id>") {
+	if !strings.Contains(RenameAgentCommand("bob"), "/agents rename bob <new-id>") {
 		t.Error(RenameAgentCommand("bob"))
 	}
 }

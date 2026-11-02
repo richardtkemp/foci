@@ -21,14 +21,14 @@ func TestCloseSessionConversations_RemovesOnlyThisSessionAndBroadcasts(t *testin
 	mine := sweepBinding(h, "mine", time.Minute, now)
 	sweepBinding(h, "otherSession", time.Minute, now)
 	foreign := sweepBinding(h, "foreignAgent", time.Minute, now)
-	foreign.agentID = "cam"
-	foreign.sessionKey = mine.sessionKey
+	foreign.setIdent("cam", foreign.key())
+	foreign.setIdent(foreign.agent(), mine.key())
 	c1, c2 := fakeClient(), fakeClient()
 	h.clients[c1] = struct{}{}
 	h.clients[c2] = struct{}{}
 	h.storeOpenChats([]string{"otherSession", "mine", "foreignAgent", "unbound"})
 
-	if n := h.closeSessionConversations("clutch", mine.sessionKey); n != 1 {
+	if n := h.closeSessionConversations("clutch", mine.key()); n != 1 {
 		t.Fatalf("closed = %d, want 1", n)
 	}
 
@@ -52,12 +52,12 @@ func TestCloseSessionConversations_NotOpenIsANoop(t *testing.T) {
 	mine := sweepBinding(h, "mine", time.Minute, now)
 	sweepBinding(h, "other", time.Minute, now)
 	blank := sweepBinding(h, "blank", time.Minute, now)
-	blank.sessionKey = ""
+	blank.setIdent(blank.agent(), "")
 	c := fakeClient()
 	h.clients[c] = struct{}{}
 	h.storeOpenChats([]string{"other", "blank"})
 
-	if n := h.closeSessionConversations("clutch", mine.sessionKey); n != 0 {
+	if n := h.closeSessionConversations("clutch", mine.key()); n != 0 {
 		t.Errorf("closed = %d, want 0 for a chat that is not open", n)
 	}
 	if n := h.closeSessionConversations("clutch", ""); n != 0 {
@@ -81,7 +81,7 @@ func TestCloseSessionConversations_LastChatStoresEmptyList(t *testing.T) {
 	h.clients[c] = struct{}{}
 	h.storeOpenChats([]string{"mine"})
 
-	if n := h.closeSessionConversations("clutch", mine.sessionKey); n != 1 {
+	if n := h.closeSessionConversations("clutch", mine.key()); n != 1 {
 		t.Fatalf("closed = %d, want 1", n)
 	}
 	if raw, _ := idx.GetSystemState(systemStateOpenChats); raw != "[]" {
@@ -98,7 +98,7 @@ func markReadHub(t *testing.T) (h *Hub, b *convBinding, onChat, elsewhere *wsCli
 	t.Helper()
 	h, idx := sweepHub(t, nil)
 	b = sweepBinding(h, "mine", time.Minute, time.Now())
-	h.bySession[b.sessionKey] = b
+	h.bySession[b.key()] = b
 	onChat, elsewhere = fakeClient(), fakeClient()
 	b.clients = map[*wsClient]struct{}{onChat: {}}
 	h.clients[onChat] = struct{}{}
@@ -121,7 +121,7 @@ func TestMarkSessionRead_IdleMarksLatestNow(t *testing.T) {
 	b.send(fap.Notification{ConversationID: b.convID, MessageID: "01J00000000000000000000009", Text: "skill", Ambient: true})
 	drain(t, onChat)
 
-	if n := h.markSessionRead("clutch", b.sessionKey); n != 1 {
+	if n := h.markSessionRead("clutch", b.key()); n != 1 {
 		t.Fatalf("marked = %d, want 1", n)
 	}
 	const want = "01J00000000000000000000002" // the ambient line is not a message row
@@ -148,7 +148,7 @@ func TestMarkSessionRead_InTurnWaitsForFinalReply(t *testing.T) {
 	// either side of the reply's, and production has seconds between them.
 	b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: "01J00000000000000000000001", Role: "user", Text: "ot"})
 	s.Emit(ctx, turnevent.TurnStart{})
-	if n := h.markSessionRead("clutch", b.sessionKey); n != 1 {
+	if n := h.markSessionRead("clutch", b.key()); n != 1 {
 		t.Fatalf("marked = %d, want 1", n)
 	}
 	if got := getRead(); got != "" {
@@ -211,7 +211,7 @@ func TestMarkSessionRead_WithoutItTheReplyStaysUnread(t *testing.T) {
 func TestMarkSessionRead_NoMatch(t *testing.T) {
 	h, b, _, elsewhere, _ := markReadHub(t)
 	b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: fap.NewULID(), Role: "agent", Text: "x"})
-	for _, tc := range []struct{ agent, key string }{{"cam", b.sessionKey}, {"clutch", "clutch/c999"}, {"clutch", ""}} {
+	for _, tc := range []struct{ agent, key string }{{"cam", b.key()}, {"clutch", "clutch/c999"}, {"clutch", ""}} {
 		if n := h.markSessionRead(tc.agent, tc.key); n != 0 {
 			t.Errorf("markSessionRead(%q, %q) = %d, want 0", tc.agent, tc.key, n)
 		}
@@ -235,7 +235,7 @@ func TestMarkSessionRead_CoversRepliesAfterTheCall(t *testing.T) {
 	s.Emit(ctx, turnevent.TurnStart{})
 	s.Emit(ctx, turnevent.TextBlock{Text: "Nothing outstanding.", Phase: turnevent.PhaseIntermediate})
 	s.Emit(ctx, turnevent.ToolCall{Name: "close_session", Args: []byte(`{"mark_read":true}`)})
-	if n := h.markSessionRead("clutch", b.sessionKey); n != 1 {
+	if n := h.markSessionRead("clutch", b.key()); n != 1 {
 		t.Fatalf("marked = %d, want 1", n)
 	}
 	s.Emit(ctx, turnevent.ToolResult{})
@@ -282,17 +282,17 @@ func TestSessionChatClosed(t *testing.T) {
 	open := sweepBinding(h, "open", time.Minute, now)
 	shut := sweepBinding(h, "shut", time.Minute, now)
 	foreign := sweepBinding(h, "foreign", time.Minute, now)
-	foreign.agentID = "cam"
+	foreign.setIdent("cam", foreign.key())
 	h.storeOpenChats([]string{"open", "foreign"})
 
 	for _, tc := range []struct {
 		name, agent, sk     string
 		wantClosed, wantKnw bool
 	}{
-		{"open chat", "clutch", open.sessionKey, false, true},
-		{"closed chat", "clutch", shut.sessionKey, true, true},
+		{"open chat", "clutch", open.key(), false, true},
+		{"closed chat", "clutch", shut.key(), true, true},
 		{"no app chat", "clutch", "clutch/c999", false, false},
-		{"other agent's binding", "clutch", foreign.sessionKey, false, false},
+		{"other agent's binding", "clutch", foreign.key(), false, false},
 	} {
 		closed, known := h.sessionChatClosed(tc.agent, tc.sk)
 		if closed != tc.wantClosed || known != tc.wantKnw {

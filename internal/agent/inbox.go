@@ -632,6 +632,7 @@ func (a *Agent) StartInbox(ctx context.Context) {
 	if a.inboxStarted {
 		return
 	}
+	ctx, a.inboxCancel = context.WithCancel(ctx)
 	a.inboxCtx = ctx
 	if a.inboxes == nil {
 		a.inboxes = make(map[string]*sessionInbox)
@@ -647,6 +648,20 @@ func (a *Agent) StartInbox(ctx context.Context) {
 	}
 	// Idle-inbox reaper (#2283): exits with the workers on ctx.
 	go a.inboxReaper(ctx)
+}
+
+// StopInbox ends the session workers and the idle reaper, for the live stop
+// of this one agent (#2787); the rest of the process runs on. Call it after
+// the agent's turns have drained and its backends closed: an envelope
+// enqueued afterwards is never processed (the agent is no longer
+// registered, so nothing routes to it). The inbox is not started again.
+func (a *Agent) StopInbox() {
+	a.inboxesMu.Lock()
+	cancel := a.inboxCancel
+	a.inboxesMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 // Enqueue accepts a fully-resolved envelope and routes it to the right

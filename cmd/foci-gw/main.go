@@ -411,6 +411,7 @@ Subcommands:
 		plat:            plat,
 		agentListFn:     agentListFn,
 		agentResolverFn: agentResolverFn,
+		gracefulTimeout: gracefulTimeout(cfg),
 	}
 	// The live start for /agents new. Its wiring (the warning hook) exists
 	// only after the agent loop, so the wizard reaches it through this
@@ -423,6 +424,8 @@ Subcommands:
 		}
 		return starter.Start(agentID)
 	}
+	// /agents rename (#2787) reaches the same starter, late-bound the same way.
+	env.renameAgentFn = newRenameCommandFn(ctx, func() *liveAgentStarter { return starter }, agents, connMgr)
 
 	for _, acfg := range cfg.Agents {
 		if reason, skip := skipAgents[acfg.ID]; skip {
@@ -725,10 +728,16 @@ Subcommands:
 	// snapshot below includes it.
 	starter.close()
 
-	shutdownTimeout, _ := time.ParseDuration(cfg.HTTP.GracefulShutdownTimeout)
-	if shutdownTimeout == 0 {
-		shutdownTimeout = 30 * time.Second
-	}
 	runShutdown(agents.Snapshot(), httpServer, &httpMu, connMgr, clients, si.sessionIndex,
-		shutdownConfig{gracefulTimeout: shutdownTimeout, ctx: ctx, stopHeartbeat: hbCancel}, cancel)
+		shutdownConfig{gracefulTimeout: gracefulTimeout(cfg), ctx: ctx, stopHeartbeat: hbCancel}, cancel)
+}
+
+// gracefulTimeout is how long a stop waits for in-flight turns: the whole
+// shutdown's drain, and a live stop of one agent (#2787).
+func gracefulTimeout(cfg *config.Config) time.Duration {
+	d, _ := time.ParseDuration(cfg.HTTP.GracefulShutdownTimeout)
+	if d == 0 {
+		d = 30 * time.Second
+	}
+	return d
 }

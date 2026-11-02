@@ -192,6 +192,23 @@ func OpenAgent(agentID, path string) (closeLog func(), err error) {
 	}, nil
 }
 
+// CloseAgent unregisters and closes agentID's conversation log, whether boot
+// (InitPerAgent) or a hot-add (OpenAgent) opened it: the live stop of one
+// agent (#2787). Its sessions' entries then go to the fallback log, if any.
+// No-op for an agent with no open log.
+func CloseAgent(agentID string) {
+	logsMu.Lock()
+	cl := convLogs[agentID]
+	delete(convLogs, agentID)
+	if cl != nil && convFallback == cl {
+		convFallback = nil
+	}
+	logsMu.Unlock()
+	if cl != nil {
+		_ = cl.db.Close()
+	}
+}
+
 // Close closes all conversation log databases.
 func Close() {
 	logsMu.Lock()

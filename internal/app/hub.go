@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -104,6 +105,10 @@ type Hub struct {
 	mu         sync.RWMutex
 	agents     map[string]*appConn // agentID → its connection
 	agentOrder []string            // registration order (for default-agent resolution)
+	// stoppedSlot: agentID → its place in agentOrder when StopAgent removed
+	// it, so a live rename can give the new id the same place (the first
+	// agent is the default one, #2787). Guarded by mu.
+	stoppedSlot map[string]int
 	// agentCfgs holds each registered agent's config (agentID →
 	// config.AgentConfig), written by setupAgent. A sync.Map, not h.mu: the
 	// roster reads it while holding h.mu. It is how an agent hot-added by
@@ -665,8 +670,8 @@ func (h *Hub) ServeHistory(w http.ResponseWriter, r *http.Request) {
 		b.mu.Lock()
 		resp["lastSeq"] = b.seq
 		resp["present"] = true
-		resp["agentId"] = b.agentID
-		resp["sessionKey"] = b.sessionKey
+		resp["agentId"] = b.agent()
+		resp["sessionKey"] = b.key()
 		b.mu.Unlock()
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -872,7 +877,7 @@ func (h *Hub) setupAgent(params platform.AgentConnectionParams) *appConn {
 
 	h.agentCfgs.Store(params.AgentID, params.AgentConfig)
 	h.mu.Lock()
-	if _, exists := h.agents[params.AgentID]; !exists {
+	if !slices.Contains(h.agentOrder, params.AgentID) {
 		h.agentOrder = append(h.agentOrder, params.AgentID)
 	}
 	h.agents[params.AgentID] = conn
@@ -1011,6 +1016,60 @@ func (h *Hub) StartAgent(context.Context, string) {
 	h.pushRosterAll()
 }
 
+// StopAgent implements platform.AgentStopper for the live stop of one agent
+// (#2787): the hub forgets the agent's connection and its roster entry, and
+// connected devices get a roster without it. Its conversation bindings stay:
+// they are durable conversation state, which a live rename re-points to the
+// new id (RenameAgent). A message the user sends to one of them meanwhile
+// finds no connection and is answered with an error frame, as for any agent
+// that is not running.
+func (h *Hub) StopAgent(agentID string) {
+	h.mu.Lock()
+	delete(h.agents, agentID)
+	if i := slices.Index(h.agentOrder, agentID); i >= 0 {
+		h.agentOrder = slices.Delete(h.agentOrder, i, i+1)
+		if h.stoppedSlot == nil {
+			h.stoppedSlot = make(map[string]int)
+		}
+		h.stoppedSlot[agentID] = i
+	}
+	h.mu.Unlock()
+	h.agentCfgs.Delete(agentID)
+	h.pushRosterAll()
+}
+
+// RenameAgent implements platform.AgentRenamer (#2787): every conversation
+// binding of agent old now belongs to agent new, under its rewritten session
+// key, with its live sockets, replay buffer and sequence kept, so an open
+// chat carries on without the device reconnecting. The new id takes the
+// stopped agent's place in the order. Call it while neither agent runs:
+// after old's StopAgent, before new's setupAgent.
+func (h *Hub) RenameAgent(old, new string, rewriteKey func(string) string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := 0
+	for _, b := range h.convs {
+		b.mu.Lock()
+		if b.agent() == old {
+			oldKey := b.key()
+			b.setIdent(new, rewriteKey(oldKey))
+			if h.bySession[oldKey] == b {
+				delete(h.bySession, oldKey)
+			}
+			h.bySession[b.key()] = b
+			n++
+		}
+		b.mu.Unlock()
+	}
+	if i, ok := h.stoppedSlot[old]; ok {
+		delete(h.stoppedSlot, old)
+		if !slices.Contains(h.agentOrder, new) {
+			h.agentOrder = slices.Insert(h.agentOrder, min(i, len(h.agentOrder)), new)
+		}
+	}
+	appLog.Infof("agent rename %s → %s: %d conversation binding(s) re-pointed", old, new, n)
+}
+
 // Close shuts every live socket.
 func (h *Hub) Close() error {
 	h.mu.Lock()
@@ -1103,25 +1162,25 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 		// this is the only path that feeds hello/roster snapshots (what a
 		// reconnecting client actually sees), so there is nothing to seed at
 		// startup for THIS field.
-		if conn := h.agents[b.agentID]; conn != nil && conn.agentRef != nil {
-			ci.CacheExpiryMs = conn.agentRef.CacheExpiryMs(b.sessionKey, time.Now())
+		if conn := h.agents[b.agent()]; conn != nil && conn.agentRef != nil {
+			ci.CacheExpiryMs = conn.agentRef.CacheExpiryMs(b.key(), time.Now())
 		}
 		// Pending wake reminders (#2600), listed live from the store like the
 		// cache expiry above, so a reconnect after a restart sees the truth. A
 		// depth leaf's conversation carries its own (#2646).
 		// The list becomes the push cache too (#2602): the device now holds it.
-		rs := remindersFor(b.agentID, b.sessionKey)
+		rs := remindersFor(b.identity())
 		if len(rs) > 0 {
 			ci.Reminders = rs
 		}
 		b.noteRemindersAdvertised(rs)
-		if dc := memoDefaultChat(idx, defaultChatByAgent, b.agentID); dc != 0 && dc == b.chatID {
+		if dc := memoDefaultChat(idx, defaultChatByAgent, b.agent()); dc != 0 && dc == b.chatID {
 			ci.IsDefault = true
 		}
-		if archivedChats(b.agentID)[b.chatID] {
+		if archivedChats(b.agent())[b.chatID] {
 			ci.Archived = true
 		}
-		byAgent[b.agentID] = append(byAgent[b.agentID], ci)
+		byAgent[b.agent()] = append(byAgent[b.agent()], ci)
 	}
 	out := make([]fap.AgentInfo, 0, len(order))
 	for _, id := range order {
@@ -1198,7 +1257,7 @@ func (h *Hub) pushCommands(b *convBinding) {
 
 // sendCommands is pushCommands with the archived check already made.
 func (h *Hub) sendCommands(b *convBinding) {
-	conn := h.PrimaryBot(b.agentID)
+	conn := h.PrimaryBot(b.agent())
 	if conn == nil || conn.commands == nil {
 		return
 	}
@@ -1206,8 +1265,8 @@ func (h *Hub) sendCommands(b *convBinding) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx = tools.WithSessionKey(ctx, b.sessionKey)
-	req := command.Request{SessionKey: b.sessionKey, Source: "app"}
+	ctx = tools.WithSessionKey(ctx, b.key())
+	req := command.Request{SessionKey: b.key(), Source: "app"}
 	cmds := toFAPCommands(conn.commands.VisibleList(ctx, req, conn.cmdCtx))
 
 	// Send only on an actual change. The palette is derived from the command
@@ -1252,7 +1311,7 @@ func (h *Hub) conversationArchived(b *convBinding) bool {
 	if idx == nil {
 		return false
 	}
-	return idx.ArchivedChatsForAgent(b.agentID, "app")[b.chatID]
+	return idx.ArchivedChatsForAgent(b.agent(), "app")[b.chatID]
 }
 
 // pushCommandsAll sends per-conversation command palettes for every live
@@ -1287,10 +1346,10 @@ func (h *Hub) pushCommandsTo(client *wsClient) {
 		if idx == nil {
 			return false
 		}
-		set, ok := archivedByAgent[b.agentID]
+		set, ok := archivedByAgent[b.agent()]
 		if !ok {
-			set = idx.ArchivedChatsForAgent(b.agentID, "app")
-			archivedByAgent[b.agentID] = set
+			set = idx.ArchivedChatsForAgent(b.agent(), "app")
+			archivedByAgent[b.agent()] = set
 		}
 		return set[b.chatID]
 	}
@@ -1365,7 +1424,7 @@ func (h *Hub) agentDisplay(id string) (name, emoji string) {
 // aliasFor returns the user-set conversation alias persisted in the session index's
 // chat_metadata (keyed by the stable app chatID), or "" if none / unavailable.
 func (h *Hub) aliasFor(b *convBinding) string {
-	return h.aliasForChat(b.agentID, b.chatID)
+	return h.aliasForChat(b.agent(), b.chatID)
 }
 
 // aliasForChat resolves the conversation alias by agent + chatID (the identity
@@ -1397,13 +1456,13 @@ func (h *Hub) adoptSession(b *convBinding, sessionKey string) {
 		appLog.Infof("conversation %s: normalised legacy session key %q → %q", b.convID, sessionKey, stable)
 		sessionKey = stable
 	}
-	if sk, err := session.ParseSessionKey(sessionKey); err != nil || sk.AgentID != b.agentID {
-		appLog.Warnf("conversation %s: refusing to adopt session key %q (agent %s): invalid or cross-agent", b.convID, sessionKey, b.agentID)
+	if sk, err := session.ParseSessionKey(sessionKey); err != nil || sk.AgentID != b.agent() {
+		appLog.Warnf("conversation %s: refusing to adopt session key %q (agent %s): invalid or cross-agent", b.convID, sessionKey, b.agent())
 		return
 	}
 	b.mu.Lock()
-	old := b.sessionKey
-	b.sessionKey = sessionKey
+	old := b.key()
+	b.setIdent(b.agent(), sessionKey)
 	b.mu.Unlock()
 	h.mu.Lock()
 	if h.bySession[old] == b {
@@ -1412,7 +1471,7 @@ func (h *Hub) adoptSession(b *convBinding, sessionKey string) {
 	h.bySession[sessionKey] = b
 	h.mu.Unlock()
 	if idx := h.deps.SessionIndex; idx != nil {
-		_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "session_key", sessionKey)
+		_ = idx.SetChatMetadata(b.agent(), "app", b.chatID, "session_key", sessionKey)
 	}
 }
 
@@ -1429,7 +1488,7 @@ func (h *Hub) mintFacetConversation(agentID, sessionKey string) (string, error) 
 	b := h.ensureBinding(nil, agentID, fap.NewULID())
 	h.adoptSession(b, sessionKey)
 	b.mu.Lock()
-	adopted := b.sessionKey
+	adopted := b.key()
 	b.mu.Unlock()
 	if adopted != sessionKey {
 		return "", fmt.Errorf("facet conversation %s: session key %q refused", b.convID, sessionKey)
@@ -1519,7 +1578,8 @@ func (h *Hub) ensureBinding(client *wsClient, agentID, convID string) *convBindi
 		existing.attach(client)
 		return existing
 	}
-	b = &convBinding{convID: convID, sessionKey: sk, agentID: agentID, chatID: chatID, replayDepth: h.replayDepth, replayTTL: h.replayTTL, store: h.frames, seq: h.frames.MaxSeq(convID), seen: make(map[string]struct{}), notifyOffline: h.pushNotify}
+	b = &convBinding{convID: convID, chatID: chatID, replayDepth: h.replayDepth, replayTTL: h.replayTTL, store: h.frames, seq: h.frames.MaxSeq(convID), seen: make(map[string]struct{}), notifyOffline: h.pushNotify}
+	b.setIdent(agentID, sk)
 	if preview, sentMs, ok := h.frames.LastVisible(convID); ok {
 		b.lastPreview = preview
 		b.lastActMs = sentMs
@@ -1566,10 +1626,10 @@ func (h *Hub) resumeConversations(client *wsClient, points []fap.ResumePoint) {
 		if idx == nil {
 			return false
 		}
-		set, ok := archivedByAgent[b.agentID]
+		set, ok := archivedByAgent[b.agent()]
 		if !ok {
-			set = idx.ArchivedChatsForAgent(b.agentID, "app")
-			archivedByAgent[b.agentID] = set
+			set = idx.ArchivedChatsForAgent(b.agent(), "app")
+			archivedByAgent[b.agent()] = set
 		}
 		return set[b.chatID]
 	}
@@ -1684,7 +1744,7 @@ func (h *Hub) defaultChatBinding(agentID string) *convBinding {
 	}
 	h.mu.RLock()
 	for _, b := range h.convs {
-		if b.agentID == agentID && b.chatID == dc {
+		if b.agent() == agentID && b.chatID == dc {
 			h.mu.RUnlock()
 			return b
 		}
@@ -1735,7 +1795,7 @@ func (h *Hub) deliverBinding(agentID string) (*convBinding, string) {
 	var latest *convBinding
 	h.mu.RLock()
 	for _, b := range h.convs {
-		if b.agentID != agentID || archived[b.chatID] || b.isDepthLeaf() {
+		if b.agent() != agentID || archived[b.chatID] || b.isDepthLeaf() {
 			continue
 		}
 		if latest == nil || b.lastActivity() > latest.lastActivity() {
@@ -1764,7 +1824,7 @@ func (h *Hub) createDefaultConversation(agentID string) (string, error) {
 		return "", fmt.Errorf("agent %s has no app connection", agentID)
 	}
 	b, _ := h.deliverBinding(agentID)
-	return b.sessionKey, nil
+	return b.key(), nil
 }
 
 // pushRoster re-advertises the roster to one socket — the ack half of a
@@ -2006,7 +2066,7 @@ func (h *Hub) pushChatScalar(client *wsClient, metaKey string, replayEmpty bool,
 	}
 	h.mu.RUnlock()
 	for _, b := range bindings {
-		if v, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, metaKey); err == nil && (replayEmpty || v != "") {
+		if v, err := idx.GetChatMetadata(b.agent(), "app", b.chatID, metaKey); err == nil && (replayEmpty || v != "") {
 			if f := frame(b.convID, v); f != nil {
 				client.sendRaw(f)
 			}
@@ -2078,7 +2138,7 @@ func (h *Hub) registerPrompt(promptID string, b *convBinding) {
 	h.mu.Lock()
 	h.prompts[promptID] = b
 	h.mu.Unlock()
-	h.frames.PutPrompt(promptID, b.convID, b.agentID, time.Now().UnixMilli())
+	h.frames.PutPrompt(promptID, b.convID, b.agent(), time.Now().UnixMilli())
 }
 
 func (h *Hub) bindingForPrompt(promptID string) *convBinding {
@@ -2149,7 +2209,7 @@ func (h *Hub) registerBatchPrompt(promptID string, b *convBinding, questionCount
 	h.mu.Lock()
 	h.batchPrompts[promptID] = &batchPrompt{b: b, onResp: onResp, answers: make([]string, questionCount), created: time.Now()}
 	h.mu.Unlock()
-	h.frames.PutPrompt(promptID, b.convID, b.agentID, time.Now().UnixMilli())
+	h.frames.PutPrompt(promptID, b.convID, b.agent(), time.Now().UnixMilli())
 }
 
 func (h *Hub) batchPromptByID(promptID string) (*batchPrompt, bool) {
@@ -2371,7 +2431,7 @@ func (h *Hub) OpenSessionsForAgent(agentID string) []string {
 			continue
 		}
 		b.mu.Lock()
-		sk, ag := b.sessionKey, b.agentID
+		ag, sk := b.identity()
 		b.mu.Unlock()
 		if ag != agentID || sk == "" {
 			continue
@@ -2410,11 +2470,21 @@ type clientState struct {
 	seqHW int64 // highest inbound seq seen from this client
 }
 
+// bindingIdent is a binding's owner: the agent and the session key it is
+// bound to. Swapped whole (convBinding.ident), so a reader never sees a torn
+// or mismatched pair while a live rename re-points the binding (#2787).
+type bindingIdent struct {
+	agentID, sessionKey string
+}
+
 type convBinding struct {
-	convID     string
-	sessionKey string
-	agentID    string
-	chatID     int64
+	convID string
+	// ident holds the owning agent and session key. Read it through agent(),
+	// key() or identity() — never cached across a call that may block — and
+	// write it only through setIdent. Lock-free, so readers holding b.mu or
+	// h.mu need no further lock.
+	ident  atomic.Pointer[bindingIdent]
+	chatID int64
 
 	replayDepth int           // config-driven buffer depth; 0 = code default
 	replayTTL   time.Duration // config-driven buffer TTL; 0 = code default
@@ -2503,6 +2573,35 @@ type convBinding struct {
 //
 // attach(nil) is the socketless restore path (startup binding reconstruction):
 // it clears the live set without touching the durable buffer.
+// agent returns the binding's owning agent id ("" when unset).
+func (b *convBinding) agent() string {
+	if id := b.ident.Load(); id != nil {
+		return id.agentID
+	}
+	return ""
+}
+
+// key returns the binding's session key ("" when unset).
+func (b *convBinding) key() string {
+	if id := b.ident.Load(); id != nil {
+		return id.sessionKey
+	}
+	return ""
+}
+
+// identity returns the owning agent and session key as one consistent pair.
+func (b *convBinding) identity() (agentID, sessionKey string) {
+	if id := b.ident.Load(); id != nil {
+		return id.agentID, id.sessionKey
+	}
+	return "", ""
+}
+
+// setIdent sets the owning agent and session key together.
+func (b *convBinding) setIdent(agentID, sessionKey string) {
+	b.ident.Store(&bindingIdent{agentID: agentID, sessionKey: sessionKey})
+}
+
 func (b *convBinding) attach(client *wsClient) {
 	b.mu.Lock()
 	if b.clients == nil {
@@ -2640,7 +2739,7 @@ func (b *convBinding) info() fap.ConversationInfo {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	a := b.activityFrameLocked()
-	return fap.ConversationInfo{ID: b.convID, SessionKey: b.sessionKey, LastSeq: b.seq, Activity: a.Kind, ActivityDetail: a.Detail,
+	return fap.ConversationInfo{ID: b.convID, SessionKey: b.key(), LastSeq: b.seq, Activity: a.Kind, ActivityDetail: a.Detail,
 		ActivityAgentKind: a.AgentKind, ActivityAgentDetail: a.AgentDetail, ActivityAgentCommand: a.AgentCommand, ActivityAgentShell: a.AgentShell, Subagents: a.Subagents,
 		LastActivityTs: b.lastActMs, LastPreview: b.lastPreview, CacheExpiryMs: b.cacheExpiryMs, DepthRootID: b.depthRoot}
 }
@@ -2965,7 +3064,7 @@ func (b *convBinding) sendThen(frame fap.ServerFrame, onRecorded func()) {
 	}
 	notify := b.notifyOffline
 	store := b.store
-	sessionKey := b.sessionKey
+	sessionKey := b.key()
 	b.mu.Unlock()
 
 	// Persist the canonical (ack=0) wire to the durable backstop (async; survives
@@ -2973,7 +3072,7 @@ func (b *convBinding) sendThen(frame fap.ServerFrame, onRecorded func()) {
 	// it). The visible flag marks user-facing content vs transient frames (typing).
 	// With no store the buffer append above already recorded it; AppendThen on a
 	// nil store runs onRecorded at once.
-	store.AppendThen(b.convID, b.agentID, seq, wire, now.UnixMilli(), visible, preview, onRecorded)
+	store.AppendThen(b.convID, b.agent(), seq, wire, now.UnixMilli(), visible, preview, onRecorded)
 
 	// Fan out: every attached device receives the frame, ack-stamped for ITS own
 	// stream. Per-client app dedups by envelope id and tracks its own resume point.
@@ -3000,7 +3099,7 @@ func (b *convBinding) sendThen(frame fap.ServerFrame, onRecorded func()) {
 		notify(pushPayload{
 			ConvID:     b.convID,
 			Preview:    preview,
-			AgentID:    b.agentID,
+			AgentID:    b.agent(),
 			SessionKey: sessionKey,
 			ChatID:     b.chatID,
 		})

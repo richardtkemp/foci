@@ -1,21 +1,21 @@
 // Package agentrename renames a foci agent's id across everything that holds
 // it (#1281): every SQLite store, the sessions tree, the per-agent search
-// index, optionally the workspace directory, and — through sudo approval —
-// foci.toml (root-owned since #479; #2784), secrets.toml and the crontab. It runs offline (the gateway
-// stopped), shows a plan, backs up every file it changes, and resumes after a
-// partial failure. docs/WIRING.md "Renaming an agent" describes the order.
+// index, optionally the workspace directory, foci.toml, secrets.toml and the
+// crontab. It runs INSIDE the gateway (#2787), between the live stop of the
+// old agent and the live start of the new one, as the gateway's own user
+// (which owns the data, may write foci.toml and secrets.toml in place, and
+// owns the crontab). It shows a plan, backs up every file it changes, and
+// resumes after a partial failure. docs/WIRING.md "Renaming an agent"
+// describes the order.
 package agentrename
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
-	"net"
 	"os"
-	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -26,10 +26,6 @@ import (
 	"foci/internal/config"
 	"foci/internal/fociroot"
 )
-
-// ErrPending is returned when every step ran except privileged ones that were
-// declined or failed; the output lists the manual commands for each.
-var ErrPending = errors.New("the rename finished with pending privileged steps (see the commands above)")
 
 // journalName is the in-progress record under the data dir.
 const journalName = "rename-agent.json"
@@ -52,23 +48,10 @@ type Options struct {
 	Old, New   string
 	// Move moves the workspace ~/<Old> to ~/<New>. Default (false) keeps it.
 	Move     bool
-	PlanOnly bool // print the plan and exit; change nothing
-	Yes      bool // do not ask for confirmation
-	In       io.Reader
+	PlanOnly bool // print the plan and return; change nothing
 	Out      io.Writer
-	// Interactive: In is a terminal, so a confirmation can be asked.
-	Interactive bool
-	Priv        Privileged
-	Crontab     CrontabIO
-	CrontabUser string // whose crontab the privileged step installs (default: Owner's user, else the current user)
-	// Owner is set when the command runs as root (#2786, RootRun): the
-	// privileged steps then write directly (Priv defaults to DirectRunner,
-	// Crontab reads Owner's crontab), and every file the run creates or
-	// replaces gets the owner a run as Owner.User would leave.
-	Owner *Owner
-	Now   func() time.Time
-
-	fakeOwners ownerFS // tests: simulated chown and owners (a root run without root)
+	Crontab  CrontabIO // default SystemCrontab
+	Now      func() time.Time
 
 	failSessionsAfter int    // tests: the sessions-tree step fails after N file rewrites
 	failDB            string // tests: this database step fails just before its commit
@@ -79,30 +62,27 @@ type step struct {
 	id     string
 	title  string
 	detail []string
-	n      int // things to change; 0 = nothing to do
-	sudo   bool
+	n      int  // things to change; 0 = nothing to do
 	always bool // runs even when n == 0
-	// closeDBs: release the database locks before this step (a workspace
+	// closeDBs: close the database handles before this step (a workspace
 	// move must not happen under open SQLite handles).
 	closeDBs bool
 	run      func() error
-	manual   func() []string // pending privileged step: the commands to run by hand
 }
 
 type runner struct {
-	ctx      context.Context
-	o        Options
-	cfg      *config.Config
-	r        ids
-	p        paths
-	jr       *journal
-	jpath    string
-	backup   string
-	man      *manifest
-	locks    map[string]*lockedDB
-	lockList []*lockedDB
-	out      *printer
-	own      *ownership
+	ctx    context.Context
+	o      Options
+	cfg    *config.Config
+	r      ids
+	p      paths
+	jr     *journal
+	jpath  string
+	backup string
+	man    *manifest
+	dbs    map[string]*dbHandle
+	dbList []*dbHandle
+	out    *printer
 }
 
 // printer writes the command's output and keeps the first write error.
@@ -131,20 +111,6 @@ func Run(ctx context.Context, o Options) error {
 	if o.Out == nil {
 		o.Out = io.Discard
 	}
-	if o.Owner != nil {
-		if o.Priv == nil {
-			o.Priv = DirectRunner{}
-		}
-		if o.Crontab == nil {
-			o.Crontab = SystemCrontab{User: o.Owner.User}
-		}
-		if o.CrontabUser == "" {
-			o.CrontabUser = o.Owner.User
-		}
-	}
-	if o.Priv == nil {
-		o.Priv = SudoRunner{}
-	}
 	if o.Crontab == nil {
 		o.Crontab = SystemCrontab{}
 	}
@@ -152,19 +118,15 @@ func Run(ctx context.Context, o Options) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	rn := &runner{ctx: ctx, o: o, cfg: cfg, r: ids{o.Old, o.New}, out: &printer{w: o.Out}, locks: map[string]*lockedDB{},
-		own: newOwnership(o.Owner, o.fakeOwners)}
-	defer func() { _ = rn.closeDBs() }()
-	if err := rn.own.checkDataDir(config.ResolvePath(cfg.DataDir)); err != nil {
-		return err
-	}
+	rn := &runner{ctx: ctx, o: o, cfg: cfg, r: ids{o.Old, o.New}, out: &printer{w: o.Out}, dbs: map[string]*dbHandle{}}
+	defer rn.closeDBs()
 
 	rn.jpath = cfg.DataPath(journalName)
 	if rn.jr, err = readJournal(rn.jpath); err != nil {
 		return err
 	}
 	if rn.jr != nil && (rn.jr.Old != o.Old || rn.jr.New != o.New || rn.jr.Move != o.Move) {
-		return fmt.Errorf("an unfinished rename %s → %s (move workspace: %v) is recorded in %s: re-run it with the same arguments to finish it, or restore its backup with: foci rename-agent --restore %s",
+		return fmt.Errorf("an unfinished rename %s → %s (move workspace: %v) is recorded in %s: finish it first by re-running it with the same arguments (its backup is %s)",
 			rn.jr.Old, rn.jr.New, rn.jr.Move, rn.jpath, rn.jr.BackupDir)
 	}
 	resume := rn.jr != nil
@@ -188,11 +150,8 @@ func Run(ctx context.Context, o Options) error {
 		rn.jr = &journal{Old: o.Old, New: o.New, Move: o.Move, BackupDir: rn.backup, Paths: rn.p, Done: map[string]bool{}}
 	}
 
-	if err := checkGatewayStopped(cfg.DataPath("foci-gw.sock")); err != nil {
-		return err
-	}
 	specs := dbSpecs(rn.p, rn.r, rn.wsDBDir(), o.Move)
-	if err := rn.lockAll(specs); err != nil {
+	if err := rn.openAll(specs); err != nil {
 		return err
 	}
 	if !resume {
@@ -207,13 +166,7 @@ func Run(ctx context.Context, o Options) error {
 	}
 	rn.printPlan(steps, resume)
 	if o.PlanOnly {
-		rn.out.println("\nPlan only: nothing was changed.")
 		return rn.out.err
-	}
-	if !o.Yes {
-		if err := rn.confirm("Proceed with the rename?"); err != nil {
-			return err
-		}
 	}
 	return rn.execute(steps)
 }
@@ -237,7 +190,13 @@ func validate(cfg *config.Config, o Options) error {
 	if err != nil {
 		return err
 	}
+	ownWS := filepath.Clean(config.ResolvePath(a.Workspace))
 	for _, p := range []string{filepath.Join(root, o.New), filepath.Join(cfg.Sessions.Dir, o.New)} {
+		// ~/<new> may be the agent's own workspace, kept by an earlier
+		// rename: the undo (renaming back) keeps it where it is.
+		if p == ownWS && !o.Move {
+			continue
+		}
 		if _, err := os.Lstat(p); err == nil {
 			return fmt.Errorf("%s already exists: the new id %q is in use", p, o.New)
 		} else if !errors.Is(err, fs.ErrNotExist) {
@@ -348,64 +307,40 @@ func (rn *runner) wsDBDir() string {
 	return rn.p.OldWS
 }
 
-// checkGatewayStopped refuses while the gateway answers on its socket. (The
-// database locks are the second, decisive check: they refuse while anything
-// at all holds a database open.)
-func checkGatewayStopped(sock string) error {
-	conn, err := net.DialTimeout("unix", sock, 2*time.Second)
-	if err != nil {
-		return nil
-	}
-	_ = conn.Close()
-	return fmt.Errorf("the gateway is running (it answers on %s): stop it first; nothing was changed", sock)
-}
-
-// lockAll takes the exclusive lock on every existing database the rename reads.
-func (rn *runner) lockAll(specs []dbSpec) error {
+// openAll opens every existing database the rename reads.
+func (rn *runner) openAll(specs []dbSpec) error {
 	for _, s := range specs {
-		if s.path == "" || rn.locks[s.path] != nil {
+		if s.path == "" || rn.dbs[s.path] != nil {
 			continue
 		}
-		l, err := lockDB(rn.ctx, s.path)
+		l, err := openDB(rn.ctx, s.path)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
-		}
-		if errors.Is(err, errInUse) {
-			return fmt.Errorf("%s is open in another process: stop the gateway (and anything else using the data dir) first; nothing was changed", s.path)
 		}
 		if err != nil {
 			return err
 		}
-		rn.locks[s.path] = l
-		rn.lockList = append(rn.lockList, l)
-		// Opening may have created a -wal (root run: as root).
-		if err := rn.own.sidecars(s.path); err != nil {
-			return err
-		}
+		rn.dbs[s.path] = l
+		rn.dbList = append(rn.dbList, l)
 	}
 	return nil
 }
 
-// closeDBs releases every database lock. In a root run it then gives any
-// -wal/-shm/-journal left beside a database the database's owner.
-func (rn *runner) closeDBs() error {
-	var first error
-	for _, l := range rn.lockList {
+// closeDBs closes every database handle (before a step that moves files a
+// database lives in, and at the end).
+func (rn *runner) closeDBs() {
+	for _, l := range rn.dbList {
 		l.close()
-		if err := rn.own.sidecars(l.path); err != nil && first == nil {
-			first = err
-		}
 	}
-	rn.lockList = nil
-	rn.locks = map[string]*lockedDB{}
-	return first
+	rn.dbList = nil
+	rn.dbs = map[string]*dbHandle{}
 }
 
 // checkNewUnused refuses when any store already holds rows for the new id.
 func (rn *runner) checkNewUnused() error {
 	var found []string
 	for _, s := range dbSpecs(rn.p, ids{rn.o.New, rn.o.New}, rn.wsDBDir(), false) {
-		l := rn.locks[s.path]
+		l := rn.dbs[s.path]
 		if l == nil {
 			continue
 		}
@@ -435,37 +370,18 @@ func (rn *runner) checkNewUnused() error {
 	return nil
 }
 
-// confirm asks a yes/no question on the terminal.
-func (rn *runner) confirm(q string) error {
-	if !rn.o.Interactive {
-		return errors.New("refusing to change anything without confirmation: run this on a terminal, or pass --yes")
-	}
-	rn.out.printf("\n%s [y/N] ", q)
-	line, err := bufio.NewReader(rn.o.In).ReadString('\n')
-	if err != nil && line == "" {
-		return errors.New("no answer: nothing was changed")
-	}
-	if a := strings.ToLower(strings.TrimSpace(line)); a != "y" && a != "yes" {
-		return errors.New("cancelled: nothing was changed")
-	}
-	return nil
-}
+func (rn *runner) saveJournal() error { return writeJSON(rn.jpath, rn.jr) }
 
-func (rn *runner) saveJournal() error { return rn.own.writeJSON(rn.jpath, rn.jr) }
-
-// execute runs the steps in order. A failing step stops the run, except a
-// privileged one, which is reported PENDING with its manual commands.
+// execute runs the steps in order. A failing step stops the run; a re-run
+// with the same arguments resumes after the last step done.
 func (rn *runner) execute(steps []step) error {
-	var pending []step
 	rn.out.println()
 	for i, s := range steps {
 		if rn.jr.Done[s.id] {
 			continue
 		}
 		if s.closeDBs {
-			if err := rn.closeDBs(); err != nil {
-				return err
-			}
+			rn.closeDBs()
 		}
 		if s.n == 0 && !s.always {
 			rn.jr.Done[s.id] = true
@@ -474,13 +390,7 @@ func (rn *runner) execute(steps []step) error {
 			}
 			continue
 		}
-		err := s.run()
-		if err != nil && s.sudo {
-			rn.out.printf("PENDING  %s: %v\n", s.title, err)
-			pending = append(pending, s)
-			continue
-		}
-		if err != nil {
+		if err := s.run(); err != nil {
 			rn.out.printf("FAILED   %s: %v\n", s.title, err)
 			rn.printFailure(steps, i)
 			return fmt.Errorf("%s: %w", s.title, err)
@@ -494,25 +404,13 @@ func (rn *runner) execute(steps []step) error {
 			return err
 		}
 	}
-	if err := rn.closeDBs(); err != nil {
-		return err
-	}
+	rn.closeDBs()
 	rn.printChecklist()
-	if len(pending) > 0 {
-		rn.out.println("\nPENDING steps (sudo was declined or failed). Run these by hand, or re-run this command (gateway stopped) to retry them:")
-		for _, s := range pending {
-			rn.out.printf("  %s:\n", s.title)
-			for _, c := range s.manual() {
-				rn.out.printf("    %s\n", c)
-			}
-		}
-		return ErrPending
-	}
 	// Finished: the journal moves into the backup, beside the manifest.
 	if err := os.Rename(rn.jpath, filepath.Join(rn.backup, "journal.json")); err != nil {
 		return fmt.Errorf("finish: %w", err)
 	}
-	rn.out.printf("\nRenamed %q to %q.\n", rn.o.Old, rn.o.New)
+	rn.out.printf("\nRenamed %q to %q on disk.\n", rn.o.Old, rn.o.New)
 	return nil
 }
 
@@ -529,14 +427,13 @@ func (rn *runner) printFailure(steps []step, failed int) {
 		}
 		rn.out.printf("  %-8s %s\n", state, s.title)
 	}
-	rn.out.printf("Fix the cause and re-run the same command to resume, or undo everything with the backup:\n  foci rename-agent --restore %s\n", rn.backup)
+	rn.out.printf("Fix the cause and re-run the same rename to resume it. The backup of everything it changes is %s.\n", rn.backup)
 }
 
 // printChecklist prints what the user must still do, and what this command
 // cannot reach.
 func (rn *runner) printChecklist() {
 	rn.out.println("\nChecklist:")
-	rn.out.println("  - Start the gateway again: the agent runs under its new id only after a restart.")
 	rn.out.printf("  - The Android and desktop apps cache the agent id per conversation: a conversation they hold may still name %q until the app reconnects and reloads its conversation list.\n", rn.o.Old)
 	refs := rn.scriptRefs()
 	if len(refs) == 0 {
@@ -547,7 +444,7 @@ func (rn *runner) printChecklist() {
 			rn.out.printf("      %s\n", l)
 		}
 	}
-	rn.out.printf("  - Backup: %s (undo: foci rename-agent --restore %s, gateway stopped)\n", rn.backup, rn.backup)
+	rn.out.printf("  - Backup: %s. Undo: /agents rename %s %s\n", rn.backup, rn.o.New, rn.o.Old)
 }
 
 // scriptRefs greps the helper-script dirs for exact references to the old id.
@@ -580,15 +477,4 @@ func (rn *runner) scriptRefs() []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// currentUser is whose crontab the privileged step installs.
-func (rn *runner) currentUser() string {
-	if rn.o.CrontabUser != "" {
-		return rn.o.CrontabUser
-	}
-	if u, err := user.Current(); err == nil {
-		return u.Username
-	}
-	return os.Getenv("USER")
 }

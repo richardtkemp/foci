@@ -27,7 +27,7 @@ func scrollHub(t *testing.T) (*Hub, *session.SessionIndex) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42, sessionKey: "clutch/c42"}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "clutch/c42")
 	return h, idx
 }
 
@@ -111,9 +111,9 @@ func TestHandleScroll_IgnoresUnknownConversation(t *testing.T) {
 // skipped rather than sent as a position (and must not panic the replay).
 func TestPushScrolls_ReplaysStoredPositions(t *testing.T) {
 	h, idx := scrollHub(t)
-	h.convs["c2"] = &convBinding{convID: "c2", agentID: "clutch", chatID: 43}
-	h.convs["c3"] = &convBinding{convID: "c3", agentID: "clutch", chatID: 44}
-	h.convs["c4"] = &convBinding{convID: "c4", agentID: "clutch", chatID: 45}
+	h.convs["c2"] = withIdent(&convBinding{convID: "c2", chatID: 43}, "clutch", "")
+	h.convs["c3"] = withIdent(&convBinding{convID: "c3", chatID: 44}, "clutch", "")
+	h.convs["c4"] = withIdent(&convBinding{convID: "c4", chatID: 45}, "clutch", "")
 	_ = idx.SetChatMetadata("clutch", "app", 42, chatMetaScroll, `{"messageId":"m5","following":false}`)
 	_ = idx.SetChatMetadata("clutch", "app", 43, chatMetaScroll, `{"following":true}`)
 	_ = idx.SetChatMetadata("clutch", "app", 44, chatMetaScroll, `not json`)

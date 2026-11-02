@@ -3,16 +3,17 @@ package agentrename
 import (
 	"bytes"
 	"compress/gzip"
-	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"foci/internal/config"
 	"foci/internal/session"
@@ -252,13 +253,13 @@ func TestRenameRewritesEveryStore(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(f.root, "rob")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("~/rob created in keep mode: %v", err)
 	}
-	if !strings.Contains(out, "Checklist:") || !strings.Contains(out, "Start the gateway again") {
+	if !strings.Contains(out, "Checklist:") || !strings.Contains(out, "Undo: /agents rename rob bob") {
 		t.Errorf("no final checklist:\n%s", out)
 	}
 }
 
-// TestRenameValidationRefusesBeforeAnyChange covers requirement 2 and the
-// offline gate of requirement 1: each bad input aborts with nothing changed.
+// TestRenameValidationRefusesBeforeAnyChange covers requirement 2: each bad
+// input aborts with nothing changed.
 func TestRenameValidationRefusesBeforeAnyChange(t *testing.T) {
 	cases := []struct {
 		name, old, new, want string
@@ -278,35 +279,17 @@ func TestRenameValidationRefusesBeforeAnyChange(t *testing.T) {
 			execAll(t, p, `INSERT INTO app_frames (conv_id, seq, wire, sent_ms, agent_id) VALUES ('conv-r',1,'{}',1,'rob')`)
 			return func() { execAll(t, p, `DELETE FROM app_frames WHERE agent_id='rob'`) }
 		}},
-		{name: "gateway socket answers", old: "bob", new: "rob", want: "gateway is running", setup: func(t *testing.T, f *fixture) func() {
-			sock := filepath.Join(f.data, "foci-gw.sock")
-			if len(sock) >= 100 {
-				t.Skipf("socket path too long for this OS: %s", sock)
-			}
-			l, err := net.Listen("unix", sock)
-			must(t, err)
-			return func() { _ = l.Close() }
-		}},
-		{name: "database held open", old: "bob", new: "rob", want: "open in another process", setup: func(t *testing.T, f *fixture) func() {
-			// An idle WAL connection, as the gateway keeps.
-			db, err := sql.Open("sqlite", "file:"+filepath.Join(f.data, "state.db")+"?_pragma=journal_mode(WAL)")
-			must(t, err)
-			var n int
-			must(t, db.QueryRow(`SELECT count(*) FROM session_index`).Scan(&n))
-			return func() { _ = db.Close() }
-		}},
 	}
-	f := newFixtureAt(t, shortRoot(t))
-	skip := []string{"data/foci-gw.sock"}
+	f := newFixture(t)
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var undo func()
 			if c.setup != nil {
 				undo = c.setup(t, f)
 			}
-			before := hashTree(t, f.root, skip...)
+			before := hashTree(t, f.root)
 			out, err := f.run(Options{Old: c.old, New: c.new})
-			after := hashTree(t, f.root, skip...)
+			after := hashTree(t, f.root)
 			if undo != nil {
 				undo()
 			}
@@ -316,15 +299,62 @@ func TestRenameValidationRefusesBeforeAnyChange(t *testing.T) {
 			diffHashes(t, before, after)
 		})
 	}
-	// Fail-arm of the held-open case: with the holder closed the same run is
-	// refused for no reason, i.e. the lock probe itself is what refused.
-	if out, err := f.run(Options{PlanOnly: true}); err != nil {
-		t.Fatalf("plan with nothing holding the files: %v\n%s", err, out)
+}
+
+// TestRenameWhileDatabasesAreOpen (#2787): the rename runs inside the
+// gateway, whose own pools keep every shared database open while the other
+// agents write to it. The rename must succeed beside an open WAL connection
+// that holds a read transaction and writes another agent's rows while the
+// rename runs, and those rows must survive it.
+func TestRenameWhileDatabasesAreOpen(t *testing.T) {
+	f := newFixture(t)
+	ws := filepath.Join(f.root, "bob")
+	before := snapshotDBs(t, f, ws)
+	state := filepath.Join(f.data, "state.db")
+	db, err := sql.Open("sqlite", "file:"+state+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	must(t, err)
+	defer func() { _ = db.Close() }()
+	var n int
+	must(t, db.QueryRow(`SELECT count(*) FROM session_index`).Scan(&n))
+	// Another agent's writes, in a table of its own so the rename's
+	// before/after row counts are not disturbed by them.
+	_, err = db.Exec(`CREATE TABLE other_agent (k TEXT)`)
+	must(t, err)
+
+	stop := make(chan struct{})
+	done := make(chan int)
+	go func() {
+		wrote := 0
+		for {
+			select {
+			case <-stop:
+				done <- wrote
+				return
+			default:
+			}
+			if _, err := db.Exec(`INSERT INTO other_agent (k) VALUES (?)`, fmt.Sprintf("live-%d", wrote)); err == nil {
+				wrote++
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	out, err := f.run(Options{})
+	close(stop)
+	wrote := <-done
+	if err != nil {
+		t.Fatalf("rename beside a live writer: %v\n%s", err, out)
+	}
+	assertRenamed(t, f, ws, before)
+	if wrote == 0 {
+		t.Fatal("the concurrent writer wrote nothing: the test proves nothing")
+	}
+	if got := queryInt(t, state, `SELECT count(*) FROM other_agent`); got != wrote {
+		t.Errorf("the other writer's rows: %d in the file, %d written", got, wrote)
 	}
 }
 
 // TestRenamePlanOnlyChangesNothing: requirement 3. A plan-only run lists the
-// steps with counts and sudo marks, exits 0, and changes no byte anywhere.
+// steps with counts and changes no byte anywhere.
 func TestRenamePlanOnlyChangesNothing(t *testing.T) {
 	f := newFixture(t)
 	before := hashTree(t, f.root)
@@ -333,7 +363,7 @@ func TestRenamePlanOnlyChangesNothing(t *testing.T) {
 		t.Fatalf("plan: %v\n%s", err, out)
 	}
 	diffHashes(t, before, hashTree(t, f.root))
-	for _, want := range []string{"[sudo] secrets", "[sudo] crontab of foci", "session_index.session_key", "row(s)", "Plan only: nothing was changed.", "+[agents.rob.telegram]"} {
+	for _, want := range []string{"secrets " + f.secretsPath, "crontab", "session_index.session_key", "row(s)", "+[agents.rob.telegram]"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("plan lacks %q:\n%s", want, out)
 		}
@@ -341,36 +371,18 @@ func TestRenamePlanOnlyChangesNothing(t *testing.T) {
 	if strings.Contains(out, "SECRET-VALUE") || strings.Contains(out, "TOKEN-BOB") {
 		t.Errorf("the plan printed a secret value:\n%s", out)
 	}
-	if len(f.priv.calls) != 0 {
-		t.Errorf("plan ran sudo: %v", f.priv.calls)
+	if f.cron.installs != 0 {
+		t.Errorf("plan installed a crontab %d time(s)", f.cron.installs)
 	}
 }
 
-// TestRenameNeedsConfirmation: without --yes, a non-interactive run refuses;
-// an interactive "n" cancels; both change nothing.
-func TestRenameNeedsConfirmation(t *testing.T) {
+// TestRenameBackupAndReverse: requirement 4. The backup holds every changed
+// file (each database as a whole, openable snapshot), and the undo — the
+// reverse rename — brings every store's rows back to what they were.
+func TestRenameBackupAndReverse(t *testing.T) {
 	f := newFixture(t)
-	before := hashTree(t, f.root)
-	var out bytes.Buffer
-	err := Run(context.Background(), Options{ConfigPath: f.cfgPath, Old: "bob", New: "rob", Out: &out, Priv: f.priv, Crontab: f.cron})
-	if err == nil || !strings.Contains(err.Error(), "--yes") {
-		t.Fatalf("non-interactive without --yes: %v", err)
-	}
-	err = Run(context.Background(), Options{ConfigPath: f.cfgPath, Old: "bob", New: "rob", Out: &out, Priv: f.priv, Crontab: f.cron,
-		Interactive: true, In: strings.NewReader("n\n")})
-	if err == nil || !strings.Contains(err.Error(), "cancelled") {
-		t.Fatalf("interactive no: %v", err)
-	}
-	diffHashes(t, before, hashTree(t, f.root))
-}
-
-// TestRenameBackupRestores: requirement 4. The backup holds every changed
-// file and restoring it reproduces the pre-rename tree byte for byte (the
-// privileged files excepted: restore prints their commands instead).
-func TestRenameBackupRestores(t *testing.T) {
-	f := newFixture(t)
-	skip := []string{"data/backups", "config/secrets.toml"}
-	before := hashTree(t, f.root, skip...)
+	ws := filepath.Join(f.root, "bob")
+	before := snapshotDBs(t, f, ws)
 	out, err := f.run(Options{})
 	if err != nil {
 		t.Fatalf("rename: %v\n%s", err, out)
@@ -384,11 +396,34 @@ func TestRenameBackupRestores(t *testing.T) {
 			t.Errorf("backup lacks %s: %v", rel, err)
 		}
 	}
-	var rout bytes.Buffer
-	must(t, Restore(context.Background(), RestoreOptions{ConfigPath: f.cfgPath, BackupDir: backup, Yes: true, Out: &rout, Priv: f.priv}))
-	diffHashes(t, before, hashTree(t, f.root, skip...))
-	if !strings.Contains(rout.String(), "crontab.before") {
-		t.Errorf("restore does not say how to put the crontab back:\n%s", rout.String())
+	m, err := readManifest(backup)
+	must(t, err)
+	var stateBackup string
+	for _, e := range m.Files {
+		if e.Orig == filepath.Join(f.data, "state.db") {
+			stateBackup = filepath.Join(backup, e.Backup)
+		}
+	}
+	if stateBackup == "" {
+		t.Fatal("no state.db in the backup manifest")
+	}
+	if n := queryInt(t, stateBackup, `SELECT count(*) FROM session_index WHERE agent_id='bob'`); n != 4 {
+		t.Errorf("state.db backup holds %d bob rows, want 4", n)
+	}
+
+	out, err = f.run(Options{Old: "rob", New: "bob"})
+	if err != nil {
+		t.Fatalf("reverse rename: %v\n%s", err, out)
+	}
+	after := snapshotDBs(t, f, ws)
+	for db, st := range before {
+		if !reflect.DeepEqual(st, after[db]) {
+			t.Errorf("%s: rows after the reverse rename differ from before the rename", db)
+		}
+	}
+	state := filepath.Join(f.data, "state.db")
+	if bob, rob := queryInt(t, state, `SELECT count(*) FROM session_index WHERE agent_id='bob'`), queryInt(t, state, `SELECT count(*) FROM session_index WHERE agent_id='rob'`); bob != 4 || rob != 0 {
+		t.Errorf("after the reverse rename session_index has %d bob and %d rob rows, want 4 and 0", bob, rob)
 	}
 }
 
@@ -403,7 +438,7 @@ func TestRenameResumesAfterSessionsFailure(t *testing.T) {
 	if err == nil {
 		t.Fatalf("simulated failure did not fail:\n%s", out)
 	}
-	for _, want := range []string{"FAILED", "re-run the same command", "--restore"} {
+	for _, want := range []string{"FAILED", "re-run the same rename"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("failure output lacks %q:\n%s", want, out)
 		}
@@ -452,10 +487,10 @@ func TestRenameDatabaseFailureIsAllOrNothing(t *testing.T) {
 	}
 }
 
-// TestRenamePrivilegedEditsMatchTheShownDiff: requirement 5g, success arm.
-// The secrets.toml and crontab changes go through the (fake) sudo, and what
-// lands equals the diff the plan showed.
-func TestRenamePrivilegedEditsMatchTheShownDiff(t *testing.T) {
+// TestRenameSecretsAndCrontabMatchTheShownDiff: requirement 5g. The
+// gateway writes secrets.toml in place (its mode survives) and installs the
+// crontab, and what lands equals the diff the plan showed.
+func TestRenameSecretsAndCrontabMatchTheShownDiff(t *testing.T) {
 	f := newFixture(t)
 	secBefore, _ := os.ReadFile(f.secretsPath)
 	cronBefore := f.cron.content
@@ -466,7 +501,7 @@ func TestRenamePrivilegedEditsMatchTheShownDiff(t *testing.T) {
 	secAfter, _ := os.ReadFile(f.secretsPath)
 	for _, d := range []string{unifiedDiff("secrets.toml", string(secBefore), string(secAfter), 0), unifiedDiff("crontab", cronBefore, f.cron.content, 1)} {
 		if d == "" {
-			t.Fatal("a privileged file did not change")
+			t.Fatal("secrets.toml or the crontab did not change")
 		}
 		for _, l := range indent(d) {
 			if !strings.Contains(out, "       "+l+"\n") {
@@ -474,69 +509,44 @@ func TestRenamePrivilegedEditsMatchTheShownDiff(t *testing.T) {
 			}
 		}
 	}
-	var sawTee, sawCfgTee, sawCron bool
-	for _, c := range f.priv.calls {
-		sawTee = sawTee || (c[0] == "tee" && c[1] == f.secretsPath)
-		sawCfgTee = sawCfgTee || (c[0] == "tee" && c[1] == f.cfgPath)
-		sawCron = sawCron || (c[0] == "crontab" && c[2] == "foci")
-	}
-	// #2784: foci.toml is root:foci-secrets (#479) and the foci user may not
-	// write it, so its edit is a [sudo] step like secrets.toml.
-	if !strings.Contains(out, "[sudo] config "+f.cfgPath) {
-		t.Errorf("the foci.toml step is not marked [sudo] in the plan:\n%s", out)
-	}
-	if !sawTee || !sawCfgTee || !sawCron {
-		t.Errorf("privileged edits did not go through sudo: %v", f.priv.calls)
+	if f.cron.installs != 1 {
+		t.Errorf("crontab installed %d time(s), want 1", f.cron.installs)
 	}
 	if info, _ := os.Stat(f.secretsPath); info.Mode().Perm() != 0o660 {
 		t.Errorf("secrets.toml mode changed to %v", info.Mode().Perm())
 	}
 }
 
-// TestRenamePrivilegedDeclinedIsPending: requirement 5g, declined arm. The
-// rest of the rename completes; the two steps are PENDING with exact manual
-// commands, the files are untouched, and the run exits non-zero.
-func TestRenamePrivilegedDeclinedIsPending(t *testing.T) {
+// TestRenameCrontabFailureResumes: requirement 6 at the last step. A crontab
+// that cannot be installed stops the run there, with everything before it
+// done; the re-run installs only the crontab.
+func TestRenameCrontabFailureResumes(t *testing.T) {
 	f := newFixture(t)
-	f.priv.decline = true
-	secBefore, _ := os.ReadFile(f.secretsPath)
-	cfgBefore, _ := os.ReadFile(f.cfgPath)
 	cronBefore := f.cron.content
+	f.cron.fail = true
 	out, err := f.run(Options{})
-	if !errors.Is(err, ErrPending) {
-		t.Fatalf("err = %v, want ErrPending\n%s", err, out)
+	if err == nil {
+		t.Fatalf("a failed crontab install did not fail the run:\n%s", out)
 	}
-	bdir := filepath.Join(f.data, "backups", "rename-bob-rob-20261101T120000Z")
-	cfgAfter := filepath.Join(bdir, "foci.toml.after")
-	for _, want := range []string{"PENDING  config", "PENDING  secrets", "PENDING  crontab", "sudo sed -i -E", "sudo crontab -u foci " + filepath.Join(bdir, "crontab.after"), "sudo cp " + cfgAfter + " " + f.cfgPath} {
-		if !strings.Contains(out, want) {
-			t.Errorf("output lacks %q:\n%s", want, out)
-		}
+	if !strings.Contains(out, "FAILED   crontab") {
+		t.Errorf("output does not name the failed step:\n%s", out)
 	}
-	if sec, _ := os.ReadFile(f.secretsPath); string(sec) != string(secBefore) || f.cron.content != cronBefore {
-		t.Error("a declined privileged edit changed a file")
-	}
-	if cfg, _ := os.ReadFile(f.cfgPath); string(cfg) != string(cfgBefore) {
-		t.Error("a declined foci.toml step changed foci.toml")
-	}
-	// The manual command's source holds the planned foci.toml.
-	if planned, err := os.ReadFile(cfgAfter); err != nil || !strings.Contains(string(planned), `id = "rob"`) {
-		t.Errorf("%s does not hold the planned foci.toml: %v", cfgAfter, err)
-	}
-	if n := queryInt(t, filepath.Join(f.data, "state.db"), `SELECT count(*) FROM session_index WHERE agent_id='rob'`); n != 4 {
-		t.Errorf("the non-privileged steps did not complete: %d", n)
-	}
-	// Re-run (approver now says yes): only the pending steps run.
-	f.priv.decline = false
-	out, err = f.run(Options{})
-	if err != nil {
-		t.Fatalf("retry: %v\n%s", err, out)
-	}
-	if sec, _ := os.ReadFile(f.secretsPath); !strings.Contains(string(sec), "[agents.rob.telegram]") || !strings.Contains(f.cron.content, "-a rob hello") {
-		t.Error("the retry did not apply the pending edits")
+	if f.cron.content != cronBefore {
+		t.Error("a failed install changed the crontab")
 	}
 	if cfg, _ := os.ReadFile(f.cfgPath); !strings.Contains(string(cfg), `id = "rob"`) {
-		t.Error("the retry did not apply the pending foci.toml edit")
+		t.Error("the foci.toml step before the crontab did not complete")
+	}
+	if sec, _ := os.ReadFile(f.secretsPath); !strings.Contains(string(sec), "[agents.rob.telegram]") {
+		t.Error("the secrets.toml step before the crontab did not complete")
+	}
+	f.cron.fail = false
+	out, err = f.run(Options{})
+	if err != nil {
+		t.Fatalf("resume: %v\n%s", err, out)
+	}
+	if !strings.Contains(f.cron.content, "-a rob hello") || f.cron.installs != 1 {
+		t.Errorf("the resume did not install the crontab once (installs=%d):\n%s", f.cron.installs, f.cron.content)
 	}
 }
 
@@ -681,12 +691,11 @@ func TestCronAndSecretsBoundaries(t *testing.T) {
 	}
 }
 
-// TestRenameAndRestoreKeepConfigInode (#479 × #1281): foci.toml is
+// TestRenameKeepsConfigInode (#479 × #1281): foci.toml is
 // root:foci-secrets 0664 and the gateway refuses it in any other shape, so
-// neither the rename's rewrite nor the restore may replace the file. Both must
-// write in place: the inode before the rename, after it and after the
-// restore is the same.
-func TestRenameAndRestoreKeepConfigInode(t *testing.T) {
+// the rename's rewrite may not replace the file: the inode before and after
+// the rename is the same.
+func TestRenameKeepsConfigInode(t *testing.T) {
 	f := newFixture(t)
 	inode := func() uint64 {
 		t.Helper()
@@ -707,57 +716,5 @@ func TestRenameAndRestoreKeepConfigInode(t *testing.T) {
 	}
 	if got := inode(); got != before {
 		t.Fatalf("rename replaced foci.toml (inode %d -> %d); it must edit in place", before, got)
-	}
-	backup := filepath.Join(f.data, "backups", "rename-bob-rob-20261101T120000Z")
-	var rout bytes.Buffer
-	must(t, Restore(context.Background(), RestoreOptions{ConfigPath: f.cfgPath, BackupDir: backup, Yes: true, Out: &rout, Priv: f.priv}))
-	if got := inode(); got != before {
-		t.Fatalf("restore replaced foci.toml (inode %d -> %d); it must write in place", before, got)
-	}
-}
-
-// TestRestoreConfigThroughSudo (#2784): the restore writes foci.toml back
-// through sudo too (the foci user may not write it). Declined, every other
-// file is still restored, and the output gives the manual command.
-func TestRestoreConfigThroughSudo(t *testing.T) {
-	f := newFixture(t)
-	cfgBefore, _ := os.ReadFile(f.cfgPath)
-	out, err := f.run(Options{})
-	if err != nil {
-		t.Fatalf("rename: %v\n%s", err, out)
-	}
-	backup := filepath.Join(f.data, "backups", "rename-bob-rob-20261101T120000Z")
-	f.priv.decline = true
-	f.priv.calls = nil
-	var rout bytes.Buffer
-	err = Restore(context.Background(), RestoreOptions{ConfigPath: f.cfgPath, BackupDir: backup, Yes: true, Out: &rout, Priv: f.priv})
-	if !errors.Is(err, ErrPending) {
-		t.Fatalf("declined restore: err = %v, want ErrPending\n%s", err, rout.String())
-	}
-	want := "sudo cp " + filepath.Join(backup, "config", "foci.toml") + " " + f.cfgPath
-	if !strings.Contains(rout.String(), want) {
-		t.Errorf("restore output lacks %q:\n%s", want, rout.String())
-	}
-	if n := queryInt(t, filepath.Join(f.data, "state.db"), `SELECT count(*) FROM session_index WHERE agent_id='bob'`); n != 4 {
-		t.Errorf("state.db not restored when the foci.toml write was declined: %d", n)
-	}
-	if cfg, _ := os.ReadFile(f.cfgPath); string(cfg) == string(cfgBefore) {
-		t.Error("a declined restore wrote foci.toml")
-	}
-	// Approved: foci.toml goes back through sudo tee.
-	f.priv.decline = false
-	rout.Reset()
-	if err := Restore(context.Background(), RestoreOptions{ConfigPath: f.cfgPath, BackupDir: backup, Yes: true, Out: &rout, Priv: f.priv}); err != nil {
-		t.Fatalf("restore: %v\n%s", err, rout.String())
-	}
-	if cfg, _ := os.ReadFile(f.cfgPath); string(cfg) != string(cfgBefore) {
-		t.Error("restore did not put foci.toml back")
-	}
-	var sawCfgTee bool
-	for _, c := range f.priv.calls {
-		sawCfgTee = sawCfgTee || (c[0] == "tee" && c[1] == f.cfgPath)
-	}
-	if !sawCfgTee {
-		t.Errorf("restore did not write foci.toml through sudo: %v", f.priv.calls)
 	}
 }

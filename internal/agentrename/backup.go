@@ -9,20 +9,22 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"time"
 )
 
 // manifest describes one rename's backup: what was copied from where, and
 // every move the rename made (recorded BEFORE the move happens, so a crash
-// mid-move still leaves the record). Restore replays it backwards.
+// mid-move still leaves the record). The backup is for recovery by hand; the
+// undo of a finished rename is the reverse rename (/agents rename NEW OLD),
+// which, unlike copying whole shared databases back, does not throw away what
+// the other agents wrote since.
 type manifest struct {
 	Old     string    `json:"old"`
 	New     string    `json:"new"`
 	Move    bool      `json:"move_workspace"`
 	Created time.Time `json:"created"`
-	// Files: single files copied byte for byte (databases after a WAL
-	// checkpoint, foci.toml). Backup is relative to the backup dir.
+	// Files: single files (a VACUUM INTO snapshot of each database,
+	// foci.toml). Backup is relative to the backup dir.
 	Files []backupEntry `json:"files"`
 	// Trees: directories copied whole (the agent's sessions tree).
 	Trees []backupEntry `json:"trees"`
@@ -35,11 +37,6 @@ type manifest struct {
 type backupEntry struct {
 	Orig   string `json:"orig"`
 	Backup string `json:"backup"`
-	// Config marks the foci.toml entry: restore writes it back IN PLACE
-	// through sudo tee (#2784), so the file keeps the root:foci-secrets
-	// owner and mode the gateway requires (#479). Every other file is
-	// restored by temp-and-rename.
-	Config bool `json:"config,omitempty"`
 }
 
 type moveEntry struct {
@@ -49,13 +46,13 @@ type moveEntry struct {
 
 const manifestName = "manifest.json"
 
-func (ow *ownership) writeJSON(path string, v any) error {
+func writeJSON(path string, v any) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
 	data = append(data, '\n')
-	return ow.writeFileAtomic(path, 0o600, time.Time{}, func(w io.Writer) error {
+	return writeFileAtomic(path, 0o600, time.Time{}, func(w io.Writer) error {
 		_, err := w.Write(data)
 		return err
 	})
@@ -74,19 +71,19 @@ func readManifest(dir string) (*manifest, error) {
 }
 
 // recordMove appends a move to the manifest on disk.
-func (ow *ownership) recordMove(dir string, m *manifest, from, to string) error {
+func recordMove(dir string, m *manifest, from, to string) error {
 	m.Moves = append(m.Moves, moveEntry{From: from, To: to})
-	return ow.writeJSON(filepath.Join(dir, manifestName), m)
+	return writeJSON(filepath.Join(dir, manifestName), m)
 }
 
 // copyFile copies src to dst byte for byte, keeping mode and mtime. dst's
 // directory is created.
-func (ow *ownership) copyFile(src, dst string) error {
+func copyFile(src, dst string) error {
 	info, err := os.Stat(src)
 	if err != nil {
 		return err
 	}
-	if err := ow.mkdirAll(filepath.Dir(dst), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return err
 	}
 	in, err := os.Open(src)
@@ -94,7 +91,7 @@ func (ow *ownership) copyFile(src, dst string) error {
 		return err
 	}
 	defer func() { _ = in.Close() }()
-	return ow.writeFileAtomic(dst, info.Mode().Perm(), info.ModTime(), func(w io.Writer) error {
+	return writeFileAtomic(dst, info.Mode().Perm(), info.ModTime(), func(w io.Writer) error {
 		_, err := io.Copy(w, in)
 		return err
 	})
@@ -102,10 +99,10 @@ func (ow *ownership) copyFile(src, dst string) error {
 
 // writeFileAtomic replaces dst in one step: fill writes a temp file beside
 // it, which is synced, given perm (and mtime, when not zero), then renamed
-// over dst. A reader never sees a half-written file. In a root run the temp
-// file first gets dst's owner (a new dst: the install owner, #2786). Not for
-// foci.toml, which is written in place through sudo tee (#479, #2784).
-func (ow *ownership) writeFileAtomic(dst string, perm os.FileMode, mtime time.Time, fill func(io.Writer) error) error {
+// over dst. A reader never sees a half-written file. Not for foci.toml or
+// secrets.toml, which are written in place (their owner and mode must
+// survive, #479).
+func writeFileAtomic(dst string, perm os.FileMode, mtime time.Time, fill func(io.Writer) error) error {
 	tmp := dst + ".copy-tmp"
 	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
@@ -136,15 +133,11 @@ func (ow *ownership) writeFileAtomic(dst string, perm os.FileMode, mtime time.Ti
 			return err
 		}
 	}
-	if err := ow.like(tmp, dst); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
 	return os.Rename(tmp, dst)
 }
 
 // copyTree copies every regular file under src to the same relative path under dst.
-func (ow *ownership) copyTree(src, dst string) error {
+func copyTree(src, dst string) error {
 	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -158,100 +151,52 @@ func (ow *ownership) copyTree(src, dst string) error {
 			if err != nil {
 				return err
 			}
-			return ow.mkdirAll(filepath.Join(dst, rel), info.Mode().Perm()|0o700)
+			return os.MkdirAll(filepath.Join(dst, rel), info.Mode().Perm()|0o700)
 		}
 		if !d.Type().IsRegular() {
 			return nil
 		}
-		return ow.copyFile(p, filepath.Join(dst, rel))
+		return copyFile(p, filepath.Join(dst, rel))
 	})
 }
 
-// takeBackup copies every file the rename will modify into dir: each locked
-// database (after folding its WAL into the main file, so the copy is the
-// whole, consistent database), foci.toml and the agent's sessions tree. It
-// writes the manifest last-but-not-least: a failure leaves an incomplete
-// backup dir and nothing else changed.
-func (ow *ownership) takeBackup(ctx context.Context, dir string, m *manifest, dbs []*lockedDB, configPath, sessionsOld string) error {
-	if err := ow.mkdirAll(dir, 0o700); err != nil {
+// takeBackup copies every file the rename will modify into dir: a VACUUM
+// INTO snapshot of each database (consistent while the gateway's other
+// connections keep writing), foci.toml and the agent's sessions tree. It
+// writes the manifest last: a failure leaves an incomplete backup dir and
+// nothing else changed.
+func takeBackup(ctx context.Context, dir string, m *manifest, dbs []*dbHandle, configPath, sessionsOld string) error {
+	if err := os.MkdirAll(filepath.Join(dir, "db"), 0o700); err != nil {
 		return fmt.Errorf("create backup dir: %w", err)
 	}
 	for i, l := range dbs {
-		if err := l.checkpoint(ctx); err != nil {
-			return err
-		}
 		rel := filepath.Join("db", fmt.Sprintf("%02d-%s", i, filepath.Base(l.path)))
-		if err := ow.copyFile(l.path, filepath.Join(dir, rel)); err != nil {
-			return fmt.Errorf("back up %s: %w", l.path, err)
+		if err := l.backupTo(ctx, filepath.Join(dir, rel)); err != nil {
+			return err
 		}
 		m.Files = append(m.Files, backupEntry{Orig: l.path, Backup: rel})
 	}
-	if err := ow.copyFile(configPath, filepath.Join(dir, "config", filepath.Base(configPath))); err != nil {
+	if err := copyFile(configPath, filepath.Join(dir, "config", filepath.Base(configPath))); err != nil {
 		return fmt.Errorf("back up %s: %w", configPath, err)
 	}
-	m.Files = append(m.Files, backupEntry{Orig: configPath, Backup: filepath.Join("config", filepath.Base(configPath)), Config: true})
+	m.Files = append(m.Files, backupEntry{Orig: configPath, Backup: filepath.Join("config", filepath.Base(configPath))})
 	if _, err := os.Stat(sessionsOld); err == nil {
-		if err := ow.copyTree(sessionsOld, filepath.Join(dir, "sessions")); err != nil {
+		if err := copyTree(sessionsOld, filepath.Join(dir, "sessions")); err != nil {
 			return fmt.Errorf("back up %s: %w", sessionsOld, err)
 		}
 		m.Trees = append(m.Trees, backupEntry{Orig: sessionsOld, Backup: "sessions"})
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	return ow.writeJSON(filepath.Join(dir, manifestName), m)
+	return writeJSON(filepath.Join(dir, manifestName), m)
 }
 
-// restoreBackup puts back the state the manifest recorded: it reverses every
-// recorded move (newest first, each only if it is still in place), then
-// copies every backed-up file and tree over its original path. A database's
-// stale -wal/-shm beside the restored file is removed (the copy is a whole
-// database). The caller has checked that the gateway is stopped.
-//
-// The foci.toml entry goes to writeConfig(backup, orig) instead: the caller
-// writes it through sudo (#2784). A writeConfig error stops the restore.
-func (ow *ownership) restoreBackup(dir string, m *manifest, writeConfig func(backup, orig string) error) error {
-	for i := len(m.Moves) - 1; i >= 0; i-- {
-		mv := m.Moves[i]
-		_, toErr := os.Stat(mv.To)
-		_, fromErr := os.Stat(mv.From)
-		switch {
-		case toErr == nil && errors.Is(fromErr, fs.ErrNotExist):
-			if err := ow.mkdirAll(filepath.Dir(mv.From), 0o755); err != nil {
-				return err
-			}
-			if err := os.Rename(mv.To, mv.From); err != nil {
-				return fmt.Errorf("move %s back to %s: %w", mv.To, mv.From, err)
-			}
-		case fromErr == nil:
-			// already back (or never moved)
-		default:
-			return fmt.Errorf("cannot reverse move %s → %s: neither path is in place", mv.From, mv.To)
-		}
-	}
-	for _, t := range m.Trees {
-		if err := ow.copyTree(filepath.Join(dir, t.Backup), t.Orig); err != nil {
-			return fmt.Errorf("restore %s: %w", t.Orig, err)
-		}
-	}
-	files := append([]backupEntry(nil), m.Files...)
-	sort.Slice(files, func(i, j int) bool { return files[i].Orig < files[j].Orig })
-	for _, f := range files {
-		if f.Config {
-			if err := writeConfig(filepath.Join(dir, f.Backup), f.Orig); err != nil {
-				return fmt.Errorf("restore %s: %w", f.Orig, err)
-			}
-			continue
-		}
-		if err := ow.copyFile(filepath.Join(dir, f.Backup), f.Orig); err != nil {
-			return fmt.Errorf("restore %s: %w", f.Orig, err)
-		}
-		for _, side := range []string{"-wal", "-shm"} {
-			if err := os.Remove(f.Orig + side); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return err
-			}
-		}
-	}
-	return nil
+// writeBackupFile writes a small backup file (0600) in one step.
+func writeBackupFile(path string, data []byte) error {
+	return writeFileAtomic(path, 0o600, time.Time{}, func(out io.Writer) error {
+		_, err := out.Write(data)
+		return err
+	})
 }
 
 // journal records a rename in progress, so a re-run with the same arguments

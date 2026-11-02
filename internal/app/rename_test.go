@@ -25,7 +25,7 @@ func TestAliasFor_RoundTrip(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	b := &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
+	b := withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "")
 
 	if got := h.aliasFor(b); got != "" {
 		t.Fatalf("aliasFor (unset) = %q, want \"\"", got)
@@ -45,7 +45,7 @@ func TestHandleConversationRename_Persists(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	b := &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
+	b := withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "")
 	h.convs["c1"] = b
 
 	h.handleConversationRename(fakeClient(), fap.ConversationRename{ConversationID: "c1", Title: "  Holiday  "})
@@ -69,8 +69,8 @@ func TestHandleConversationRename_Claim(t *testing.T) {
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
 	act := time.Date(2026, 10, 31, 14, 2, 0, 0, time.Local)
-	old := &convBinding{convID: "c1", agentID: "clutch", chatID: 41, lastActMs: act.UnixMilli()}
-	b := &convBinding{convID: "c2", agentID: "clutch", chatID: 42}
+	old := withIdent(&convBinding{convID: "c1", chatID: 41, lastActMs: act.UnixMilli()}, "clutch", "")
+	b := withIdent(&convBinding{convID: "c2", chatID: 42}, "clutch", "")
 	h.convs["c1"], h.convs["c2"] = old, b
 	if err := idx.SetChatAliasUnique("clutch", "app", 41, "Holiday"); err != nil {
 		t.Fatal(err)

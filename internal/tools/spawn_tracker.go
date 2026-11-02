@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode"
 
+	"foci/internal/session"
 	"foci/internal/turnevent"
 )
 
@@ -98,6 +99,10 @@ type SpawnTracker struct {
 	// cut by the shutdown, and is resumed by the next process instead of
 	// being reported failed.
 	shuttingDown bool
+	// stopping holds the agents whose live stop has begun (BeginAgentStop,
+	// #2787): a run of theirs cut short is treated like one cut by a
+	// shutdown, for that agent's next start to resume.
+	stopping map[string]bool
 	// starting holds, per caller session, the names its spawn calls have
 	// claimed (claimName) and not yet registered a spawn under, so two calls
 	// at once cannot take one name (#2721).
@@ -453,7 +458,7 @@ func (t *SpawnTracker) finishOrNext(parent, id string, force bool) (next []strin
 		t.mu.Unlock()
 		return nil, true, false, false, 0
 	}
-	if force && t.shuttingDown && !s.stopped {
+	if force && (t.shuttingDown || t.stopping[session.AgentIDFromAnyKey(parent)]) && !s.stopped {
 		t.mu.Unlock()
 		return nil, true, false, true, 0
 	}

@@ -14,7 +14,7 @@ func TestHandleConversationSetDefault_PersistsAndClears(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	b := &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
+	b := withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "")
 	h.convs["c1"] = b
 
 	// Set.
@@ -42,8 +42,8 @@ func TestHandleConversationSetDefault_MovesDefault(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
-	h.convs["c2"] = &convBinding{convID: "c2", agentID: "clutch", chatID: 99}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "")
+	h.convs["c2"] = withIdent(&convBinding{convID: "c2", chatID: 99}, "clutch", "")
 
 	h.handleConversationSetDefault(fap.ConversationSetDefault{ConversationID: "c1", IsDefault: true})
 	h.handleConversationSetDefault(fap.ConversationSetDefault{ConversationID: "c2", IsDefault: true})
@@ -60,8 +60,8 @@ func TestAgentRoster_MarksDefaultConversation(t *testing.T) {
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
 	registerBareAgent(h, "ag")
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "ag", chatID: 42}
-	h.convs["c2"] = &convBinding{convID: "c2", agentID: "ag", chatID: 99}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "ag", "")
+	h.convs["c2"] = withIdent(&convBinding{convID: "c2", chatID: 99}, "ag", "")
 	if err := idx.SetDefaultChat("ag", "app", 99); err != nil {
 		t.Fatal(err)
 	}

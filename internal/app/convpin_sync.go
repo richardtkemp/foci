@@ -46,7 +46,7 @@ func (h *Hub) conversationPinned(b *convBinding) (pinned, known bool, err error)
 	if idx == nil {
 		return false, false, nil
 	}
-	v, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, chatMetaConvPinned)
+	v, err := idx.GetChatMetadata(b.agent(), "app", b.chatID, chatMetaConvPinned)
 	if err != nil {
 		return false, false, err
 	}
@@ -68,7 +68,7 @@ func (h *Hub) handleConvPin(client *wsClient, f fap.ConvPinPut) {
 		return
 	}
 	if idx := h.deps.SessionIndex; idx != nil {
-		if err := idx.SetChatMetadata(b.agentID, "app", b.chatID, chatMetaConvPinned, encodeConvPin(f.Pinned)); err != nil {
+		if err := idx.SetChatMetadata(b.agent(), "app", b.chatID, chatMetaConvPinned, encodeConvPin(f.Pinned)); err != nil {
 			appLog.Warnf("convpin %s: persist: %v", f.ConversationID, err)
 		}
 	}

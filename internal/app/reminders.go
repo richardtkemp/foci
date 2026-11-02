@@ -52,6 +52,18 @@ func SetReminderStore(agentID string, rs *memory.ReminderStore, held func(sessio
 	rs.SetOnChange(func() { NotifyRemindersChanged(agentID) })
 }
 
+// ClearReminderStore unregisters agentID's reminder source (the live stop of
+// one agent, #2787). The store itself is closed by its owner; its change
+// hook is detached here so a late change pushes nothing for a gone agent.
+func ClearReminderStore(agentID string, rs *memory.ReminderStore) {
+	reminderMu.Lock()
+	delete(reminderSources, agentID)
+	reminderMu.Unlock()
+	if rs != nil {
+		rs.SetOnChange(nil)
+	}
+}
+
 // wakeOwner resolves the session that owns a wake set from a session now
 // (#2647): a depth leaf that has closed hands its wakes up its tree, as it
 // does its spawns (tools.WakeOwner). A variable so a test can stand in for
@@ -121,13 +133,13 @@ func (h *Hub) pushReminders(agentID string) {
 	h.mu.RLock()
 	var bindings []*convBinding
 	for _, b := range h.convs {
-		if b.agentID == agentID {
+		if b.agent() == agentID {
 			bindings = append(bindings, b)
 		}
 	}
 	h.mu.RUnlock()
 	for _, b := range bindings {
-		b.setReminders(remindersFor(agentID, b.sessionKey))
+		b.setReminders(remindersFor(agentID, b.key()))
 	}
 }
 

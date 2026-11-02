@@ -57,7 +57,7 @@ func wizardTestBed(t *testing.T, capable bool) (*Hub, *appConn, *convBinding, *w
 	t.Helper()
 	h := newTestHub()
 	c := fakeClient()
-	b := &convBinding{convID: "c1", agentID: "ag", sessionKey: "ag/c1", clients: map[*wsClient]struct{}{c: {}}}
+	b := withIdent(&convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}, "ag", "ag/c1")
 	if capable {
 		b.features = map[string]struct{}{featureWizard: {}}
 	}
@@ -68,9 +68,9 @@ func wizardTestBed(t *testing.T, capable bool) (*Hub, *appConn, *convBinding, *w
 
 func startWizard(t *testing.T, h *Hub, conn *appConn, b *convBinding, w command.WizardHandler, firstPrompt string) bool {
 	t.Helper()
-	genBefore := conn.commands.WizardGen(b.sessionKey)
-	conn.commands.SetWizard(b.sessionKey, w)
-	return h.maybeStartWizard(conn, b, command.Response{Text: firstPrompt}, "/fake", b.sessionKey, genBefore)
+	genBefore := conn.commands.WizardGen(b.key())
+	conn.commands.SetWizard(b.key(), w)
+	return h.maybeStartWizard(conn, b, command.Response{Text: firstPrompt}, "/fake", b.key(), genBefore)
 }
 
 // one drained frame of type want, or fatal.
@@ -118,7 +118,7 @@ func TestWizard_UncapableClientKeepsTextPath(t *testing.T) {
 func TestWizard_NoActivationNoFrame(t *testing.T) {
 	h, conn, b, c := wizardTestBed(t, true)
 	// A command that did NOT set a wizard: generation unchanged.
-	if h.maybeStartWizard(conn, b, command.Response{Text: "plain reply"}, "/status", b.sessionKey, conn.commands.WizardGen(b.sessionKey)) {
+	if h.maybeStartWizard(conn, b, command.Response{Text: "plain reply"}, "/status", b.key(), conn.commands.WizardGen(b.key())) {
 		t.Fatal("maybeStartWizard = true with no activation")
 	}
 	if got := drain(t, c); len(got) != 0 {
@@ -174,7 +174,7 @@ func TestWizard_StepFlowToDone(t *testing.T) {
 	if len(w.inputs) != 2 || w.inputs[0] != "George" || w.inputs[1] != "claude-code" {
 		t.Errorf("wizard received inputs %v, want [George claude-code]", w.inputs)
 	}
-	if conn.commands.WizardActive(b.sessionKey) {
+	if conn.commands.WizardActive(b.key()) {
 		t.Error("registry wizard should be cleared after done")
 	}
 	h.wizardMu.Lock()
@@ -203,7 +203,7 @@ func TestWizard_CancelSentinel(t *testing.T) {
 	if len(w.inputs) != 0 {
 		t.Errorf("cancel must be consumed by HandleMessage, not the wizard; got inputs %v", w.inputs)
 	}
-	if conn.commands.WizardActive(b.sessionKey) {
+	if conn.commands.WizardActive(b.key()) {
 		t.Error("registry wizard should be cleared by /cancel")
 	}
 }
@@ -235,7 +235,7 @@ func TestWizard_StaleStepDropped(t *testing.T) {
 	if len(w.inputs) != 0 {
 		t.Errorf("stale response must not reach the wizard; got %v", w.inputs)
 	}
-	if !conn.commands.WizardActive(b.sessionKey) {
+	if !conn.commands.WizardActive(b.key()) {
 		t.Error("wizard must stay active after a dropped stale response")
 	}
 }
@@ -247,7 +247,7 @@ func TestWizard_ReplacedWizardExpiresSession(t *testing.T) {
 
 	// The Registry's wizard is replaced behind the session's back (e.g. a
 	// second wizard started from Telegram — no app hook runs).
-	conn.commands.SetWizard(b.sessionKey, &scriptedWizard{responses: []string{"other"}, doneAt: 99})
+	conn.commands.SetWizard(b.key(), &scriptedWizard{responses: []string{"other"}, doneAt: 99})
 
 	h.handleWizardResponse(fap.WizardResponse{
 		ConversationID: "c1",
@@ -301,13 +301,13 @@ func TestWizard_SessionSurvivesRestart(t *testing.T) {
 	conn1.cmdCtx = ccFor(conn1.commands)
 	conn1.commands.Register(command.AgentsCommand())
 
-	genBefore := conn1.commands.WizardGen(b1.sessionKey)
+	genBefore := conn1.commands.WizardGen(b1.key())
 	resp, handled, err := conn1.commands.Dispatch(context.Background(),
-		command.Request{Name: "agents", Args: "new", SessionKey: b1.sessionKey}, conn1.cmdCtx)
+		command.Request{Name: "agents", Args: "new", SessionKey: b1.key()}, conn1.cmdCtx)
 	if err != nil || !handled {
 		t.Fatalf("dispatch /agents new: handled=%v err=%v", handled, err)
 	}
-	if !h1.maybeStartWizard(conn1, b1, resp, "/agents new", b1.sessionKey, genBefore) {
+	if !h1.maybeStartWizard(conn1, b1, resp, "/agents new", b1.key(), genBefore) {
 		t.Fatal("wizard should start out-of-band")
 	}
 	first := single(t, c1, fap.TypeWizardStep)
@@ -327,7 +327,7 @@ func TestWizard_SessionSurvivesRestart(t *testing.T) {
 	reg2 := command.NewRegistry()
 	reg2.EnableWizardPersistence(idx, "ag")
 	reg2.RestoreWizards(ccFor(reg2))
-	if !reg2.WizardActive(b1.sessionKey) {
+	if !reg2.WizardActive(b1.key()) {
 		t.Fatal("registry should restore the wizard")
 	}
 	h2 := newTestHub()

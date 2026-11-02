@@ -8,6 +8,7 @@
 package testharness
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -78,6 +79,38 @@ type botState struct {
 	// blobs and reference the file_id when building synthetic Voice /
 	// PhotoSize / Document Telegram payloads.
 	files map[string]FileBlob
+	// Poll overlap bookkeeping (#2787). Real Telegram refuses a second
+	// concurrent poll on one token (409 Conflict); the stub serves it but
+	// records it, so a test can prove that a bot that replaced another on
+	// the same token (a live rename) never polled while the old one did.
+	// connects counts getMe calls (one per bot connect): a poll belongs to
+	// the connect it follows. inflight holds each poll in flight (its
+	// connect and a description); crossOverlaps records a poll that started
+	// while a poll of ANOTHER connect was in flight. (Two polls of one bot
+	// can overlap briefly at its own shutdown: the final ack poll starts
+	// before the server has noticed the cancelled long-poll hang up.)
+	// Guarded by the stub's mu.
+	connects      int
+	inflight      map[int]inflightPoll
+	pollSeq       int
+	crossOverlaps []string
+}
+
+type inflightPoll struct {
+	connect int
+	desc    string
+}
+
+// CrossConnectPollOverlaps describes every getUpdates on token that started
+// while a poll of an earlier (or later) bot connect was still in flight: two
+// bots polling one token at once, which real Telegram refuses.
+func (s *TelegramStub) CrossConnectPollOverlaps(token string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if st, ok := s.bots[token]; ok {
+		return append([]string(nil), st.crossOverlaps...)
+	}
+	return nil
 }
 
 // FileBlob is a synthetic binary payload registered against a file_id.
@@ -383,9 +416,12 @@ func (s *TelegramStub) handle(w http.ResponseWriter, r *http.Request) {
 
 	switch method {
 	case "getMe":
+		s.mu.Lock()
+		st.connects++
+		s.mu.Unlock()
 		writeOK(w, st.user)
 	case "getUpdates":
-		s.serveGetUpdates(w, st, body)
+		s.serveGetUpdates(r.Context(), w, st, body)
 	case "setMyCommands":
 		writeOK(w, true)
 	case "sendMessage":
@@ -508,7 +544,27 @@ func extractField(body []byte, key string) string {
 // serveGetUpdates drains pending updates up to a soft cap. gotgbot polls
 // with a long timeout (~60s in foci); we return immediately if we have
 // updates, otherwise block briefly so the test harness can synchronise.
-func (s *TelegramStub) serveGetUpdates(w http.ResponseWriter, st *botState, body []byte) {
+func (s *TelegramStub) serveGetUpdates(ctx context.Context, w http.ResponseWriter, st *botState, body []byte) {
+	s.mu.Lock()
+	connect := st.connects
+	desc := fmt.Sprintf("connect %d offset=%q at %s", connect, extractField(body, "offset"), time.Now().Format("15:04:05.000"))
+	if st.inflight == nil {
+		st.inflight = map[int]inflightPoll{}
+	}
+	st.pollSeq++
+	me := st.pollSeq
+	for _, other := range st.inflight {
+		if other.connect != connect {
+			st.crossOverlaps = append(st.crossOverlaps, fmt.Sprintf("%s started while %s was in flight", desc, other.desc))
+		}
+	}
+	st.inflight[me] = inflightPoll{connect: connect, desc: desc}
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(st.inflight, me)
+		s.mu.Unlock()
+	}()
 	// Optional: respect offset to drop acknowledged updates.
 	if offsetStr := extractField(body, "offset"); offsetStr != "" {
 		// Trim updates with id < offset
@@ -538,7 +594,13 @@ func (s *TelegramStub) serveGetUpdates(w http.ResponseWriter, st *botState, body
 			writeOK(w, []gotgbot.Update{})
 			return
 		}
-		time.Sleep(25 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			// The client hung up (a cancelled poll): the poll is over, as
+			// it is for Telegram, and no longer counts as in flight.
+			return
+		case <-time.After(25 * time.Millisecond):
+		}
 	}
 }
 

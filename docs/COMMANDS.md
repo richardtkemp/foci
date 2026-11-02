@@ -283,10 +283,11 @@ List and manage per-chat sessions.
 - `/sessions info` — details for the current chat's session
 - `/sessions index [filters...]` — query the session metadata index across all agents. Filters: type (`chat`/`spawn`/`cron`/`facet`/`branch`), status (`active`/`compacted`/`archived`/`cleared`/`all`), duration (e.g. `3d`, `4h`), count (e.g. `10`)
 
-### `/agents [new]`
+### `/agents [new|rename]`
 List active agent sessions.
 - `/agents` — all agents with ID, session key, status, model, message count
 - `/agents new` — interactive wizard to create a new agent (name → backend → model → character mode). The backend step offers the live set of registered delegated backends (claude-code, codex, opencode) plus `api` for the in-process loop; empty input picks `claude-code`. The model step is **skipped for `api`** — API agents have no per-agent model (it resolves globally via `[groups]`/`[models]`), so the wizard goes straight from backend to character mode. The choice is written explicitly to `foci.toml` (delegated → `backend = "<name>"` + `backend_config.model = "<alias>"`; api → `backend = "api"`), and the workspace is set up
+- `/agents rename OLD NEW [--move-workspace] [--yes]` — rename an agent inside the running gateway (#2787): only OLD stops while it runs, and NEW starts with OLD's history in OLD's place. Without `--yes` it replies with the plan. Over the HTTP API (`foci command`, an agent) it sends the owner an Approve/Deny prompt instead of running. The result is posted to the chat it came from. Undo: `/agents rename NEW OLD --yes`. See CONFIG.md "Renaming an agent".
 
 ### `/tools`
 List all registered tools (name and description).

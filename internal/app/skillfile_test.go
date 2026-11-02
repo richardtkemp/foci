@@ -194,7 +194,7 @@ func rawFrames(c *wsClient) [][]byte {
 func TestAppSink_SkillChipCarriesFileURL(t *testing.T) {
 	f := newSkillFixture(t)
 	c := fakeClient()
-	b := &convBinding{convID: "c1", agentID: "ag", clients: map[*wsClient]struct{}{c: {}}}
+	b := withIdent(&convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}, "ag", "")
 	s := newAppSink(b)
 	s.skillScopeFn = f.h.PrimaryBot("ag").agentRef.SkillScope
 	ctx := context.Background()

@@ -112,6 +112,39 @@ func (t *SpawnTracker) BeginShutdown() {
 	t.mu.Unlock()
 }
 
+// BeginAgentStop is BeginShutdown for one agent's spawns: the live stop of
+// that agent (#2787) has begun, so a run of one of its sessions cut short
+// from now on keeps its persisted record, which the agent's next start (the
+// renamed agent's, after a live rename) resumes.
+func (t *SpawnTracker) BeginAgentStop(agentID string) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	if t.stopping == nil {
+		t.stopping = make(map[string]bool)
+	}
+	t.stopping[agentID] = true
+	t.mu.Unlock()
+}
+
+// ForgetAgent drops the in-memory entries of agentID's spawns once its live
+// stop is done, and ends BeginAgentStop for it. The persisted records are
+// not touched: they are what the agent's next start resumes from.
+func (t *SpawnTracker) ForgetAgent(agentID string) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for parent := range t.spawns {
+		if session.AgentIDFromAnyKey(parent) == agentID {
+			delete(t.spawns, parent)
+		}
+	}
+	delete(t.stopping, agentID)
+}
+
 // record is the persisted form of s, or nil when nothing about it must
 // survive a restart (finished, result delivered). Caller holds t.mu.
 func (s *trackedSpawn) record(parent string) *spawnRecord {

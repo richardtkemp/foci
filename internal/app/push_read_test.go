@@ -91,7 +91,7 @@ func TestHandleRead_SendsReadWakeOnlyOnAdvance(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42, sessionKey: "clutch/c42"}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "clutch/c42")
 	h.tokens.set("phone", "tok-phone")
 	h.tokens.setReadWake("phone", true)
 	p, rec := newRecordingPusher(t, h.tokens)
@@ -157,7 +157,7 @@ func TestHandleRead_ReassertedWatermarkSendsNoWake(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42, sessionKey: "clutch/c42"}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "clutch/c42")
 	h.tokens.set("phone", "tok-phone")
 	h.tokens.setReadWake("phone", true)
 	p, rec := newRecordingPusher(t, h.tokens)

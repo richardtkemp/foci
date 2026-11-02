@@ -23,13 +23,10 @@ func TestResumeConversations_AttachesConversationsNotInTheHello(t *testing.T) {
 	h := newTestHub()
 
 	mkBinding := func(convID string, seqs ...int64) *convBinding {
-		b := &convBinding{
-			convID:     convID,
-			sessionKey: "ag/" + convID,
-			agentID:    "ag",
-			seen:       map[string]struct{}{},
-			clients:    map[*wsClient]struct{}{},
-		}
+		b := withIdent(&convBinding{
+			convID:  convID,
+			seen:    map[string]struct{}{},
+			clients: map[*wsClient]struct{}{}}, "ag", "ag/"+convID)
 		for _, sq := range seqs {
 			b.buffer = append(b.buffer, bufferedFrame{seq: sq, wire: mkWire(t, convID, sq), sent: time.Now()})
 			b.seq = sq

@@ -71,7 +71,7 @@ func TestPinLabel_ReachesOtherDeviceAndReconnectingDevice(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "")
 
 	a, b := fakeClient(), fakeClient()
 	h.clients[a] = struct{}{}
@@ -99,7 +99,7 @@ func TestPinLabel_RepinTakesNewLabelAndUnpinClears(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "")
 	other := fakeClient()
 	h.clients[other] = struct{}{}
 
@@ -133,7 +133,7 @@ func TestPinLabel_PinOfPinnedMessageKeepsLabel(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "")
 	other := fakeClient()
 	h.clients[other] = struct{}{}
 
@@ -153,8 +153,8 @@ func TestPinLabel_LegacyRowsAndOldAppFrames(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
-	h.convs["c2"] = &convBinding{convID: "c2", agentID: "clutch", chatID: 43}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "")
+	h.convs["c2"] = withIdent(&convBinding{convID: "c2", chatID: 43}, "clutch", "")
 	_ = idx.SetChatMetadata("clutch", "app", 42, chatMetaPins, `["m1","m2"]`)
 
 	c := fakeClient()
@@ -190,9 +190,9 @@ func TestPinsList_ListsEveryPinAcrossAgentsAndChats(t *testing.T) {
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
 	h.frames = tempFrameStore(t)
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
-	h.convs["c2"] = &convBinding{convID: "c2", agentID: "clutch", chatID: 43}
-	h.convs["c3"] = &convBinding{convID: "c3", agentID: "scout", chatID: 44}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "")
+	h.convs["c2"] = withIdent(&convBinding{convID: "c2", chatID: 43}, "clutch", "")
+	h.convs["c3"] = withIdent(&convBinding{convID: "c3", chatID: 44}, "scout", "")
 	_ = idx.SetChatMetadata("clutch", "app", 42, "alias", "Flights")
 	_ = idx.SetChatMetadata("scout", "app", 44, "alias", "Research")
 
@@ -254,8 +254,8 @@ func TestPinsList_SnapshotFallbackAndMissingMessages(t *testing.T) {
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
 	h.frames = tempFrameStore(t)
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
-	h.convs["c2"] = &convBinding{convID: "c2", agentID: "clutch", chatID: 43}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "")
+	h.convs["c2"] = withIdent(&convBinding{convID: "c2", chatID: 43}, "clutch", "")
 
 	seedMessageFrame(t, h.frames, "c1", 1, "m1", "kept by snapshot", 1000)
 	h.handlePin(fakeClient(), fap.PinPut{ConversationID: "c1", MessageID: "m1", Pinned: true, Label: "snap"})

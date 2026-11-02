@@ -54,7 +54,7 @@ func (h *Hub) closeSessionConversations(agentID, sessionKey string) int {
 		h.mu.RUnlock()
 		if b != nil {
 			b.mu.Lock()
-			sk, ag := b.sessionKey, b.agentID
+			ag, sk := b.identity()
 			b.mu.Unlock()
 			if ag == agentID && sk == sessionKey {
 				continue
@@ -101,7 +101,7 @@ func (h *Hub) markSessionRead(agentID, sessionKey string) int {
 		return 0
 	}
 	b.mu.Lock()
-	if b.agentID != agentID {
+	if b.agent() != agentID {
 		b.mu.Unlock()
 		return 0
 	}
@@ -173,7 +173,7 @@ func (h *Hub) sessionChatClosed(agentID, sessionKey string) (closed, known bool)
 			continue
 		}
 		b.mu.Lock()
-		sk, ag := b.sessionKey, b.agentID
+		ag, sk := b.identity()
 		b.mu.Unlock()
 		if ag == agentID && sk == sessionKey {
 			bound[id] = true

@@ -241,11 +241,25 @@ type BotManager[B PooledBot[B]] struct {
 	started map[B]bool
 	waiting bool
 
+	// owner maps each agent's own bot (primary or per-agent facet; not the
+	// shared pool's) to its agent, and runs holds each agent's bot context,
+	// so StopAgent can end one agent's bots and wait for them (#2787). Both
+	// guarded by mu.
+	owner map[B]string
+	runs  map[string]*agentRun
+
 	// pendMu guards pending and onLive. It is a leaf lock: taken after mu or a
 	// pool's mu, never held while taking another.
 	pendMu  sync.Mutex
 	pending map[B]pendingConnect // registered, not yet connected
 	onLive  map[B][]func(B)      // WhenPrimaryLive callbacks waiting on a pending bot
+}
+
+// agentRun is one agent's running bots: their shared context and goroutines.
+type agentRun struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 // pendingConnect is the deferred connect for a pending bot.
@@ -263,6 +277,8 @@ func NewBotManager[B PooledBot[B]](name string) *BotManager[B] {
 		pending: make(map[B]pendingConnect),
 		onLive:  make(map[B][]func(B)),
 		started: make(map[B]bool),
+		owner:   make(map[B]string),
+		runs:    make(map[string]*agentRun),
 	}
 }
 
@@ -272,6 +288,7 @@ func (m *BotManager[B]) AddPrimary(agentID string, bot B) {
 	defer m.mu.Unlock()
 	m.primary[agentID] = bot
 	m.all = append(m.all, bot)
+	m.owner[bot] = agentID
 }
 
 // AddFacet registers a facet bot for an agent.
@@ -287,6 +304,7 @@ func (m *BotManager[B]) AddFacet(agentID string, bot B) {
 	bot.SetSecondary(pool)
 	pool.Add(bot)
 	m.all = append(m.all, bot)
+	m.owner[bot] = agentID
 }
 
 // newPool creates a pool that hides this manager's pending bots.
@@ -527,6 +545,17 @@ func (m *BotManager[B]) startLocked(ctx context.Context, bots []B) {
 		}
 		m.started[bot] = true
 		launched++
+		botCtx := ctx
+		var run *agentRun
+		if id, ok := m.owner[bot]; ok {
+			if run = m.runs[id]; run == nil {
+				run = &agentRun{}
+				run.ctx, run.cancel = context.WithCancel(ctx)
+				m.runs[id] = run
+			}
+			botCtx = run.ctx
+			run.wg.Add(1)
+		}
 		m.pendMu.Lock()
 		pc, pending := m.pending[bot]
 		m.pendMu.Unlock()
@@ -534,8 +563,11 @@ func (m *BotManager[B]) startLocked(ctx context.Context, bots []B) {
 			connecting++
 		}
 		m.wg.Add(1)
-		go func(b B) {
+		go func(b B, ctx context.Context, run *agentRun) {
 			defer m.wg.Done()
+			if run != nil {
+				defer run.wg.Done()
+			}
 			if pending {
 				// connect sees ctx between attempts, but an attempt already in
 				// flight (a getMe or gateway dial) only ends on its own network
@@ -562,12 +594,62 @@ func (m *BotManager[B]) startLocked(ctx context.Context, bots []B) {
 				m.markLive(b)
 			}
 			b.Run(ctx)
-		}(bot)
+		}(bot, botCtx, run)
 	}
 	if connecting > 0 {
 		lg.Infof("started %d bot(s), %d connecting in the background", launched, connecting)
 	} else {
 		lg.Infof("started %d bot(s)", launched)
+	}
+}
+
+// StopAgent ends one agent's bots — its primary and per-agent facets, not
+// the shared pool — and waits until each has returned (a Telegram bot
+// acknowledges its processed updates first), then forgets them: no lookup
+// hands one out again, and a later AddPrimary for the same token starts
+// clean (a renamed agent's new bot polls with the token the old one used,
+// which a still-running poll would make the platform refuse). Every other
+// agent's bots run on. The live stop of one agent (#2787).
+func (m *BotManager[B]) StopAgent(agentID string) {
+	m.mu.Lock()
+	var bots []B
+	for b, id := range m.owner {
+		if id == agentID {
+			bots = append(bots, b)
+		}
+	}
+	gone := make(map[B]bool, len(bots))
+	for _, b := range bots {
+		gone[b] = true
+		delete(m.owner, b)
+		delete(m.started, b)
+	}
+	kept := m.all[:0:0]
+	for _, b := range m.all {
+		if !gone[b] {
+			kept = append(kept, b)
+		}
+	}
+	m.all = kept
+	delete(m.primary, agentID)
+	delete(m.pools, agentID)
+	run := m.runs[agentID]
+	delete(m.runs, agentID)
+	m.mu.Unlock()
+
+	m.pendMu.Lock()
+	for _, b := range bots {
+		delete(m.pending, b)
+		delete(m.onLive, b)
+	}
+	m.pendMu.Unlock()
+
+	if run != nil {
+		run.cancel()
+		run.wg.Wait()
+	}
+	if len(bots) > 0 {
+		log.NewComponentLogger(m.name).Infof("agent %q: stopped %d bot(s)", agentID, len(bots))
 	}
 }
 

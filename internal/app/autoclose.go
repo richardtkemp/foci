@@ -145,7 +145,7 @@ func (h *Hub) shouldAutoClose(idx *session.SessionIndex, id string, cfg autoClos
 	if h.isViewed(id) || !b.activityIdle() {
 		return false // on screen on some device, or a turn still in flight
 	}
-	if dc := memoDefaultChat(idx, defaultChats, b.agentID); dc != 0 && dc == b.chatID {
+	if dc := memoDefaultChat(idx, defaultChats, b.agent()); dc != 0 && dc == b.chatID {
 		return false // the agent's default app chat
 	}
 	// Pinned stays; never-written counts as NOT pinned (the ruling: closing a
@@ -169,7 +169,7 @@ func (h *Hub) shouldAutoClose(idx *session.SessionIndex, id string, cfg autoClos
 		return false
 	}
 	if ok {
-		lastRead, _ := idx.GetChatMetadata(b.agentID, "app", b.chatID, "last_read")
+		lastRead, _ := idx.GetChatMetadata(b.agent(), "app", b.chatID, "last_read")
 		if readWatermarkAdvances(lastRead, msg) {
 			return false
 		}

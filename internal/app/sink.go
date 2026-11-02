@@ -362,7 +362,7 @@ func (s *appSink) skillLoadNotification(e turnevent.ToolCall) (fap.Notification,
 	}
 	n := fap.Notification{ConversationID: s.b.convID, MessageID: fap.NewULID(), Text: line, Level: "info", Ambient: true}
 	if openable {
-		n.SkillURL = skillFileURL(s.b.agentID, ref)
+		n.SkillURL = skillFileURL(s.b.agent(), ref)
 	}
 	return n, true
 }

@@ -16,15 +16,17 @@ func setupAskgw(cfg *config.Config, agents *agentRegistry, connMgr platform.Conn
 		return nil
 	}
 
+	// An id from the startup config (or a client that has not seen a live
+	// rename) resolves through gwAgentRenames to the id it runs under (#2787).
 	resolveAgent := func(frameAgent string) string {
 		if frameAgent != "" {
-			return frameAgent
+			return gwAgentRenames.resolve(frameAgent)
 		}
 		if cfg.Askgw.DefaultAgent != "" {
-			return cfg.Askgw.DefaultAgent
+			return gwAgentRenames.resolve(cfg.Askgw.DefaultAgent)
 		}
 		if cfg.MasterAgent != "" {
-			return cfg.MasterAgent
+			return gwAgentRenames.resolve(cfg.MasterAgent)
 		}
 		if inst, ok := agents.Default(); ok {
 			return inst.id

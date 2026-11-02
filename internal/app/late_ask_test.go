@@ -23,7 +23,7 @@ func lateAskHub(t *testing.T) (h *Hub, b *convBinding, answerer, sibling *wsClie
 		return true
 	}
 	h.agents["ag"] = conn
-	b = &convBinding{convID: "c1", sessionKey: "ag/c7", agentID: "ag", chatID: 7}
+	b = withIdent(&convBinding{convID: "c1", chatID: 7}, "ag", "ag/c7")
 	h.convs["c1"] = b
 	h.bySession["ag/c7"] = b
 	answerer, sibling = fakeClientFor(h), fakeClientFor(h)

@@ -55,6 +55,17 @@ func (cr *ConversationReader) AddAgent(agentID, dbPath string) {
 	cr.dbPaths[agentID] = dbPath
 }
 
+// RemoveAgent forgets an agent's conversation.db (the live stop of one
+// agent, #2787). Nil-safe, like the reader's other methods' callers expect.
+func (cr *ConversationReader) RemoveAgent(agentID string) {
+	if cr == nil {
+		return
+	}
+	cr.mu.Lock()
+	defer cr.mu.Unlock()
+	delete(cr.dbPaths, agentID)
+}
+
 // dbPathFor returns the agent's conversation.db path.
 func (cr *ConversationReader) dbPathFor(agentID string) (string, bool) {
 	cr.mu.RLock()

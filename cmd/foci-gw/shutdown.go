@@ -52,15 +52,9 @@ func runShutdown(
 	// gracefulShutdown below waits for them — and queued work (a scheduled
 	// wake) stays pending for the next process instead of being consumed by a
 	// turn that the backend close would cut off.
+	// Then stop keepalive runners — prevents new timer-triggered branches.
 	for _, inst := range agents {
-		inst.ag.BeginShutdown()
-	}
-
-	// Stop keepalive runners — prevents new timer-triggered branches
-	for _, inst := range agents {
-		if inst.kaRunner != nil {
-			inst.kaRunner.Stop()
-		}
+		drainAgent(inst)
 	}
 
 	// Close HTTP server — prevents new HTTP-triggered turns
@@ -73,11 +67,10 @@ func runShutdown(
 	// Wait for in-flight agent turns to complete naturally
 	gracefulShutdown(agents, cfg.gracefulTimeout)
 
-	// Close delegated sessions (kills CC tmux panes, saves resume IDs)
+	// Close delegated sessions (kills CC tmux panes, saves resume IDs) and
+	// MCP managers.
 	for _, inst := range agents {
-		if inst.ag.DelegatedManager != nil {
-			inst.ag.DelegatedManager.Close()
-		}
+		closeAgentBackends(inst)
 	}
 
 	// Backstop: each backend's process-global shutdown hook
@@ -90,13 +83,6 @@ func runShutdown(
 	for _, s := range delegator.Specs() {
 		if s.OnGatewayShutdown != nil {
 			mainLog.Infof("%s: closed %d pooled process(es) on shutdown", s.Name, s.OnGatewayShutdown())
-		}
-	}
-
-	// Close MCP managers
-	for _, inst := range agents {
-		if inst.mcpManager != nil {
-			_ = inst.mcpManager.Close()
 		}
 	}
 
@@ -117,6 +103,32 @@ func runShutdown(
 
 	// Wait for platform connections to finish cleanup
 	connMgr.Wait()
+}
+
+// The per-agent halves of a stop, shared by the whole shutdown (runShutdown,
+// every agent) and the live stop of one agent (agentEnv.stopLive, #2787), so
+// a step added to one cannot be missed by the other. Between them the caller
+// waits for the agent's in-flight turns (gracefulShutdown).
+
+// drainAgent stops new work: drain mode (#2059: no new system turn,
+// compaction or backend) and the keepalive runner (no timer-triggered
+// branch).
+func drainAgent(inst *agentInstance) {
+	inst.ag.BeginShutdown()
+	if inst.kaRunner != nil {
+		inst.kaRunner.Stop()
+	}
+}
+
+// closeAgentBackends ends the agent's backends once its turns are done: the
+// delegated sessions (CC panes killed, resume ids saved) and its MCP servers.
+func closeAgentBackends(inst *agentInstance) {
+	if dm := inst.ag.DelegatedManager; dm != nil {
+		dm.Close()
+	}
+	if inst.mcpManager != nil {
+		_ = inst.mcpManager.Close()
+	}
 }
 
 type shutdownConfig struct {

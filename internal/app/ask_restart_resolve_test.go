@@ -36,7 +36,7 @@ func TestInteractiveResponse_BatchedAskAfterRestartLostRegistration(t *testing.T
 	h.mu.Lock()
 	h.agents["ag"] = primary
 	// Durable conversation binding (survives a restart; both devices attached).
-	b := &convBinding{convID: "c1", sessionKey: "ag/c7", agentID: "ag", chatID: 7}
+	b := withIdent(&convBinding{convID: "c1", chatID: 7}, "ag", "ag/c7")
 	h.convs["c1"] = b
 	h.bySession["ag/c7"] = b
 	h.mu.Unlock()

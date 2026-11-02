@@ -359,8 +359,13 @@ func AgentsCommand() *Command {
 		// does not auto-wire dispatch from this list (#2279).
 		Subcommands: []Subcommand{
 			{Name: "new", Description: "Start the new-agent wizard"},
+			{Name: "rename", Description: "Rename an agent live: /agents rename OLD NEW [--move-workspace] [--yes]"},
 		},
-		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+			// /agents rename OLD NEW … — the live rename (#2787)
+			if f := strings.Fields(req.Args); len(f) > 0 && strings.ToLower(f[0]) == "rename" {
+				return agentsRename(ctx, req, cc, strings.TrimSpace(req.Args[strings.Index(req.Args, f[0])+len(f[0]):])), nil
+			}
 			// /agents new — start wizard
 			if strings.TrimSpace(strings.ToLower(req.Args)) == "new" {
 				if cc.AgentNewDeps == nil {

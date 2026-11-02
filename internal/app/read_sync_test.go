@@ -28,7 +28,7 @@ func TestHandleRead_PersistsAndFansOutToOtherClients(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42, sessionKey: "clutch/c42"}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "clutch/c42")
 
 	sender := fakeClient()
 	other := fakeClient()
@@ -55,7 +55,7 @@ func TestPushReads_ReplaysStoredWatermark(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "")
 	_ = idx.SetChatMetadata("clutch", "app", 42, "last_read", "m5")
 
 	c := fakeClient()
@@ -91,7 +91,7 @@ func TestHandleRead_StaleReadDoesNotRegressWatermark(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42, sessionKey: "clutch/c42"}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "clutch/c42")
 	stale := fakeClient()
 	other := fakeClient()
 	h.clients[stale] = struct{}{}
@@ -147,7 +147,7 @@ func TestHandleRead_ReassertedWatermarkIsMirrored(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
-	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42, sessionKey: "clutch/c42"}
+	h.convs["c1"] = withIdent(&convBinding{convID: "c1", chatID: 42}, "clutch", "clutch/c42")
 	phone := fakeClient()
 	mac := fakeClient()
 	h.clients[phone] = struct{}{}

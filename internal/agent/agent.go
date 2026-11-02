@@ -229,6 +229,7 @@ type Agent struct {
 	inboxStarted          bool                                                              // true once StartInbox has been called
 	reloginDrainOnce      sync.Once                                                         // registers DrainReloginDeferred with relogin.G once, on the first paused injection (#2384)
 	inboxCtx              context.Context                                                   //nolint:containedctx // parent ctx for session worker goroutines
+	inboxCancel           context.CancelFunc                                                // ends inboxCtx (StopInbox, #2787)
 	inboxSteerMode        bool                                                              // urgent-steer dispatch enabled
 	inboxBackend          func(ctx context.Context, sk string) (delegator.Delegator, error) // test seam; nil = use DelegatedManager
 	turnObserver          func(sk string, batch []Envelope)                                 // test seam — see SetTurnObserver / TODO #746 Stage C

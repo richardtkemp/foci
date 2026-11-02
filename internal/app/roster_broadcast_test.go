@@ -283,7 +283,7 @@ func TestConversationArchive_RefusedDefaultDoesNotBroadcast(t *testing.T) {
 func TestNotifyAliasChanged_RosterCarriesNewTitle(t *testing.T) {
 	const agentID = "arnix"
 	h, sender, other := rosterTestHub(t, agentID)
-	h.convs["conv-1"] = &convBinding{convID: "conv-1", agentID: agentID, chatID: 42}
+	h.convs["conv-1"] = withIdent(&convBinding{convID: "conv-1", chatID: 42}, agentID, "")
 	setActiveHub(h)
 	t.Cleanup(func() { setActiveHub(nil) })
 

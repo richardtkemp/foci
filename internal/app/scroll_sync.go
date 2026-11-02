@@ -69,7 +69,7 @@ func (h *Hub) handleScroll(client *wsClient, f fap.ScrollPut) {
 		return
 	}
 	if idx := h.deps.SessionIndex; idx != nil {
-		if err := idx.SetChatMetadata(b.agentID, "app", b.chatID, chatMetaScroll, encodeScroll(s)); err != nil {
+		if err := idx.SetChatMetadata(b.agent(), "app", b.chatID, chatMetaScroll, encodeScroll(s)); err != nil {
 			appLog.Warnf("scroll %s: persist: %v", f.ConversationID, err)
 		}
 	}

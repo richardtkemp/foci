@@ -137,7 +137,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		// same one f.Resume used to describe.
 		if idx := h.deps.SessionIndex; idx != nil {
 			for _, b := range client.attachedBindings() {
-				_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "features", b.featuresCSV())
+				_ = idx.SetChatMetadata(b.agent(), "app", b.chatID, "features", b.featuresCSV())
 			}
 		}
 
@@ -283,7 +283,7 @@ func (h *Hub) handleInteractiveResponse(client *wsClient, f fap.InteractiveRespo
 	// When the ask layer has no pending ask either, the ask is dead: the answer is
 	// delivered as a late answer and the form is removed (#1868/#2080).
 	if len(f.Answers) > 0 && b != nil {
-		if conn := h.PrimaryBot(b.agentID); conn != nil && conn.routeBatchAnswer != nil {
+		if conn := h.PrimaryBot(b.agent()); conn != nil && conn.routeBatchAnswer != nil {
 			h.deletePrompt(f.PromptID) // drop any stale single-prompt registration
 			if conn.routeBatchAnswer(f.PromptID, f.Answers) {
 				b.send(fap.InteractiveProgressEdit{ConversationID: b.convID, PromptID: f.PromptID, Answers: f.Answers, Done: true})
@@ -427,7 +427,7 @@ func (h *Hub) handleConversationRename(client *wsClient, f fap.ConversationRenam
 		if f.Claim {
 			err = h.claimAlias(b, f.Title)
 		} else {
-			err = idx.SetChatAliasUnique(b.agentID, "app", b.chatID, f.Title)
+			err = idx.SetChatAliasUnique(b.agent(), "app", b.chatID, f.Title)
 		}
 		if err != nil {
 			appLog.Warnf("rename %s (claim=%v): persist alias: %v", f.ConversationID, f.Claim, err)
@@ -440,7 +440,7 @@ func (h *Hub) handleConversationRename(client *wsClient, f fap.ConversationRenam
 		}
 		// Clear alias_auto: user-set names must not be overwritten by
 		// future backend-generated thread names.
-		if err := idx.SetChatMetadata(b.agentID, "app", b.chatID, "alias_auto", ""); err != nil {
+		if err := idx.SetChatMetadata(b.agent(), "app", b.chatID, "alias_auto", ""); err != nil {
 			appLog.Debugf("rename %s: clear alias_auto: %v", f.ConversationID, err)
 		}
 	}
@@ -453,16 +453,16 @@ func (h *Hub) handleConversationRename(client *wsClient, f fap.ConversationRenam
 // set and writes every alias in one transaction.
 func (h *Hub) claimAlias(b *convBinding, title string) error {
 	idx := h.deps.SessionIndex
-	holders, err := idx.ChatsHoldingAlias(b.agentID, "app", title, b.chatID)
+	holders, err := idx.ChatsHoldingAlias(b.agent(), "app", title, b.chatID)
 	if err != nil {
 		return err
 	}
 	displaced := make(map[int64]string, len(holders))
 	for chatID, held := range holders {
 		// The holder's own spelling of the name, not the claimer's.
-		displaced[chatID] = displacedAlias(held, h.lastActivityForChat(b.agentID, chatID))
+		displaced[chatID] = displacedAlias(held, h.lastActivityForChat(b.agent(), chatID))
 	}
-	renamed, err := idx.ClaimChatAlias(b.agentID, "app", b.chatID, title, displaced)
+	renamed, err := idx.ClaimChatAlias(b.agent(), "app", b.chatID, title, displaced)
 	if err != nil {
 		return err
 	}
@@ -489,7 +489,7 @@ func (h *Hub) lastActivityForChat(agentID string, chatID int64) int64 {
 	h.mu.RLock()
 	var live *convBinding
 	for _, c := range h.convs {
-		if c.agentID == agentID && c.chatID == chatID {
+		if c.agent() == agentID && c.chatID == chatID {
 			live = c
 			break
 		}
@@ -525,9 +525,9 @@ func (h *Hub) handleConversationSetDefault(f fap.ConversationSetDefault) {
 	if idx := h.deps.SessionIndex; idx != nil {
 		var err error
 		if f.IsDefault {
-			err = idx.SetDefaultChat(b.agentID, "app", b.chatID)
+			err = idx.SetDefaultChat(b.agent(), "app", b.chatID)
 		} else {
-			err = idx.ClearDefaultChat(b.agentID, "app")
+			err = idx.ClearDefaultChat(b.agent(), "app")
 		}
 		if err != nil {
 			appLog.Warnf("setDefault %s (isDefault=%v): %v", f.ConversationID, f.IsDefault, err)
@@ -576,8 +576,8 @@ func (h *Hub) handleConversationArchive(client *wsClient, f fap.ConversationArch
 		return
 	}
 	if idx := h.deps.SessionIndex; idx != nil {
-		if f.Archived && idx.DefaultChatForAgent(b.agentID, "app") == b.chatID {
-			appLog.Infof("refused archive of default conversation %s (agent %s)", f.ConversationID, b.agentID)
+		if f.Archived && idx.DefaultChatForAgent(b.agent(), "app") == b.chatID {
+			appLog.Infof("refused archive of default conversation %s (agent %s)", f.ConversationID, b.agent())
 			client.sendRaw(fap.ErrorFrame{ConversationID: f.ConversationID, Code: "archive_default", Message: "This is the default chat. Set another default before archiving it."})
 			// Per-socket, deliberately: nothing changed server-side, and only this
 			// device applied the optimistic flag that needs reverting.
@@ -585,13 +585,13 @@ func (h *Hub) handleConversationArchive(client *wsClient, f fap.ConversationArch
 			return
 		}
 		changed := true
-		if current, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, "is_archived"); err != nil {
+		if current, err := idx.GetChatMetadata(b.agent(), "app", b.chatID, "is_archived"); err != nil {
 			appLog.Warnf("archive %s: read current state: %v", f.ConversationID, err)
 		} else if (current == "true") == f.Archived {
 			changed = false
 		}
 		if changed {
-			if err := idx.SetArchivedChat(b.agentID, "app", b.chatID, f.Archived); err != nil {
+			if err := idx.SetArchivedChat(b.agent(), "app", b.chatID, f.Archived); err != nil {
 				appLog.Warnf("archive %s (archived=%v): %v", f.ConversationID, f.Archived, err)
 			}
 		}
@@ -605,7 +605,7 @@ func (h *Hub) handleConversationArchive(client *wsClient, f fap.ConversationArch
 			return
 		}
 	}
-	appLog.Infof("archived=%v conversation %s (session %s, frames retained)", f.Archived, f.ConversationID, b.sessionKey)
+	appLog.Infof("archived=%v conversation %s (session %s, frames retained)", f.Archived, f.ConversationID, b.key())
 	h.pushRosterAll()
 }
 
@@ -652,10 +652,10 @@ func (h *Hub) applyRead(sender *wsClient, b *convBinding, messageID string) {
 		// since that value is what pushReads replays to every reconnecting device.
 		// Compare-and-set under readMu so two devices' reads can't interleave.
 		h.readMu.Lock()
-		cur, _ := idx.GetChatMetadata(b.agentID, "app", b.chatID, "last_read")
+		cur, _ := idx.GetChatMetadata(b.agent(), "app", b.chatID, "last_read")
 		advance = readWatermarkAdvances(cur, messageID)
 		if advance {
-			_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "last_read", messageID)
+			_ = idx.SetChatMetadata(b.agent(), "app", b.chatID, "last_read", messageID)
 		}
 		h.readMu.Unlock()
 		// A Read naming the stored watermark itself is still mirrored (#1515): the
@@ -790,7 +790,7 @@ func (h *Hub) handleDraft(client *wsClient, f fap.DraftPut) {
 		return
 	}
 	if idx := h.deps.SessionIndex; idx != nil {
-		if err := idx.SetChatMetadata(b.agentID, "app", b.chatID, "draft", f.Text); err != nil {
+		if err := idx.SetChatMetadata(b.agent(), "app", b.chatID, "draft", f.Text); err != nil {
 			appLog.Warnf("draft %s: persist: %v", f.ConversationID, err)
 		}
 	}
@@ -836,7 +836,7 @@ func (h *Hub) handlePin(client *wsClient, f fap.PinPut) {
 		return
 	}
 	h.pinsMu.Lock()
-	stored, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, chatMetaPins)
+	stored, err := idx.GetChatMetadata(b.agent(), "app", b.chatID, chatMetaPins)
 	if err != nil {
 		h.pinsMu.Unlock()
 		appLog.Warnf("pin %s/%s: read pins: %v", f.ConversationID, f.MessageID, err)
@@ -851,12 +851,12 @@ func (h *Hub) handlePin(client *wsClient, f fap.PinPut) {
 		}
 	}
 	ids := applyPin(old, f.MessageID, f.Pinned)
-	if err := idx.SetChatMetadata(b.agentID, "app", b.chatID, chatMetaPins, session.EncodeChatSet(ids)); err != nil {
+	if err := idx.SetChatMetadata(b.agent(), "app", b.chatID, chatMetaPins, session.EncodeChatSet(ids)); err != nil {
 		h.pinsMu.Unlock()
 		appLog.Warnf("pin %s/%s: write pins: %v", f.ConversationID, f.MessageID, err)
 		return
 	}
-	metaStored, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, chatMetaPinMeta)
+	metaStored, err := idx.GetChatMetadata(b.agent(), "app", b.chatID, chatMetaPinMeta)
 	if err != nil {
 		// The set is written and authoritative; fan it out unlabelled rather
 		// than leave the other devices with a stale set.
@@ -878,7 +878,7 @@ func (h *Hub) handlePin(client *wsClient, f fap.PinPut) {
 		}
 	}
 	if changed {
-		if err := idx.SetChatMetadata(b.agentID, "app", b.chatID, chatMetaPinMeta, encodePinMeta(meta)); err != nil {
+		if err := idx.SetChatMetadata(b.agent(), "app", b.chatID, chatMetaPinMeta, encodePinMeta(meta)); err != nil {
 			appLog.Warnf("pin %s/%s: write pin meta: %v", f.ConversationID, f.MessageID, err)
 		}
 	}
@@ -906,10 +906,10 @@ func (h *Hub) routeCommand(client *wsClient, f fap.Command) {
 	existed := h.convs[f.ConversationID] != nil
 	h.mu.RUnlock()
 	b := h.ensureBinding(client, agentID, f.ConversationID)
-	if existed && f.AgentID != "" && f.AgentID != b.agentID {
-		appLog.Warnf("frame agentId %q disagrees with conversation owner %q (conv=%q) — routing to owner", f.AgentID, b.agentID, f.ConversationID)
+	if existed && f.AgentID != "" && f.AgentID != b.agent() {
+		appLog.Warnf("frame agentId %q disagrees with conversation owner %q (conv=%q) — routing to owner", f.AgentID, b.agent(), f.ConversationID)
 	}
-	conn := h.PrimaryBot(b.agentID)
+	conn := h.PrimaryBot(b.agent())
 	if conn == nil || conn.commands == nil {
 		client.sendRaw(fap.ErrorFrame{ConversationID: f.ConversationID, Code: "no_commands", Message: "commands unavailable"})
 		return
@@ -923,7 +923,7 @@ func (h *Hub) routeCommand(client *wsClient, f fap.Command) {
 	req := command.Request{
 		Name:       strings.ToLower(strings.TrimPrefix(f.Name, "/")),
 		Args:       f.Args,
-		SessionKey: b.sessionKey,
+		SessionKey: b.key(),
 		UserID:     deviceID,
 		ChatID:     b.chatID,
 		Source:     "app",
@@ -1126,13 +1126,13 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 	// so it can never disagree with the owning binding. If it does, a client has
 	// regressed — route to the owner (b.agentID, authoritative) but make the
 	// mismatch loud so we catch it instead of silently correcting (#906/#907).
-	if existed && frameAgent != "" && frameAgent != b.agentID {
-		appLog.Warnf("frame agentId %q disagrees with conversation owner %q (conv=%q) — routing to owner", frameAgent, b.agentID, convID)
+	if existed && frameAgent != "" && frameAgent != b.agent() {
+		appLog.Warnf("frame agentId %q disagrees with conversation owner %q (conv=%q) — routing to owner", frameAgent, b.agent(), convID)
 	}
 
-	conn := h.PrimaryBot(b.agentID)
+	conn := h.PrimaryBot(b.agent())
 	if conn == nil {
-		appLog.Warnf("no agent for inbound message (agent=%q conv=%q)", b.agentID, convID)
+		appLog.Warnf("no agent for inbound message (agent=%q conv=%q)", b.agent(), convID)
 		client.sendRaw(fap.ErrorFrame{
 			ConversationID: convID,
 			Code:           "no_agent",
@@ -1181,7 +1181,7 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 	}
 	if b.depthLeafOf() != nil {
 		if ctl := depthController(); ctl != nil {
-			ctl.LeafUserMessage(b.sessionKey)
+			ctl.LeafUserMessage(b.key())
 		}
 	}
 	// User message confirmed bound for the agent — record interaction. The turn
@@ -1192,7 +1192,7 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 		conn.OnUserMessage()
 	}
 	conn.agentRef.Enqueue(agent.Envelope{
-		SessionKey:  b.sessionKey,
+		SessionKey:  b.key(),
 		Text:        text,
 		Attachments: atts,
 		UserID:      deviceID,

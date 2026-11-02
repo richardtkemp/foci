@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 
 	"foci/internal/command"
@@ -149,6 +150,39 @@ func (r *agentRegistry) commit(inst *agentInstance) error {
 	}
 	r.byID[inst.id] = inst
 	r.order = append(r.order, inst.id)
+	return nil
+}
+
+// remove unregisters a running agent (its live stop, #2787) and returns its
+// place in the order, so a live rename can put the new id there (the first
+// agent is the default one). ok is false when id is not registered.
+func (r *agentRegistry) remove(id string) (inst *agentInstance, slot int, ok bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	inst, ok = r.byID[id]
+	if !ok {
+		return nil, -1, false
+	}
+	delete(r.byID, id)
+	slot = slices.Index(r.order, id)
+	r.order = slices.Delete(r.order, slot, slot+1)
+	return inst, slot, true
+}
+
+// commitAt is commit with the agent placed at slot in the order (clamped to
+// the end), for the new id of a live rename.
+func (r *agentRegistry) commitAt(inst *agentInstance, slot int) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.reserved, inst.id)
+	if _, ok := r.byID[inst.id]; ok {
+		return errAgentExists{inst.id}
+	}
+	r.byID[inst.id] = inst
+	if slot < 0 || slot > len(r.order) {
+		slot = len(r.order)
+	}
+	r.order = slices.Insert(r.order, slot, inst.id)
 	return nil
 }
 
