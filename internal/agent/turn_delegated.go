@@ -503,6 +503,11 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 	}
 
 	t.logger().Debugf("RunInference: Inject(%s, begin-turn) start sk=%s attachments=%d", src, ts.SessionKey, len(atts))
+	// A system turn refused for pending background work retries below; it
+	// stops waiting for that work once it has waited maxPendingHold, the same
+	// limit the inbox gate applies (#2792). An inject whose inbox hold
+	// already ran out (pendingHoldExpiredRun) is exempt from its first begin.
+	pendingWaitStart := time.Now()
 	for waited := false; ; waited = true {
 		// Drain gate (#2059): a system turn waiting here for an in-flight turn
 		// must not begin once shutdown has started, however long it waited.
@@ -517,6 +522,15 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 			Attachments: atts,
 			Turn:        turnEvents,
 			Refs:        InputRefsFromContext(ts.Ctx),
+		}
+		if src == delegator.SourceSystem && !isKeepaliveTrigger(ts.Trigger) &&
+			(a.pendingHoldExpiredRun(ts.SessionKey) || time.Since(pendingWaitStart) >= a.pendingHoldLimit()) {
+			// Background work has held this turn for maxPendingHold (#2792,
+			// Dick: "5 minutes of waiting then delivery anyway"): begin it
+			// past the pending-work refusal. The active-turn refusal and the
+			// post-run grace still apply, so it never interrupts a turn that
+			// is actually running.
+			inj.PendingWorkExempt = true
 		}
 		if src == delegator.SourceSystem && isKeepaliveTrigger(ts.Trigger) {
 			// A keepalive's whole purpose is to keep the prompt cache warm

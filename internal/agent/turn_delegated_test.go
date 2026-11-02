@@ -194,6 +194,10 @@ type mockBackendDT struct {
 	sessionFile   string
 	sessionEvents *delegator.SessionEvents // captured by AttachSessionEvents; Inject splices delivery callbacks back into handler
 	awaiting      bool                     // AwaitingAutonomousRun() return, guarded by mu (#1068 Phase 2 gate tests)
+	// refusePending mirrors ccstream's tryBegin (#2792): a SourceSystem
+	// inject is refused with ErrTurnInFlight while awaiting is set, unless it
+	// carries PendingWorkExempt. Opt-in, so older tests keep the plain mock.
+	refusePending bool
 
 	// cachedThreadName/consumeThreadNameCalls model a Codex-style backend
 	// that auto-generates a session title once and otherwise never clears
@@ -328,6 +332,12 @@ func (m *mockBackendDT) ImmediateInject(ctx context.Context, inj delegator.Injec
 		// Mirrors production: system input never folds into an in-flight
 		// turn — reject so the caller waits and retries.
 		if m.IsTurnInFlight() {
+			return delegator.ErrTurnInFlight
+		}
+		m.mu.Lock()
+		refused := m.refusePending && m.awaiting && !inj.PendingWorkExempt
+		m.mu.Unlock()
+		if refused {
 			return delegator.ErrTurnInFlight
 		}
 		_, err := m.SendToPane(ctx, inj.Text, handler)

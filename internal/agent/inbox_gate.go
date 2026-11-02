@@ -37,6 +37,42 @@ func (a *Agent) gatePollInterval() time.Duration {
 	return injectGatePollInterval
 }
 
+// maxPendingHold is the longest background work may hold one system inject
+// (#2792, Dick 2026-11-02: "5 minutes of waiting then delivery anyway"). The
+// hold exists so an inject does not interrupt active work, but an agent can
+// leave a background watcher running for hours (an `until … sleep` loop), and
+// a cron, wake or spawn result must not wait that long. Once an inject has
+// been parked this long, the pending-work half of the hold no longer applies
+// to it — it is treated like a keepalive: it still waits for an adopted
+// delivering run (a turn that is actually running) and for the backend's
+// active-turn refusal, but not for background work. Counted per inject from
+// when it first parked (Envelope.heldSince). Not configurable: Dick set the
+// value; Agent.pendingHoldMax is a test seam only.
+const maxPendingHold = 5 * time.Minute
+
+// pendingHoldLimit is the hold limit this agent applies.
+func (a *Agent) pendingHoldLimit() time.Duration {
+	if a.pendingHoldMax > 0 {
+		return a.pendingHoldMax
+	}
+	return maxPendingHold
+}
+
+// pendingHoldExpired reports whether env has been parked by the pending-work
+// gate for at least maxPendingHold (#2792). False for an inject that never
+// parked.
+func (a *Agent) pendingHoldExpired(env Envelope) bool {
+	return !env.heldSince.IsZero() && time.Since(env.heldSince) >= a.pendingHoldLimit()
+}
+
+// pendingHoldExpiredRun reports whether sk's worker is running an inject whose
+// pending-work hold ran out (sessionInbox.pendingExempt): RunInference then
+// begins its turn PendingWorkExempt (#2792).
+func (a *Agent) pendingHoldExpiredRun(sk string) bool {
+	inb := a.lookupInbox(sk)
+	return inb != nil && inb.pendingExempt.Load()
+}
+
 // backendAwaitingAutonomousRun is the nil-safe wrapper over
 // DelegatedManager.BackendAwaitingAutonomousRun: false for API agents (no
 // DelegatedManager) and for idle/non-tracking backends. Used by the inbox
@@ -147,7 +183,9 @@ func (a *Agent) injectHeld(env Envelope) bool {
 	if a.usageHoldsTrigger(env.Inject.Trigger, env.Inject.HoldPermit) {
 		return true
 	}
-	if isKeepaliveTrigger(env.Inject.Trigger) {
+	// A keepalive is never held by background work (#2233), and no other
+	// inject is held by it past maxPendingHold (#2792).
+	if isKeepaliveTrigger(env.Inject.Trigger) || a.pendingHoldExpired(env) {
 		return a.adoptedRunActive(env.SessionKey)
 	}
 	return a.holdActive(env.SessionKey)
@@ -180,8 +218,15 @@ func (a *Agent) waitInjectGate(ctx context.Context, sk string) bool {
 // runs the moment that run ends even while other background work is still
 // outstanding (#2233 review F1).
 func (a *Agent) waitHeldGate(ctx context.Context, env Envelope) bool {
-	if env.Inject == nil || (!isKeepaliveTrigger(env.Inject.Trigger) && !a.usageHoldsTrigger(env.Inject.Trigger, env.Inject.HoldPermit)) {
+	if env.Inject == nil {
 		return a.waitInjectGate(ctx, env.SessionKey)
+	}
+	if !isKeepaliveTrigger(env.Inject.Trigger) && !a.usageHoldsTrigger(env.Inject.Trigger, env.Inject.HoldPermit) {
+		// The full hold, but only until this inject's pending-work limit
+		// runs out (#2792): the poll backstop sees the limit pass.
+		return a.gateWaitLoop(ctx, env.SessionKey, "autonomous_or_pending", func() bool {
+			return a.injectHeld(env)
+		})
 	}
 	return a.gateWaitLoop(ctx, env.SessionKey, "adopted_run", func() bool {
 		return a.injectHeld(env)
@@ -351,6 +396,9 @@ func (a *Agent) dispatchInject(ctx context.Context, inb *sessionInbox, env Envel
 		// serialisable form, so it survives a restart (#2491).
 		if env.Inject.Durable != nil && a.usageHoldPhase() != usagehold.Open {
 			a.storeUsageHeld(&env)
+		}
+		if env.heldSince.IsZero() {
+			env.heldSince = time.Now()
 		}
 		inb.held = append(inb.held, env)
 		inb.heldGen++

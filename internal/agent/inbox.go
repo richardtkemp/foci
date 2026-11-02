@@ -121,6 +121,11 @@ type Envelope struct {
 	// (for non-control triggers) defers it while a foci_ask is pending.
 	Inject *InjectMeta
 
+	// heldSince is when the pending-work gate first parked this injection;
+	// zero for one it never parked. Background work holds an injection for
+	// at most maxPendingHold from then (#2792, see pendingHoldExpired).
+	heldSince time.Time
+
 	// enqSeq is the session-local order Enqueue put this user message on the
 	// channel in (1-based; 0 = never queued through Enqueue). A /stop that
 	// drops a queued batch drops every message queued up to it, including
@@ -387,6 +392,12 @@ type sessionInbox struct {
 	// runs from reading as a pending-work hold: the reporting half of the
 	// gate only.
 	busy atomic.Int32
+
+	// pendingExempt is set while runInject runs an injection whose
+	// pending-work hold ran out (#2792): RunInference begins that turn
+	// PendingWorkExempt, so the backend does not refuse it for the same
+	// background work the inbox gate just stopped waiting for.
+	pendingExempt atomic.Bool
 
 	workerStarted sync.Once
 
@@ -1896,6 +1907,12 @@ func (a *Agent) runInject(inb *sessionInbox, env Envelope) {
 		// (#1068, #2233 review F4).
 		inb.busy.Add(1)
 		defer inb.busy.Add(-1)
+		if a.pendingHoldExpired(env) {
+			a.logger().Infof("inbox: injection sk=%s trigger=%s delivered after %s held by background work (limit %s, #2792)",
+				inb.sk, env.Inject.Trigger, time.Since(env.heldSince).Round(time.Second), a.pendingHoldLimit())
+			inb.pendingExempt.Store(true)
+			defer inb.pendingExempt.Store(false)
+		}
 		env.Inject.Run()
 	}
 }
