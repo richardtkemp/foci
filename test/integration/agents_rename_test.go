@@ -32,8 +32,6 @@ func TestL2_AgentsRename_LiveOnlyTheRenamedAgentStops(t *testing.T) {
 	)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: alphaUser}, {ID: "l2ren", UserID: renUser}},
-		// The rename reads and may install the crontab: never the real one.
-		FakeCrontab: true,
 	})
 	waitForSocket(t, h.SocketPath(), 0)
 	// A job naming the agent, which the rename must rewrite.
@@ -144,8 +142,7 @@ func TestL2_AgentsRename_OverHTTPNeedsTheOwnersApproval(t *testing.T) {
 	testharness.ParallelWait(t)
 	const alphaUser = 27873
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents:      []testharness.AgentSpec{{ID: "alpha", UserID: alphaUser}, {ID: "l2apr", UserID: 27874}},
-		FakeCrontab: true,
+		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: alphaUser}, {ID: "l2apr", UserID: 27874}},
 	})
 	waitForSocket(t, h.SocketPath(), 0)
 	alphaToken := h.AgentBotToken("alpha")

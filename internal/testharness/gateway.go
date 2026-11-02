@@ -205,12 +205,6 @@ type HarnessOptions struct {
 	// fault can be in place for the gateway's boot-time getMe (e.g. a
 	// persistent getMe 502 to hold Telegram's background connect failing).
 	BeforeSpawn func(*TelegramStub)
-	// FakeCrontab puts a fake `crontab` first on the gateway's PATH, so a
-	// test that reaches the crontab (an agent rename, #2787) can never read
-	// or write the real crontab of the user running the tests. It keeps the
-	// crontab in a file (FakeCrontabPath): `crontab -l` prints it (absent:
-	// "no crontab", exit 1, as the real one), `crontab -` replaces it.
-	FakeCrontab bool
 }
 
 // Harness drives one foci-gw subprocess against a Telegram stub. Tests
@@ -630,14 +624,19 @@ func (h *Harness) spawnGateway() error {
 	if h.opts.BackendReadyTimeout > 0 {
 		cmd.Env = append(cmd.Env, "FOCI_BACKEND_READY_TIMEOUT="+h.opts.BackendReadyTimeout.String())
 	}
-	if h.opts.FakeCrontab {
-		dir, err := h.writeFakeCrontab()
-		if err != nil {
-			cancel()
-			return err
-		}
-		cmd.Env = append(cmd.Env, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// Always: a fake `crontab` first on the gateway's PATH (#2778). Several
+	// gateway paths run `crontab` — `/agents new` appends the new agent's
+	// jobs whenever crontab.template sits in the shared dir beside the
+	// workspaces (boot seeds it there, since HOME is the test's workspaces
+	// dir), an agent rename reads and installs it (#2787), and startup
+	// counts it. Without the fake every one of them reaches the real crontab
+	// of the user running the tests. See writeFakeCrontab.
+	fakeDir, err := h.writeFakeCrontab()
+	if err != nil {
+		cancel()
+		return err
 	}
+	cmd.Env = append(cmd.Env, "PATH="+fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	// Always override HOME for the spawned foci-gw to a directory inside
 	// THIS test's own temp tree — never the real host home.
 	//
@@ -847,7 +846,10 @@ func (h *Harness) SocketPath() string { return h.gwSock }
 // or read foci's persisted state.
 func (h *Harness) DataDir() string { return h.dataDir }
 
-// FakeCrontabPath is the file the FakeCrontab option keeps the crontab in.
+// FakeCrontabPath is the file the harness's fake `crontab` keeps the
+// gateway's crontab in: `crontab -l` prints it (absent: "no crontab", exit 1,
+// as the real one), `crontab -` replaces it. Tests seed it to give the
+// gateway jobs and read it to see what the gateway installed.
 func (h *Harness) FakeCrontabPath() string {
 	return filepath.Join(h.tempDir, "fake-crontab-data", "crontab.txt")
 }
@@ -857,13 +859,18 @@ func (h *Harness) FakeCrontabPath() string {
 // with a scrubbed environment.
 func (h *Harness) writeFakeCrontab() (string, error) {
 	dir := filepath.Join(h.tempDir, "fake-crontab")
+	// A Restart spawns again: the read-only dir and script from the first
+	// spawn are still in place, and rewriting them would fail.
+	if _, err := os.Stat(filepath.Join(dir, "crontab")); err == nil {
+		return dir, nil
+	}
 	for _, d := range []string{dir, filepath.Dir(h.FakeCrontabPath())} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return "", fmt.Errorf("fake crontab: %w", err)
 		}
 	}
 	script := fmt.Sprintf(`#!/bin/sh
-# Fake crontab for L2 tests (HarnessOptions.FakeCrontab).
+# Fake crontab for L2 tests (testharness writeFakeCrontab).
 f=%q
 case "$1" in
 -l) if [ -f "$f" ]; then cat "$f"; else echo "no crontab for test" >&2; exit 1; fi ;;

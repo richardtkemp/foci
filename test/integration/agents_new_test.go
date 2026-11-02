@@ -10,7 +10,6 @@ package integration
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -45,16 +44,14 @@ func TestL2_AgentsNew_StartsAgentWithoutRestart(t *testing.T) {
 	})
 	waitForSocket(t, h.SocketPath(), 0)
 
-	// SAFETY: the wizard installs crontab entries when the defaults dir
-	// beside the workspaces holds crontab.template — and it runs the REAL
-	// `crontab` of the user running the tests. Boot seeded that template
-	// (HOME is the test's workspaces dir), so remove it and prove it gone.
+	// The wizard installs crontab entries when the shared dir beside the
+	// workspaces holds crontab.template, and boot seeded it there (HOME is
+	// the test's workspaces dir). The harness's fake `crontab` takes those
+	// writes (#2778); the check after the wizard proves the wizard did call
+	// `crontab`, i.e. that without the fake it would edit the real crontab.
 	tmpl := filepath.Join(filepath.Dir(h.AgentWorkspace("alpha")), "shared", "crontab.template")
-	if err := os.Remove(tmpl); err != nil && !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("remove %s: %v", tmpl, err)
-	}
-	if _, err := os.Stat(tmpl); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("crontab template still present at %s (err %v): refusing to run a wizard that would edit the real crontab", tmpl, err)
+	if _, err := os.Stat(tmpl); err != nil {
+		t.Fatalf("boot did not seed %s (%v): the crontab check below would prove nothing", tmpl, err)
 	}
 
 	alphaToken := h.AgentBotToken("alpha")
@@ -74,6 +71,9 @@ func TestL2_AgentsNew_StartsAgentWithoutRestart(t *testing.T) {
 	}
 	if final := waitForSendMessageText(t, h, alphaToken, 0, "is running"); strings.Contains(final, "/restart") {
 		t.Errorf("the wizard's final reply still asks for a restart:\n%s", final)
+	}
+	if cron, err := os.ReadFile(h.FakeCrontabPath()); err != nil || !strings.Contains(string(cron), "-a newbie") {
+		t.Errorf("the wizard did not install the new agent's jobs through the fake crontab (err %v):\n%s", err, cron)
 	}
 	if !strings.Contains(h.Stderr(), `agent "newbie" started live`) {
 		t.Errorf("no live-start log line for the new agent\nstderr:\n%s", stderrTail(h.Stderr()))
