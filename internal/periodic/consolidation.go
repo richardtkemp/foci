@@ -112,7 +112,7 @@ func (r *Runner) maybeConsolidation() {
 			_ = resp // consolidation writes to files directly via tools
 			r.log.Infof("consolidation batch complete")
 		} else {
-			r.agent.Branch("consolidation", parentKey, promptText, true)
+			r.agent.Branch(context.Background(), "consolidation", parentKey, promptText, true)
 		}
 	}()
 }

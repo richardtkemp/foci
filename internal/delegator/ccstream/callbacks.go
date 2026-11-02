@@ -74,9 +74,10 @@ func (b *Backend) RunningSubagents() []delegator.RunningSubagent { return b.agen
 //   - OnModelFallbackNotice gets a formatted notice when CC's model refused
 //     and CC fell back to another model (model_refusal_fallback), for the
 //     session's chat (#2200).
-//   - EngageRateLimit fires when CC reports a session limit (a synthetic
-//     "You've hit your session limit · resets <time>" message, which unlike a
-//     direct-API 429 never reaches classifyAPIError).
+//   - EngageRateLimit fires when CC reports a usage limit: a synthetic
+//     "You've hit your <session|weekly|…> limit · resets <time>" message
+//     (which unlike a direct-API 429 never reaches classifyAPIError), or a
+//     rate_limit_event rejecting the five-hour or weekly window (#2488).
 //   - PreToolRules (#2028) and StopRules (#2089) are read at every Start and
 //     baked into that CC process's hook command line, so a source that reads
 //     the live config makes an edit reach the next session (#2033).

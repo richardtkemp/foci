@@ -131,7 +131,7 @@ func TestBranchTurn_BackendForkRunsUnderParentGate(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(d.ctx, 5*time.Second)
 	defer cancel()
-	if !handleDelegatedBranch(ag, testAgentID, "reflection", parent, "reflect on the day", "", ctx) {
+	if !handleDelegatedBranch(context.Background(), ag, testAgentID, "reflection", parent, "reflect on the day", "", ctx) {
 		t.Fatal("the forked branch turn failed while the parent gate was held — see the log")
 	}
 
@@ -178,7 +178,7 @@ func TestBranchTurn_RunIndependentRunsUnderParentGate(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(d.ctx, 5*time.Second)
 	defer cancel()
-	if !handleDelegatedBranch(ag, testAgentID, "background", parent, "check the todo list", "", ctx) {
+	if !handleDelegatedBranch(context.Background(), ag, testAgentID, "background", parent, "check the todo list", "", ctx) {
 		t.Fatal("the independent branch turn failed while the parent gate was held — see the log")
 	}
 

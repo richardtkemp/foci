@@ -735,6 +735,7 @@ bind = "127.0.0.1"
 # prompt = ""
 # warm_open_app_chats = false             # warm every chat the app has open (per its pager tabs), not just the default session
 # max_user_idle = "96h"                   # only warm sessions a human used within this window ("0" disables the gate)
+# timeout = "2m"                          # cancel a keepalive turn not completed this long after it starts
 # force_in_session = false                # run in the existing session instead of a backend fork
 
 # ─── Global Reflection ───────────────────────────────────────────────

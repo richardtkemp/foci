@@ -145,7 +145,7 @@ var (
 
 	liveApplyPeriodicAddrs = []string{
 		"keepalive.enabled", "keepalive.interval", "keepalive.prompt", "keepalive.max_user_idle",
-		"keepalive.warm_open_app_chats",
+		"keepalive.warm_open_app_chats", "keepalive.timeout",
 		"background.enabled", "background.interval", "background.prompt",
 		"reflection.backend_quiet_period", "reflection.interval", "reflection.interval_enabled",
 		"reflection.interval_prompt", "reflection.notify_on_skill_creation",
@@ -157,7 +157,7 @@ var (
 		"maintenance.reset_idle_guard", "maintenance.reset_time",
 		"scheduler.tick_interval",
 		"agent.keepalive.enabled", "agent.keepalive.interval", "agent.keepalive.prompt", "agent.keepalive.max_user_idle",
-		"agent.keepalive.warm_open_app_chats",
+		"agent.keepalive.warm_open_app_chats", "agent.keepalive.timeout",
 		"agent.background.enabled", "agent.background.interval", "agent.background.prompt",
 		"agent.reflection.backend_quiet_period", "agent.reflection.interval", "agent.reflection.interval_enabled",
 		"agent.reflection.interval_prompt", "agent.reflection.notify_on_skill_creation",

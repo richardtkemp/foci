@@ -70,8 +70,10 @@ func isSyntheticNoResponse(m BetaMessage) bool {
 }
 
 // syntheticSessionLimitText returns the text of m when it is CC's synthetic
-// "You've hit your session limit …" message (the sentinel model carrying that
-// phrase), else "". Unlike a direct-API 429, this arrives as an assistant
+// usage-limit message (the sentinel model carrying "You've hit your session
+// limit …", "… weekly limit …" or any other "hit your <kind> limit", #2488),
+// else "". Only the synthetic sentinel model is read, never a real reply, so a
+// reply that merely discusses limits cannot close the gate (#1238). Unlike a direct-API 429, this arrives as an assistant
 // message on the stream and never reaches classifyAPIError, so the delegated
 // backend detects it here to engage the rate-limit gate.
 func syntheticSessionLimitText(m BetaMessage) string {
@@ -88,7 +90,7 @@ func syntheticSessionLimitText(m BetaMessage) string {
 		}
 	}
 	s := strings.TrimSpace(text.String())
-	if strings.Contains(s, "hit your session limit") {
+	if syntheticLimitRe.MatchString(s) {
 		return s
 	}
 	return ""
@@ -1039,7 +1041,8 @@ func (b *Backend) OnKeepAlive() {
 // OnRateLimit handles CC's structured rate_limit_event: CC emits it on status
 // transitions (allowed → allowed_warning → rejected) with the API's
 // utilization. Past the "allowed" threshold we surface a WARNING via the
-// rate-limit hook — informational only, it does NOT gate periodic work.
+// rate-limit hook. A warning does NOT gate periodic work; a rejection of the
+// five-hour or weekly window closes the rate-limit gate (#2488).
 //
 // CC repeats the event, so a warning per event would flood (#1211/#1238).
 // We throttle via a shared RateLimitThrottle (one per agent, so main + facet
@@ -1058,6 +1061,15 @@ func (b *Backend) OnRateLimit(ev *RateLimitEvent) {
 	b.logger().Debugf("rate_limit_event received: %s", describeRateLimitInfo(info))
 	if info.Status == "" || info.Status == "allowed" {
 		return
+	}
+	// A rejected five-hour or weekly window is the limit itself (#2488): close
+	// the agent's rate-limit gate until the window resets, so periodic work
+	// and keepalives stop firing into it. This reads only the structured
+	// event, never reply text (#1238). Every rejected event re-closes the
+	// gate, so a successful user probe that opened it early is undone by the
+	// next rejection.
+	if info.Status == "rejected" && (info.RateLimitType == "five_hour" || info.RateLimitType == "seven_day") {
+		b.fireSessionLimit(rejectedWindowSignal(info, timeutil.Now()))
 	}
 	resetsAt := int64(0)
 	if info.ResetsAt != nil {

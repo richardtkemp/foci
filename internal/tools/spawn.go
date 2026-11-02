@@ -51,6 +51,13 @@ type SpawnAgent interface {
 	HandleMessage(ctx context.Context, sessionKey string, texts []string, attachments []platform.Attachment) error
 }
 
+// SpawnCacheReporter is the optional agent side of spawn_send's cold-cache
+// rule: when the session's prompt cache expires (or expired). A zero time
+// means no cache. *agent.Agent implements it (Agent.CacheExpiry).
+type SpawnCacheReporter interface {
+	CacheExpiry(sessionKey string, at time.Time) time.Time
+}
+
 // SpawnSteerer is the optional agent side of spawn_send (#2523): fold text
 // into the turn running on sessionKey now, as a typed mid-turn message does.
 // False when it could not (no turn in flight, or a backend without live

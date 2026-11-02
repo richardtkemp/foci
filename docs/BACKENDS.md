@@ -311,7 +311,7 @@ grepped for each ✗. Row IDs are not renumbered, so the gaps are the removed ro
 | U4 | Expectation guards | `ExpectationGuard` invariants + version tracking | ✓ | ✗ | ✓ |
 | U5 | Resume cost baseline | Cumulative counters on `--resume` | ✓ | n/a [33] | n/a [33] |
 | U6 | Utilisation notice | Rate-limit utilisation notice to the human's chat | ✓ | ✗ | ✓ |
-| U7 | Limit gate | Usage/session limit engages `Agent.EngageRateLimit` | ✓ | ✓ | ✓ [34] |
+| U7 | Limit gate | Usage/session limit engages `Agent.EngageRateLimit` | ✓ [49] | ✓ [49] | ✓ [34] |
 | U9 | Turn usage | Token usage on `TurnResult` | ✓ | ✓ | ✓ |
 
 ### 8. Models and effort
@@ -591,6 +591,13 @@ Notes:
     and resume; read-only batches always use `read-only`, with `approval_policy=never` (#2702). `cx/lifecycle.go:buildEnv` still reads
     `cfg["api_key"]`, which `config.BackendConfig` does not supply; `CODEX_API_KEY` can come
     only from `backend_config.env`.
+49. Which limits close the gate. ccstream: CC's synthetic limit message for every kind
+    ("hit your session limit", "… weekly limit", "… five-hour limit"; a clock or dated reset
+    clause is parsed), and a structured `rate_limit_event` with `status=rejected` for
+    `five_hour` or `seven_day` (reset = its `resetsAt`, #2488). A warning event
+    (`allowed_warning`) only notifies. Reply text is never read (#1238). opencode: a retry
+    status naming a usage or rate limit; opencode reports no per-window usage. No backend yet
+    holds work at a usage percentage before the limit (#2491, open).
 
 
 ### Parity evidence
@@ -677,7 +684,7 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - U4: `cc/expectations.go` | ✗ grep `ExpectationGuard|violated` | `cx/expectations.go:checkTokenUsage`
 - U5: `cc/cost.go:resumeBaseline` | n/a | n/a
 - U6: `cc/handlers.go:OnRateLimit`, `cc/ratelimit.go:FormatRateLimitNotice`, `HostHooks.OnRateLimitNotice` | ✗ grep `rate.?limit` | `cx/ratelimits.go:onRateLimitsUpdated` (account/rateLimits/updated) → `HostHooks.OnRateLimitNotice`; usage in `StatusDetail`
-- U7: `cc/handlers.go:OnAssistant` (`syntheticSessionLimitText`) → `HostHooks.EngageRateLimit` | `oc/ratelimit.go:handleRateLimitRetry` → `HostHooks.EngageRateLimit` | `cx/ratelimits.go:onRateLimitsUpdated` → `gateSignal` → `HostHooks.EngageRateLimit`
+- U7: `cc/handlers.go:OnAssistant` (`syntheticSessionLimitText`) and `cc/handlers.go:OnRateLimit` (`status=rejected`, `rejectedWindowSignal`) → `HostHooks.EngageRateLimit` | `oc/ratelimit.go:handleRateLimitRetry` → `HostHooks.EngageRateLimit` | `cx/ratelimits.go:onRateLimitsUpdated` → `gateSignal` → `HostHooks.EngageRateLimit`
 - `usage_query`: `cc/usage_oneshot.go:QueryUsage`, `cc/spec.go` `UsageQuery` | ✗ `oc/spec.go` declares `usage_query` No | `cx/ratelimits.go:QueryUsage` (fresh `account/rateLimits/read` on the agent's running app-server, else the last pushed numbers), `cx/spec.go` `UsageQuery`
 - U9: `cc/handlers.go:OnResult` | `oc/handlers.go:onMessageUpdated` | `cx/handlers.go:onTokenUsage`
 

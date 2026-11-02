@@ -164,7 +164,7 @@ func (r *Runner) maybeReflection() {
 		}
 		for _, key := range keys {
 			winStart := time.Now()
-			ran := r.agent.Branch("reflection", key, promptText, true)
+			ran := r.agent.Branch(context.Background(), "reflection", key, promptText, true)
 			if ran {
 				r.sessionIndex.StampReflection(key, winStart)
 			}
@@ -215,7 +215,7 @@ func (r *Runner) ReflectSessionIfDue(sessionKey string) {
 	}
 
 	winStart := time.Now()
-	if r.agent.Branch("reflection", sessionKey, promptText, true) {
+	if r.agent.Branch(context.Background(), "reflection", sessionKey, promptText, true) {
 		r.sessionIndex.StampReflection(sessionKey, winStart)
 	}
 

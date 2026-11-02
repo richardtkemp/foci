@@ -60,7 +60,6 @@ func (r *Runner) maybePrecoldCompaction(ctx context.Context) {
 	reflectionRunning := r.reflectionRunning
 	consolidationRunning := r.consolidationRunning
 	resetRunning := r.resetRunning
-	keepaliveRunning := r.keepaliveRunning
 	r.mu.Unlock()
 
 	if running {
@@ -68,8 +67,9 @@ func (r *Runner) maybePrecoldCompaction(ctx context.Context) {
 		return
 	}
 	// The same yields as quiet compaction (see maybeQuietCompaction), plus
-	// quiet compaction itself: both compact the same sessions.
-	if quietRunning || reflectionRunning || consolidationRunning || resetRunning || keepaliveRunning {
+	// quiet compaction itself: both compact the same sessions. A keepalive is
+	// yielded to per session, in precoldCompactionTargets (#2487).
+	if quietRunning || reflectionRunning || consolidationRunning || resetRunning {
 		skip = "another periodic task running"
 		return
 	}
@@ -108,6 +108,10 @@ func (r *Runner) precoldCompactionTargets(now time.Time, lead time.Duration, thr
 		return nil, "no session index"
 	}
 	for _, sk := range r.quietCandidates() {
+		if r.keepaliveRunningFor(sk) {
+			r.log.Debugf("pre-cold compaction: skip %s: keepalive running", sk)
+			continue
+		}
 		t, skip := r.precoldCandidate(sk, now, lead, threshold)
 		if skip != "" {
 			r.log.Debugf("pre-cold compaction: skip %s: %s", sk, skip)

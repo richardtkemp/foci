@@ -64,7 +64,10 @@ func (r *Runner) parseDuration(field string, s string) (time.Duration, bool) {
 // ("keepalive", "background", "reflection", "consolidation"), the parent
 // session key to branch from, the prompt text, and whether to skip compaction.
 // Returns true if the branch was created and the agent turn completed successfully.
-type BranchFunc func(branchType, parentKey, promptText string, noCompact bool) bool
+//
+// ctx bounds the turn: when it ends before the turn completes (a keepalive's
+// timeout, #2489), the branch stops the turn and returns.
+type BranchFunc func(ctx context.Context, branchType, parentKey, promptText string, noCompact bool) bool
 
 // BackgroundAgent is everything the Runner needs to drive background work on an
 // agent. It replaces the former wall of individually-injected closures with one
@@ -76,7 +79,8 @@ type BranchFunc func(branchType, parentKey, promptText string, noCompact bool) b
 type BackgroundAgent interface {
 	// Branch dispatches a background prompt as a branch turn (keepalive,
 	// background, reflection, consolidation). Returns true if the turn completed.
-	Branch(branchType, parentKey, promptText string, noCompact bool) bool
+	// When ctx ends before the turn completes, the turn is stopped.
+	Branch(ctx context.Context, branchType, parentKey, promptText string, noCompact bool) bool
 	// HasActiveWork returns the count of in-progress async work (e.g. tmux
 	// watches); >0 suppresses background work. 0 = idle.
 	HasActiveWork() int
@@ -208,8 +212,10 @@ type Runner struct {
 	lastInteraction time.Time
 	// bootedAt is when New() ran: the last-activity fallback for an agent with
 	// no recorded human interaction at all (see sinceUserActivity).
-	bootedAt            time.Time
-	keepaliveRunning    bool
+	bootedAt time.Time
+	// keepaliveRunning holds the sessions with a keepalive in flight (#2487):
+	// each session's keepalive runs on its own, at most one per session.
+	keepaliveRunning    map[string]bool
 	backgroundRunning   bool
 	lastBackgroundEnded time.Time // when the last background session finished (persisted, #2026)
 

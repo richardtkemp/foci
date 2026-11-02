@@ -31,6 +31,29 @@ func (b *Backend) fireSessionLimit(signal ratelimit.Signal) {
 	}
 }
 
+// rejectedWindowSignal is the gate signal for a rejected rate_limit_event:
+// the window's resetsAt when it is still ahead, else no hint (the shared
+// usage fallback applies).
+func rejectedWindowSignal(info RateLimitInfo, now time.Time) ratelimit.Signal {
+	sig := ratelimit.Signal{Kind: ratelimit.KindUsage,
+		Detail: fmt.Sprintf("Claude Code %s limit rejected", rateLimitWindowLabel(info.RateLimitType))}
+	if info.ResetsAt != nil {
+		if reset := time.Unix(int64(*info.ResetsAt), 0); reset.After(now) {
+			sig.ResetAt = reset
+		}
+	}
+	return sig
+}
+
+// syntheticLimitRe matches CC's synthetic limit phrase for any limit kind:
+// "hit your session limit", "hit your weekly limit", "hit your five-hour
+// limit" (#2488).
+var syntheticLimitRe = regexp.MustCompile(`(?i)\bhit your [a-z0-9-]+ limit\b`)
+
+// sessionLimitResetDateRe matches the dated reset clause of CC's longer
+// limits, e.g. "resets Oct 12, 12am (Europe/London)" (#2488).
+var sessionLimitResetDateRe = regexp.MustCompile(`(?i)resets\s+([a-z]{3})[a-z]*\s+(\d{1,2}),?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([^)]+)\)`)
+
 // sessionLimitResetRe matches CC's session-limit reset clause, e.g.
 // "resets 11:30pm (Europe/London)" or "resets 6pm (Europe/London)".
 var sessionLimitResetRe = regexp.MustCompile(`(?i)resets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([^)]+)\)`)
@@ -41,6 +64,9 @@ var sessionLimitResetRe = regexp.MustCompile(`(?i)resets\s+(\d{1,2})(?::(\d{2}))
 // wall-clock time in the named zone, and false if the clause is absent or the
 // zone is unknown.
 func parseSessionLimitReset(text string, now time.Time) (ratelimit.Signal, bool) {
+	if d := sessionLimitResetDateRe.FindStringSubmatch(text); d != nil {
+		return parseDatedLimitReset(text, d, now)
+	}
 	m := sessionLimitResetRe.FindStringSubmatch(text)
 	if m == nil {
 		return ratelimit.Signal{}, false
@@ -64,6 +90,39 @@ func parseSessionLimitReset(text string, now time.Time) (ratelimit.Signal, bool)
 	reset := time.Date(n.Year(), n.Month(), n.Day(), hour, minute, 0, 0, loc)
 	if !reset.After(now) {
 		reset = reset.Add(24 * time.Hour)
+	}
+	return ratelimit.Signal{Kind: ratelimit.KindUsage, ResetAt: reset, Detail: text}, true
+}
+
+// parseDatedLimitReset resolves a dated reset clause (sessionLimitResetDateRe
+// submatches d) to its next future occurrence: the named month and day at the
+// wall-clock time in the named zone, this year or, when that has passed, next
+// year.
+func parseDatedLimitReset(text string, d []string, now time.Time) (ratelimit.Signal, bool) {
+	month, err := time.Parse("Jan", strings.ToUpper(d[1][:1])+strings.ToLower(d[1][1:3]))
+	if err != nil {
+		return ratelimit.Signal{}, false
+	}
+	day, _ := strconv.Atoi(d[2])
+	hour, _ := strconv.Atoi(d[3])
+	minute := 0
+	if d[4] != "" {
+		minute, _ = strconv.Atoi(d[4])
+	}
+	switch {
+	case strings.EqualFold(d[5], "pm") && hour != 12:
+		hour += 12
+	case strings.EqualFold(d[5], "am") && hour == 12:
+		hour = 0
+	}
+	loc, err := time.LoadLocation(strings.TrimSpace(d[6]))
+	if err != nil {
+		return ratelimit.Signal{}, false
+	}
+	n := now.In(loc)
+	reset := time.Date(n.Year(), month.Month(), day, hour, minute, 0, 0, loc)
+	if !reset.After(now) {
+		reset = time.Date(n.Year()+1, month.Month(), day, hour, minute, 0, 0, loc)
 	}
 	return ratelimit.Signal{Kind: ratelimit.KindUsage, ResetAt: reset, Detail: text}, true
 }

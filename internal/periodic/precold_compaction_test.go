@@ -343,7 +343,7 @@ func TestMaybePrecoldCompaction_YieldsToOtherTasks(t *testing.T) {
 			case "quiet":
 				f.r.quietCompactionRunning = true
 			case "keepalive":
-				f.r.keepaliveRunning = true
+				f.r.keepaliveRunning = map[string]bool{precoldKey: true}
 			case "reflection":
 				f.r.reflectionRunning = true
 			case "consolidation":
@@ -394,7 +394,7 @@ func waitIdleExceptPrecold(t *testing.T, r *Runner) {
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		r.mu.Lock()
-		busy := r.keepaliveRunning || r.quietCompactionRunning
+		busy := len(r.keepaliveRunning) > 0 || r.quietCompactionRunning
 		r.mu.Unlock()
 		if !busy {
 			return

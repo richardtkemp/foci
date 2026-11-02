@@ -817,7 +817,7 @@ func TestMaybeQuietCompaction_YieldsToOtherTasks(t *testing.T) {
 		{name: "reflection running", park: func(r *Runner) { r.reflectionRunning = true }},
 		{name: "consolidation running", park: func(r *Runner) { r.consolidationRunning = true }},
 		{name: "reset running", park: func(r *Runner) { r.resetRunning = true }},
-		{name: "keepalive running", park: func(r *Runner) { r.keepaliveRunning = true }},
+		{name: "keepalive running", park: func(r *Runner) { r.keepaliveRunning = map[string]bool{"test/c1": true} }},
 		{name: "quiet compaction already running", park: func(r *Runner) { r.quietCompactionRunning = true }},
 	}
 	for _, tc := range cases {
@@ -828,7 +828,7 @@ func TestMaybeQuietCompaction_YieldsToOtherTasks(t *testing.T) {
 			// Clear the parked flags so isIdle reflects real work only.
 			f.r.mu.Lock()
 			f.r.reflectionRunning, f.r.consolidationRunning, f.r.resetRunning = false, false, false
-			f.r.keepaliveRunning, f.r.quietCompactionRunning = false, false
+			f.r.keepaliveRunning, f.r.quietCompactionRunning = nil, false
 			f.r.mu.Unlock()
 			if got := f.compacted["test/c1"]; got != 0 {
 				t.Errorf("compactions = %d, want 0 while another task runs", got)

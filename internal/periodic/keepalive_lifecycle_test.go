@@ -297,7 +297,7 @@ func TestMaybeKeepalive_AlreadyRunning(t *testing.T) {
 			Enabled:  true,
 			Interval: "1m",
 		},
-		keepaliveRunning: true,
+		keepaliveRunning: map[string]bool{"test/c1": true},
 		agent: &fakeBackgroundAgent{
 			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 				calls++

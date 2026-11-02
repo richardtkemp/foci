@@ -26,8 +26,8 @@ type backgroundAgent struct {
 	branch periodic.BranchFunc
 }
 
-func (b *backgroundAgent) Branch(branchType, parentKey, promptText string, noCompact bool) bool {
-	return b.branch(branchType, parentKey, promptText, noCompact)
+func (b *backgroundAgent) Branch(ctx context.Context, branchType, parentKey, promptText string, noCompact bool) bool {
+	return b.branch(ctx, branchType, parentKey, promptText, noCompact)
 }
 
 func (b *backgroundAgent) HasActiveWork() int {

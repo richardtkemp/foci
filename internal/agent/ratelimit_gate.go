@@ -247,8 +247,16 @@ func (a *Agent) SessionRateLimited(sessionKey string) (limited bool, reason stri
 // user API turns already receive the returned RateLimitedError directly.
 func (a *Agent) engageRateLimit(endpoint string, signal ratelimit.Signal, notify bool) time.Time {
 	gate := a.getOrCreateRateLimitGate(endpoint)
+	wasLimited, prev := gate.IsLimited()
 	until := gate.CloseFor(signal)
 	a.persistRateLimitDeadline(endpoint, until)
+	// A backend repeats a rejection while it retries (CC's rate_limit_event,
+	// #2488): re-closing to the same deadline is not news, so it neither
+	// re-logs at INFO nor re-notifies.
+	if wasLimited && prev.Equal(until) {
+		a.logger().Debugf("rate limit gate (%s) still closed until %s (kind=%s)", endpoint, until.Format(time.Kitchen), signal.Kind)
+		return until
+	}
 	a.logger().Infof("rate limit gate (%s) closed until %s (kind=%s)", endpoint, until.Format(time.Kitchen), signal.Kind)
 	if notify {
 		for _, fn := range a.RateLimitFunc {

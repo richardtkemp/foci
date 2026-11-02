@@ -98,6 +98,6 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 			r.lastBackgroundEnded = ended
 			r.mu.Unlock()
 		}()
-		r.agent.Branch("background", parentKey, promptText, true)
+		r.agent.Branch(context.Background(), "background", parentKey, promptText, true)
 	}()
 }

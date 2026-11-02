@@ -94,6 +94,18 @@ func (s *Spawner) send(ctx context.Context, idOrBranch, message string, timeoutS
 		// It finished between the lookup and the queue: resume it instead.
 	}
 
+	// A finished spawn whose prompt cache has gone cold is not woken (Dick
+	// 2026-11-02, #2491): resuming it rebuilds its whole cached prefix at full
+	// price for a conversation nobody kept warm. The caller is told, and
+	// nothing about the spawn changes.
+	if rep, ok := agent.(SpawnCacheReporter); ok {
+		now := time.Now()
+		if exp := rep.CacheExpiry(snap.BranchKey, now); !exp.After(now) {
+			spawnLog.Infof("spawn_send to spawn=%s branch=%s refused: prompt cache cold (expiry %s)", snap.ID, snap.BranchKey, exp.Format(time.RFC3339))
+			return TextResult(fmt.Sprintf("NOT delivered: spawn %s has finished and its prompt cache is cold, so it was not woken (resuming it would rebuild its whole context at full price). Start a new spawn to go on with this work.", snap.ID)), nil
+		}
+	}
+
 	timeout := snap.Timeout
 	if timeoutSec > 0 || timeout <= 0 {
 		timeout = resolveSpawnTimeout(timeoutSec, true) // a resumed spawn runs in the background

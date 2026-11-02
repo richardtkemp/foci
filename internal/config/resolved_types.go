@@ -307,7 +307,8 @@ type ResolvedKeepalive struct {
 	Prompt           string
 	WarmOpenAppChats bool
 	MaxUserIdle      string
-	ForceInSession   bool // force in-session (no backend fork) even on a fork-capable backend
+	Timeout          string // keepalive turn timeout (#2489); "" = default 2m
+	ForceInSession   bool   // force in-session (no backend fork) even on a fork-capable backend
 }
 
 // ResolveKeepaliveFor is the agent's effective keepalive config: the agent's
@@ -325,6 +326,7 @@ func resolveKeepalive(m KeepaliveConfig) ResolvedKeepalive {
 		Prompt:           DerefStr(m.Prompt),
 		WarmOpenAppChats: DerefBool(m.WarmOpenAppChats),
 		MaxUserIdle:      DerefStr(m.MaxUserIdle),
+		Timeout:          DerefStr(m.Timeout),
 		ForceInSession:   DerefBool(m.ForceInSession),
 	}
 }

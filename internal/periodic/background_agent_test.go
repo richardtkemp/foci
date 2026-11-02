@@ -14,6 +14,7 @@ import (
 // nil-closure degradation (Branch=false, CanFire=allowed, SessionKey="", etc.).
 type fakeBackgroundAgent struct {
 	branchFn         func(branchType, parentKey, promptText string, noCompact bool) bool
+	branchCtxFn      func(ctx context.Context, branchType, parentKey, promptText string, noCompact bool) bool
 	hasActiveWorkFn  func() int
 	isTurnInFlightFn func(parentBase string) bool
 	sessionKeyFn     func() string
@@ -28,7 +29,10 @@ type fakeBackgroundAgent struct {
 	quietCompactFn   func(ctx context.Context, sessionKey string) error
 }
 
-func (f *fakeBackgroundAgent) Branch(branchType, parentKey, promptText string, noCompact bool) bool {
+func (f *fakeBackgroundAgent) Branch(ctx context.Context, branchType, parentKey, promptText string, noCompact bool) bool {
+	if f.branchCtxFn != nil {
+		return f.branchCtxFn(ctx, branchType, parentKey, promptText, noCompact)
+	}
 	if f.branchFn != nil {
 		return f.branchFn(branchType, parentKey, promptText, noCompact)
 	}

@@ -3,6 +3,7 @@ package periodic
 import (
 	"context"
 	"slices"
+	"sync"
 	"time"
 
 	"foci/internal/config"
@@ -32,7 +33,6 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 	}
 
 	r.mu.Lock()
-	running := r.keepaliveRunning
 	reflectionRunning := r.reflectionRunning
 	consolidationRunning := r.consolidationRunning
 	resetRunning := r.resetRunning
@@ -40,10 +40,6 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 	precoldCompactionRunning := r.precoldCompactionRunning
 	r.mu.Unlock()
 
-	if running {
-		skip = "already running"
-		return
-	}
 	// Defer to the memory-forming passes — the same three that are already
 	// mutually exclusive with each other. Reflection and consolidation branch
 	// off the same parent session keepalive would, and the branch key carries
@@ -92,32 +88,133 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 	// for routine work in one session a cycle and a bare ping in the rest).
 	src := prompts.ResolveKeepaliveSource(r.kaCfg.Prompt, r.promptSearchDirs...)
 	defaultKey := r.defaultParentKey()
+	timeout := r.keepaliveTimeout()
 
+	// Each session's keepalive runs on its own (#2487): a slow or stuck one
+	// must not delay another session's, whose cache may expire meanwhile.
+	// keepaliveTargets already dropped the sessions with a keepalive running,
+	// so each session still has at most one at a time.
 	r.mu.Lock()
-	r.keepaliveRunning = true
+	if r.keepaliveRunning == nil {
+		r.keepaliveRunning = map[string]bool{}
+	}
+	for _, sk := range targets {
+		r.keepaliveRunning[sk] = true
+	}
 	r.mu.Unlock()
 
 	r.log.Infof("firing keepalive for agent %s (%d session(s))", r.agentID, len(targets))
 
+	// One dispatcher starts the sessions' keepalives in target order: each
+	// prompt script runs in turn (bounded by its own timeout), and each
+	// keepalive starts before the next session's script runs, so the order a
+	// script sees (index/count, #1351) is the order the turns start. After it
+	// starts, a keepalive runs on its own and nothing waits for it.
 	go func() {
-		defer func() {
-			r.mu.Lock()
-			r.keepaliveRunning = false
-			r.mu.Unlock()
-		}()
 		for i, sk := range targets {
-			promptText := src.Text
-			if src.Script != "" {
-				promptText = r.keepaliveScriptPrompt(ctx, src.Script, keepaliveRun{
-					sessionKey: sk,
-					index:      i,
-					count:      len(targets),
-					isDefault:  sk == defaultKey,
-				})
+			run := keepaliveRun{
+				sessionKey: sk,
+				index:      i,
+				count:      len(targets),
+				isDefault:  sk == defaultKey,
 			}
-			r.agent.Branch("keepalive", sk, promptText, true)
+			started := make(chan struct{})
+			go r.runKeepalive(ctx, src, run, timeout, started)
+			<-started
 		}
 	}()
+}
+
+// runKeepalive warms one session and releases its run state. A keepalive
+// that has not completed within timeout (#2489) is cancelled: its context
+// ends, which stops the backend turn, and the session's run state is
+// released at once so the next due tick can warm it again. A healthy
+// keepalive is one cache-read turn that ends in seconds; one that hangs (a
+// rejected usage limit holding it in a retry loop, 10 Oct: 7h52m) warmed
+// nothing, so the cache touch it recorded is put back.
+//
+// started is closed just before the turn starts.
+func (r *Runner) runKeepalive(ctx context.Context, src prompts.Source, run keepaliveRun, timeout time.Duration, started chan<- struct{}) {
+	sk := run.sessionKey
+	startedOnce := sync.OnceFunc(func() { close(started) })
+	defer startedOnce()
+	defer func() {
+		r.mu.Lock()
+		delete(r.keepaliveRunning, sk)
+		r.mu.Unlock()
+	}()
+
+	promptText := src.Text
+	if src.Script != "" {
+		promptText = r.keepaliveScriptPrompt(ctx, src.Script, run)
+	}
+
+	var touchBefore time.Time
+	var hadTouch bool
+	if r.sessionIndex != nil {
+		touchBefore, hadTouch = r.sessionIndex.LastCacheTouch(sk)
+	}
+	began := time.Now()
+
+	kctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		startedOnce()
+		r.agent.Branch(kctx, "keepalive", sk, promptText, true)
+	}()
+	select {
+	case <-done:
+		return
+	case <-kctx.Done():
+	}
+	if ctx.Err() != nil {
+		return // the runner is stopping, not a stuck keepalive
+	}
+	r.log.Warnf("keepalive timed out: agent=%s session=%s reason=not completed within %s; cancelled", r.agentID, sk, timeout)
+	r.restoreCacheTouchAfterTimeout(sk, touchBefore, hadTouch, began)
+}
+
+// restoreCacheTouchAfterTimeout puts back the session's last_cache_touch a
+// timed-out keepalive advanced: its turn reached the backend (which records
+// the touch) but never completed, so the cache was not warmed. A real turn
+// that ended on the session since the keepalive started did warm it, and
+// its touch is kept.
+func (r *Runner) restoreCacheTouchAfterTimeout(sk string, before time.Time, hadTouch bool, started time.Time) {
+	if r.sessionIndex == nil || !hadTouch {
+		return
+	}
+	if end := r.agent.LastTurnEnd(sk); end.After(started) {
+		return
+	}
+	if now, ok := r.sessionIndex.LastCacheTouch(sk); ok && now.After(before) {
+		r.sessionIndex.TouchCacheTouch(sk, before)
+	}
+}
+
+// defaultKeepaliveTimeout bounds one keepalive turn when keepalive.timeout is
+// unset or unparseable (#2489).
+const defaultKeepaliveTimeout = 2 * time.Minute
+
+// keepaliveTimeout is the parsed keepalive.timeout; the default when unset,
+// zero, negative or unparseable (the last logs a warning).
+func (r *Runner) keepaliveTimeout() time.Duration {
+	if r.kaCfg.Timeout == "" {
+		return defaultKeepaliveTimeout
+	}
+	d, ok := r.parseDuration("keepalive timeout", r.kaCfg.Timeout)
+	if !ok || d <= 0 {
+		return defaultKeepaliveTimeout
+	}
+	return d
+}
+
+// keepaliveRunningFor reports whether a keepalive is running on sk now.
+func (r *Runner) keepaliveRunningFor(sk string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.keepaliveRunning[sk]
 }
 
 // keepaliveTargets returns the sessions to warm this cycle. Candidates are the
@@ -150,6 +247,10 @@ func (r *Runner) keepaliveTargetsAt(interval time.Duration, now time.Time) (read
 	maxIdle := r.keepaliveMaxUserIdle()
 
 	for _, sk := range candidates {
+		if r.keepaliveRunningFor(sk) {
+			why = "already running on " + sk
+			continue // one keepalive per session at a time (#2487)
+		}
 		if skip := r.checkRateLimit(sk); skip != "" {
 			continue // endpoint rate-limited — don't warm into a cap
 		}

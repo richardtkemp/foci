@@ -1320,6 +1320,7 @@ Cache keepalive timer. Fires a lightweight branch session to keep the prompt cac
 | `enabled` | bool | `false` | Enable keepalive timer. |
 | `interval` | string | `"55m"` | Time since cache last warmed before firing. Should be less than the model's cache TTL (Anthropic default 1h; configurable per-model via `[models.*] cache_ttl`). |
 | `prompt` | string | `""` | Prompt file path. `""` = embedded default (or `keepalive.sh` / `keepalive.md` from the prompt dirs), `"default"` = embedded, `"none"` = disabled, `/path` = custom file, or an executable script run once per warmed session (see [Keepalive prompt scripts](#keepalive-prompt-scripts)). |
+| `timeout` | string | `"2m"` | Cancel a keepalive turn that has not completed this long after it starts. A healthy keepalive ends in seconds; one that hangs (for example on a rejected usage limit) is stopped, its session can be warmed again on the next tick, and the cache touch it recorded is put back. Each session's keepalive runs on its own, so a hung one never delays another session's. Live-appliable. |
 | `force_in_session` | bool | `false` | Force keepalive to run in the existing session instead of a real backend fork, even on a backend that can branch (e.g. Claude Code). Backends that can't fork already behave this way; this opts a fork-capable backend into the same behaviour for keepalive only. Live-appliable. |
 
 #### Keepalive prompt scripts

@@ -76,7 +76,6 @@ func (r *Runner) maybeQuietCompaction(ctx context.Context) {
 	reflectionRunning := r.reflectionRunning
 	consolidationRunning := r.consolidationRunning
 	resetRunning := r.resetRunning
-	keepaliveRunning := r.keepaliveRunning
 	precoldRunning := r.precoldCompactionRunning
 	r.mu.Unlock()
 
@@ -91,11 +90,13 @@ func (r *Runner) maybeQuietCompaction(ctx context.Context) {
 		return
 	}
 	// Yield to the memory passes and reset (they mutate the same sessions,
-	// and reset rotates the key) and to keepalive (warming a session the
+	// and reset rotates the key). A keepalive in flight is yielded to per
+	// session, in quietCompactionTargets (#2487): warming a session the
 	// compaction is about to shrink pays the very full-context write this
-	// trigger exists to remove). The run loop orders all four BEFORE this
-	// check's consumers; see the ORDER IS LOAD-BEARING comment in run().
-	if reflectionRunning || consolidationRunning || resetRunning || keepaliveRunning {
+	// trigger exists to remove, but a keepalive on another session does not.
+	// The run loop orders these BEFORE this check's consumers; see the ORDER
+	// IS LOAD-BEARING comment in run().
+	if reflectionRunning || consolidationRunning || resetRunning {
 		skip = "another periodic task running"
 		return
 	}
@@ -147,6 +148,10 @@ func (r *Runner) quietCompactionTargets(win config.QuietWindow, now time.Time, m
 	}
 	occStart := win.OccurrenceStart(now)
 	for _, sk := range r.quietCandidates() {
+		if r.keepaliveRunningFor(sk) {
+			r.log.Debugf("quiet compaction: skip %s: keepalive running", sk)
+			continue
+		}
 		t, skip := r.quietCandidate(sk, occStart, now, minIdle, threshold)
 		if skip != "" {
 			r.log.Debugf("quiet compaction: skip %s: %s", sk, skip)
