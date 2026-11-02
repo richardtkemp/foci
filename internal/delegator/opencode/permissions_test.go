@@ -600,11 +600,12 @@ func TestAutoApprove_NoRules_NoAutoApprove(t *testing.T) {
 	}
 }
 
-func TestAutoApprove_ExternalDirectory_NotAutoApproved(t *testing.T) {
-	// external_directory is opencode's boundary guard; foci's engine
-	// doesn't evaluate it (it has its own path-scope logic).
+func TestAutoApprove_ExternalDirectory_UnknownCall_NotAutoApproved(t *testing.T) {
+	// An external_directory ask whose tool call foci never saw has no rule
+	// to be checked against: it is prompted, even under a rule that would
+	// cover the directory for any tool.
 	b, rec := newPermTestBackend(t)
-	b.autoApproveRules = autoapprove.Compile(autoapprove.CommonReadonlyRules)
+	b.autoApproveRules = autoapprove.Compile([]string{"Read", "Edit", "Write"})
 
 	b.onPermissionAsked(PermissionRequest{
 		ID:         "per-ext",
@@ -614,7 +615,84 @@ func TestAutoApprove_ExternalDirectory_NotAutoApproved(t *testing.T) {
 	})
 
 	if posts := rec.findallPath("/permission/per-ext/reply"); len(posts) != 0 {
-		t.Errorf("external_directory should not be auto-approved, got: %v", posts)
+		t.Errorf("external_directory with no known tool should not be auto-approved, got: %v", posts)
+	}
+}
+
+// toolPartProps is a message.part.updated payload for a tool call in state.
+func toolPartProps(sessionID, callID, tool, status string) json.RawMessage {
+	b, _ := json.Marshal(map[string]any{"part": map[string]any{
+		"id": "prt-" + callID, "sessionID": sessionID, "messageID": "msg-1",
+		"type": PartTool, "callID": callID, "tool": tool,
+		"state": map[string]any{"status": status},
+	}})
+	return b
+}
+
+// TestAutoApprove_ExternalDirectory_ByAskingTool pins the rule an
+// external_directory ask is decided by: the asking tool's. Reading tools need
+// a Read rule, writing tools Edit/Write, and bash a Write rule (Dick
+// 2026-11-02). The rule dir is a temp dir, which on macOS sits under a
+// symlink (/var -> /private/var): the match must survive canonicalisation.
+func TestAutoApprove_ExternalDirectory_ByAskingTool(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		name    string
+		tool    string
+		rules   []string
+		pattern string
+		want    bool
+	}{
+		{"read under Read rule", "read", []string{"Read:" + dir + "/*"}, dir + "/repo/app/*", true},
+		{"grep under Read rule", "grep", []string{"Read:" + dir + "/*"}, dir + "/repo/*", true},
+		{"list under Read rule", "list", []string{"Read:" + dir + "/*"}, dir + "/*", true},
+		{"read outside Read rule", "read", []string{"Read:" + dir + "/*"}, "/etc/*", false},
+		{"read under single-file rule", "read", []string{"Read:" + dir + "/repo/a.txt"}, dir + "/repo/*", false},
+		{"edit under Read rule only", "edit", []string{"Read:" + dir + "/*"}, dir + "/repo/*", false},
+		{"edit under Edit rule", "edit", []string{"Edit:" + dir + "/*"}, dir + "/repo/*", true},
+		{"write under Edit rule only", "write", []string{"Edit:" + dir + "/*"}, dir + "/repo/*", false},
+		{"write under Write rule", "write", []string{"Write:" + dir + "/*"}, dir + "/repo/*", true},
+		{"bash under Read rule only", "bash", []string{"Read:" + dir + "/*"}, dir + "/*", false},
+		{"bash under Write rule", "bash", []string{"Write:" + dir + "/*"}, dir + "/*", true},
+		{"unmapped tool", "webfetch", []string{"Read", "Edit", "Write"}, dir + "/*", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b, rec := newPermTestBackend(t)
+			b.autoApproveRules = autoapprove.Compile(tc.rules)
+			b.server.trackToolCall(toolPartProps("sess-perm", "call-1", tc.tool, ToolStateRunning))
+
+			b.onPermissionAsked(PermissionRequest{
+				ID:         "per-ext",
+				SessionID:  "sess-perm",
+				Permission: PermExternalDirectory,
+				Patterns:   []string{tc.pattern},
+				Tool: struct {
+					MessageID string `json:"messageID"`
+					CallID    string `json:"callID"`
+				}{MessageID: "msg-1", CallID: "call-1"},
+			})
+
+			posts := rec.findallPath("/permission/per-ext/reply")
+			if got := len(posts) == 1 && strings.Contains(string(posts[0].Body), `"once"`); got != tc.want {
+				t.Errorf("auto-approved = %v, want %v (replies: %v)", got, tc.want, posts)
+			}
+		})
+	}
+}
+
+// TestTrackToolCall_ChildSessionAndEnd: a subagent's tool parts are recorded
+// even though route() has no Backend for the child session (its asks are
+// decided by the parent), and a finished call is forgotten.
+func TestTrackToolCall_ChildSessionAndEnd(t *testing.T) {
+	s := &Server{}
+	s.route(rawEvent{Type: EventMessagePartUpdated, Properties: toolPartProps("ses-child", "call-c", "read", ToolStateRunning)})
+	if got := s.toolForCall("call-c"); got != "read" {
+		t.Fatalf("toolForCall after running = %q, want read", got)
+	}
+	s.route(rawEvent{Type: EventMessagePartUpdated, Properties: toolPartProps("ses-child", "call-c", "read", ToolStateCompleted)})
+	if got := s.toolForCall("call-c"); got != "" {
+		t.Fatalf("toolForCall after completed = %q, want empty", got)
 	}
 }
 

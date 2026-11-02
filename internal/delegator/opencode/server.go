@@ -74,11 +74,16 @@ type Server struct {
 	// childToCallID extends this: child session ID → parent tool callID,
 	// learned from the Task tool's part metadata (trackTaskTool), so child
 	// text events can be grouped with their OnSubagentStart/End.
-	// Both guarded by sessionsMu.
+	// callTools maps a live tool call's callID to its tool name, for every
+	// session this Server streams (children included), learned from tool
+	// parts (trackToolCall). An external_directory ask names only the
+	// directory; its tool.callID is how foci learns which tool raised it.
+	// All guarded by sessionsMu.
 	sessionsMu    sync.RWMutex
 	sessions      map[string]*Backend
 	childToParent map[string]string
 	childToCallID map[string]string
+	callTools     map[string]string
 
 	// SSE subscriber cancel.
 	subscriberCancel context.CancelFunc

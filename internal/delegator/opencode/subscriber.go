@@ -403,6 +403,7 @@ func (s *Server) route(ev rawEvent) {
 	// dispatcher, preserving the tool-start → session.created ordering.
 	if ev.Type == EventMessagePartUpdated {
 		s.trackTaskTool(ev.Properties)
+		s.trackToolCall(ev.Properties)
 	}
 
 	sid := extractSessionID(ev.Properties)
@@ -528,6 +529,45 @@ func (s *Server) trackTaskTool(props json.RawMessage) {
 		s.childToCallID = make(map[string]string)
 	}
 	s.childToCallID[meta.SessionID] = p.Part.CallID
+}
+
+// trackToolCall records a tool part's callID → tool name while the call is
+// live (pending or running) and forgets it once the call ends. It sees every
+// session's parts, children included, because route() runs it before any
+// per-session routing: a subagent's external_directory ask is decided by the
+// parent Backend, which looks the tool up here (toolForCall). The call's
+// pending/running part is expected to precede its ask on the one SSE stream
+// (opencode emits the part before it executes the tool); if it ever does not,
+// the tool is unknown and the ask is prompted, never approved.
+func (s *Server) trackToolCall(props json.RawMessage) {
+	var p eventMessagePartUpdated
+	if err := json.Unmarshal(props, &p); err != nil {
+		return
+	}
+	if p.Part.Type != PartTool || p.Part.CallID == "" || p.Part.State == nil {
+		return
+	}
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	switch p.Part.State.Status {
+	case ToolStateCompleted, ToolStateError:
+		delete(s.callTools, p.Part.CallID)
+	default:
+		if s.callTools == nil {
+			s.callTools = make(map[string]string)
+		}
+		s.callTools[p.Part.CallID] = p.Part.Tool
+	}
+}
+
+// toolForCall returns the tool name of a live call, "" when unknown.
+func (s *Server) toolForCall(callID string) string {
+	if s == nil || callID == "" {
+		return ""
+	}
+	s.sessionsMu.RLock()
+	defer s.sessionsMu.RUnlock()
+	return s.callTools[callID]
 }
 
 // callIDForChild looks up the parent tool callID assigned to a child session.

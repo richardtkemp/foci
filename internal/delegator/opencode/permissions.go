@@ -56,6 +56,7 @@ func (b *Backend) onPermissionAsked(req PermissionRequest) {
 		title:     title,
 		patterns:  req.Patterns,
 		metadata:  req.Metadata,
+		callID:    req.Tool.CallID,
 		replyNext: true, // 1.2.x: reply via POST /permission/{id}/reply
 	})
 }
@@ -77,6 +78,11 @@ func (b *Backend) surfacePermission(pp pendingPermission) {
 		b.answerUnattended(pp, label)
 		return
 	}
+	// Decided before dedup: an ask foci's rules approve is never parked as an
+	// alias of a prompt for the same target raised by a different tool (a
+	// read and a bash call asking for the same directory).
+	autoApproved, _ := b.checkAutoApprove(pp)
+
 	// Store under permMu so RespondToPermission (caller's goroutine) and the
 	// dispatcher goroutine don't race.
 	b.permMu.Lock()
@@ -86,7 +92,7 @@ func (b *Backend) surfacePermission(pp pendingPermission) {
 	// call, so two calls touching the same dir produce two asks in the same
 	// instant; without this the user gets duplicate prompts. We still answer
 	// every alias (see RespondToPermission) — opencode blocks each separately.
-	if pp.permType != PermQuestion {
+	if pp.permType != PermQuestion && !autoApproved {
 		key := permDedupKey(pp)
 		for _, ex := range b.pendingPerms {
 			if ex.aliasOf == "" && ex.permType != PermQuestion && permDedupKey(*ex) == key {
@@ -115,8 +121,8 @@ func (b *Backend) surfacePermission(pp pendingPermission) {
 	// restores the defense-in-depth the ccstream auto-approve engine
 	// provided — bash command segmentation, unsafe-flag rejection, path
 	// traversal canonicalization, symlink escape detection.
-	if approved, _ := b.checkAutoApprove(pp); approved {
-		log.NewComponentLogger(b.logComponent()).Infof("auto-approved: type=%s patterns=%v id=%s", pp.permType, pp.patterns, pp.id)
+	if autoApproved {
+		log.NewComponentLogger(b.logComponent()).Infof("auto-approved: type=%s tool=%s patterns=%v id=%s", pp.permType, b.server.toolForCall(pp.callID), pp.patterns, pp.id)
 		if err := b.sendPermissionReply(pp, true, false); err != nil {
 			log.NewComponentLogger(b.logComponent()).Warnf("auto-approve reply failed (%v) — falling through to user prompt", err)
 		} else {
@@ -163,7 +169,8 @@ func (b *Backend) unattended() (label string, ok bool) {
 // session (a batch run, or backend_config.skip_permissions) or an unattended
 // turn — from foci's auto-approve rules (delegator.Unattended): allowed once
 // when a rule permits every pattern, otherwise rejected with a WARN. A type
-// with no rule mapping (external_directory, unknown types) is always rejected.
+// with no rule mapping (unknown types, or an external_directory ask whose
+// tool foci cannot name) is always rejected.
 // A question has nobody to answer it, so it is declined. Never registered as
 // outstanding: nothing waits on it. A failed reply is logged and left:
 // prompting would put the ask in a chat nobody is watching (#2153).
@@ -189,8 +196,9 @@ func (b *Backend) answerUnattended(pp pendingPermission, label string) {
 
 // permTypeToToolName maps opencode permission types to the tool names used
 // by the auto-approve engine (matching ccstream's naming convention).
-// Returns "" for types foci doesn't auto-approve (external_directory,
-// question, unknown types).
+// Returns "" for types foci doesn't auto-approve (question, unknown types).
+// external_directory is not here: its rule depends on the tool that raised
+// it (extDirRuleTool).
 var permTypeToToolName = map[string]string{
 	"bash":      "Bash",
 	"read":      "Read",
@@ -200,6 +208,27 @@ var permTypeToToolName = map[string]string{
 	"grep":      "Grep",
 	"webfetch":  "WebFetch",
 	"websearch": "WebSearch",
+}
+
+// extDirRuleTool maps the opencode tool that raised an external_directory ask
+// to the auto-approve rule tool its directory is checked against. The ask is
+// opencode's gate on ANY access outside the workdir, and on an agent whose
+// opencode permissions allow the tool itself it is the only gate, so the rule
+// must match what the tool can do there: reading tools need a Read rule,
+// writing tools an Edit or Write rule, and bash — which can write anywhere it
+// can reach — a Write rule (Dick 2026-11-02). A tool not listed (or a call
+// foci never saw) is not auto-approved.
+var extDirRuleTool = map[string]string{
+	"read":        "Read",
+	"glob":        "Read",
+	"grep":        "Read",
+	PermList:      "Read",
+	"edit":        "Edit",
+	"multiedit":   "Edit",
+	"apply_patch": "Edit",
+	"patch":       "Edit",
+	"write":       "Write",
+	PermBash:      "Write",
 }
 
 // checkAutoApprove evaluates pending permission patterns against foci's
@@ -220,6 +249,17 @@ func (b *Backend) checkAutoApprove(pp pendingPermission) (approved bool, vetoRea
 	}
 
 	toolName, ok := permTypeToToolName[pp.permType]
+	if pp.permType == PermExternalDirectory {
+		// Each pattern is a directory glob ("<dir>/*"). Checked as a path for
+		// the asking tool's rule: "Read:/Users/x/*" covers
+		// "/Users/x/repo/*", "Read:/Users/x/repo/file" does not.
+		callTool := b.server.toolForCall(pp.callID)
+		toolName, ok = extDirRuleTool[callTool]
+		if !ok {
+			log.NewComponentLogger(b.logComponent()).Debugf("external_directory %v: tool %q (call %q) has no rule mapping — not auto-approved", pp.patterns, callTool, pp.callID)
+			return false, ""
+		}
+	}
 	if !ok {
 		return false, ""
 	}
