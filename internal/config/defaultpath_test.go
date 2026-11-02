@@ -4,6 +4,7 @@ import (
 	"flag"
 	"io"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -30,31 +31,49 @@ func TestDefaultConfigPath(t *testing.T) {
 	}
 }
 
-// foci-gw -check-config with no -config must validate the live config, not
-// ./foci.toml in whatever directory it was run from (#2117).
+// foci-gw with no -config must load the live config, not ./foci.toml in
+// whatever directory it was run from (#2117).
 func TestParseFlagsInto_DefaultsToLiveConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("FOCI_CONFIG", "")
 
 	cases := []struct {
-		args      []string
-		wantPath  string
-		wantCheck bool
+		args     []string
+		wantPath string
 	}{
-		{[]string{"-check-config"}, filepath.Join(home, "config", "foci.toml"), true},
-		{nil, filepath.Join(home, "config", "foci.toml"), false},
-		{[]string{"-check-config", "-config", "rel.toml"}, "rel.toml", true},
+		{nil, filepath.Join(home, "config", "foci.toml")},
+		{[]string{"-config", "rel.toml"}, "rel.toml"},
 	}
 	for _, c := range cases {
 		fs := flag.NewFlagSet("foci-gw", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
-		path, check, err := parseFlagsInto(fs, c.args)
+		path, err := parseFlagsInto(fs, c.args)
 		if err != nil {
 			t.Fatalf("%v: %v", c.args, err)
 		}
-		if path != c.wantPath || check != c.wantCheck {
-			t.Errorf("%v: got (%q, %v), want (%q, %v)", c.args, path, check, c.wantPath, c.wantCheck)
+		if path != c.wantPath {
+			t.Errorf("%v: got %q, want %q", c.args, path, c.wantPath)
+		}
+	}
+}
+
+// foci-gw -check-config was dropped (#2788): every spelling is refused with
+// a pointer to foci check config, not a bare "flag provided but not defined"
+// and never a silent server start.
+func TestParseFlagsInto_CheckConfigRemoved(t *testing.T) {
+	t.Setenv("FOCI_CONFIG", "/x/foci.toml")
+	for _, args := range [][]string{
+		{"-check-config"},
+		{"--check-config"},
+		{"-check-config=true"},
+		{"-config", "/x/foci.toml", "-check-config"},
+	} {
+		fs := flag.NewFlagSet("foci-gw", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		_, err := parseFlagsInto(fs, args)
+		if err == nil || !strings.Contains(err.Error(), "foci check config") {
+			t.Errorf("%v: err %v, want one naming foci check config", args, err)
 		}
 	}
 }

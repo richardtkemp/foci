@@ -79,7 +79,7 @@ func Load(path string) (*Store, error) {
 }
 
 // LoadNoFollow reads a secrets file the way a privileged pre-flight check
-// must (foci-gw -check-config runs as root during deploys while the config
+// must (foci check config runs as root during deploys while the config
 // directory stays writable by the service user): EVERY path component is
 // opened with openat(2) + O_NOFOLLOW beneath the previous one — a symlink
 // anywhere (a directory component redirects just as effectively as the

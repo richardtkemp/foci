@@ -17,6 +17,14 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 id = "main"
 `
 
+// runConfigCheck runs `foci check config --config path` in-process. These
+// tests moved here from cmd/foci-gw when foci-gw -check-config was dropped
+// (#2788): foci check config is now the one entry point, the deploy gate
+// included, so it carries the whole suite.
+func runConfigCheck(path string, stdout, stderr io.Writer) int {
+	return checkConfig([]string{"--config", path}, stdout, stderr)
+}
+
 func writeTempConfig(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -85,7 +93,7 @@ func TestRunConfigCheck_MissingFileNamesConfigFlag(t *testing.T) {
 		t.Fatalf("runConfigCheck(missing) = %d, want 1", got)
 	}
 	msg := stderr.String()
-	for _, want := range []string{missing, "-config PATH", "foci-gw -check-config -config "} {
+	for _, want := range []string{missing, "--config PATH", "foci check config --config "} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("missing-file message lacks %q:\n%s", want, msg)
 		}
@@ -247,5 +255,38 @@ reason = "r"
 	}
 	if out := stderr.String(); strings.Contains(out, "pretool") {
 		t.Errorf("stderr mentions pretool:\n%s", out)
+	}
+}
+
+// TestRunConfigCheck_UnknownToolNameFails proves the config check exits 1 and
+// names the bad entry, its scope and the valid names, for a misspelt global
+// deny entry and for a foci_-prefixed agent allow entry; and exits 0 when
+// every name is valid.
+func TestRunConfigCheck_UnknownToolNameFails(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, body string
+		wantCode   int
+		wantMsg    []string
+	}{
+		{"global deny typo", "[tools]\ndeny_tools = [\"browsr\"]\n" + validConfigTOML, 1,
+			[]string{"tools.deny_tools", `"browsr"`, "valid tool names:", "browser", "send_to_session"}},
+		{"agent allow prefixed", validConfigTOML + "[agents.tools]\nallow_tools = [\"foci_todo\"]\n", 1,
+			[]string{"agents[main].tools.allow_tools", `"foci_todo"`, "valid tool names:"}},
+		{"valid names", "[tools]\ndeny_tools = [\"browser\"]\n" + validConfigTOML + "[agents.tools]\nallow_tools = [\"todo\", \"shell\"]\ndeny_tools = [\"shell\"]\n", 0, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := writeTempConfig(t, tc.body)
+			var stderr strings.Builder
+			if got := runConfigCheck(path, &strings.Builder{}, &stderr); got != tc.wantCode {
+				t.Fatalf("exit %d, want %d; stderr:\n%s", got, tc.wantCode, stderr.String())
+			}
+			for _, m := range tc.wantMsg {
+				if !strings.Contains(stderr.String(), m) {
+					t.Errorf("stderr lacks %q:\n%s", m, stderr.String())
+				}
+			}
+		})
 	}
 }

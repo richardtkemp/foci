@@ -48,8 +48,10 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 // command's own flag.
 const checkConfigMissingHint = "Point at one explicitly with --config PATH, e.g. foci check config --config /home/foci/config/foci.toml"
 
-// checkConfig runs the same check as `foci-gw -check-config`
-// (configcheck.Run), with the same lines and exit codes.
+// checkConfig implements `foci check config`: configcheck.Run on --config
+// (default $FOCI_CONFIG, else ~/config/foci.toml). It is the one config-check
+// entry point (#2788): the deploy gate (make check-config-built) and the macOS
+// installer run it too, so its lines and exit codes are configcheck's.
 func checkConfig(args []string, stdout, stderr io.Writer) int {
 	configPath, args := parseFlagValue(args, "config")
 	if len(args) > 0 {
@@ -165,9 +167,9 @@ func checkUsage(w io.Writer) {
 Read-only validity checks, run offline (no gateway). Neither changes any file.
 
 Subcommands:
-  config               Check the foci config file: the same check, lines and
-                       exit codes as foci-gw -check-config. Exit 0 when it
-                       passes, non-zero with the failure lines when not.
+  config               Check the foci config file, as a deploy does before it
+                       installs anything (make check-config). Exit 0 when
+                       it passes, non-zero with the failure lines when not.
   nudge                Check one agent's nudge-rules.json. Prints each error
                        (a rule that can never fire, an unknown key, bad JSON)
                        and warning (a trigger this agent's backend cannot run;

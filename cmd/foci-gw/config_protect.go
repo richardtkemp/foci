@@ -11,7 +11,7 @@ import (
 // the file is root:foci-secrets 0664 so no agent can write it, and every
 // gateway load refuses a file in any other shape (fail closed) — at startup,
 // at live apply after an edit, and at each reload of the delegated rules.
-// `foci-gw -check-config`, `foci pretool` and `foci debug` load the file
+// `foci check config`, `foci pretool` and `foci debug` load the file
 // without this check: they only read it.
 
 // gwConfigProtect is the load-time protection check the gateway applies, set

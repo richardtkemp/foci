@@ -243,7 +243,7 @@ This means even if an AI agent constructs a command to read `secrets.toml` using
 
 The same group keeps agents from rewriting the config. `foci.toml` is `root:foci-secrets` with mode **`0664`**: every process can read it, and only root and foci-gw (the one process holding `foci-secrets`) can write it. An agent changes a setting by asking: `foci config set <path> <value>` (skill `foci-config`) sends the owner an Approve/Deny prompt, and the gateway writes the file only on Approve.
 
-- **Fail closed.** foci-gw refuses a config file in any other shape: at startup it exits naming the fault and the fix; a live apply after an edit applies nothing; a reload of the delegated pretool/stop rules keeps the previous rules. `foci-gw -check-config`, `foci pretool` and `foci debug` still read any readable file.
+- **Fail closed.** foci-gw refuses a config file in any other shape: at startup it exits naming the fault and the fix; a live apply after an edit applies nothing; a reload of the delegated pretool/stop rules keeps the previous rules. `foci check config`, `foci pretool` and `foci debug` still read any readable file.
 - **Writes keep the shape.** Every gateway write edits the file in place (`config.WriteConfigFile`), so the inode, owner, group and mode survive. The gateway is not root, so it could never give a replaced file back to root.
 - **The directory stays `foci`-owned.** An agent could rename `foci.toml` and put its own file in its place; the load-time check refuses that file, which is why the check, not the directory, is the boundary.
 - **Off Linux** (macOS) there is no such group model, so the check is not applied (see [macOS](#macos)).

@@ -1,7 +1,7 @@
 package secrets
 
 // secrets_nofollow_test.go: LoadNoFollow — the read-through-one-verified-
-// descriptor loader for privileged pre-flight checks (-check-config runs as
+// descriptor loader for privileged pre-flight checks (foci check config runs as
 // root while the config directory stays writable by the service user). The
 // bytes a caller gets are the bytes the open(2) O_NOFOLLOW descriptor
 // yielded: a symlink fails the open, a non-regular file is refused, and the

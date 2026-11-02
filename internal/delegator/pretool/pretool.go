@@ -77,7 +77,7 @@ type Rule struct {
 	// DenyExamples and AllowExamples are the rule's own test cases (#2039):
 	// calls this rule must deny, and calls it must leave alone. Checked
 	// against the resolved rule set by `foci pretool test --all` and
-	// `foci-gw -check-config`; see examples.go. They take no part in
+	// `foci check config`; see examples.go. They take no part in
 	// matching and stay off the hook wire (json:"-").
 	DenyExamples  Examples `toml:"deny_examples"  json:"-"`
 	AllowExamples Examples `toml:"allow_examples" json:"-"`

@@ -151,7 +151,7 @@ type AutoApproveScopeReport struct {
 // drop, without logging and without touching the config: the same filter,
 // the same env judgement, the same scope order (#1897). Callers that need
 // the mutation and the WARNs take the Drop; callers that only report (the
-// -check-config preview) take this, so the two can never disagree.
+// foci check config preview) take this, so the two can never disagree.
 func (cfg *Config) ScanAutoApproveRules(env execguard.Env) []AutoApproveScopeReport {
 	out := make([]AutoApproveScopeReport, 0, 1+len(cfg.Agents))
 	for _, s := range cfg.autoApproveScopes() {

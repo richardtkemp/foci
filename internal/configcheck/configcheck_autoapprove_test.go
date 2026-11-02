@@ -67,7 +67,7 @@ func runConfigCheckDeps(t *testing.T, cfgTOML string, d checkDeps) (int, string)
 
 // TestRunConfigCheck_SubstitutableBuiltinWarned is the ticket's repro: with
 // mds and mdq executable and writable on the judge's PATH, and no
-// auto_approve entries at all, -check-config still names both as vetoed
+// auto_approve entries at all, foci check config still names both as vetoed
 // read-only built-ins — with the reason and the path execguard gave — and
 // summarises them.
 func TestRunConfigCheck_SubstitutableBuiltinWarned(t *testing.T) {
@@ -283,7 +283,7 @@ skip_permissions = true
 }
 
 // TestRunConfigCheck_SharedCommandNamedOncePerGroup pins the per-command
-// report on the -check-config side: six read-only rules share the token
+// report on the foci check config side: six read-only rules share the token
 // `go`, the veto judges the token, so exactly one line names it.
 func TestRunConfigCheck_SharedCommandNamedOncePerGroup(t *testing.T) {
 	t.Parallel()

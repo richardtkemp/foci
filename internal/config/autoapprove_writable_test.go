@@ -173,7 +173,7 @@ func TestFilterWritableAutoApproveRules_ReportsCommandsItCannotLocate(t *testing
 	}
 }
 
-// TestScanAutoApproveRules_ScopesFieldsAndPurity proves the -check-config
+// TestScanAutoApproveRules_ScopesFieldsAndPurity proves the foci check config
 // preview sees exactly what the startup drop would do, and that seeing it
 // costs nothing: ScanAutoApproveRules reports every scope in drop order
 // (global block first, then agents in config order), carries the fields the

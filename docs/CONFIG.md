@@ -1,6 +1,6 @@
 # Foci Configuration Reference
 
-Foci uses two TOML files: `foci.toml` (main config) and `secrets.toml` (credentials). By default, foci uses `$FOCI_CONFIG`, else `~/config/foci.toml` — the same resolution for `foci-gw`, `foci-gw -check-config`, and the `foci` CLI. Override with `--config`:
+Foci uses two TOML files: `foci.toml` (main config) and `secrets.toml` (credentials). By default, foci uses `$FOCI_CONFIG`, else `~/config/foci.toml` — the same resolution for `foci-gw`, `foci check config`, and the `foci` CLI. Override with `--config`:
 
 ```
 foci-gw --config /home/foci/config/foci.toml
@@ -199,7 +199,7 @@ bot_token = "xoxb-..."
 app_token = "xapp-..."
 ```
 
-The tokens never appear in foci.toml, logs, error messages or agent context (secrets store only). A credential problem (missing key, empty value, wrong token shape) leaves Slack off: the startup log, `foci-gw -check-config` and `foci check config` all name the secret KEY that is wrong, and the rest of foci starts normally. This includes a `[[platforms]] id = "slack"` entry with no `[platforms.slack]` block: the entry declares the platform, so the default credential keys and the "answers nothing" mapping check apply to it like any explicit block. The config check reads `secrets.toml` beside the config only when a slack platform is configured, and opens it without following symlinks — every path component is opened with `openat` + `O_NOFOLLOW` and the read goes through that one verified regular-file descriptor, so a symlink anywhere in the path (a symlinked directory included) or anything but a regular file is refused rather than read. A malformed `secrets.toml` fails the check naming the line number only; the parser's message can quote fragments of the file, so it is never shown.
+The tokens never appear in foci.toml, logs, error messages or agent context (secrets store only). A credential problem (missing key, empty value, wrong token shape) leaves Slack off: the startup log, `foci check config` and the deploy's `make check-config` all name the secret KEY that is wrong, and the rest of foci starts normally. This includes a `[[platforms]] id = "slack"` entry with no `[platforms.slack]` block: the entry declares the platform, so the default credential keys and the "answers nothing" mapping check apply to it like any explicit block. The config check reads `secrets.toml` beside the config only when a slack platform is configured, and opens it without following symlinks — every path component is opened with `openat` + `O_NOFOLLOW` and the read goes through that one verified regular-file descriptor, so a symlink anywhere in the path (a symlinked directory included) or anything but a regular file is refused rather than read. A malformed `secrets.toml` fails the check naming the line number only; the parser's message can quote fragments of the file, so it is never shown.
 
 `default_platform = "slack"` is rejected at load: a Slack conversation is never an agent's default chat, and never receives agent-wide traffic (startup notices, cron, keepalive, approval prompts).
 
@@ -822,7 +822,7 @@ Controls foci-level auto-approval of delegated backend permission requests. When
 | `auto_approve_common_readonly` | bool | `true` | Enable built-in allowlist of read-only tools (Search, Glob, Grep, Read, WebSearch, WebFetch) and safe shell commands (ls, cat, grep, jq, read-only git subcommands, etc.). Adding read-only git (#2734) means a session that can write a repository's `.git/config` without a prompt (every delegated agent's workspace rule) can plant a program that an approved `git status`/`diff`/`log -p` runs; see `autoapprove.ReadonlyGitRule`. |
 | `auto_approve_common_safe_write` | bool | `false` | Enable built-in allowlist of side-effecting commands that are typically low-risk for a coding agent: `curl`, `wget`, `mkdir`, `touch`. **Opt-in** — see the warning below. |
 | `prompt_ttl` | duration | `3h` | How long an unanswered interactive prompt (permission request, AskUserQuestion) stays live. On expiry it is resolved as a denial/cancel — so a turn blocked waiting on it doesn't orphan — and its message is edited to show it expired. **Effective value is `min(prompt_ttl, idle timeout)`** — it starts at `[sessions] idle_timeout` when set, else the delegated-backend default (`agent.DefaultIdleTimeout`, 3h), and a configured value only ever *lowers* it, so setting anything above the idle timeout has no effect. A prompt must never outlive the backend waiting on it; the idle reaper clears the prompt anyway when it closes that backend. |
-| `substitutability_check` | string | `"auto"` | Global only. Whether the substitutability check below applies: `"on"` always, `"off"` never, `"auto"` only when foci **cannot** replace its own executable. When foci can (every single-user install, including every macOS install), its agents run as the same user and could already rewrite foci, its config and its allowlist, so vetoing a writable `gh` protects nothing; `auto` then turns the check off and logs one INFO line at startup (and one line in `-check-config`) naming the binary and the reason. A Linux install keeps it: `foci-gw` is root-owned in `/usr/local/bin`. If `os.Executable` fails, `auto` keeps the check on. |
+| `substitutability_check` | string | `"auto"` | Global only. Whether the substitutability check below applies: `"on"` always, `"off"` never, `"auto"` only when foci **cannot** replace its own executable. When foci can (every single-user install, including every macOS install), its agents run as the same user and could already rewrite foci, its config and its allowlist, so vetoing a writable `gh` protects nothing; `auto` then turns the check off and logs one INFO line at startup (and one line in `foci check config`) naming the binary and the reason. A Linux install keeps it: `foci-gw` is root-owned in `/usr/local/bin`. If `os.Executable` fails, `auto` keeps the check on. |
 
 Rules from global `[permissions]` and per-agent `[[agents]].permissions` are combined (union) — both sets apply. Both bools follow standard cascade (per-agent overrides global).
 
@@ -848,15 +848,15 @@ Rules from global `[permissions]` and per-agent `[[agents]].permissions` are com
 > **Startup additionally drops** any `auto_approve` entry that already fails the test, with a warning
 > naming it. That is hygiene, not the control — it reports an entry that would never have matched
 > anyway. The entry stays in the config file; it is ignored, not rewritten. Startup and
-> `-check-config` (run as the service user) also name each **built-in group command** (read-only,
+> `foci check config` (run as the service user) also name each **built-in group command** (read-only,
 > safe-write) that will be vetoed — once per group and command, and only when some agent the groups
 > are live for has the group enabled: a delegated backend that still asks for approval (an API agent
 > never receives the groups, and `skip_permissions` never prompts, so neither can stop
 > auto-approving) — with the group, the command, the reason and the path; a vetoed built-in
 > otherwise just falls through to an approval prompt with no line anywhere saying so. And
-> `-check-config` adds a summary line with the count and the sorted command names, config entries
+> `foci check config` adds a summary line with the count and the sorted command names, config entries
 > and built-ins together.
-> `-check-config` does not check any of this when run as root (root's `access(2)` says every file
+> `foci check config` does not check any of this when run as root (root's `access(2)` says every file
 > is writable, and it never sources the rc file as root) or when the shell env file, or any
 > directory on its path, is writable by anyone other than the invoking user and root — not
 > group-writable (a shared home is the common case), not world-writable, not another user's, not
@@ -866,7 +866,7 @@ Rules from global `[permissions]` and per-agent `[[agents]].permissions` are com
 > `WorkingDirectory`, not the check's cwd — give an absolute or `~/` path); it prints one warning
 > saying so instead.
 > A configured shell env file that is missing, or that cannot be sourced, does not stop the check:
-> startup gets no overlay from it either, so the verdicts agree — but `-check-config` says in one
+> startup gets no overlay from it either, so the verdicts agree — but `foci check config` says in one
 > warning that the PATH it judged has no rc overlay.
 >
 > **A writable `PATH` directory that does not contain the command is deliberately NOT a finding.** It
@@ -879,7 +879,7 @@ Rules from global `[permissions]` and per-agent `[[agents]].permissions` are com
 > `test` — the shell resolves these before searching `PATH`, so no planted file can shadow them),
 > **glob tokens** (`foci_*` names no single file), and relative paths (no cwd exists at
 > config-load time). The built-in readonly/safe-write groups are NOT exempt: the match-time veto
-> covers them like any other rule — which is exactly why startup and `-check-config` report the
+> covers them like any other rule — which is exactly why startup and `foci check config` report the
 > built-in commands it will refuse.
 >
 > `PATH` is read from the operator population (`execguard.Live()` → `procx.PathDirs` for the
@@ -1259,7 +1259,7 @@ Global defaults set in `[tools]`, overridable per-agent via `[agents.tools]`. Pe
 - **Allow:** the agent's `allow_tools` if it sets one, else the global one. Empty means no allowlist.
 - **Deny:** the union of the global and the agent's `deny_tools`, applied after allow.
 - A withheld tool is never built (a denied `web_search` with `search_provider = "anthropic"` adds no server-side tool; a denied `browser` starts no browser; a denied `mcp` loads no MCP config) and appears nowhere: not in the tool list, the `shell` tool's function list, spawned sub-agents, the delegated `foci_*` functions or their auto-approve rules, or the environment block's Foci Shell Tools list. A direct exec-bridge call to it is refused as an unknown tool.
-- A name that is not a foci tool (a typo, or `foci_todo` instead of `todo`) is a config error: `foci-gw -check-config` prints it with the scope (`tools` or `agents[<id>].tools`), the list and the valid names and exits 1, and the gateway refuses to start. A misspelt deny entry can therefore never leave a tool silently switched on.
+- A name that is not a foci tool (a typo, or `foci_todo` instead of `todo`) is a config error: `foci check config` prints it with the scope (`tools` or `agents[<id>].tools`), the list and the valid names and exits 1, and the gateway refuses to start. A misspelt deny entry can therefore never leave a tool silently switched on.
 - **Not covered:** Claude Code and opencode built-in tools (`Bash`, `Read`, `Write`, `Edit`, `WebFetch`, ...) are not foci tools. Restrict those with `backend_config.pretool_rules` / `allowed_tools`.
 
 ```toml
@@ -1741,7 +1741,7 @@ name = "ask_user_question"
 enabled = false
 ```
 
-An unknown key in a rule (a typo, or a key newer than the running binary) is a config load error, not the usual unknown-key warning: ignored, it would leave the rule with fewer constraints than written, and a rule whose only constraint is dropped denies every call of its tool. `foci pretool list` and `foci-gw -check-config` report it; a gateway that hits it on a rule re-read keeps its last good rules.
+An unknown key in a rule (a typo, or a key newer than the running binary) is a config load error, not the usual unknown-key warning: ignored, it would leave the rule with fewer constraints than written, and a rule whose only constraint is dropped denies every call of its tool. `foci pretool list` and `foci check config` report it; a gateway that hits it on a rule re-read keeps its last good rules.
 
 A rule matches a call to its `tool` when every constraint it gives holds. Each constraint takes one regex or a list of them, and any one of a list may match:
 
@@ -1868,7 +1868,7 @@ Examples merge like every other field (a later layer that sets them replaces the
 
 Malformed examples are config load errors naming the rule: a table without `cmd`, an unknown table key, a table on a non-`Bash` rule, or a non-`Bash` rule's string example that is not valid JSON. An error is also reported when an override layer misshapes an example only after the merge.
 
-Run them with `foci pretool test --all --agent <id>` (see CLI.md). `foci-gw -check-config` runs them for every agent too, but **never evaluates a `when` script** (it runs as root during deploys, and the scripts come from a config file the foci user can write): a failing example of a rule without a `when` fails the check, while a rule with a `when` gets its examples checked against its patterns only and one WARN line (`when not evaluated`).
+Run them with `foci pretool test --all --agent <id>` (see CLI.md). `foci check config` runs them for every agent too, but **never evaluates a `when` script** (it runs as root during deploys, and the scripts come from a config file the foci user can write): a failing example of a rule without a `when` fails the check, while a rule with a `when` gets its examples checked against its patterns only and one WARN line (`when not evaluated`).
 
 Check rules offline with `foci pretool list --agent <id>` and `foci pretool test --agent <id> --bash '<command>' [--cwd <dir>] [-v]` (see CLI.md). Rules are read from the config file each time foci launches a CC process (a new session, or a session resumed after an idle shutdown or a foci restart), so an edit applies from the next launch without a restart. A CC process already running keeps the rules it was launched with. If the file does not load at that moment, the session keeps the last rules that did. Each deny is logged as `pretool_rule_deny`.
 

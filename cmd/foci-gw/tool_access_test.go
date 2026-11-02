@@ -332,39 +332,6 @@ func TestFociToolNamesMatchToolTable(t *testing.T) {
 	}
 }
 
-// TestRunConfigCheck_UnknownToolNameFails proves -check-config exits 1 and
-// names the bad entry, its scope and the valid names, for a misspelt global
-// deny entry and for a foci_-prefixed agent allow entry; and exits 0 when
-// every name is valid.
-func TestRunConfigCheck_UnknownToolNameFails(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name, body string
-		wantCode   int
-		wantMsg    []string
-	}{
-		{"global deny typo", "[tools]\ndeny_tools = [\"browsr\"]\n" + validConfigTOML, 1,
-			[]string{"tools.deny_tools", `"browsr"`, "valid tool names:", "browser", "send_to_session"}},
-		{"agent allow prefixed", validConfigTOML + "[agents.tools]\nallow_tools = [\"foci_todo\"]\n", 1,
-			[]string{"agents[main].tools.allow_tools", `"foci_todo"`, "valid tool names:"}},
-		{"valid names", "[tools]\ndeny_tools = [\"browser\"]\n" + validConfigTOML + "[agents.tools]\nallow_tools = [\"todo\", \"shell\"]\ndeny_tools = [\"shell\"]\n", 0, nil},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			path := writeTempConfig(t, tc.body)
-			var stderr strings.Builder
-			if got := runConfigCheck(path, &strings.Builder{}, &stderr); got != tc.wantCode {
-				t.Fatalf("exit %d, want %d; stderr:\n%s", got, tc.wantCode, stderr.String())
-			}
-			for _, m := range tc.wantMsg {
-				if !strings.Contains(stderr.String(), m) {
-					t.Errorf("stderr lacks %q:\n%s", m, stderr.String())
-				}
-			}
-		})
-	}
-}
-
 // callExecBridge sends one request line to an exec bridge socket and returns
 // the response's error field.
 func callExecBridge(t *testing.T, sockPath, request string) string {

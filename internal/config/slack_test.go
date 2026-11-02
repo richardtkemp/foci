@@ -201,7 +201,7 @@ func TestSlackValidate_PerAgentBlockUnderForeignID(t *testing.T) {
 // as a half-configured platform, not as "no slack": it loads (the zero block
 // has no mapping errors), SlackProblems reports both default token keys
 // missing plus the nothing-mapped problem, and RequiredSecrets names the
-// keys — so -check-config and startup's inert log both catch the shape
+// keys — so foci check config and startup's inert log both catch the shape
 // instead of waving it through.
 func TestSlackValidate_BlocklessEntryGetsDefaultChecks(t *testing.T) {
 	body := `[groups]

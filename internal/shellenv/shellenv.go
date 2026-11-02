@@ -127,7 +127,7 @@ func shellQuote(s string) string {
 
 // Gate judges whether the env file Resolve chose may be sourced by THIS
 // caller. It returns the path to actually source — which a gate may rewrite,
-// as long as the file judged stays the file the shell runs (-check-config's
+// as long as the file judged stays the file the shell runs (foci check config's
 // envFileGate in cmd/foci-gw returns it unchanged, and refuses relative
 // paths rather than resolving them against its own cwd) — or an error
 // explaining why the file must not be sourced. A refused file is never run;

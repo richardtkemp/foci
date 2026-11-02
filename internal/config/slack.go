@@ -122,7 +122,7 @@ func (cfg *Config) slackBlock() *SlackSpecific {
 }
 
 // validateSlack checks the Slack platform block's mapping errors. It runs in
-// Load, so a broken mapping is fatal at startup AND in -check-config:
+// Load, so a broken mapping is fatal at startup AND in foci check config:
 // an empty channel id or agent name, an unknown agent (in channels or as
 // default_agent), a channel mapped twice (to two agents, or to the same
 // agent twice), a [platforms.slack] block under a [[platforms]] entry whose
@@ -196,7 +196,7 @@ func (cfg *Config) validatePerAgentSlackBlocks() error {
 // tokens missing, nothing mapped) — the entry declares the platform, so its
 // defaults must work, not just its explicit settings. Mapping errors are not
 // here — validateSlack rejects those in Load. Called by the slack provider's
-// Init (with the live secrets store) and by -check-config (with secrets.toml
+// Init (with the live secrets store) and by foci check config (with secrets.toml
 // loaded beside the config), so both agree.
 func SlackProblems(cfg *Config, secrets SecretGetter) []string {
 	s := cfg.slackBlock()

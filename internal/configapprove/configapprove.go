@@ -8,7 +8,7 @@
 // A request is validated BEFORE any prompt and again before any write: the
 // edit must change the file only at the requested path (config.PlanSetPath /
 // PlanUnsetPath, verified by config.VerifyPathEdit) and the result must pass
-// the same check as `foci-gw -check-config` (configcheck.CheckContent). On
+// the same check as `foci check config` (configcheck.CheckContent). On
 // Approve the file is re-read: if the value at the path is no longer the old
 // value shown, or any check fails, nothing is written.
 //
@@ -96,7 +96,7 @@ type Deps struct {
 	// CheckProtected judges the file's ownership before a write; nil skips it
 	// (skip_security_checks, or a platform without the protection model).
 	CheckProtected func(path string) error
-	// CheckContent is the -check-config verdict on candidate content.
+	// CheckContent is the foci check config verdict on candidate content.
 	CheckContent func(content, path string) error
 	// Present shows the prompt; an error means no chat could show it.
 	Present func(p Prompt) error

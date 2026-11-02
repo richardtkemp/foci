@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -224,27 +225,37 @@ func DefaultConfigPath() (string, error) {
 	return filepath.Join(home, "config", "foci.toml"), nil
 }
 
-// ParseFlags returns the config file path and the -check-config flag from the
-// command line. When checkConfig is true the caller should validate the config
-// and exit without starting the server (see cmd/foci-gw/checkconfig.go).
-func ParseFlags() (path string, checkConfig bool, err error) {
+// ParseFlags returns the config file path from foci-gw's command line.
+// foci-gw is only the server: the config check is `foci check config`
+// (#2788), and the old -check-config flag is refused with a pointer to it.
+func ParseFlags() (path string, err error) {
 	return parseFlagsInto(flag.CommandLine, os.Args[1:])
 }
 
-func parseFlagsInto(fs *flag.FlagSet, args []string) (path string, checkConfig bool, err error) {
+// errCheckConfigRemoved answers the dropped foci-gw -check-config flag (#2788)
+// with the command that replaced it, instead of the flag package's bare
+// "flag provided but not defined".
+var errCheckConfigRemoved = errors.New("-check-config was removed from foci-gw: run foci check config [--config PATH] (same check, lines and exit codes)")
+
+func parseFlagsInto(fs *flag.FlagSet, args []string) (path string, err error) {
+	for _, a := range args {
+		name, _, _ := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		if strings.HasPrefix(a, "-") && name == "check-config" {
+			return "", errCheckConfigRemoved
+		}
+	}
 	p := fs.String("config", "", "path to config file (default: $FOCI_CONFIG, else ~/config/foci.toml)")
-	check := fs.Bool("check-config", false, "validate the config file named by -config (or its default) and exit (0 = will start cleanly, 1 = parse/validate error, unknown keys, or no such file); does not start the server. E.g. foci-gw -check-config -config /home/foci/config/foci.toml")
 	if err := fs.Parse(args); err != nil {
-		return "", false, err
+		return "", err
 	}
 	if *p != "" {
-		return *p, *check, nil
+		return *p, nil
 	}
 	def, err := DefaultConfigPath()
 	if err != nil {
-		return "", false, fmt.Errorf("no -config given and default config path unavailable: %w", err)
+		return "", fmt.Errorf("no -config given and default config path unavailable (pass -config PATH): %w", err)
 	}
-	return def, *check, nil
+	return def, nil
 }
 
 // UnknownKeys returns the list of unrecognised key names from the TOML metadata.

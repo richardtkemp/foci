@@ -5,7 +5,7 @@ import (
 )
 
 // Names of the built-in rule groups, as both reporters (the startup WARN and
-// the -check-config preview) print them.
+// the foci check config preview) print them.
 const (
 	GroupReadonly  = "read-only"
 	GroupSafeWrite = "safe-write"

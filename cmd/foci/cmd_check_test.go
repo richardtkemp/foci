@@ -111,7 +111,7 @@ func (s snapshot) assertUnchanged(t *testing.T) {
 // TestCheckConfig_SameLinesAndCodesAsCheckConfig proves `foci check config`
 // runs the shared check: for a clean config and a config with an unknown
 // key it prints exactly the lines, and returns exactly the code, that
-// configcheck.Run (the code behind foci-gw -check-config) gives, and it
+// configcheck.Run (the shared check) gives, and it
 // changes neither file.
 func TestCheckConfig_SameLinesAndCodesAsCheckConfig(t *testing.T) {
 	f := newCheckFixture(t)

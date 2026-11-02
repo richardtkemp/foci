@@ -945,7 +945,7 @@ WIZARD_ARGS += --api-key $(FOCI_API_KEY)
 endif
 endif
 
-.PHONY: deploy-build sync-main install-bin install-lib install-unit install-polkit provision install-shared install-docs install-scripts wizard protect-config check-config check-config-built stage-changelog reload restart enable setup update deploy-from-snapshot
+.PHONY: deploy-build sync-main install-bin install-lib install-unit install-polkit provision install-shared install-docs install-scripts wizard protect-config check-config build-check-config check-config-built stage-changelog reload restart enable setup update deploy-from-snapshot
 
 # sync-main (#1448 piece 4): deploy exactly origin/main, never a dirty or stale
 # local working tree. `make update` builds the working tree, so without this a
@@ -1082,37 +1082,48 @@ protect-config:
 	  echo "  $$(basename $$svcfile .service): $$cfg is root:$(SECRETS_GROUP) 0664"; \
 	done
 
-# check-config validates each installed foci*.service's config with a foci-gw
-# built from THIS tree (#2680). It builds first: bin/foci-gw is never rebuilt
-# by anything else, so in a long-lived checkout it can be weeks old and report
-# today's keys as unknown (seen: 50 false unknowns from a 5-week-old binary).
-# As root the build runs as $(FOCI_USER), like deploy-build, so no root-owned
-# bin/ or Go cache lands in the tree. Deploys call check-config-built directly:
-# deploy-build has just built the snapshot, and `build` takes /tmp/heavy.
+# check-config validates each installed foci*.service's config with
+# `foci check config` from a bin/foci built from THIS tree (#2680, #2788: the
+# one config-check entry point; foci-gw is only the server). It builds first:
+# bin/foci is never rebuilt by `make build`, so in a long-lived checkout it can
+# be weeks old and report today's keys as unknown (seen: 50 false unknowns from
+# a 5-week-old binary). As root the build runs as $(FOCI_USER), like
+# deploy-build, so no root-owned bin/ or Go cache lands in the tree. Deploys
+# call check-config-built directly: deploy-build has just built the snapshot
+# (`make all`, bin/foci included), and the build takes /tmp/heavy.
 check-config:
-	@if [ "$$(id -u)" = 0 ]; then sudo -u $(FOCI_USER) $(MAKE) --no-print-directory -C '$(CURDIR)' build || exit $$?; \
-	else $(MAKE) --no-print-directory build || exit $$?; fi
+	@if [ "$$(id -u)" = 0 ]; then sudo -u $(FOCI_USER) $(MAKE) --no-print-directory -C '$(CURDIR)' build-check-config || exit $$?; \
+	else $(MAKE) --no-print-directory build-check-config || exit $$?; fi
 	@$(MAKE) --no-print-directory check-config-built
 
-# The check itself, against the existing bin/foci-gw. It names the binary and
+# Builds bin/foci (the checker) under the heavy lock, like `build`.
+build-check-config:
+	@[ -e $(HEAVY_LOCK_PATH) ] || : > $(HEAVY_LOCK_PATH)
+	@( echo ">>> waiting for heavy lock ($(HEAVY_LOCK_PATH); another build may be running) ... [$$(date +%T)]" >&2; flock 9; echo ">>> acquired heavy lock [$$(date +%T)]" >&2; $(MAKE) --no-print-directory foci 9<&- || exit $$? ) 9<$(HEAVY_LOCK_PATH)
+
+# The check itself, against the existing bin/foci. It names the binary and
 # its build, and refuses (exit 1) one built from a commit other than HEAD: a
 # stale binary gives wrong verdicts both ways (false unknowns, missed real ones).
 # It does not detect uncommitted edits since the build; check-config rebuilds.
+# Any failing service aborts before anything is installed: daemon untouched.
+# CHECK_CONFIG_UNITS is the unit-file glob it walks; override it only to test
+# the gate against a throwaway unit (the fail-arm in #2788).
+CHECK_CONFIG_UNITS ?= /etc/systemd/system/foci*.service
 check-config-built:
-	@[ -x bin/foci-gw ] || { echo "ABORT: bin/foci-gw missing; run make check-config (it builds)"; exit 1; }; \
-	ver=$$(bin/foci-gw --version) || { echo "ABORT: bin/foci-gw --version failed"; exit 1; }; \
-	echo "  check-config binary: $(CURDIR)/bin/foci-gw — $$ver"; \
+	@[ -x bin/foci ] || { echo "ABORT: bin/foci missing; run make check-config (it builds)"; exit 1; }; \
+	ver=$$(bin/foci --version) || { echo "ABORT: bin/foci --version failed"; exit 1; }; \
+	echo "  check-config binary: $(CURDIR)/bin/foci — $$ver"; \
 	bincommit=$$(echo "$$ver" | sed -n 's/.*(commit \([0-9a-f]*\),.*/\1/p'); \
 	want=$$(git -c safe.directory='$(CURDIR)' -C '$(CURDIR)' rev-parse HEAD) || { echo "ABORT: cannot read HEAD"; exit 1; }; \
 	got=$$( [ -n "$$bincommit" ] && git -c safe.directory='$(CURDIR)' -C '$(CURDIR)' rev-parse -q --verify "$$bincommit^{commit}"); \
-	[ -n "$$got" ] && [ "$$got" = "$$want" ] || { echo "ABORT: bin/foci-gw is from commit '$$bincommit', not HEAD $$want — stale binary; run make check-config (it builds)"; exit 1; }
-	@for svcfile in /etc/systemd/system/foci*.service; do \
+	[ -n "$$got" ] && [ "$$got" = "$$want" ] || { echo "ABORT: bin/foci is from commit '$$bincommit', not HEAD $$want — stale binary; run make check-config (it builds)"; exit 1; }
+	@for svcfile in $(CHECK_CONFIG_UNITS); do \
 	  [ -f "$$svcfile" ] || continue; \
 	  cfg=$$(grep '^ExecStart=' "$$svcfile" | grep -oP '(?<=-config )\S+' || true); \
 	  [ -z "$$cfg" ] && continue; \
 	  home=$$(grep '^WorkingDirectory=' "$$svcfile" | cut -d= -f2); \
 	  printf '  %s: %s ... ' "$$(basename $$svcfile .service)" "$$cfg"; \
-	  HOME="$$home" bin/foci-gw -check-config -config "$$cfg" || { echo "ABORT: $$svcfile config incompatible — daemon untouched"; exit 1; }; \
+	  HOME="$$home" bin/foci check config --config "$$cfg" || { echo "ABORT: $$svcfile config incompatible — daemon untouched"; exit 1; }; \
 	done
 
 stage-changelog:

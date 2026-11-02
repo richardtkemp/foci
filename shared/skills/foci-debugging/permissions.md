@@ -73,7 +73,7 @@ is captured once (`shellenv.Load`) and handed only to agent-shell spawns (`procx
 #1914), so the daemon's environ never shows the `PATH` a tool shell searches. It looks authoritative
 and is wrong: it misled two independent investigations of one bug.
 
-- **`-check-config` previews the drop only as the service user.** As root it skips the check. As a
+- **`foci check config` previews the drop only as the service user.** As root it skips the check. As a
   user it sources the rc file only if the file and every directory on its path is writable by
   that user and root alone; otherwise (group/world-writable, foreign owner, symlink, `..`,
   relative path) it refuses with one warning; then read the startup log. A missing or unsourceable

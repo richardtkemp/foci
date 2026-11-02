@@ -1,10 +1,11 @@
-// Package configcheck is the one config validity check behind both
-// `foci-gw -check-config` (the deploy gate) and `foci check config` (the
-// agent's offline check, #2223): a pre-flight validation of the config file
-// that runs WITHOUT starting the server, opening databases, rotating the
-// production log, or creating any directories. Both callers print the same
-// lines and get the same exit code from Run; only the missing-file hint names
-// the caller's own flag.
+// Package configcheck is the one config validity check behind
+// `foci check config` (#2223), which is both the deploy gate (make
+// check-config, scripts/macos-install.sh) and the agent's offline check: a
+// pre-flight validation of the config file that runs WITHOUT starting the
+// server, opening databases, rotating the production log, or creating any
+// directories. foci-gw has no entry point to it (its -check-config was
+// dropped, #2788). Run takes the caller's missing-file hint, so the hint
+// names the caller's own flag.
 //
 // It also owns the config-derived auto-approve helpers the gateway's startup
 // reports share with the preview below (AgentConsultsAllowlist,
@@ -13,11 +14,12 @@
 package configcheck
 
 //
-// Purpose: update.sh builds a new foci-gw binary, then runs it with this flag
-// (as root, against each service's -config path) BEFORE stopping the running
-// daemon. If the new binary cannot load a config (a parse/validate error, or —
+// Purpose: a deploy (make update → check-config-built) builds new binaries,
+// then runs `bin/foci check config` (as root, against each service's -config
+// path, with HOME set to its WorkingDirectory) BEFORE installing anything or
+// stopping the running daemon. If the new binary cannot load a config (a parse/validate error, or —
 // under the strict policy — any unknown/deprecated key such as a renamed
-// setting), the check exits non-zero and update.sh aborts, leaving the running
+// setting), the check exits non-zero and the deploy aborts, leaving the running
 // foci untouched. Without this, config incompatibilities were only discovered
 // after the old daemon had already been replaced, bricking the service.
 //
@@ -79,7 +81,7 @@ package configcheck
 //	1  parse/validate error, OR one or more unknown/deprecated keys (strict),
 //	   OR a failing pretool example, OR a slack platform whose credentials
 //	   or mapping startup would reject (secrets.toml beside the config is
-//	   read only then), OR no file at the path (-config, else
+//	   read only then), OR no file at the path (--config, else
 //	   $FOCI_CONFIG, else ~/config/foci.toml)
 //	2  usage error (e.g. config path unreadable for reasons other than load)
 //
@@ -292,7 +294,7 @@ func previewAutoApprove(cfg *config.Config, stderr io.Writer, d checkDeps) {
 // so the check's verdict and startup agree. The file is read through
 // secrets.LoadNoFollow (every path component opened with openat +
 // O_NOFOLLOW, the final descriptor verified a regular file, parsed from that
-// descriptor's bytes) because foci-gw -check-config runs as root during
+// descriptor's bytes) because foci check config runs as root during
 // deploys while the config directory stays writable by the service user: a
 // symlink planted at secrets.toml — or at any directory component of its
 // path, which would redirect the read just as effectively — must fail the
@@ -346,7 +348,7 @@ type autoApproveCheckPlan struct {
 // between check and source is run.
 func planAutoApproveCheck(cfg *config.Config, d checkDeps) autoApproveCheckPlan {
 	if d.euid() == 0 {
-		return autoApproveCheckPlan{skip: "this check runs as root, where every file is writable, so it would flag every command. Run foci-gw -check-config as the service user to see which commands will stop auto-approving."}
+		return autoApproveCheckPlan{skip: "this check runs as root, where every file is writable, so it would flag every command. Run foci check config as the service user to see which commands will stop auto-approving."}
 	}
 	env, unsourced, refused := d.loadEnvFile(cfg.ShellEnvFile)
 	if refused != nil {
@@ -362,7 +364,7 @@ func planAutoApproveCheck(cfg *config.Config, d checkDeps) autoApproveCheckPlan 
 // the plan's unsourced message.
 var errEnvFileMissing = errors.New("shell env file does not exist")
 
-// envFileGate is the shellenv.Gate -check-config installs: the file must be
+// envFileGate is the shellenv.Gate foci check config installs: the file must be
 // shown writable only by the invoking user and root before the check will
 // source it (#2347 owns the full trust rule; this is the fail-closed
 // subset). It refuses three path shapes outright, because in each the file
@@ -427,7 +429,7 @@ func hasDotDot(path string) bool {
 // the user-facing warning, so it must stay true on ordinary machines: the
 // common case is a group-writable home directory, and an earlier attempt's
 // text named only a rare one (#1897 requirement 8).
-const envFileRefusalRule = "-check-config will not source a shell env file unless the file and every directory on its path is writable only by the invoking user and root — not group-writable, not world-writable, not another user's, not reached through a symlink, with no \"..\" component (\"..\" resolves after symlinks, so the written path can hide the directory the file really lands in), and not a relative path (bash searches PATH for a bare name, and the daemon resolves any other relative path against its own WorkingDirectory, not this check's). Fix the file or point shell_env_file somewhere safe, then re-run."
+const envFileRefusalRule = "foci check config will not source a shell env file unless the file and every directory on its path is writable only by the invoking user and root — not group-writable, not world-writable, not another user's, not reached through a symlink, with no \"..\" component (\"..\" resolves after symlinks, so the written path can hide the directory the file really lands in), and not a relative path (bash searches PATH for a bare name, and the daemon resolves any other relative path against its own WorkingDirectory, not this check's). Fix the file or point shell_env_file somewhere safe, then re-run."
 
 // envFileConcern reports why path cannot be shown writable only by uid and
 // root, or "" when it can. Every component from the file up to AND INCLUDING
@@ -530,7 +532,7 @@ func reportAutoApproveWarnings(w io.Writer, cfg *config.Config, env execguard.En
 		len(stopping), strings.Join(stopping, ", "))
 }
 
-// checkScopeLabel renders a scope for -check-config output. Globalness is
+// checkScopeLabel renders a scope for foci check config output. Globalness is
 // the report's boolean, never a comparison of the rendered string: an agent
 // whose id is "global" is labelled as that agent, and the global block is
 // still labelled global (#1897 requirement 4).

@@ -359,7 +359,7 @@ grepped for each ✗. Row IDs are not renumbered, so the gaps are the removed ro
 
 ### 12. Config keys that apply to only some backends
 
-Generated from each backend's `Spec.ConfigKeys` / `Spec.StartFields` (`internal/delegator/config_schema.go`, #2178). `make lint` checks those declarations against each backend package's source, and the gateway warns at startup (and `foci-gw -check-config` lists) every `backend_config` key an agent sets that its backend ignores.
+Generated from each backend's `Spec.ConfigKeys` / `Spec.StartFields` (`internal/delegator/config_schema.go`, #2178). `make lint` checks those declarations against each backend package's source, and the gateway warns at startup (and `foci check config` lists) every `backend_config` key an agent sets that its backend ignores.
 
 <!-- BEGIN GENERATED CONFIG SCHEMA: internal/delegator/all TestBackendsDoc_ConfigSchemaTable. Edit the Specs, not this block. -->
 | `backend_config` key | claude-code | codex | opencode |

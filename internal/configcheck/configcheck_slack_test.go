@@ -8,11 +8,11 @@ import (
 	"testing"
 )
 
-// TestCheckConfig_NoSlackDoesNotReadSecrets pins that -check-config on a
+// TestCheckConfig_NoSlackDoesNotReadSecrets pins that foci check config on a
 // config WITHOUT a slack platform never loads secrets.toml: a malformed
 // secrets file sitting beside the config must not change the verdict.
 // (The slack provider's credential check is the first thing that makes
-// -check-config read secrets, and it only runs when slack is configured.)
+// foci check config read secrets, and it only runs when slack is configured.)
 func TestCheckConfig_NoSlackDoesNotReadSecrets(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -175,7 +175,7 @@ func TestCheckConfig_SlackBlocklessEntryFails(t *testing.T) {
 	}
 }
 
-// TestCheckConfig_SlackNonRegularSecretsRefused proves -check-config refuses
+// TestCheckConfig_SlackNonRegularSecretsRefused proves foci check config refuses
 // a secrets.toml that is not a regular file (here a directory; the open
 // refuses the fifo shape the same way) — the check runs as root, and its
 // read goes through one O_NOFOLLOW-opened, regular-file-verified descriptor.
@@ -194,7 +194,7 @@ func TestCheckConfig_SlackNonRegularSecretsRefused(t *testing.T) {
 	}
 }
 
-// TestCheckConfig_SlackSymlinkedSecretsRefused proves -check-config never
+// TestCheckConfig_SlackSymlinkedSecretsRefused proves foci check config never
 // reads a secrets.toml that is a symlink (the check runs as root during
 // deploys; secrets.Load would follow the link), and that the refusal names
 // the file without echoing any of the target's content.

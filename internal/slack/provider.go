@@ -34,7 +34,7 @@ func (p *slackProvider) Name() string { return platformName }
 // IsConfigured reports whether a global [[platforms]] id="slack" entry
 // exists — config only. Credentials cannot be checked here (the interface
 // sees no secrets); Init does that, through config.SlackProblems, and
-// -check-config runs the same oracle against secrets.toml. It deliberately
+// foci check config runs the same oracle against secrets.toml. It deliberately
 // does not require a non-empty allowlist: the interim access rule (#2459
 // A1, req 7) is "nobody allowed" until part A2 flips the default, and an
 // empty list is a valid (if quiet) state.

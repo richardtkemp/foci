@@ -159,13 +159,13 @@ On update, setup generates a changelog (`WELCOME.md`) that the agent summarises 
 `-config` path from its `ExecStart`) is checked via:
 
 ```bash
-foci-gw -check-config -config /path/to/foci.toml
+foci check config --config /path/to/foci.toml
 ```
 
 This exits `0` if the config loads cleanly and `1` on a parse/validate error or
 any unknown/deprecated key (e.g. a renamed setting — strict policy, since the
-old value would be silently dropped at startup). Without `-config` it checks `$FOCI_CONFIG`, else
-`~/config/foci.toml`; a missing file fails with a pointer to `-config PATH`. If any service's config fails,
+old value would be silently dropped at startup). Without `--config` it checks `$FOCI_CONFIG`, else
+`~/config/foci.toml`; a missing file fails with a pointer to `--config PATH`. If any service's config fails,
 `make update` aborts with the running daemon untouched, so a config incompatibility
 can no longer brick the service mid-upgrade. You can run the same check by hand
 before upgrading.
@@ -276,7 +276,7 @@ use yours.
   `PATH` puts `/usr/bin` and `/bin` before Homebrew (`ls`, `grep`, `jq`,
   `sqlite3`, `diff`, `git` auto-approve as usual), and tools that exist only in
   Homebrew or `~/foci/bin` (`rg`, `go`, `npm`, `mdq`, `mds`, …) ask for
-  approval. `foci-gw -check-config` lists them.
+  approval. `foci check config` lists them.
 
 ### Developing on a Mac
 

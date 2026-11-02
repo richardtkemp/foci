@@ -56,7 +56,7 @@ grep -qs '^module foci$' go.mod || die "run from the foci repo root"
 command -v go >/dev/null || die "go not found — run: make macos-deps"
 
 FOCI_HOME=${FOCI_HOME:-$HOME/foci}
-# Exported for the foci binaries this script runs (first-run, -check-config):
+# Exported for the foci binaries this script runs (first-run, check config):
 # they take the install root from it, as foci-gw does under the LaunchAgent.
 export FOCI_HOME
 LABEL=${FOCI_LAUNCHD_LABEL:-com.github.richardtkemp.foci}
@@ -170,7 +170,7 @@ fi
 say "checking config against the new binary"
 # FOCI_HOME and PATH exactly as the LaunchAgent runs it: relative config paths
 # resolve against FOCI_HOME, and the auto-approve veto report resolves against PATH.
-PATH="$SERVICE_PATH" "$BIN_DIR/foci-gw" -check-config -config "$CONFIG"
+PATH="$SERVICE_PATH" "$BIN_DIR/foci" check config --config "$CONFIG"
 
 say "rendering $PLIST"
 sed -e "s|@LABEL@|$LABEL|g" -e "s|@BIN_DIR@|$BIN_DIR|g" -e "s|@FOCI_HOME@|$FOCI_HOME|g" -e "s|@HOME@|$HOME|g" \

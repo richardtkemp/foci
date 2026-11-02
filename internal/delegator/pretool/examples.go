@@ -2,7 +2,7 @@
 // A rule can carry the calls it was written for — deny_examples it must stop,
 // allow_examples it must leave alone — so a rule that stops matching what it
 // was written for is caught by `foci pretool test --all` and by
-// `foci-gw -check-config` instead of by a live agent misbehaving.
+// `foci check config` instead of by a live agent misbehaving.
 //
 // Examples are checked against a RESOLVED rule set, with the same matching
 // the gateway uses (Match), because what an example proves is what the next
@@ -13,7 +13,7 @@
 //
 // WhenMode splits the two callers by what they may do with a rule's
 // `when` script. `foci pretool test --all` runs as the invoking user and
-// evaluates when-checks for real (WhenRun). `foci-gw -check-config` runs as
+// evaluates when-checks for real (WhenRun). `foci check config` runs as
 // ROOT during deploys and the scripts come from a config file the foci user
 // can write, so it must never execute one (WhenSkip): rules with a when
 // script get a patterns-only check and a WARN instead.
@@ -168,7 +168,7 @@ const (
 	// which runs as the invoking user), so each when rule's decision is
 	// the one the next session will make.
 	WhenRun WhenMode = iota
-	// WhenSkip never executes a when-check (`foci-gw -check-config`, which
+	// WhenSkip never executes a when-check (`foci check config`, which
 	// runs as root during deploys; the scripts come from a config file the
 	// foci user can write).
 	WhenSkip
