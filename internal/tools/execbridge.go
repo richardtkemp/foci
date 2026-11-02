@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"foci/internal/peercred"
 	"foci/internal/tempdir"
@@ -287,11 +288,68 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 	// (`foci_http_request url | jq`) gets the complete body and CC applies its
 	// own output truncation to the final result. text remains the inline
 	// preview for the non-spilled case / fallback.
-	writeBridgeResponse(conn, bridgeResponse{
+	resp, err := fitBridgeResponse(bridgeResponse{
 		Result:     result.Text,
 		ResultFile: result.ResultFile,
 		ResultSize: result.ResultSize,
 	})
+	if err != nil {
+		execbridgeLog.Warnf("session=%s tool=%s: %v", SessionKeyFromContext(b.ctx), req.Tool, err)
+		writeError(conn, err.Error())
+		return
+	}
+	writeBridgeResponse(conn, resp)
+}
+
+// bridgeMaxResponseBytes is the largest response line foci-call accepts
+// (maxResponseBytes in cmd/foci-call/main.go; the two must stay equal).
+const bridgeMaxResponseBytes = 1024 * 1024
+
+// bridgePreviewBytes bounds the inline preview of a result fitBridgeResponse
+// spills. foci-call prints the preview only when it cannot open the file.
+const bridgePreviewBytes = 64 * 1024
+
+// fitBridgeResponse makes resp fit foci-call's response cap (#2818). A tool
+// that returns a large text result (foci_todo list --limit 5000, ~2 MB of
+// JSONL) used to fail with "response too large", because only some tools
+// spill to a file themselves, and JSON escaping can double a text's size on
+// the wire. An over-cap response now has its text written to a file in the foci temp dir:
+// foci-call streams the file to stdout, so the caller gets the whole result.
+// A response that already names a file only has its preview cut. An error
+// means the spill file could not be written; the caller reports it rather
+// than send a response foci-call would reject.
+func fitBridgeResponse(resp bridgeResponse) (bridgeResponse, error) {
+	data, err := json.Marshal(resp)
+	if err != nil || len(data) < bridgeMaxResponseBytes {
+		return resp, nil // writeBridgeResponse reports the marshal error itself
+	}
+	if resp.ResultFile == "" {
+		f, err := tempdir.Create("foci-spill-*.tmp") // same name as the tool spill files
+		if err != nil {
+			return resp, fmt.Errorf("result too large to send (%d bytes) and spill failed: %w", len(data), err)
+		}
+		_, werr := f.WriteString(resp.Result)
+		cerr := f.Close()
+		if werr != nil || cerr != nil {
+			_ = os.Remove(f.Name())
+			return resp, fmt.Errorf("result too large to send (%d bytes) and spill failed: %v", len(data), errors.Join(werr, cerr))
+		}
+		resp.ResultFile = f.Name()
+		resp.ResultSize = int64(len(resp.Result))
+	}
+	resp.Result = truncateUTF8(resp.Result, bridgePreviewBytes)
+	return resp, nil
+}
+
+// truncateUTF8 cuts s to at most n bytes without splitting a rune.
+func truncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // cancelWhenPeerCloses calls cancel once a read on conn returns: the peer

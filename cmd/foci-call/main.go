@@ -28,7 +28,7 @@ var (
 	goVersion = runtime.Version()
 )
 
-const maxResponseBytes = 1024 * 1024 // 1MB — accepted response cap; do not raise (#1933)
+const maxResponseBytes = 1024 * 1024 // 1MB — accepted response cap; do not raise (#1933). The gateway spills any response over it to a file (tools.bridgeMaxResponseBytes must stay equal; #2818).
 
 // maxMeasureBytes bounds how far we'll keep reading an over-cap response
 // purely to report its actual size in the error message below. It is NOT an
