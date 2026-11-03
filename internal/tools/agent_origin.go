@@ -22,6 +22,11 @@ type AgentOrigin struct {
 	AgentID string
 	// Text is the caller's raw message parameter.
 	Text string
+	// ChildName is the sending child's name, set by send_to_spawner (the
+	// spawn's name, #2836): the chit then reads "from <ChildName>". Empty
+	// otherwise; app.DeliverAgentMessage then asks ChildName whether the
+	// sender is a named child of the receiving session.
+	ChildName string
 }
 
 // NewAgentOrigin builds an AgentOrigin, deriving the agent id from sessionKey.

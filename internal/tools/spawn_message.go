@@ -176,10 +176,23 @@ func (s *Spawner) messageFromSpawn(parent, id string, direct bool, from, text st
 		spawnLog.Infof("spawn=%s message to spawner %s kept for its result (%d chars)", id, parent, len(text))
 		return TextResult("Kept: " + keepWhy + ". It will head your result."), nil
 	}
-	s.deps.Notifier.InjectAgentMessage(owner, formatSpawnerMessage(info, direct, text), "", NewAgentOrigin(from, text))
+	s.deps.Notifier.InjectAgentMessage(owner, formatSpawnerMessage(info, direct, text), "", spawnOrigin(info, from, text))
 	tr.appendLog(parent, id, "to-spawner", text)
 	spawnLog.Infof("spawn=%s message to spawner %s delivered (%d chars)", id, owner, len(text))
 	return TextResult("Sent to your spawner (" + owner + ")."), nil
+}
+
+// spawnOrigin is the sender a spawn's message to its spawner carries: the
+// app labels its chit "from <spawn name>" (#2836), not the spawn's agent and
+// session key. A spawn persisted before names existed (#2721) has no name, so
+// its id stands in.
+func spawnOrigin(info RunningSpawn, from, text string) AgentOrigin {
+	o := NewAgentOrigin(from, text)
+	o.ChildName = info.Name
+	if o.ChildName == "" {
+		o.ChildName = info.ID
+	}
+	return o
 }
 
 // callerTurnRunning reports whether a turn runs on the spawner's session now,

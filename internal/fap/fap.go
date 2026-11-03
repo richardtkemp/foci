@@ -551,8 +551,9 @@ func (ServerMessage) Type() string { return TypeMessage }
 // drove the turn. Two senders reuse the frame: an external HTTP /send prompt
 // (foci send CLI / raw API; Text is the verbatim prompt, no wrapper) and an
 // agent-to-agent message (send_to_session, #1286). The latter names its sender
-// through FromAgent/FromSession; a foci send prompt sets neither, so its wire
-// bytes are unchanged.
+// through FromAgent/FromSession, and a message from one of the receiving
+// session's own named children also sets FromChild (#2836); a foci send prompt sets none, so its wire bytes are
+// unchanged.
 type ExternalPrompt struct {
 	ConversationID string `json:"conversationId"`
 	MessageID      string `json:"messageId"`
@@ -561,6 +562,11 @@ type ExternalPrompt struct {
 	FromAgent string `json:"fromAgent,omitempty"`
 	// FromSession is the SENDING session's key — empty for a foci send prompt.
 	FromSession string `json:"fromSession,omitempty"`
+	// FromChild is the sender's name when it is a child of the receiving
+	// session (a spawn's name, a depth leaf's title, #2836): the app then
+	// labels the chit "from <FromChild>" instead of the agent and session.
+	// Empty otherwise.
+	FromChild string `json:"fromChild,omitempty"`
 }
 
 func (ExternalPrompt) Type() string { return TypeExternalPrompt }

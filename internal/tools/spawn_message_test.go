@@ -109,6 +109,10 @@ func TestSendToSpawnerFromBackgroundSpawn(t *testing.T) {
 	if first.origin == nil || first.origin.SessionKey != "msgbg/imain/bchar" || first.origin.Text != "halfway: found the bug" {
 		t.Errorf("origin = %+v, want the spawn's branch and raw text (the app's chit)", first.origin)
 	}
+	// #2836: the app labels the chit "from <spawn name>", so the origin names the spawn.
+	if first.origin != nil && first.origin.ChildName != "messag1" {
+		t.Errorf("origin.ChildName = %q, want the spawn's name messag1", first.origin.ChildName)
+	}
 	result := recv(t, got, "the [SPAWN RESULT]")
 	if !strings.Contains(result.msg, "[SPAWN RESULT]") || strings.Contains(result.msg, "[MESSAGES FROM YOUR SPAWN]") {
 		t.Errorf("result = %q, want a plain [SPAWN RESULT] (the message already went)", result.msg)
@@ -321,5 +325,18 @@ func TestSendToSpawnerInEverySpawnToolSet(t *testing.T) {
 		if sub == nil || sub.Get("send_to_spawner") == nil {
 			t.Errorf("batch access %s lacks send_to_spawner", access)
 		}
+	}
+}
+
+// #2836: a spawn persisted before names existed (#2721) has no name; its id
+// stands in so the chit still names the spawn rather than its agent and key.
+func TestSpawnOriginFallsBackToIDWithoutName(t *testing.T) {
+	t.Parallel()
+	o := spawnOrigin(RunningSpawn{ID: "spawn-abc"}, "clutch/c1/b2", "hi")
+	if o.ChildName != "spawn-abc" || o.SessionKey != "clutch/c1/b2" || o.AgentID != "clutch" || o.Text != "hi" {
+		t.Errorf("origin = %+v, want ChildName spawn-abc and the sender fields kept", o)
+	}
+	if o := spawnOrigin(RunningSpawn{ID: "spawn-abc", Name: "todo-1"}, "clutch/c1/b2", "hi"); o.ChildName != "todo-1" {
+		t.Errorf("ChildName = %q, want the name todo-1", o.ChildName)
 	}
 }

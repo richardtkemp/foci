@@ -45,6 +45,58 @@ func TestDeliverAgentMessage_BoundSessionGetsFrameWithFromFields(t *testing.T) {
 	}
 }
 
+// TestDeliverAgentMessage_ChildNameRidesAsFromChild pins #2836: a spawn's
+// message to its spawner carries the spawn's name as fromChild (the app's
+// "from <spawn name>" label), and an ordinary agent message carries none.
+func TestDeliverAgentMessage_ChildNameRidesAsFromChild(t *testing.T) {
+	h := newTestHub()
+	setActiveHub(h)
+	t.Cleanup(func() { setActiveHub(nil) })
+
+	b := h.ensureBinding(nil, "clutch", "conv-1")
+	client := fakeClient()
+	b.attach(client)
+
+	DeliverAgentMessage(b.key(), tools.AgentOrigin{SessionKey: "clutch/c1/b2", AgentID: "clutch", Text: "halfway", ChildName: "todo-2826"})
+	DeliverAgentMessage(b.key(), tools.AgentOrigin{SessionKey: "scout/c4", AgentID: "scout", Text: "plain"})
+
+	got := drain(t, client)
+	if len(got) != 2 {
+		t.Fatalf("frames = %v, want two external.prompt", types(got))
+	}
+	if got[0].d["fromChild"] != "todo-2826" {
+		t.Errorf("fromChild = %v, want todo-2826", got[0].d["fromChild"])
+	}
+	if _, ok := got[1].d["fromChild"]; ok {
+		t.Errorf("plain agent message has fromChild %v, want the field absent", got[1].d["fromChild"])
+	}
+}
+
+// TestDeliverAgentMessage_ChildSenderIsNamed pins the general case of #2836:
+// an ordinary agent message (send_to_session, no name on the origin) from a
+// running spawn of the receiving session is labelled with the spawn's name.
+func TestDeliverAgentMessage_ChildSenderIsNamed(t *testing.T) {
+	h := newTestHub()
+	setActiveHub(h)
+	t.Cleanup(func() { setActiveHub(nil) })
+
+	b := h.ensureBinding(nil, "dlvchild", "conv-1")
+	client := fakeClient()
+	b.attach(client)
+
+	tracker := tools.NewSpawnTracker()
+	tools.RegisterSpawner("dlvchild", tools.NewSpawner(tools.SpawnDeps{AgentID: "dlvchild", Tracker: tracker}, nil))
+	t.Cleanup(func() { tools.UnregisterSpawner("dlvchild") })
+	tracker.Add(b.key(), tools.RunningSpawn{ID: "spawn-z", BranchKey: b.key() + "/b7", Name: "audit-run"}, func() {})
+
+	DeliverAgentMessage(b.key(), tools.NewAgentOrigin(b.key()+"/b7", "done half"))
+
+	got := drain(t, client)
+	if len(got) != 1 || got[0].d["fromChild"] != "audit-run" {
+		t.Fatalf("frames = %v, want one external.prompt with fromChild audit-run", got)
+	}
+}
+
 // TestDeliverAgentMessage_UnboundSessionGetsNoFrameAnywhere pins the
 // bound-only rule: a session with no bound conversation of its own (a branch
 // the app never opened) gets no chit in ANY conversation — even though the

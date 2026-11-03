@@ -283,7 +283,8 @@ func SetCacheExpiry(sessionKey string, expiryMs int64) {
 // agent's default chat. Frames sent through the binding are stored and
 // replayed on resume, and fall through pushPreview's default case (no push,
 // no unread bump — #1279).
-func deliverBoundPrompt(sessionKey, text, fromAgent, fromSession string) {
+// p carries the text and sender fields; its ids are filled in here.
+func deliverBoundPrompt(sessionKey string, p fap.ExternalPrompt) {
 	activeMu.RLock()
 	h := activeHub
 	activeMu.RUnlock()
@@ -291,7 +292,8 @@ func deliverBoundPrompt(sessionKey, text, fromAgent, fromSession string) {
 		return
 	}
 	if b := h.bindingForSession(sessionKey); b != nil {
-		b.send(fap.ExternalPrompt{ConversationID: b.convID, MessageID: fap.NewULID(), Text: text, FromAgent: fromAgent, FromSession: fromSession})
+		p.ConversationID, p.MessageID = b.convID, fap.NewULID()
+		b.send(p)
 	}
 }
 
@@ -302,18 +304,25 @@ func deliverBoundPrompt(sessionKey, text, fromAgent, fromSession string) {
 // (foci send to a telegram/discord-only agent surfaces via that transport's
 // injected-message header instead).
 func DeliverExternalPrompt(sessionKey, text string) {
-	deliverBoundPrompt(sessionKey, text, "", "")
+	deliverBoundPrompt(sessionKey, fap.ExternalPrompt{Text: text})
 }
 
 // DeliverAgentMessage surfaces an agent-to-agent message (send_to_session,
 // #1286) to the app clients bound to the RECEIVING sessionKey, as a durable
 // ExternalPrompt frame whose FromAgent/FromSession name the sending agent and
-// session. Same bound-only rule as DeliverExternalPrompt: only the
+// session. A message from one of the receiving session's own children (a
+// spawn, a depth leaf) also carries the child's name in FromChild, so the app
+// labels it "from <child name>" (#2836): the origin's name when it has one
+// (send_to_spawner sets it), else tools.ChildName. Same bound-only rule as DeliverExternalPrompt: only the
 // conversation bound to sessionKey, no fallback to the agent's default chat,
 // no-op when the app provider is not running or the session has no bound
 // conversation. App only — Telegram/Discord hear nothing (#1286 ruling).
 func DeliverAgentMessage(sessionKey string, origin tools.AgentOrigin) {
-	deliverBoundPrompt(sessionKey, origin.Text, origin.AgentID, origin.SessionKey)
+	child := origin.ChildName
+	if child == "" {
+		child = tools.ChildName(sessionKey, origin.SessionKey)
+	}
+	deliverBoundPrompt(sessionKey, fap.ExternalPrompt{Text: origin.Text, FromAgent: origin.AgentID, FromSession: origin.SessionKey, FromChild: child})
 }
 
 // SetWaiting marks the conversation bound to callerSessionKey as waiting on
