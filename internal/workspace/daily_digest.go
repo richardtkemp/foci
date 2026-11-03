@@ -55,7 +55,7 @@ func DailyMemoryDigest(workspaceDir string, now time.Time) string {
 	}
 	return "## Recent Memory (headings only)\n" +
 		"The section headings of today's and yesterday's daily memory files, as they were when this session started. " +
-		"The files keep growing; to read a section, grep the file or use foci_memory_search.\n\n" +
+		"The files keep growing. To read a section, use mds if it is installed: `mds memory/YYYY-MM-DD.md \"words from the heading\"` prints just that section (`mds <file>` lists the headings). Else grep the file or use the memory search tool.\n\n" +
 		strings.TrimRight(strings.Join(sections, "\n"), "\n")
 }
 
