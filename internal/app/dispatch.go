@@ -213,7 +213,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		safeGo("wizard-response", func() { h.handleWizardResponse(f) })
 
 	case fap.Command:
-		h.routeCommand(client, f)
+		h.routeCommand(client, f, "")
 
 	case fap.Ping:
 		client.sendRaw(fap.Pong{})
@@ -889,7 +889,13 @@ func (h *Hub) handlePin(client *wsClient, f fap.PinPut) {
 // routeCommand dispatches a slash command through the agent's command registry,
 // returning its response as message frame(s). Dispatch runs off the read pump
 // because some commands do real work.
-func (h *Hub) routeCommand(client *wsClient, f fap.Command) {
+// echoID is the message id for the user echo of the command. It is the
+// inbound message's id when the command arrived as message text (typed, or
+// produced by a message transform such as "st" → "/stop"): the sending device
+// shows an optimistic bubble under that id, so the echo replaces its text with
+// the command instead of adding a second bubble (#2830). Empty (a Command
+// frame, which has no bubble) mints a fresh id.
+func (h *Hub) routeCommand(client *wsClient, f fap.Command, echoID string) {
 	if f.ConversationID == "" || f.Name == "" {
 		return
 	}
@@ -928,10 +934,10 @@ func (h *Hub) routeCommand(client *wsClient, f fap.Command) {
 		ChatID:     b.chatID,
 		Source:     "app",
 	}
-	safeGo("dispatch-command", func() { h.dispatchCommand(client, conn, b, req) })
+	safeGo("dispatch-command", func() { h.dispatchCommand(client, conn, b, req, echoID) })
 }
 
-func (h *Hub) dispatchCommand(client *wsClient, conn *appConn, b *convBinding, req command.Request) {
+func (h *Hub) dispatchCommand(client *wsClient, conn *appConn, b *convBinding, req command.Request, echoID string) {
 	ctx := h.deps.Ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -954,7 +960,10 @@ func (h *Hub) dispatchCommand(client *wsClient, conn *appConn, b *convBinding, r
 	if req.Args != "" {
 		userText += " " + req.Args
 	}
-	b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: fap.NewULID(), Role: "user", Text: userText})
+	if echoID == "" {
+		echoID = fap.NewULID()
+	}
+	b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: echoID, Role: "user", Text: userText})
 
 	// Snapshot the session's wizard generation so maybeStartWizard can tell
 	// whether this dispatch activated a (new) wizard for it.
@@ -1067,7 +1076,7 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 					AgentID:        agentID,
 					Name:           name,
 					Args:           args,
-				})
+				}, inID)
 				return
 			}
 		}
@@ -1092,7 +1101,7 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 							AgentID:        agentID,
 							Name:           name,
 							Args:           args,
-						})
+						}, inID)
 						return
 					}
 				}

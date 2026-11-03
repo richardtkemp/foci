@@ -86,7 +86,7 @@ func TestDispatchCommand_ForegroundsRequester(t *testing.T) {
 	b := withIdent(&convBinding{convID: "c1", clients: map[*wsClient]struct{}{convClient: {}}}, "", "ag/c1")
 	requester := fakeClientFor(h)
 
-	h.dispatchCommand(requester, conn, b, command.Request{Name: "facet", Source: "app"})
+	h.dispatchCommand(requester, conn, b, command.Request{Name: "facet", Source: "app"}, "")
 
 	// The requesting socket gets the foreground directive.
 	ds := drain(t, requester)

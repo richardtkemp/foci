@@ -2866,7 +2866,7 @@ func TestRouteCommand_NoCommandsErrors(t *testing.T) {
 	c := fakeClient()
 	c.hub = h
 
-	h.routeCommand(c, fap.Command{ConversationID: "c1", AgentID: "ag", Name: "help"})
+	h.routeCommand(c, fap.Command{ConversationID: "c1", AgentID: "ag", Name: "help"}, "")
 
 	ds := drain(t, c)
 	if len(ds) != 1 || ds[0].t != fap.TypeError || ds[0].d["code"] != "no_commands" {
