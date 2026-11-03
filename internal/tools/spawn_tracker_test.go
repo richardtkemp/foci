@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +21,9 @@ type recordingSpawnObserver struct {
 	texts   []string
 	ended   []string
 	parents []string
+	// followups are the parent's spawn_send messages to a running spawn
+	// (SpawnPrompt), as "<id>=<message>".
+	followups []string
 }
 
 func (o *recordingSpawnObserver) SpawnStarted(parent string, s RunningSpawn, prompt string) {
@@ -34,6 +38,18 @@ func (o *recordingSpawnObserver) SpawnText(_, id, text string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.texts = append(o.texts, id+"="+text)
+}
+
+func (o *recordingSpawnObserver) SpawnPrompt(_, id, message string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.followups = append(o.followups, id+"="+message)
+}
+
+func (o *recordingSpawnObserver) followupsSnapshot() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return slices.Clone(o.followups)
 }
 
 func (o *recordingSpawnObserver) SpawnEnded(_, id string) {

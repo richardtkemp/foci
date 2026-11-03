@@ -76,6 +76,10 @@ type SpawnObserver interface {
 	SpawnStarted(parentSession string, s RunningSpawn, prompt string)
 	// SpawnText reports one block of the spawn's assistant text.
 	SpawnText(parentSession, id, text string)
+	// SpawnPrompt reports a parent's spawn_send message to a spawn that is
+	// running, folded into its turn or queued for its next step (#2822). A
+	// message that resumes a finished spawn comes as SpawnStarted instead.
+	SpawnPrompt(parentSession, id, message string)
 	// SpawnEnded reports the spawn finished, failed or was stopped.
 	SpawnEnded(parentSession, id string)
 }

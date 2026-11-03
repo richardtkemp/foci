@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -98,10 +99,11 @@ type followupHarness struct {
 	tracker   *SpawnTracker
 	delivered chan string
 	ctx       context.Context
+	obs       *recordingSpawnObserver
 }
 
 func newFollowupHarness(agent SpawnAgent) *followupHarness {
-	h := &followupHarness{tracker: NewSpawnTracker(), delivered: make(chan string, 8)}
+	h := &followupHarness{tracker: NewSpawnTracker(), delivered: make(chan string, 8), obs: &recordingSpawnObserver{}}
 	notifier := NewAsyncNotifier(func(sk, msg, _, _ string, _ *AgentOrigin) {
 		h.delivered <- sk + "\n" + msg
 	})
@@ -111,6 +113,7 @@ func newFollowupHarness(agent SpawnAgent) *followupHarness {
 		MaxInherit: 2,
 		Notifier:   notifier,
 		Tracker:    h.tracker,
+		Observer:   h.obs,
 	}, func() SpawnAgent { return agent })
 	h.ctx = WithSessionKey(context.Background(), "test/imain")
 	return h
@@ -246,6 +249,48 @@ func TestSpawnSend_DeclinedSteerIsQueued(t *testing.T) {
 	close(agent.gates[0])
 	waitStarted(t, agent.scriptedSpawnAgent, 1)
 	h.result(t)
+}
+
+func TestSpawnSend_RunningSpawnShowsMessageInApp(t *testing.T) {
+	// Every spawn_send message to a running spawn reaches the app's view of
+	// the spawn, in order, without the parent prefix the spawn itself sees:
+	// one folded into the running turn and one queued for its next step
+	// (#2822). Fail-arm: before #2822 send told the observer nothing, so the
+	// view showed the first prompt and then only the spawn's own text.
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		steer bool
+		want  string
+	}{
+		{"steered", true, "Delivered"},
+		{"queued", false, "Queued"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			agent := &steeringSpawnAgent{scriptedSpawnAgent: newScriptedSpawnAgent(2), ok: tc.steer, steered: make(chan [2]string, 2)}
+			h := newFollowupHarness(agent)
+			id := h.start(t, "watch the build")
+			waitStarted(t, agent.scriptedSpawnAgent, 0)
+			for _, m := range []string{"first note", "second note"} {
+				if got := h.send(t, id, m); !strings.Contains(got, tc.want) {
+					t.Fatalf("send %q = %q, want %q", m, got, tc.want)
+				}
+			}
+			if got, want := h.obs.followupsSnapshot(), []string{id + "=first note", id + "=second note"}; !slices.Equal(got, want) {
+				t.Errorf("app saw follow-ups %q, want %q", got, want)
+			}
+			close(agent.gates[0])
+			if !tc.steer {
+				waitStarted(t, agent.scriptedSpawnAgent, 1)
+				close(agent.gates[1])
+			}
+			h.result(t)
+			if got := h.obs.followupsSnapshot(); len(got) != 2 {
+				t.Errorf("follow-ups after the run = %q, want each shown once", got)
+			}
+		})
+	}
 }
 
 func TestSpawnSend_APITurnDrainsMessageAtToolBoundary(t *testing.T) {

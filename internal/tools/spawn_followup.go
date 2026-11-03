@@ -89,9 +89,11 @@ func (s *Spawner) send(ctx context.Context, idOrBranch, message string, timeoutS
 	if snap.Running {
 		if st, ok := agent.(SpawnSteerer); ok && st.SteerTurn(ctx, snap.BranchKey, text) {
 			tr.appendLog(parent, snap.ID, "message", "(steered into the running turn) "+message)
+			s.showFollowup(parent, snap.ID, message)
 			return TextResult(fmt.Sprintf("Delivered to spawn %s: it folds into its current turn.", snap.ID)), nil
 		}
 		if tr.queue(parent, snap.ID, text) {
+			s.showFollowup(parent, snap.ID, message)
 			return TextResult(fmt.Sprintf("Queued for spawn %s: it gets the message at its next step, or as a new turn when its current one ends. Its result still comes once, as [SPAWN RESULT].", snap.ID)), nil
 		}
 		// It finished between the lookup and the queue: resume it instead.
@@ -114,6 +116,16 @@ func (s *Spawner) send(ctx context.Context, idOrBranch, message string, timeoutS
 		timeout = resolveSpawnTimeout(timeoutSec, true) // a resumed spawn runs in the background
 	}
 	return s.resume(ctx, agent, parent, snap.RunningSpawn, text, message, timeout)
+}
+
+// showFollowup shows the parent's message to a running spawn in the app's
+// view of that spawn, after its first prompt and the text it has sent so far
+// (#2822). The message is shown as the parent wrote it, without
+// spawnMessagePrefix, like the first prompt and a resume's message.
+func (s *Spawner) showFollowup(parent, id, message string) {
+	if s.deps.Observer != nil {
+		s.deps.Observer.SpawnPrompt(parent, id, message)
+	}
 }
 
 // resume runs a follow-up turn on a finished spawn's branch: the branch still

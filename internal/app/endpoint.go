@@ -241,6 +241,15 @@ func (SpawnObserver) SpawnText(parentSession, id, text string) {
 	}
 }
 
+// SpawnPrompt adds a parent's spawn_send message to the spawn's running chit
+// (#2822), as the SubagentPrompt frame a Claude Code SendMessage to a running
+// subagent gets (#1419): another "asked" block in the current run.
+func (SpawnObserver) SpawnPrompt(parentSession, id, message string) {
+	if b := spawnBinding(parentSession); b != nil {
+		b.send(fap.SubagentPrompt{ConversationID: b.convID, GroupKey: id, Prompt: message, RunIndex: 1})
+	}
+}
+
 // SpawnEnded completes the spawn's chit and drops it from the running list.
 func (SpawnObserver) SpawnEnded(parentSession, id string) {
 	if b := spawnBinding(parentSession); b != nil {
