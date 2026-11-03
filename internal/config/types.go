@@ -1076,8 +1076,8 @@ type MemoryConfig struct {
 	EvergreenPatterns []string `toml:"evergreen_patterns"  desc:"Glob patterns marking memory files that are always kept in context (never aged out)"`
 	// DailyDigest (#2827): put the headings of today's and yesterday's
 	// memory/YYYY-MM-DD.md at the end of a user chat session's system prompt,
-	// snapshotted at session start. Off by default: an agent opts in.
-	DailyDigest *bool `toml:"daily_digest" default:"false" hot:"session" desc:"At the start of each chat session with a person (not spawns, branches, background or batch sessions), add the section headings of today's and yesterday's daily memory files (memory/YYYY-MM-DD.md) to the end of the system prompt. Fixed for the session; a new session or a compaction takes a fresh copy"`
+	// snapshotted at session start. On by default (Dick 2026-11-03: "Set the digest on by default"); an agent opts out.
+	DailyDigest *bool `toml:"daily_digest" default:"true" hot:"session" desc:"At the start of each chat session with a person (not spawns, branches, background or batch sessions), add the section headings of today's and yesterday's daily memory files (memory/YYYY-MM-DD.md) to the end of the system prompt. Fixed for the session; a new session or a compaction takes a fresh copy"`
 }
 
 type HTTPConfig struct {
