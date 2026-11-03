@@ -261,6 +261,8 @@ raw_mode() {
             # Also drop further leading hashes: the binary reports the title of
             # "## #2827 foo" as "2827 foo", and the compare below must match it.
             sub(/^[# \t]+/, "", text)
+            # A closing run is not part of the title either: "## foo ##" is "foo".
+            sub(/[ \t]+#+[ \t]*$/, "", text)
             gsub(/[ \t]+$/, "", text)
             printf "%d\t%d\t%s\n", NR, depth, text
         }
@@ -299,7 +301,8 @@ raw_mode() {
 if [[ $# -ge 1 && "$1" == \#* ]]; then
     # Strip the leading run of '#' and spaces to get heading text. That includes
     # a second run ('## #2827 foo' -> '2827 foo'): the binary's title has no '#'.
-    text=$(sed -E 's/^[#[:space:]]+//' <<<"$1")
+    # A closing run is not part of the title either: '## foo ##' is 'foo'.
+    text=$(sed -E 's/^[#[:space:]]+//; s/[[:space:]]+#+[[:space:]]*$//' <<<"$1")
     shift
     # #2006: only the HEADING TEXT is ours to quote. mdq chains selectors with
     # ' | ' ('# A | - *' = the list items under section A), and quoting the whole

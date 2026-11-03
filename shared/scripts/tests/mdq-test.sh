@@ -484,6 +484,21 @@ sharp body
 
 ## Plain
 plain body
+
+## closed heading ##
+closed body
+
+## closed spaced #  
+spaced close body
+
+## mid # hash ##
+mid body
+
+## #99 open and closed ##
+both ends body
+
+## tail#
+tail body
 EOF
 hs_case() { # name, pattern, heading line, line after the section ('' = EOF)
     local start end want got rc
@@ -502,12 +517,22 @@ hs_case "double quotes, in query"  'an "odd" one'           '## LESSON: an "odd"
 hs_case "backslash"                "temp"                   '## Path C:\temp here'                  '## #1 and "both" of them'
 hs_case "leading hash and quotes"  "both"                   '## #1 and "both" of them'              '## C#'
 hs_case "trailing hash untouched"  "C#"                     '## C#'                                 '## Plain'
-hs_case "plain heading untouched"  "Plain"                  '## Plain'                              ''
+hs_case "plain heading untouched"  "Plain"                  '## Plain'                              '## closed heading ##'
+hs_case "closing hashes"           "closed heading"         '## closed heading ##'                  '## closed spaced #  '
+hs_case "closing hash, trailing sp" "closed spaced"         '## closed spaced #  '                  '## mid # hash ##'
+hs_case "closing, with a mid hash" "mid"                    '## mid # hash ##'                      '## #99 open and closed ##'
+hs_case "hashes at both ends"      "#99"                    '## #99 open and closed ##'             '## tail#'
+hs_case "closing, by full text"    "#99 open and closed ##" '## #99 open and closed ##'             '## tail#'
+hs_case "unspaced tail hash kept"  "tail#"                  '## tail#'                              ''
 # The same shapes pasted straight into mdq, the wrapper's promise since #737.
 hash_want=$(sed -n '/^## #2827/,/^sub body$/p' "$HF")
 hash_got=$("$MDQ" '## #2827 memory digest' "$HF"); hash_rc=$?
 check "heading shapes: pasted '## #N' into mdq (rc)" "0" "$hash_rc"
 check "heading shapes: pasted '## #N' into mdq (source bytes)" "$hash_want" "$hash_got"
+close_got=$("$MDQ" '## closed heading ##' "$HF"); close_rc=$?
+check "heading shapes: pasted closing hashes into mdq (rc)" "0" "$close_rc"
+check "heading shapes: pasted closing hashes into mdq (source bytes)" \
+    "$(sed -n '/^## closed heading ##$/,/^closed body$/p' "$HF")" "$close_got"
 # The rendered path takes the same selector.
 rend_got=$("$MDS" "$HF" "LESSON" --render); rend_rc=$?
 check "heading shapes: mds --render with quotes (rc)" "0" "$rend_rc"
