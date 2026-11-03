@@ -179,6 +179,7 @@ type mockHandler struct {
 	OnToolStart     func(id, name, input string)
 	OnToolEnd       func(id, name, output string, isError bool)
 	OnTurnComplete  func(result *delegator.TurnResult)
+	OnModelUsage    func(u delegator.TurnUsage)
 
 	PostToolNudgeFunc  func(toolName, toolInput string, isError bool) []string
 	PreAnswerNudgeFunc func(result *delegator.TurnResult) string
@@ -299,6 +300,9 @@ func (m *mockBackendDT) ImmediateInject(ctx context.Context, inj delegator.Injec
 		}
 		if handler.PostToolNudgeFunc == nil {
 			handler.PostToolNudgeFunc = inj.Turn.PostToolNudgeFunc
+		}
+		if handler.OnModelUsage == nil {
+			handler.OnModelUsage = inj.Turn.OnModelUsage
 		}
 		if handler.PreAnswerNudgeFunc == nil {
 			handler.PreAnswerNudgeFunc = inj.Turn.PreAnswerNudgeFunc

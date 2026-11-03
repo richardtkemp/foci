@@ -748,6 +748,12 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 		Unattended:         a.turnUnattended(ts),
 		PostToolNudgeFunc:  postToolNudgeFunc,
 		PreAnswerNudgeFunc: preAnswerNudgeFunc,
+		// Each model call's usage is the evidence that stamps cache warmth
+		// (#2509); sawModelUsage tells OnTurnComplete not to stamp again.
+		OnModelUsage: func(u delegator.TurnUsage) {
+			ts.sawModelUsage.Store(true)
+			a.recordCacheEvidence(ts.SessionKey, u.CacheReadInputTokens, u.CacheCreationInputTokens)
+		},
 	}
 	// The backend books its own calls and names this turn on each of them, so
 	// the turn's facts must be in the ledger before the first can complete.
@@ -772,6 +778,11 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 						OutputTokens:             result.Usage.OutputTokens,
 						CacheCreationInputTokens: result.Usage.CacheCreationInputTokens,
 						CacheReadInputTokens:     result.Usage.CacheReadInputTokens,
+					}
+					// Fallback evidence for a backend that reported no
+					// per-call usage (#2509).
+					if !ts.sawModelUsage.Load() {
+						a.recordCacheEvidence(ts.SessionKey, result.Usage.CacheReadInputTokens, result.Usage.CacheCreationInputTokens)
 					}
 				}
 			}

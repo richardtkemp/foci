@@ -423,6 +423,16 @@ func (b *Backend) onMessageUpdated(msg Message) {
 			CacheCreationInputTokens: msg.Tokens.Cache.Write,
 		}
 		b.mu.Unlock()
+		// The call's usage is the agent layer's cache-warmth evidence (#2509).
+		b.turnMu.Lock()
+		turn := b.turnEvents
+		b.turnMu.Unlock()
+		turn.ReportModelUsage(delegator.TurnUsage{
+			InputTokens:              msg.Tokens.Input,
+			OutputTokens:             msg.Tokens.Output,
+			CacheCreationInputTokens: msg.Tokens.Cache.Write,
+			CacheReadInputTokens:     msg.Tokens.Cache.Read,
+		})
 	}
 	// Each message is one call, booked once its usage is final (#2111 P2).
 	b.bookMessage(msg, "")

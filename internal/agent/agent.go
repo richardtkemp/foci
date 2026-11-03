@@ -209,7 +209,7 @@ type Agent struct {
 	inFlight           map[string]int32          // per-session count of in-flight OrchestrateFullTurn calls — see IsTurnInFlight
 	inFlightDelivering map[string]int32          // per-session-base count of in-flight turns whose sink reports DeliversToPlatform=true — see IsInFlightDelivering
 	inFlightChanged    map[string]chan struct{}  // per-session-base close-and-replace channel; closes on each state change so waiters wake — see InFlightWaitCh
-	lastTurnEndAt      map[string]time.Time      // per-session-base wall-clock moment the last turn ended (inFlight→0) — see LastTurnEnd; in-memory turn-END counterpart to last_cache_touch's turn-ENTRY stamp
+	lastTurnEndAt      map[string]time.Time      // per-session-base wall-clock moment the last turn ended (inFlight→0) — see LastTurnEnd; in-memory turn-END activity signal; last_cache_touch is the durable warmth signal (model-response evidence, #2509)
 	unattendedTurns    map[string]int32          // per-session count of in-flight turns that are unattended (turnUnattended) — see TurnUnattended; under inFlightMu
 	injectGatePoll     time.Duration             // test seam: the inject gate's poll backstop; zero = injectGatePollInterval (#2537)
 	pendingHoldMax     time.Duration             // test seam: how long background work may hold a system inject; zero = maxPendingHold (#2792)
@@ -222,6 +222,11 @@ type Agent struct {
 	turnLocks          map[string]*sync.Mutex // per-session turn serialization
 	metaMu             sync.Mutex
 	meta               map[string]*sessionMeta // per-session metadata
+
+	// branchRootWarms holds, per inheriting branch, the root stamp its first
+	// evidenced model response will make (#2509, cache_evidence.go).
+	branchRootMu    sync.Mutex
+	branchRootWarms map[string]branchRootWarm
 
 	// compacting latches compaction-in-flight per session so /status reports
 	// "compacting" rather than "idle" while a summary turn runs. Keyed by

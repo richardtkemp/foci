@@ -321,8 +321,9 @@ func isMemoryTrigger(trigger string) bool {
 // keepalive: it is cache maintenance, not work, and an in-place keepalive runs
 // on the parent session itself, where counting it would make an idle session
 // look active to the reflection guard and the activity gate (Dick 2026-10-22,
-// #2446). A keepalive still stamps last_cache_touch when it runs — warming the
-// cache is its whole purpose.
+// #2446). A keepalive's model response still stamps last_cache_touch —
+// warming the cache is its whole purpose (#2509: from the response, not the
+// turn).
 func countsAsActivity(trigger string) bool {
 	return !isMemoryTrigger(trigger) && !isKeepaliveTrigger(trigger)
 }

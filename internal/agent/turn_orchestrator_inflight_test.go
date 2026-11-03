@@ -153,10 +153,11 @@ func TestOrchestrator_InFlightStaysTrueDuringDelegatedWait(t *testing.T) {
 	}
 }
 
-// TestOrchestrator_CacheTouchWritesRow verifies that running a turn through
-// OrchestrateFullTurn stamps last_cache_touch on the session's own row. Covers
-// the single chokepoint's promise that "every turn-init path participates".
-func TestOrchestrator_CacheTouchWritesRow(t *testing.T) {
+// TestOrchestrator_TurnAloneDoesNotStampCacheTouch: running a turn through
+// OrchestrateFullTurn does not stamp last_cache_touch by itself. Only a model
+// response's cache usage does (recordCacheEvidence, #2509); this stub
+// contract reports none.
+func TestOrchestrator_TurnAloneDoesNotStampCacheTouch(t *testing.T) {
 	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -168,39 +169,22 @@ func TestOrchestrator_CacheTouchWritesRow(t *testing.T) {
 		AgentID:      "test-agent",
 		SessionIndex: idx,
 	}
-	// Seed the row: in production recordTurnActivity upserts it, but this test
-	// drives a stub contract, so create it up front for the cache-touch assertions.
 	seedCacheTestRow(idx, orchestratorTestKey)
-
-	// Confirm no prior cache touch.
-	if _, ok := idx.LastCacheTouch(orchestratorTestKey); ok {
-		t.Fatalf("pre-call: cache touch already present")
-	}
 
 	tc := &stubContract{}
 	ts := NewTurnState(context.Background(), orchestratorTestKey, []string{"hi"}, nil)
-
-	before := time.Now().Add(-2 * time.Second)
-	_, err = a.OrchestrateFullTurn(context.Background(), tc, ts)
-	after := time.Now().Add(2 * time.Second)
-	if err != nil {
+	if _, err := a.OrchestrateFullTurn(context.Background(), tc, ts); err != nil {
 		t.Fatalf("OrchestrateFullTurn: %v", err)
 	}
-
-	got, ok := idx.LastCacheTouch(orchestratorTestKey)
-	if !ok {
-		t.Fatalf("post-call: cache touch not written")
-	}
-	if got.Before(before) || got.After(after) {
-		t.Fatalf("cache touch %v outside expected window [%v, %v]", got, before, after)
+	if got, ok := idx.LastCacheTouch(orchestratorTestKey); ok {
+		t.Fatalf("a turn with no model usage stamped last_cache_touch = %v", got)
 	}
 }
 
-// TestOrchestrator_CacheTouchWritesEvenOnError verifies that a turn failing
-// mid-flight still records the cache touch. The agent attempted a turn — that
-// warmed the cache, regardless of inference outcome. Touch happens in Phase 1b
-// before RunInference, so the error path doesn't skip it.
-func TestOrchestrator_CacheTouchWritesEvenOnError(t *testing.T) {
+// TestOrchestrator_FailedTurnLeavesCacheTouch is #2509 on the own key: a
+// turn whose model call fails has no evidence that it warmed anything, so
+// last_cache_touch keeps its old value (here: none).
+func TestOrchestrator_FailedTurnLeavesCacheTouch(t *testing.T) {
 	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -222,8 +206,8 @@ func TestOrchestrator_CacheTouchWritesEvenOnError(t *testing.T) {
 		t.Fatalf("expected error from RunInference")
 	}
 
-	if _, ok := idx.LastCacheTouch(orchestratorTestKey); !ok {
-		t.Fatalf("cache touch not written despite error path")
+	if got, ok := idx.LastCacheTouch(orchestratorTestKey); ok {
+		t.Fatalf("a failed turn stamped last_cache_touch = %v", got)
 	}
 
 	// inFlight must still drop back to zero on the error path.
@@ -269,8 +253,9 @@ func TestOrchestrator_RateLimitGateSkipsInFlightAndTouch(t *testing.T) {
 // TestOrchestrator_BranchTurnKeysInFlightAndCacheByBranchOnly verifies the key
 // semantics for branch turns: the in-flight counter tracks the branch's OWN key
 // (branches are distinct identities — a facet turn must not couple to the
-// parent), and the cache touch lands on the branch key ONLY. Root is warmed just
-// once at branch CREATION (TouchRootCacheForBranch), not on every branch turn.
+// parent). A branch turn with no model usage stamps no cache touch on either
+// key: the root is warmed only by an inheriting branch's first evidenced
+// response (NoteBranchInheritsRoot, #2509).
 func TestOrchestrator_BranchTurnKeysInFlightAndCacheByBranchOnly(t *testing.T) {
 	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
@@ -328,52 +313,20 @@ func TestOrchestrator_BranchTurnKeysInFlightAndCacheByBranchOnly(t *testing.T) {
 		t.Fatal("orchestrator did not return")
 	}
 
-	// Cache touch lands under the branch key ONLY — the branch turn must not
-	// advance root's cache (root is warmed only at branch creation).
-	if _, ok := idx.LastCacheTouch(orchestratorTestBranchKey); !ok {
-		t.Error("branch turn did not write cache touch under the branch key")
+	// No model usage, no evidence: neither key is stamped.
+	if _, ok := idx.LastCacheTouch(orchestratorTestBranchKey); ok {
+		t.Error("branch turn with no model usage wrote a cache touch under the branch key")
 	}
 	if _, ok := idx.LastCacheTouch(orchestratorTestKey); ok {
-		t.Error("branch turn wrongly wrote cache touch under the root key (should only happen at branch creation)")
-	}
-}
-
-// TestTouchRootCacheForBranch verifies the one-time creation-time root warm: it
-// stamps last_cache_touch on the branch's ROOT (not the branch key), and is a
-// no-op when handed a root key.
-func TestTouchRootCacheForBranch(t *testing.T) {
-	t.Parallel()
-	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
-	if err != nil {
-		t.Fatalf("NewSessionIndex: %v", err)
-	}
-	defer idx.Close()
-
-	a := &Agent{AgentID: "test-agent", SessionIndex: idx}
-	seedCacheTestRow(idx, orchestratorTestKey)
-	seedCacheTestRow(idx, orchestratorTestBranchKey)
-
-	a.TouchRootCacheForBranch(orchestratorTestBranchKey)
-
-	if _, ok := idx.LastCacheTouch(orchestratorTestKey); !ok {
-		t.Error("TouchRootCacheForBranch did not warm the root's cache")
-	}
-	if _, ok := idx.LastCacheTouch(orchestratorTestBranchKey); ok {
-		t.Error("TouchRootCacheForBranch wrongly touched the branch key (should touch root only)")
-	}
-
-	// No-op for a root key: nothing to warm above it.
-	a.TouchRootCacheForBranch(orchestratorTestKey)
-	if _, ok := idx.LastCacheTouch(orchestratorTestKey); !ok {
-		t.Error("sanity: root cache should still be present")
+		t.Error("branch turn wrongly wrote cache touch under the root key")
 	}
 }
 
 // TestOrchestrator_UserActivityGatedByTrigger verifies the split between the two
-// signals: EVERY turn bumps last_cache_touch (cache freshness), but only a
-// real-time interactive turn bumps last_user_activity (human attention). Both a
-// keepalive turn AND an HTTP /send ("user") warm the cache without counting as
-// user activity — only interactive input (here: voice) does.
+// last_user_activity (human attention) is bumped only by a real-time
+// interactive turn. A keepalive turn and an HTTP /send ("user") do not count
+// as user activity; only interactive input (here: voice) does. (Cache warmth
+// is stamped by model usage, not by the turn: recordCacheEvidence, #2509.)
 func TestOrchestrator_UserActivityGatedByTrigger(t *testing.T) {
 	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
@@ -389,16 +342,13 @@ func TestOrchestrator_UserActivityGatedByTrigger(t *testing.T) {
 	// trigger must be injected there, not on the TurnState struct.
 
 	// Neither a keepalive turn nor an HTTP /send ("user") is interactive input:
-	// both warm the cache but must NOT count as user activity.
+	// neither may count as user activity.
 	for _, trig := range []string{"keepalive", "user"} {
 		tc := &stubContract{}
 		ctx := WithTrigger(context.Background(), trig)
 		ts := NewTurnState(ctx, orchestratorTestKey, []string{"hi"}, nil)
 		if _, err := a.OrchestrateFullTurn(ctx, tc, ts); err != nil {
 			t.Fatalf("%s turn: %v", trig, err)
-		}
-		if _, ok := idx.LastCacheTouch(orchestratorTestKey); !ok {
-			t.Fatalf("%s turn did not write cache touch", trig)
 		}
 		if _, ok := idx.LastUserActivityForAgent("test-agent"); ok {
 			t.Fatalf("%s turn wrongly wrote last_user_activity", trig)

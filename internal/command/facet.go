@@ -100,7 +100,7 @@ func forkBranch(ctx context.Context, cc CommandContext, parentKey string, opts s
 		if err != nil {
 			return "", fmt.Errorf("create branch: %w", err)
 		}
-		cc.Agent.TouchRootCacheForBranch(branchKey) // ForkSession already warms root on success
+		// Nothing inherited, so the branch does not warm the root (#2509).
 	}
 	return branchKey, nil
 }

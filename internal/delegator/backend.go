@@ -922,6 +922,16 @@ type TurnEvents struct {
 	// invariant holds by construction (no counters needed).
 	OnTurnComplete func(result *TurnResult)
 
+	// OnModelUsage fires for each top-level model response of the turn that
+	// reports usage, as it arrives (mid-turn), with that one call's counts.
+	// It is the agent layer's evidence that a model call reached the API and
+	// read or wrote the session's prompt cache (#2509): last_cache_touch is
+	// stamped from it, never from the turn starting. A backend that cannot
+	// report per call may leave it unfired; the agent then falls back to the
+	// turn's final usage at OnTurnComplete. Called outside backend locks;
+	// must not block. Use ReportModelUsage, which is nil-safe.
+	OnModelUsage func(u TurnUsage)
+
 	// PostToolNudgeFunc is called after each tool's completion signal
 	// (PostToolUse hook dispatch). The caller returns any nudge reminders
 	// that should be injected mid-turn as default-priority user messages,
@@ -942,6 +952,15 @@ type TurnEvents struct {
 	// authoritative one. The TurnEvents stays bound across both rounds;
 	// only the round-2 OnResult clears it.
 	PreAnswerNudgeFunc func(result *TurnResult) string
+}
+
+// ReportModelUsage fires OnModelUsage with u. Safe on a nil TurnEvents or a
+// nil callback, so a backend can call it on whatever turn it captured.
+func (t *TurnEvents) ReportModelUsage(u TurnUsage) {
+	if t == nil || t.OnModelUsage == nil {
+		return
+	}
+	t.OnModelUsage(u)
 }
 
 // TurnResult is the outcome of a completed turn.

@@ -131,7 +131,10 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 // released at once so the next due tick can warm it again. A healthy
 // keepalive is one cache-read turn that ends in seconds; one that hangs (a
 // rejected usage limit holding it in a retry loop, 10 Oct: 7h52m) warmed
-// nothing, so the cache touch it recorded is put back.
+// nothing. Nothing needs putting back: only a model response's evidence
+// writes last_cache_touch (#2509), so a keepalive that got none recorded
+// none. The attempt is recorded (noteWarmAttempt) so a failing keepalive is
+// retried once per interval, not on every tick.
 //
 // started is closed just before the turn starts.
 func (r *Runner) runKeepalive(ctx context.Context, src prompts.Source, run keepaliveRun, timeout time.Duration, started chan<- struct{}) {
@@ -149,12 +152,7 @@ func (r *Runner) runKeepalive(ctx context.Context, src prompts.Source, run keepa
 		promptText = r.keepaliveScriptPrompt(ctx, src.Script, run)
 	}
 
-	var touchBefore time.Time
-	var hadTouch bool
-	if r.sessionIndex != nil {
-		touchBefore, hadTouch = r.sessionIndex.LastCacheTouch(sk)
-	}
-	began := time.Now()
+	r.noteWarmAttempt(sk, time.Now())
 
 	kctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -173,24 +171,38 @@ func (r *Runner) runKeepalive(ctx context.Context, src prompts.Source, run keepa
 		return // the runner is stopping, not a stuck keepalive
 	}
 	r.log.Warnf("keepalive timed out: agent=%s session=%s reason=not completed within %s; cancelled", r.agentID, sk, timeout)
-	r.restoreCacheTouchAfterTimeout(sk, touchBefore, hadTouch, began)
 }
 
-// restoreCacheTouchAfterTimeout puts back the session's last_cache_touch a
-// timed-out keepalive advanced: its turn reached the backend (which records
-// the touch) but never completed, so the cache was not warmed. A real turn
-// that ended on the session since the keepalive started did warm it, and
-// its touch is kept.
-func (r *Runner) restoreCacheTouchAfterTimeout(sk string, before time.Time, hadTouch bool, started time.Time) {
-	if r.sessionIndex == nil || !hadTouch {
+// noteWarmAttempt records that work which should warm sk's cache started at
+// at (lastWarmAttempt, #2509).
+func (r *Runner) noteWarmAttempt(sk string, at time.Time) {
+	if sk == "" {
 		return
 	}
-	if end := r.agent.LastTurnEnd(sk); end.After(started) {
-		return
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.lastWarmAttempt == nil {
+		r.lastWarmAttempt = map[string]time.Time{}
 	}
-	if now, ok := r.sessionIndex.LastCacheTouch(sk); ok && now.After(before) {
-		r.sessionIndex.TouchCacheTouch(sk, before)
+	r.lastWarmAttempt[sk] = at
+}
+
+// warmAttemptWait is how long after now keepalive must still wait before it
+// may try sk again: interval after the last warm attempt, or 0 when none is
+// recorded or it is that old. A successful attempt also moves
+// last_cache_touch, which the warm window gates on; this covers the failed
+// one, whose touch did not move (#2509).
+func (r *Runner) warmAttemptWait(sk string, interval time.Duration, now time.Time) time.Duration {
+	r.mu.Lock()
+	at, ok := r.lastWarmAttempt[sk]
+	r.mu.Unlock()
+	if !ok {
+		return 0
 	}
+	if age := now.Sub(at); age < interval {
+		return interval - age
+	}
+	return 0
 }
 
 // defaultKeepaliveTimeout bounds one keepalive turn when keepalive.timeout is
@@ -263,6 +275,9 @@ func (r *Runner) keepaliveTargetsAt(interval time.Duration, now time.Time) (read
 		}
 		if !keepaliveWarmWindow(touchAge, interval, r.ttlFor(sk)) {
 			continue // warmed recently (not due yet), or already expired (don't warm a corpse)
+		}
+		if r.warmAttemptWait(sk, interval, now) > 0 {
+			continue // tried within interval (the attempt may have failed, #2509)
 		}
 		if r.parentTurnInFlight(sk) {
 			why = "due but turn in flight on " + sk
@@ -378,6 +393,7 @@ func (r *Runner) keepaliveWillRewarm(sk string, now time.Time) bool {
 	if touchAge < interval {
 		wait = interval - touchAge
 	}
+	wait = max(wait, r.warmAttemptWait(sk, interval, now))
 	if !keepaliveWarmWindow(touchAge+wait, interval, r.ttlFor(sk)) {
 		return false // the warm window is empty or already over
 	}

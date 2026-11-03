@@ -82,10 +82,11 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 	r.backgroundRunning = true
 	r.mu.Unlock()
 
-	// Background work branches off parentKey; TouchRootCacheForBranch stamps the
-	// parent's last_cache_touch at branch creation, so the per-session keepalive
-	// gate sees a fresh touch and won't double-warm right after — no separate
-	// debounce needed here.
+	// Background work branches off parentKey, and its branch's first model
+	// response warms the parent's cache. last_cache_touch moves only when that
+	// response arrives (#2509), so record the attempt now: keepalive then does
+	// not double-warm the parent in the gap before it.
+	r.noteWarmAttempt(parentKey, time.Now())
 	r.log.Infof("firing background work for agent %s (idle %s)", r.agentID, elapsed.Round(time.Second))
 
 	go func() {

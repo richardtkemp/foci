@@ -377,9 +377,10 @@ func recordTurnActivityTS(key, trigger string) *TurnState {
 	return ts
 }
 
-// TestRecordTurnActivity_WritesCacheTouch verifies the single per-turn write
-// stamps last_cache_touch on the session's own row within ±2s of now.
-func TestRecordTurnActivity_WritesCacheTouch(t *testing.T) {
+// TestRecordTurnActivity_DoesNotStampCacheTouch: the turn-entry write is a
+// receipt, not evidence of a model response, so it leaves last_cache_touch
+// alone on both transports (#2509).
+func TestRecordTurnActivity_DoesNotStampCacheTouch(t *testing.T) {
 	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -390,16 +391,10 @@ func TestRecordTurnActivity_WritesCacheTouch(t *testing.T) {
 	a := &Agent{AgentID: "test-agent", SessionIndex: idx}
 	seedCacheTestRow(idx, testBaseA)
 
-	before := time.Now().Add(-2 * time.Second)
 	a.recordTurnActivity(recordTurnActivityTS(testBaseA, "keepalive"))
-	after := time.Now().Add(2 * time.Second)
 
-	got, ok := idx.LastCacheTouch(testBaseA)
-	if !ok {
-		t.Fatalf("last_cache_touch not written for %s", testBaseA)
-	}
-	if got.Before(before) || got.After(after) {
-		t.Fatalf("last_cache_touch %v outside window [%v, %v]", got, before, after)
+	if got, ok := idx.LastCacheTouch(testBaseA); ok {
+		t.Fatalf("turn entry stamped last_cache_touch = %v", got)
 	}
 }
 
@@ -420,14 +415,14 @@ func TestRecordTurnActivity_CreatesRowIfMissing(t *testing.T) {
 	if _, err := idx.Get(testBaseA); err != nil {
 		t.Fatalf("row not created by recordTurnActivity: %v", err)
 	}
-	if _, ok := idx.LastCacheTouch(testBaseA); !ok {
-		t.Fatalf("last_cache_touch not written on freshly-created row")
+	if _, ok := idx.LastCacheTouch(testBaseA); ok {
+		t.Fatalf("last_cache_touch written on freshly-created row (entry is not evidence)")
 	}
 }
 
-// TestRecordTurnActivity_BranchOwnKeyOnly verifies a branch turn stamps its own
-// cache row but NOT its root's (root is warmed only at branch creation).
-func TestRecordTurnActivity_BranchOwnKeyOnly(t *testing.T) {
+// TestRecordTurnActivity_BranchStampsNeitherKey: a branch turn's entry
+// stamps no cache touch on the branch or its root (#2509).
+func TestRecordTurnActivity_BranchStampsNeitherKey(t *testing.T) {
 	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -442,11 +437,10 @@ func TestRecordTurnActivity_BranchOwnKeyOnly(t *testing.T) {
 
 	a.recordTurnActivity(recordTurnActivityTS(branchKey, "keepalive"))
 
-	if _, ok := idx.LastCacheTouch(branchKey); !ok {
-		t.Fatalf("branch %s cache touch not written", branchKey)
-	}
-	if _, ok := idx.LastCacheTouch(testBaseA); ok {
-		t.Fatalf("root %s cache touch wrongly written by a branch turn", testBaseA)
+	for _, k := range []string{branchKey, testBaseA} {
+		if _, ok := idx.LastCacheTouch(k); ok {
+			t.Fatalf("%s cache touch written by a branch turn's entry", k)
+		}
 	}
 }
 
@@ -458,10 +452,11 @@ func TestRecordTurnActivity_NoSessionIndex(t *testing.T) {
 	a.recordTurnActivity(recordTurnActivityTS(testBaseA, "user")) // must not panic
 }
 
-// TestTouchTurnActivity_WritesCacheNotUser verifies the per-round heartbeat
-// write advances last_cache_touch but never last_user_activity_at — a round is
-// session progress, not a fresh human interaction.
-func TestTouchTurnActivity_WritesCacheNotUser(t *testing.T) {
+// TestTouchTurnActivity_WritesActivityNotCacheOrUser verifies the per-round
+// heartbeat advances last_activity_at but neither last_cache_touch (a round
+// is not usage evidence, #2509) nor last_user_activity_at (a round is session
+// progress, not a fresh human interaction).
+func TestTouchTurnActivity_WritesActivityNotCacheOrUser(t *testing.T) {
 	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -472,8 +467,11 @@ func TestTouchTurnActivity_WritesCacheNotUser(t *testing.T) {
 
 	a.touchTurnActivity(testBaseA, "user")
 
-	if _, ok := idx.LastCacheTouch(testBaseA); !ok {
-		t.Error("touchTurnActivity did not write last_cache_touch")
+	if e, err := idx.Get(testBaseA); err != nil || e.LastActivityAt.IsZero() {
+		t.Errorf("touchTurnActivity did not write last_activity_at (err=%v)", err)
+	}
+	if _, ok := idx.LastCacheTouch(testBaseA); ok {
+		t.Error("touchTurnActivity wrote last_cache_touch (a round is not evidence)")
 	}
 	if _, ok := idx.LastUserActivity(testBaseA); ok {
 		t.Error("touchTurnActivity wrongly bumped last_user_activity_at (bumpUser must be false)")
@@ -481,7 +479,7 @@ func TestTouchTurnActivity_WritesCacheNotUser(t *testing.T) {
 }
 
 // TestTouchTurnActivity_MemoryTriggerExcludesActivity verifies a memory round
-// still warms the cache but does NOT advance last_activity_at (else the
+// does NOT advance last_activity_at (else the
 // reflection-skip guard would self-trigger). Seeds an OLD last_activity_at via
 // the UPDATE path — the path the heartbeat always hits in practice, since the
 // turn-entry write created the row.
@@ -495,7 +493,7 @@ func TestTouchTurnActivity_MemoryTriggerExcludesActivity(t *testing.T) {
 	a := &Agent{AgentID: "test-agent", SessionIndex: idx}
 
 	old := time.Now().Add(-time.Hour)
-	idx.RecordTurnActivity(session.SessionIndexEntry{
+	idx.RecordTurnReceipt(session.SessionIndexEntry{
 		SessionKey: testBaseA, CreatedAt: old,
 		SessionType: session.ClassifySessionKey(testBaseA), Status: session.SessionStatusActive,
 	}, true, false) // seed last_activity_at = old
@@ -512,9 +510,6 @@ func TestTouchTurnActivity_MemoryTriggerExcludesActivity(t *testing.T) {
 	}
 	if !e1.LastActivityAt.Equal(e0.LastActivityAt) {
 		t.Errorf("memory-trigger round advanced last_activity_at %v → %v; must be excluded", e0.LastActivityAt, e1.LastActivityAt)
-	}
-	if lc, ok := idx.LastCacheTouch(testBaseA); !ok || !lc.After(old) {
-		t.Errorf("memory-trigger round should still warm last_cache_touch (got ok=%v, %v)", ok, lc)
 	}
 }
 
@@ -535,6 +530,13 @@ func newHeartbeatTestSink(t *testing.T, inFlight bool) (*loggingSink, *session.S
 	return s, idx
 }
 
+// heartbeatWrote reports whether the heartbeat's activity upsert ran: it
+// creates testBaseA's index row, which the heartbeat tests do not seed.
+func heartbeatWrote(idx *session.SessionIndex) bool {
+	_, err := idx.Get(testBaseA)
+	return err == nil
+}
+
 // TestLoggingSink_HeartbeatTouchesWhenInFlight verifies a per-round event on an
 // in-flight turn, once past the debounce, persists an activity touch.
 func TestLoggingSink_HeartbeatTouchesWhenInFlight(t *testing.T) {
@@ -545,7 +547,7 @@ func TestLoggingSink_HeartbeatTouchesWhenInFlight(t *testing.T) {
 
 	s.Emit(ctx, turnevent.ToolResult{Name: "Bash"})
 
-	if _, ok := idx.LastCacheTouch(testBaseA); !ok {
+	if !heartbeatWrote(idx) {
 		t.Error("heartbeat did not persist a touch for an in-flight round past the debounce")
 	}
 }
@@ -560,7 +562,7 @@ func TestLoggingSink_HeartbeatDebounced(t *testing.T) {
 
 	s.Emit(ctx, turnevent.Activity{})
 
-	if _, ok := idx.LastCacheTouch(testBaseA); ok {
+	if heartbeatWrote(idx) {
 		t.Error("heartbeat wrote within the debounce interval")
 	}
 }
@@ -576,7 +578,7 @@ func TestLoggingSink_HeartbeatSkipsWhenNotInFlight(t *testing.T) {
 
 	s.Emit(ctx, turnevent.ToolResult{Name: "Bash"})
 
-	if _, ok := idx.LastCacheTouch(testBaseA); ok {
+	if heartbeatWrote(idx) {
 		t.Error("heartbeat wrote despite no in-flight turn (late-delivery must no-op)")
 	}
 }
@@ -591,7 +593,7 @@ func TestLoggingSink_HeartbeatIgnoresNonRoundEvents(t *testing.T) {
 
 	s.Emit(ctx, turnevent.TextDelta{Delta: "streaming fragment"})
 
-	if _, ok := idx.LastCacheTouch(testBaseA); ok {
+	if heartbeatWrote(idx) {
 		t.Error("a TextDelta wrongly triggered the heartbeat (only completed rounds should)")
 	}
 }

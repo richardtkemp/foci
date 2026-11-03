@@ -178,6 +178,9 @@ func (r *Runner) holdPausedKeepaliveTargets(interval time.Duration, now time.Tim
 		if !ok || !keepaliveWarmWindow(touchAge, interval, r.ttlFor(sk)) {
 			continue
 		}
+		if r.warmAttemptWait(sk, interval, now) > 0 {
+			continue // tried within interval (#2509)
+		}
 		if r.parentTurnInFlight(sk) {
 			continue
 		}

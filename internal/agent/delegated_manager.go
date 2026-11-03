@@ -1930,7 +1930,7 @@ func (m *DelegatedManager) RunBatch(ctx context.Context, req delegator.BatchRequ
 		m.clearBatchSpec(batchKey)
 	}()
 
-	// Index it as a background-task child up front: RecordTurnActivity's upsert
+	// Index it as a background-task child up front: RecordTurnReceipt's upsert
 	// preserves session_type and parent, so the turn's own index write keeps
 	// this classification rather than "unknown".
 	if m.SessionIndex != nil {

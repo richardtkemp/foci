@@ -130,14 +130,14 @@ func (f *entrySplitFixture) assertNoTurnRan(t *testing.T) {
 	}
 }
 
-// assertTurnRan checks that every "turn ran" write happened.
+// assertTurnRan checks that every "turn ran" write happened. Cache warmth is
+// not one of them: the fixture's backend reports no model usage, so
+// last_cache_touch stays put (#2509: only a model response's cache usage
+// stamps it; see TestEntrySplit_ModelUsageStampsCacheTouch).
 func (f *entrySplitFixture) assertTurnRan(t *testing.T) {
 	t.Helper()
-	if got := f.cacheTouch(t); !got.After(f.t0) {
-		t.Errorf("last_cache_touch = %v, want advanced past %v", got, f.t0)
-	}
-	if f.cacheExpiry.Load() == 0 {
-		t.Error("no cache-expiry push, want one")
+	if got := f.cacheTouch(t); !got.Equal(f.t0) {
+		t.Errorf("last_cache_touch = %v, want unchanged %v (no model usage reported)", got, f.t0)
 	}
 	if got := f.lastMessageTime(); got.Equal(f.m0) {
 		t.Errorf("lastMessageTime still %v, want updated", got)
@@ -308,4 +308,59 @@ func recvRows(t *testing.T, dbPath string) int {
 		t.Fatalf("count recv rows: %v", err)
 	}
 	return n
+}
+
+// completeTurnsWithUsage completes each turn as a backend that reports usage
+// would: perCall (when non-nil) through OnModelUsage mid-turn, then final on
+// the result.
+func (f *entrySplitFixture) completeTurnsWithUsage(perCall, final *delegator.TurnUsage) {
+	f.be.sendToPaneFn = func(_ context.Context, _ string, h *mockHandler) (*delegator.TurnResult, error) {
+		if h != nil {
+			go func() {
+				if perCall != nil && h.OnModelUsage != nil {
+					h.OnModelUsage(*perCall)
+				}
+				if h.OnTurnComplete != nil {
+					h.OnTurnComplete(&delegator.TurnResult{Text: "ok", Usage: final})
+				}
+			}()
+		}
+		return nil, nil
+	}
+}
+
+// TestEntrySplit_ModelUsageStampsCacheTouch (#2509): on the delegated
+// transport, a model call that reports cache usage stamps last_cache_touch
+// and pushes the warmth to the app; either the mid-turn per-call report or,
+// for a backend without one, the turn's final usage. A call that reports no
+// cache tokens (it failed, or never reached the API) stamps nothing.
+func TestEntrySplit_ModelUsageStampsCacheTouch(t *testing.T) {
+	t.Parallel()
+	warm := &delegator.TurnUsage{InputTokens: 3, CacheReadInputTokens: 900}
+	cases := []struct {
+		name         string
+		perCall, fin *delegator.TurnUsage
+		wantStamped  bool
+	}{
+		{"per-call usage", warm, warm, true},
+		{"final usage only", nil, warm, true},
+		{"no usage", nil, nil, false},
+		{"zero cache tokens", &delegator.TurnUsage{InputTokens: 5}, &delegator.TurnUsage{InputTokens: 5}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newEntrySplitFixture(t)
+			f.completeTurnsWithUsage(tc.perCall, tc.fin)
+			if err := f.a.HandleMessage(WithTrigger(context.Background(), TriggerKeepalive), entrySplitKey, []string{"ka"}, nil); err != nil {
+				t.Fatalf("HandleMessage: %v", err)
+			}
+			stamped := f.cacheTouch(t).After(f.t0)
+			if stamped != tc.wantStamped {
+				t.Errorf("last_cache_touch advanced=%v, want %v", stamped, tc.wantStamped)
+			}
+			if pushed := f.cacheExpiry.Load() > 0; pushed != tc.wantStamped {
+				t.Errorf("cache-expiry pushed=%v, want %v", pushed, tc.wantStamped)
+			}
+		})
+	}
 }

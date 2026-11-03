@@ -1828,9 +1828,9 @@ func TestSessionIndex_LastUserActivityForAgent(t *testing.T) {
 	}
 }
 
-func TestRecordTurnActivity_MergedWrite(t *testing.T) {
-	// Proves the single merged upsert: last_cache_touch always advances;
-	// last_activity_at advances only when bumpActivity; last_user_activity_at
+func TestRecordTurnReceipt_MergedWrite(t *testing.T) {
+	// Proves the single merged upsert: last_activity_at advances only when
+	// bumpActivity; last_user_activity_at
 	// advances only when bumpUser; the row is created if missing; and identity
 	// columns (created_at) are preserved across turns.
 	// Each turn's stamp is the entry's CreatedAt (recordTurn writes it as
@@ -1840,8 +1840,8 @@ func TestRecordTurnActivity_MergedWrite(t *testing.T) {
 	key := "bot/c1"
 	t0 := time.Now().UTC().Truncate(time.Second)
 
-	// First turn (interactive): creates the row, sets all three.
-	idx.RecordTurnActivity(SessionIndexEntry{
+	// First turn (interactive): creates the row, sets activity and user.
+	idx.RecordTurnReceipt(SessionIndexEntry{
 		SessionKey: key, CreatedAt: t0, SessionType: SessionTypeChat, Status: SessionStatusActive,
 	}, true, true)
 	e, err := idx.Get(key)
@@ -1849,18 +1849,15 @@ func TestRecordTurnActivity_MergedWrite(t *testing.T) {
 		t.Fatalf("row not created: %v", err)
 	}
 	createdAt := e.CreatedAt
-	if _, ok := idx.LastCacheTouch(key); !ok {
-		t.Fatal("cache touch not set on first turn")
-	}
 	act1 := e.LastActivityAt
 	if _, ok := idx.LastUserActivity(key); !ok {
 		t.Fatal("user activity not set on interactive first turn")
 	}
 
-	// Memory turn (bumpActivity=false, bumpUser=false): cache advances, activity
-	// and user do NOT; created_at preserved.
+	// Memory turn (bumpActivity=false, bumpUser=false): activity and user do
+	// NOT advance; created_at preserved.
 	u1, _ := idx.LastUserActivity(key)
-	idx.RecordTurnActivity(SessionIndexEntry{
+	idx.RecordTurnReceipt(SessionIndexEntry{
 		SessionKey: key, CreatedAt: t0.Add(2 * time.Second), SessionType: SessionTypeChat, Status: SessionStatusActive,
 	}, false, false)
 	e, _ = idx.Get(key)
@@ -1873,14 +1870,10 @@ func TestRecordTurnActivity_MergedWrite(t *testing.T) {
 	if !e.CreatedAt.Equal(createdAt) {
 		t.Errorf("created_at not preserved across turns: %v != %v", e.CreatedAt, createdAt)
 	}
-	c1, _ := idx.LastCacheTouch(key)
-	if !c1.After(act1) {
-		t.Errorf("cache touch did not advance on memory turn: %v", c1)
-	}
 
 	// Non-interactive substantive turn (bumpActivity=true, bumpUser=false):
 	// activity advances, user does NOT.
-	idx.RecordTurnActivity(SessionIndexEntry{
+	idx.RecordTurnReceipt(SessionIndexEntry{
 		SessionKey: key, CreatedAt: t0.Add(4 * time.Second), SessionType: SessionTypeChat, Status: SessionStatusActive,
 	}, true, false)
 	e, _ = idx.Get(key)
@@ -1893,10 +1886,9 @@ func TestRecordTurnActivity_MergedWrite(t *testing.T) {
 }
 
 func TestRecordTurnReceipt_LeavesCacheTouch(t *testing.T) {
-	// #2446: the receipt write upserts the row and the activity columns like
-	// RecordTurnActivity, but never writes last_cache_touch — NULL on insert,
-	// the old value on conflict. Varies one thing at a time: same key, same
-	// flags, only the method differs from the merged write.
+	// #2446, #2509: the receipt write upserts the row and the activity
+	// columns, but never writes last_cache_touch — NULL on insert, the old
+	// value on conflict.
 	idx := tempIndex(t)
 	key := "bot/c1"
 	at := time.Now().UTC().Truncate(time.Second)
@@ -1926,12 +1918,10 @@ func TestRecordTurnReceipt_LeavesCacheTouch(t *testing.T) {
 		t.Errorf("receipt update last_activity_at = %v, want %v", e.LastActivityAt, at.Add(time.Minute))
 	}
 
-	// Control: the merged write through the same row does move it.
-	idx.RecordTurnActivity(SessionIndexEntry{
-		SessionKey: key, CreatedAt: at.Add(2 * time.Minute), SessionType: SessionTypeChat, Status: SessionStatusActive,
-	}, true, false)
+	// Control: TouchCacheTouch through the same row does move it.
+	idx.TouchCacheTouch(key, at.Add(2*time.Minute))
 	if got, _ := idx.LastCacheTouch(key); !got.Equal(at.Add(2 * time.Minute)) {
-		t.Errorf("merged write last_cache_touch = %v, want %v", got, at.Add(2*time.Minute))
+		t.Errorf("TouchCacheTouch last_cache_touch = %v, want %v", got, at.Add(2*time.Minute))
 	}
 }
 

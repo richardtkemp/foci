@@ -168,7 +168,7 @@ func (a *Agent) ForkBackendBranch(ctx context.Context, parentKey string, opts se
 	// resumes the clone (full parent context) via the normal getOrCreate path.
 	a.DelegatedManager.saveResumeID(branchKey, forkedID)
 	a.DelegatedManager.InheritParentPrompt(parentKey, branchKey)
-	a.TouchRootCacheForBranch(branchKey) // branching warms root's shared prefix once
+	a.NoteBranchInheritsRoot(branchKey, parentKey) // its first evidenced call warms the root (#2509)
 	a.taggedLog(opts.BranchType).Infof("backend fork %s → %s (%s)", parentKey, branchKey, forkedID)
 	return branchKey, true
 }
@@ -213,7 +213,7 @@ func (a *Agent) ForkSession(ctx context.Context, parentKey string, opts session.
 			a.taggedLog(opts.BranchType).Errorf("branch %s: write opening: %v", bk, err)
 		}
 	}
-	a.TouchRootCacheForBranch(bk) // branching warms root's shared prefix once (ForkBackendBranch does its own)
+	a.NoteBranchInheritsRoot(bk, parentKey) // its first evidenced call warms the root (#2509; ForkBackendBranch does its own)
 	return bk, true, nil
 }
 
@@ -252,7 +252,8 @@ func (a *Agent) ForkOrFreshBranch(ctx context.Context, parentKey string, opts se
 	if err != nil {
 		return "", false, err
 	}
-	a.TouchRootCacheForBranch(bk)
+	// A fresh branch inherits nothing, so it reads none of the root's cached
+	// prefix and does not warm the root (#2509).
 	return bk, false, nil
 }
 
@@ -299,7 +300,7 @@ func (a *Agent) createMemoryBranch(parentKey, branchType, orientTemplate string)
 		return "", false
 	}
 	a.SetSessionNoCompact(branchKey, true)
-	a.TouchRootCacheForBranch(branchKey) // branching warms root's shared prefix once
+	a.NoteBranchInheritsRoot(branchKey, parentKey) // its first evidenced call warms the root (#2509)
 	return branchKey, true
 }
 

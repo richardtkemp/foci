@@ -222,7 +222,15 @@ type Runner struct {
 	bootedAt time.Time
 	// keepaliveRunning holds the sessions with a keepalive in flight (#2487):
 	// each session's keepalive runs on its own, at most one per session.
-	keepaliveRunning    map[string]bool
+	keepaliveRunning map[string]bool
+	// lastWarmAttempt is, per session, when a scheduler last started work that
+	// should warm its cache (a keepalive, or a background branch off it). It is
+	// the keepalive debounce (#2509): last_cache_touch moves only on a model
+	// response's evidence, so after a failed warm the touch stays old and the
+	// session stays in the warm window; this keeps keepalive to one attempt per
+	// interval. In memory: a restart allows one early retry. Never read it for
+	// warmth: that is lastCacheTouchAge's job. Under mu.
+	lastWarmAttempt     map[string]time.Time
 	backgroundRunning   bool
 	lastBackgroundEnded time.Time // when the last background session finished (persisted, #2026)
 

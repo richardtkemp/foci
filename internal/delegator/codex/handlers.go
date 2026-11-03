@@ -589,7 +589,10 @@ func (b *Backend) onTokenUsage(params *tokenUsageParams) {
 		b.usageTurnID = params.TurnID
 	}
 	b.stashedUsage = u
+	turn := b.turnEvents
 	b.turnMu.Unlock()
+	// One API cycle is the agent layer's cache-warmth evidence (#2509).
+	turn.ReportModelUsage(*u)
 
 	if params.TokenUsage.ModelContextWindow > 0 {
 		b.mu.Lock()

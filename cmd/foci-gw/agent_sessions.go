@@ -59,7 +59,7 @@ func buildBranchFunc(
 			log.NewComponentLogger(branchType).Errorf("[%s] branch error: %v", agentID, err)
 			return false
 		}
-		ag.TouchRootCacheForBranch(branchKey) // branching warms root's shared prefix once
+		ag.NoteBranchInheritsRoot(branchKey, parentKey) // its first evidenced call warms the root (#2509)
 
 		// The API turn's context also ends when the caller's does (a
 		// keepalive timeout, #2489), which cancels the model call.

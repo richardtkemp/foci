@@ -221,7 +221,7 @@ func (a *Agent) markInFlight(key string, delivering bool) func() {
 		if a.inFlight[base] <= 0 {
 			delete(a.inFlight, base)
 			// Record the turn-END moment (the counterpart to recordTurnActivity's
-			// turn-ENTRY last_cache_touch write) so the activity gate can measure
+			// turn-ENTRY receipt) so the activity gate can measure
 			// CONTINUOUS dead time. Without this, a turn that started >window ago
 			// reads "cold" the instant inFlight drops — releasing a deferred send
 			// into the brief gap between back-to-back turns (#753 follow-up).
@@ -405,14 +405,10 @@ func (a *Agent) autonomousTurnSink(conn platform.Connection, sessionKey string) 
 // (only interactive human turns — a platform/voice trigger, or an HTTP request
 // declared human via the human-source marker).
 //
-// last_cache_touch is a claim that the turn RAN (#2446). On the API transport
-// the turn always runs once it gets here, so the same upsert stamps it. A
-// delegated turn's input can still be refused or abandoned before it reaches
-// the backend (a skipped keepalive, a system turn abandoned in the begin loop,
-// a failed write, a stale redelivery), so here it writes only the receipt
-// (RecordTurnReceipt) and recordTurnRan stamps last_cache_touch once the input
-// reached the backend. Own key only — root warmth is handled at branch
-// creation by TouchRootCacheForBranch.
+// It does NOT write last_cache_touch, on either transport: that is evidence
+// of a model response that read or wrote the cache, and only
+// recordCacheEvidence writes it (#2509). A turn that arrives here can still
+// fail before its model call answers.
 func (a *Agent) recordTurnActivity(ts *TurnState) {
 	if a.SessionIndex == nil || ts.SessionKey == "" {
 		return
@@ -440,48 +436,35 @@ func (a *Agent) recordTurnActivity(ts *TurnState) {
 		SessionType: session.ClassifySessionKey(ts.SessionKey),
 		Status:      session.SessionStatusActive,
 	}
-	if a.DelegatedManager != nil {
-		a.SessionIndex.RecordTurnReceipt(entry, countsAsActivity(ts.Trigger), bumpUser)
-		return
-	}
-	a.SessionIndex.RecordTurnActivity(entry, countsAsActivity(ts.Trigger), bumpUser)
-	a.emitCacheExpiry(ts.SessionKey) // last_cache_touch just advanced → refresh client
+	a.SessionIndex.RecordTurnReceipt(entry, countsAsActivity(ts.Trigger), bumpUser)
 }
 
-// recordTurnRan performs the writes that claim a delegated turn RAN, once its
-// input reached the backend (TurnState.inputDelivered): last_cache_touch and
-// the app's warmth push, and lastMessageTime (the next turn's [meta] gap=).
-// ComposePrompt has already read the old lastMessageTime for this turn's own
-// gap. A turn whose input never reached the backend skips all of it (#2446).
+// recordTurnRan performs the write that claims a delegated turn RAN, once its
+// input reached the backend (TurnState.inputDelivered): lastMessageTime (the
+// next turn's [meta] gap=). ComposePrompt has already read the old
+// lastMessageTime for this turn's own gap. A turn whose input never reached
+// the backend skips it (#2446). Cache warmth is not claimed here: input
+// reaching the backend is not a model response (#2509, recordCacheEvidence).
 func (a *Agent) recordTurnRan(ts *TurnState) {
 	if ts.SessionMeta != nil {
 		ts.SessionMeta.lastMessageTime = ts.UserMessageTime()
 	}
-	if a.SessionIndex == nil || ts.SessionKey == "" {
-		return
-	}
-	a.SessionIndex.TouchCacheTouch(ts.SessionKey, time.Now())
-	a.emitCacheExpiry(ts.SessionKey) // last_cache_touch just advanced → refresh client
 }
 
 // touchTurnActivity is the per-ROUND heartbeat counterpart to
 // recordTurnActivity's single turn-ENTRY write. recordTurnActivity stamps the
 // timestamps once, before inference; a turn that then runs for minutes leaves
-// last_cache_touch / last_activity_at frozen at entry, so the session reads
-// "cold" the moment inFlight drops between back-to-back turns. Calling this on
-// each mid-turn round (a completed message, a tool result, the Activity
-// heartbeat) advances the persistent signals to track the turn's PROGRESS, so
-// every consumer — the activity gate's durable path, cache-bust idle
-// detection, the client's warmth avatar — sees the truth without waiting for
-// the turn to end.
+// last_activity_at frozen at entry, so the session reads idle the moment
+// inFlight drops between back-to-back turns. Calling this on each mid-turn
+// round (a completed message, a tool result, the Activity heartbeat) advances
+// last_activity_at (when countsAsActivity) to track the turn's PROGRESS, but
+// NOT last_user_activity_at: a round is session progress, not a fresh human
+// interaction.
 //
-// It advances last_cache_touch (always: a round proves the turn ran) and
-// last_activity_at (when countsAsActivity), but NOT last_user_activity_at: a round is session
-// progress, not a fresh human interaction. Unlike recordTurnActivity it does
-// NOT recapture prevRequestTime — cache-bust idle detection is a turn-entry
-// concern, and each round bumping last_cache_touch is exactly the request time
-// the NEXT turn's entry should read. Own key only, mirroring recordTurnActivity.
-// Safe when SessionIndex is nil or the key is empty.
+// It does not write last_cache_touch: a round is not usage evidence. Each
+// model call's usage stamps that through recordCacheEvidence (#2509). Own key
+// only, mirroring recordTurnActivity. Safe when SessionIndex is nil or the
+// key is empty.
 func (a *Agent) touchTurnActivity(sessionKey, trigger string) {
 	if a.SessionIndex == nil || sessionKey == "" {
 		return
@@ -490,31 +473,13 @@ func (a *Agent) touchTurnActivity(sessionKey, trigger string) {
 	if a.DelegatedManager != nil {
 		filePath = a.DelegatedManager.SessionFilePath(sessionKey)
 	}
-	a.SessionIndex.RecordTurnActivity(session.SessionIndexEntry{
+	a.SessionIndex.RecordTurnReceipt(session.SessionIndexEntry{
 		SessionKey:  sessionKey,
 		FilePath:    filePath,
 		CreatedAt:   time.Now(),
 		SessionType: session.ClassifySessionKey(sessionKey),
 		Status:      session.SessionStatusActive,
 	}, countsAsActivity(trigger), false) // bumpUser=false: a mid-turn round is not new user activity
-	a.emitCacheExpiry(sessionKey) // last_cache_touch just advanced → refresh client warmth
-}
-
-// TouchRootCacheForBranch records that creating a branch warmed its root's
-// shared cached prefix — a ONE-TIME touch at the moment of branching, called
-// from the branch-creation sites (createMemoryBranch, buildBranchFunc, the facet
-// command). Branch turns themselves no longer bump the root (recordTurnActivity
-// is own-key only). No-op for a root key, a nil index, or an empty key.
-func (a *Agent) TouchRootCacheForBranch(branchKey string) {
-	if a.SessionIndex == nil || branchKey == "" {
-		return
-	}
-	if sk, err := session.ParseSessionKey(branchKey); err == nil {
-		if root := sk.Root().String(); root != branchKey {
-			a.SessionIndex.TouchCacheTouch(root, time.Now())
-			a.emitCacheExpiry(root) // branch warmed the root's shared prefix → refresh client
-		}
-	}
 }
 
 // markUnattendedTurn counts an unattended turn (turnUnattended) in flight on

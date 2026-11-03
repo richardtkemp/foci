@@ -3,6 +3,7 @@ package periodic
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -77,6 +78,10 @@ func TestKeepalive_StuckSessionDoesNotBlockAnother(t *testing.T) {
 		t.Fatal("c2 was not warmed while c1's keepalive hung (#2487)")
 	}
 
+	// Age both warm attempts past the interval (#2509), so the second tick is
+	// gated only by c1's keepalive still running, which is what this tests.
+	r.noteWarmAttempt("test/c1", time.Now().Add(-time.Hour))
+	r.noteWarmAttempt("test/c2", time.Now().Add(-time.Hour))
 	r.maybeKeepalive(context.Background())
 	select {
 	case <-c2Warmed:
@@ -95,8 +100,9 @@ func TestKeepalive_StuckSessionDoesNotBlockAnother(t *testing.T) {
 
 // TestKeepalive_TimeoutCancelsAndReleases is #2489: a keepalive that has not
 // completed within keepalive.timeout is cancelled, its session's run state is
-// released, the cache touch it advanced is put back, and the next tick can
-// warm the session again.
+// released, and a later tick warms the session again. Since #2509 the hung
+// turn produced no model response, so last_cache_touch never moved and there
+// is nothing to put back; the retry waits one interval after the attempt.
 func TestKeepalive_TimeoutCancelsAndReleases(t *testing.T) {
 	cancelled := make(chan error, 1)
 	var idx *session.SessionIndex
@@ -114,9 +120,8 @@ func TestKeepalive_TimeoutCancelsAndReleases(t *testing.T) {
 			if n > 1 {
 				return true
 			}
-			// The turn reached the backend (which records a touch) and then
-			// hangs, as on a rejected usage limit.
-			idx.TouchCacheTouch("test/c1", time.Now())
+			// The turn reached the backend and then hangs, as on a
+			// rejected usage limit. No model response, so no touch.
 			<-ctx.Done()
 			cancelled <- ctx.Err()
 			return false
@@ -142,11 +147,12 @@ func TestKeepalive_TimeoutCancelsAndReleases(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if got, _ := idx.LastCacheTouch("test/c1"); !got.Equal(before) {
-		t.Errorf("last_cache_touch after a timed-out keepalive = %v, want it put back to %v", got, before)
+		t.Errorf("last_cache_touch after a timed-out keepalive = %v, want unchanged %v", got, before)
 	}
 
-	r.maybeKeepalive(context.Background())
-	deadline = time.Now().Add(2 * time.Second)
+	// Ticks keep coming; c1 is retried once its 1s interval since the
+	// attempt has passed.
+	deadline = time.Now().Add(10 * time.Second)
 	for {
 		mu.Lock()
 		n := c1Calls
@@ -155,9 +161,10 @@ func TestKeepalive_TimeoutCancelsAndReleases(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("the next tick did not warm c1 again after its keepalive timed out")
+			t.Fatal("a later tick did not warm c1 again after its keepalive timed out")
 		}
-		time.Sleep(10 * time.Millisecond)
+		r.maybeKeepalive(context.Background())
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
@@ -185,5 +192,33 @@ func TestKeepaliveTimeout_Default(t *testing.T) {
 	}
 	if f.Default != "2m" {
 		t.Errorf("keepalive.timeout default = %q, want 2m", f.Default)
+	}
+}
+
+// TestKeepalive_FailedWarmRetriesOncePerInterval is #2509: a keepalive whose
+// fork fails leaves last_cache_touch where it was, so the session stays in
+// the warm window. The warm-attempt debounce keeps keepalive to one try per
+// interval instead of one per tick, and keepaliveWillRewarm agrees.
+func TestKeepalive_FailedWarmRetriesOncePerInterval(t *testing.T) {
+	t.Parallel()
+	r, _ := twoChatRunner(t, &fakeBackgroundAgent{}, "")
+	interval := 10 * time.Minute
+	r.kaCfg.Interval = interval.String()
+	now := time.Now()
+	r.sessionIndex.TouchCacheTouch("test/c1", now.Add(-20*time.Minute))
+	r.sessionIndex.TouchCacheTouch("test/c2", now.Add(-20*time.Minute))
+
+	r.noteWarmAttempt("test/c1", now)
+
+	ready, _ := r.keepaliveTargetsAt(interval, now.Add(interval/2))
+	if slices.Contains(ready, "test/c1") {
+		t.Errorf("c1 retried %s after a failed attempt, want none within the %s interval", interval/2, interval)
+	}
+	if !slices.Contains(ready, "test/c2") {
+		t.Errorf("c2 (no attempt) not ready: %v", ready)
+	}
+	ready, _ = r.keepaliveTargetsAt(interval, now.Add(interval))
+	if !slices.Contains(ready, "test/c1") {
+		t.Errorf("c1 not retried one interval after its failed attempt: %v", ready)
 	}
 }

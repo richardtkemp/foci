@@ -36,6 +36,9 @@ func (a *Agent) processAPIResponse(sessionKey string, sm *sessionMeta, resp *pro
 	// within the same tool_use turn don't re-fire the detection.
 	sm.prevCacheRead = resp.Usage.CacheReadInputTokens
 
+	// This response is the evidence that stamps cache warmth (#2509).
+	a.recordCacheEvidence(sessionKey, resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
+
 	// Warn on max_tokens — response was truncated mid-thought
 	if resp.StopReason == "max_tokens" {
 		warn := fmt.Sprintf("stop_reason=max_tokens on %s (output=%d, limit=%d)", sessionKey, resp.Usage.OutputTokens, maxOutput)

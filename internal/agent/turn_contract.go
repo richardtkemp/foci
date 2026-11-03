@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"foci/internal/convo"
@@ -220,6 +221,11 @@ type TurnState struct {
 	// including close(CompletionChan) — run exactly once, so the second caller
 	// is a no-op instead of a panic that would crash the gateway (P1-8).
 	completeOnce sync.Once
+
+	// sawModelUsage is set when the backend reported a model call's usage
+	// mid-turn (TurnEvents.OnModelUsage), which already stamped cache warmth;
+	// OnTurnComplete then does not stamp again from the final usage (#2509).
+	sawModelUsage atomic.Bool
 
 	// --- Delegated-specific ---
 

@@ -326,36 +326,25 @@ func (idx *SessionIndex) upsertLocked(e SessionIndexEntry) {
 	}
 }
 
-// RecordTurnActivity performs a turn's ENTIRE per-turn timestamp write in one
-// statement: it upserts the session row and sets, atomically,
-//   - last_cache_touch  → always (every turn refreshes the cached prefix),
+// RecordTurnReceipt performs a turn's per-turn timestamp write in one
+// statement: it upserts the session row (creating it if missing) and sets,
+// atomically,
 //   - last_activity_at   → only when bumpActivity (false for memory-formation
-//     turns, which must not defeat the reflection-skip guard); kept monotonic,
+//     and keepalive turns, which must not defeat the reflection-skip guard);
+//     kept monotonic,
 //   - last_user_activity_at → only when bumpUser (interactive human turns —
 //     a platform/voice trigger, or an HTTP request declared human).
 //
-// It replaces the former three separate writes (Upsert + touchCacheFreshness +
-// touchUserActivity). e.CreatedAt carries the turn's `now`. On CONFLICT the
+// It never writes last_cache_touch (NULL on insert, kept on conflict): that is
+// stamped separately (TouchCacheTouch) only from a model response's cache
+// usage, so a turn that never got one claims no cache warmth (#2446, #2509).
+// It records that a turn's input ARRIVED, and per mid-turn round that the
+// turn is progressing. e.CreatedAt carries the turn's `now`. On CONFLICT the
 // IDENTITY columns (created_at, parent, type, agent, chat, is_root) are
-// PRESERVED, not overwritten — so created_at stays the true creation time and a
-// branch's parent is never nulled by a turn (both were incidental churn in the
-// old Upsert path). last_reflection is seeded on INSERT only (#945).
-func (idx *SessionIndex) RecordTurnActivity(e SessionIndexEntry, bumpActivity, bumpUser bool) {
-	idx.recordTurn(e, true, bumpActivity, bumpUser)
-}
-
-// RecordTurnReceipt is RecordTurnActivity minus last_cache_touch: the same
-// upsert (creating the row if missing) and the same last_activity_at /
-// last_user_activity_at rules, but last_cache_touch keeps its value (NULL on
-// insert). It records that a turn's input ARRIVED. A delegated turn writes it
-// at entry and stamps last_cache_touch (TouchCacheTouch) only once its input
-// has reached the backend, so a turn that never ran claims no cache warmth
-// (#2446).
+// PRESERVED, not overwritten — so created_at stays the true creation time and
+// a branch's parent is never nulled by a turn. last_reflection is seeded on
+// INSERT only (#945).
 func (idx *SessionIndex) RecordTurnReceipt(e SessionIndexEntry, bumpActivity, bumpUser bool) {
-	idx.recordTurn(e, false, bumpActivity, bumpUser)
-}
-
-func (idx *SessionIndex) recordTurn(e SessionIndexEntry, touchCache, bumpActivity, bumpUser bool) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
@@ -365,21 +354,13 @@ func (idx *SessionIndex) recordTurn(e SessionIndexEntry, touchCache, bumpActivit
 	if bumpUser {
 		userInsert = nowStr
 	}
-	var cacheInsert interface{} // NULL on insert for a receipt-only write
-	if touchCache {
-		cacheInsert = nowStr
-	}
 	_, err := idx.db.Exec(
 		`INSERT INTO session_index
-		   (session_key, file_path, created_at, last_activity_at, last_cache_touch, last_user_activity_at, last_reflection, parent_session_key, session_type, status, agent_id, chat_id, is_root)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		   (session_key, file_path, created_at, last_activity_at, last_user_activity_at, last_reflection, parent_session_key, session_type, status, agent_id, chat_id, is_root)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(session_key) DO UPDATE SET
 		   file_path = excluded.file_path,
 		   status = excluded.status,
-		   last_cache_touch = CASE
-		     WHEN ? THEN excluded.last_cache_touch
-		     ELSE session_index.last_cache_touch
-		   END,
 		   last_activity_at = CASE
 		     WHEN ? AND unixepoch(excluded.last_activity_at) > unixepoch(session_index.last_activity_at) THEN excluded.last_activity_at
 		     ELSE session_index.last_activity_at
@@ -388,9 +369,9 @@ func (idx *SessionIndex) recordTurn(e SessionIndexEntry, touchCache, bumpActivit
 		     WHEN ? THEN excluded.last_user_activity_at
 		     ELSE session_index.last_user_activity_at
 		   END`,
-		e.SessionKey, e.FilePath, nowStr, nowStr, cacheInsert, userInsert, nowStr,
+		e.SessionKey, e.FilePath, nowStr, nowStr, userInsert, nowStr,
 		nullableString(e.ParentSessionKey), e.SessionType, e.Status, agentID, chatID, isRoot,
-		touchCache, bumpActivity, bumpUser,
+		bumpActivity, bumpUser,
 	)
 	if err != nil {
 		sessionLog(e.SessionKey).Errorf("record turn activity %q: %v", e.SessionKey, err)

@@ -183,11 +183,27 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	if isTopLevel && msg.Message.Model != "" && !synthetic {
 		b.lastModel = msg.Message.Model
 	}
-	if isTopLevel && !synthetic && !usageIsZero(msg.Message.Usage) {
+	realCall := isTopLevel && !synthetic && !usageIsZero(msg.Message.Usage)
+	if realCall {
 		u := msg.Message.Usage
 		b.lastUsage = &u
 	}
 	b.mu.Unlock()
+
+	// A real top-level call is the agent layer's cache-warmth evidence
+	// (#2509): report its usage now, mid-turn, not only at the result.
+	if realCall {
+		b.turnMu.Lock()
+		turn := b.turnEvents
+		b.turnMu.Unlock()
+		u := msg.Message.Usage
+		turn.ReportModelUsage(delegator.TurnUsage{
+			InputTokens:              u.InputTokens,
+			OutputTokens:             u.OutputTokens,
+			CacheCreationInputTokens: u.CacheCreationInputTokens,
+			CacheReadInputTokens:     u.CacheReadInputTokens,
+		})
+	}
 
 	// Delivery callbacks come from the session-scoped SessionEvents — never
 	// nil after first AttachSessionEvents, so text/tool blocks always have
