@@ -246,6 +246,12 @@ func (b *Backend) launchAppServer(ctx context.Context, opts delegator.StartOptio
 // override scoped to THIS app-server process; it never touches the shared
 // ~/.codex/config.toml, so foci's compaction prompt can't leak into the user's
 // own codex CLI or race a concurrent codex agent (#1327 sub-issue 2).
+//
+// agents.enabled=false removes codex's own spawn_agent tools, for new and resumed
+// threads alike (live on 0.166.0). OpenAI encrypts those tools' messages, so foci
+// cannot show them (#2839). A codex agent uses foci_spawn instead. It is a
+// process flag for the same reason as compact_prompt: the user's own codex keeps
+// its subagents.
 func appServerArgs(compactPrompt, sandbox, reviewer, approval string) []string {
 	if sandbox == "" {
 		sandbox = defaultSandboxMode
@@ -260,6 +266,7 @@ func appServerArgs(compactPrompt, sandbox, reviewer, approval string) []string {
 		"app-server", "-c", "sandbox_mode=" + sandbox,
 		"-c", "approval_policy=" + approval,
 		"-c", "approvals_reviewer=" + reviewer,
+		"-c", "agents.enabled=false",
 	}
 	if compactPrompt != "" {
 		args = append(args, "-c", "compact_prompt="+tomlBasicString(compactPrompt))

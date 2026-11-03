@@ -89,7 +89,7 @@ func TestAppServerArgs_ResolvedReviewer(t *testing.T) {
 			want = "auto_review"
 		}
 		args := appServerArgs("", b.sandboxMode(), b.approvalsReviewer(), b.approvalPolicy())
-		if !reflect.DeepEqual(args, []string{"app-server", "-c", "sandbox_mode=workspace-write", "-c", "approval_policy=on-request", "-c", "approvals_reviewer=" + want}) {
+		if !reflect.DeepEqual(args, []string{"app-server", "-c", "sandbox_mode=workspace-write", "-c", "approval_policy=on-request", "-c", "approvals_reviewer=" + want, "-c", "agents.enabled=false"}) {
 			t.Fatalf("mode=%q args=%v", mode, args)
 		}
 	}

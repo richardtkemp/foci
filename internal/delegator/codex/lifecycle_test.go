@@ -46,7 +46,7 @@ func newStartableBackend(t *testing.T, handler func(method string, params json.R
 // TestAppServerArgs_DefaultSandbox verifies Approve for me defaults: a workspace
 // sandbox plus on-request approvals routed through the automatic reviewer.
 func TestAppServerArgs_DefaultSandbox(t *testing.T) {
-	want := []string{"app-server", "-c", "sandbox_mode=workspace-write", "-c", "approval_policy=on-request", "-c", "approvals_reviewer=auto_review"}
+	want := []string{"app-server", "-c", "sandbox_mode=workspace-write", "-c", "approval_policy=on-request", "-c", "approvals_reviewer=auto_review", "-c", "agents.enabled=false"}
 	if got := appServerArgs("", "", "", ""); !reflect.DeepEqual(got, want) {
 		t.Fatalf("appServerArgs(\"\") = %v, want %v", got, want)
 	}
@@ -61,6 +61,7 @@ func TestAppServerArgs_CompactPrompt(t *testing.T) {
 	want := []string{
 		"app-server", "-c", "sandbox_mode=workspace-write",
 		"-c", "approval_policy=on-request", "-c", "approvals_reviewer=auto_review",
+		"-c", "agents.enabled=false",
 		"-c", `compact_prompt="summarise\tthe \"session\""`,
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -109,7 +110,7 @@ func TestThreadLifecycle_PassesResolvedSandbox(t *testing.T) {
 			if tc.readOnly {
 				wantApproval = "never"
 			}
-			if got := appServerArgs("", b.sandboxMode(), b.approvalsReviewer(), b.approvalPolicy()); !reflect.DeepEqual(got, []string{"app-server", "-c", "sandbox_mode=" + tc.want, "-c", "approval_policy=" + wantApproval, "-c", "approvals_reviewer=auto_review"}) {
+			if got := appServerArgs("", b.sandboxMode(), b.approvalsReviewer(), b.approvalPolicy()); !reflect.DeepEqual(got, []string{"app-server", "-c", "sandbox_mode=" + tc.want, "-c", "approval_policy=" + wantApproval, "-c", "approvals_reviewer=auto_review", "-c", "agents.enabled=false"}) {
 				t.Fatalf("server args=%v, want sandbox %q approval %q", got, tc.want, wantApproval)
 			}
 			if _, err := b.startThread(); err != nil {
