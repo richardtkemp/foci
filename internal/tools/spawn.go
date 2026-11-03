@@ -51,6 +51,16 @@ type SpawnAgent interface {
 	HandleMessage(ctx context.Context, sessionKey string, texts []string, attachments []platform.Attachment) error
 }
 
+// SpawnTurnInterrupter is the optional agent side of ending a background
+// spawn's run early (#2821): spawn_stop, /stop and the spawn's timeout only
+// cancel the run's ctx, and a delegated agent's turn waits for its backend
+// and never for ctx. InterruptTurn interrupts the backend turn on sessionKey,
+// as /stop does. *agent.Agent implements it (a no-op without a delegated
+// backend, whose API loop ends on the ctx itself).
+type SpawnTurnInterrupter interface {
+	InterruptTurn(sessionKey string) error
+}
+
 // SpawnCacheReporter is the optional agent side of spawn_send's cold-cache
 // rule: when the session's prompt cache expires (or expired). A zero time
 // means no cache. *agent.Agent implements it (Agent.CacheExpiry).

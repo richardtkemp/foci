@@ -52,7 +52,24 @@ func (s *Spawner) runSpawnStep(agent SpawnAgent, pauser UsageHoldPauser, runCtx,
 	tr, obs := s.deps.Tracker, s.deps.Observer
 	buf := turnevent.NewBufferSink()
 	sink := &spawnTextSink{BufferSink: buf, obs: obs, tracker: tr, parent: parent, id: id}
+	// A stop or timeout cancels spawnCtx; a delegated turn does not watch it,
+	// so interrupt the backend turn on the branch then (#2821).
+	stopInterrupt := func() bool { return false }
+	if in, ok := agent.(SpawnTurnInterrupter); ok {
+		stopInterrupt = context.AfterFunc(spawnCtx, func() {
+			spawnLog.Infof("spawn=%s branch=%s ended (%v): interrupting its turn", id, branchKey, context.Cause(spawnCtx))
+			if err := in.InterruptTurn(branchKey); err != nil {
+				spawnLog.Infof("spawn=%s branch=%s interrupt: %v", id, branchKey, err)
+			}
+		})
+	}
 	err := agent.HandleMessage(turnevent.WithSink(turnCtx, sink), branchKey, texts, nil)
+	stopInterrupt()
+	if err == nil && spawnCtx.Err() != nil {
+		// The interrupted turn ended without an error of its own: the run
+		// was still cut short, not completed.
+		err = context.Cause(spawnCtx)
+	}
 	step := spawnStep{err: err, result: buf.FinalText()}
 	if !holdDone() {
 		return step

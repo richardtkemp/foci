@@ -227,12 +227,21 @@ func (a *Agent) inboxTurnsRunning() []string {
 
 // stopBackendTurn interrupts the backend turn on key, as /stop does.
 func (a *Agent) stopBackendTurn(key string) {
-	if a.DelegatedManager == nil {
-		return
-	}
-	if err := a.DelegatedManager.StopSession(context.Background(), key); err != nil {
+	if err := a.InterruptTurn(key); err != nil {
 		a.logger().Debugf("usage hold: interrupt %s: %v", key, err)
 	}
+}
+
+// InterruptTurn interrupts the backend turn on sessionKey, as /stop does: the
+// way to end a delegated turn early, which waits for its backend and not for
+// its ctx. A no-op for an agent without a delegated backend. It implements
+// tools.SpawnTurnInterrupter, which a background spawn's stop and timeout
+// call (#2821).
+func (a *Agent) InterruptTurn(sessionKey string) error {
+	if a.DelegatedManager == nil {
+		return nil
+	}
+	return a.DelegatedManager.StopSession(context.Background(), sessionKey)
 }
 
 // cancelInboxTurn cancels the user batch the inbox worker of key is running,
@@ -312,3 +321,5 @@ func (a *Agent) WaitTurnIdle(ctx context.Context, sk string) bool {
 		}
 	}
 }
+
+var _ tools.SpawnTurnInterrupter = (*Agent)(nil)
