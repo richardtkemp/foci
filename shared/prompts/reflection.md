@@ -26,6 +26,7 @@ Capture important memories from this session to today's daily file (`memory/YYYY
 
 ### Format
 - One section per topic, 2-5 lines each
+- Give each section a heading that concisely summarises its contents, so a reader can judge the section from the heading alone. `## Morning` is a bad heading; `## Deploy failed: skipped restart left a stale binary` is a good one. A time may follow the summary, but it never replaces it.
 - Aim for 2-5k characters on a typical day, proportional to actual activity. A massive day with 9 deploys will be bigger than a quiet one — that's fine.
 - If nothing notable happened since last write, do nothing
 
