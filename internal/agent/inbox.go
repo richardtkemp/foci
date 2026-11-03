@@ -126,6 +126,11 @@ type Envelope struct {
 	// at most maxPendingHold from then (#2792, see pendingHoldExpired).
 	heldSince time.Time
 
+	// askHeldSince is when an open foci_ask first deferred this injection;
+	// zero for one no ask deferred. Asks hold an injection for at most
+	// maxAskHold from then (#2828, see askHoldExpired).
+	askHeldSince time.Time
+
 	// enqSeq is the session-local order Enqueue put this user message on the
 	// channel in (1-based; 0 = never queued through Enqueue). A /stop that
 	// drops a queued batch drops every message queued up to it, including
@@ -1851,6 +1856,9 @@ type deferredInject struct {
 // the agent the previous batch was graded). An injection whose AskReqID matches the
 // ask still pending is still deferred: that is the same-ask race the gate was
 // written for, and it stays closed.
+//
+// A proactive injection is deferred for at most maxAskHold (#2828): a timer
+// re-enqueues it then, and it runs although the ask is still open.
 func (a *Agent) runInject(inb *sessionInbox, env Envelope) {
 	// Drain gate (#2059): an injection is a new system turn, and none begins
 	// once shutdown has started. It is dropped unrun — its producer's durable
@@ -1884,11 +1892,25 @@ func (a *Agent) runInject(inb *sessionInbox, env Envelope) {
 	}
 	if pending := a.pendingAskFor(env.SessionKey); pending != "" && !IsControlInjectTrigger(env.Inject.Trigger) &&
 		(env.Inject.AskReqID == "" || env.Inject.AskReqID == pending) {
-		inb.injMu.Lock()
-		inb.deferredInjects = append(inb.deferredInjects, deferredInject{env: env, heldBy: pending})
-		inb.injMu.Unlock()
-		a.logger().Debugf("inbox: deferred injection sk=%s trigger=%s (held by ask %s)", inb.sk, env.Inject.Trigger, pending)
-		return
+		if a.askHoldExpired(env) {
+			// Held by asks for maxAskHold already (#2828): delivered as
+			// normal although an ask is still open.
+			a.logger().Infof("inbox: injection sk=%s trigger=%s delivered after %s held by ask %s (limit %s, #2828)",
+				inb.sk, env.Inject.Trigger, time.Since(env.askHeldSince).Round(time.Second), pending, a.askHoldLimit())
+		} else {
+			capped := env.Inject.AskReqID == ""
+			if capped && env.askHeldSince.IsZero() {
+				env.askHeldSince = time.Now()
+			}
+			inb.injMu.Lock()
+			inb.deferredInjects = append(inb.deferredInjects, deferredInject{env: env, heldBy: pending})
+			inb.injMu.Unlock()
+			a.logger().Debugf("inbox: deferred injection sk=%s trigger=%s (held by ask %s)", inb.sk, env.Inject.Trigger, pending)
+			if capped {
+				a.armAskHoldRelease(inb.sk, env.askHeldSince)
+			}
+			return
+		}
 	}
 	defer func() {
 		if r := recover(); r != nil {
@@ -1934,6 +1956,73 @@ func (a *Agent) pendingAskFor(sk string) string {
 		return ""
 	}
 	return reqID
+}
+
+// maxAskHold is the longest open foci_asks may hold one proactive system inject
+// (#2828, Dick 2026-11-03: "Hold up to 5 min, like the #2792 cap"). An ask can
+// sit unanswered for hours, and a spawn result, send_to_spawner message, cron
+// or wake must not wait that long. Counted per inject from when an ask first
+// deferred it (Envelope.askHeldSince), across asks: one released by an ask's
+// resolution and deferred again by the next keeps its first stamp. Only a
+// proactive inject (no AskReqID) is limited: the result of the ask still on
+// screen is the same-ask race of #1712 and waits for that ask. Not
+// configurable: Dick set the value; Agent.askHoldMax is a test seam only.
+const maxAskHold = 5 * time.Minute
+
+// askHoldLimit is the ask-hold limit this agent applies.
+func (a *Agent) askHoldLimit() time.Duration {
+	if a.askHoldMax > 0 {
+		return a.askHoldMax
+	}
+	return maxAskHold
+}
+
+// askHoldExpired reports whether open asks have held env for at least
+// maxAskHold (#2828). False for an inject no ask deferred, and always false
+// for the result of an ask (AskReqID set), which never gets a stamp.
+func (a *Agent) askHoldExpired(env Envelope) bool {
+	return !env.askHeldSince.IsZero() && time.Since(env.askHeldSince) >= a.askHoldLimit()
+}
+
+// armAskHoldRelease schedules releaseExpiredAskHolds for sk at the moment an
+// inject stamped heldSince reaches the ask-hold limit.
+func (a *Agent) armAskHoldRelease(sk string, heldSince time.Time) {
+	wait := time.Until(heldSince.Add(a.askHoldLimit()))
+	if wait < 0 {
+		wait = 0
+	}
+	time.AfterFunc(wait, func() { a.releaseExpiredAskHolds(sk) })
+}
+
+// releaseExpiredAskHolds re-enqueues every ask-deferred inject on sk whose
+// ask-hold limit has run out (#2828). runInject then runs it past the open
+// ask (askHoldExpired); it still passes the pending-work gate and the
+// backend's active-turn refusal like any system inject, so it never
+// interrupts a turn that is running. Entries paused for a CC login stay
+// paused: that hold is not an ask's.
+func (a *Agent) releaseExpiredAskHolds(sk string) {
+	a.inboxesMu.Lock()
+	inb := a.inboxes[sk]
+	a.inboxesMu.Unlock()
+	if inb == nil {
+		return
+	}
+	inb.injMu.Lock()
+	held := inb.deferredInjects
+	kept := held[:0:0]
+	var release []Envelope
+	for _, d := range held {
+		if d.heldBy != reloginHeldBy && a.askHoldExpired(d.env) {
+			release = append(release, d.env)
+			continue
+		}
+		kept = append(kept, d)
+	}
+	inb.deferredInjects = kept
+	inb.injMu.Unlock()
+	for _, env := range release {
+		a.Enqueue(env)
+	}
 }
 
 // DrainDeferredInjects re-enqueues the injections that ask reqID was holding on

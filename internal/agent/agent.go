@@ -213,6 +213,7 @@ type Agent struct {
 	unattendedTurns    map[string]int32          // per-session count of in-flight turns that are unattended (turnUnattended) — see TurnUnattended; under inFlightMu
 	injectGatePoll     time.Duration             // test seam: the inject gate's poll backstop; zero = injectGatePollInterval (#2537)
 	pendingHoldMax     time.Duration             // test seam: how long background work may hold a system inject; zero = maxPendingHold (#2792)
+	askHoldMax         time.Duration             // test seam: how long an open foci_ask may hold a system inject; zero = maxAskHold (#2828)
 	turnDetailsMu      sync.Mutex
 	turnDetails        map[uint64]*TurnDetail // keyed by unique turn ID
 	turnIDCounter      uint64                 // atomic: monotonic turn ID
