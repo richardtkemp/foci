@@ -180,6 +180,15 @@ func (a *Agent) buildSystemBlocks(sessionKey string) []provider.SystemBlock {
 	if len(a.ExtraSystemBlocks) > 0 {
 		result = append(append([]provider.SystemBlock{}, system...), a.ExtraSystemBlocks...)
 	}
+	// The daily-memory digest (#2827) goes after the skills: it differs per
+	// session and changes daily, so nothing shared across sessions may trail
+	// it. Built once per session with the rest of these blocks (cached in
+	// sm.systemBlocks), so it is a snapshot for the session's life.
+	if a.DailyDigestFunc != nil {
+		if d := a.DailyDigestFunc(sessionKey); d != "" {
+			result = append(append([]provider.SystemBlock{}, result...), provider.SystemBlock{Type: "text", Text: d})
+		}
+	}
 
 	sm.systemBlocks = result
 	return result

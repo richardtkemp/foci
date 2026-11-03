@@ -414,7 +414,7 @@ main
  │     ├── tools/tmux     → tools, log, display, procinfo, session, procx, prompts, tempdir (tmux session tool — 8 files)
  │     ├── tools/browser  → tools, config, log, tempdir, tools/browserjs (browser automation — imports root for Tool/ToolResult)
  │     └── tools/browserjs (no foci deps — vendored go-rod JS snippets)
- ├── workspace     → log, provider
+ ├── workspace     → log, provider, session
  ├── nudge         → config, delegator, log, platform, turnevent, workspace (rule extraction, scheduling, file I/O; `validate.go` is the one nudge-rules validator — `ValidateFile` for `foci check nudge`, `RuleProblems` for the scheduler WARN — and `CapabilitiesFor` the one backend-capability source for both, #2223)
  ├── suggestion    → fap, log, platform, session (server-originated suggestions: registry, sender, per-chat mute, #1321)
  ├── prompts       (top-level package, not internal — lives at `shared/prompts/`) → fociroot, log, timeutil (embedded .md files incl. nudge framing + ResolveOrientationTemplate helpers)
@@ -1506,6 +1506,8 @@ Each becomes a `SystemBlock{type:"text", text:content}`. Missing/empty files are
 3. **Secrets block** — appended by `Bootstrap.SystemBlocks()` if secret names are available. Lists available `{{secret:NAME}}` template keys.
 
 4. **Extra system blocks** — skills list and other injected blocks (`agent.ExtraSystemBlocks`).
+
+5. **Daily-memory digest (#2827, per-agent opt-in `memory.daily_digest`, default off, `hot:"session"`)** — the markdown headings (`#`–`######`, outside fenced code) of `<workspace>/memory/<today>.md` and `<yesterday>.md` (dates in `timeutil.Now()`'s zone), from `workspace.DailyMemoryDigest`, under a `## Recent Memory (headings only)` header. Only for a **root chat session** (`workspace.IsUserChatSession`: `agent/c<chatID>`, no child segment): branches, forks, character/background spawns, batches (`<root>/b<ns>`, which reach `SystemPromptFunc` with `AgentPrompt`) and independent sessions get none (Dick 2026-11-03: "Headings-only digest, chats with you only"). Built by `dailyDigestFunc` (`agents_shared.go`), which reads the flag from `resolvedLive` per call. It goes **last**, after the skills, because it is the only per-session, daily-changing part: delegated via the `digest` argument of `newDelegatedSystemPromptFunc` (appended to the string), API via `Agent.DailyDigestFunc` (appended in `buildSystemBlocks`). It is a **snapshot at session start**: delegated, `SystemPromptFunc` runs only at `getOrCreate` and in the compaction gate; API, the per-session `sm.systemBlocks` cache holds it until `reloadAfterMutation` drops the caches (a character/skill change, which busts the cache anyway). The text has no clock time, so the compaction gate's fingerprint moves only when a heading changed — then the post-compaction bounce takes a fresh copy. A backend fork inherits its parent's launch prompt, digest included (`takeForkPrompt`). One file's headings are capped at `DailyDigestMaxHeadingChars`, keeping the latest.
 
 The **last** block gets `cache_control: {type: "ephemeral"}`. Order matters: most-stable blocks first maximizes cache prefix reuse. The environment block is highly stable (only changes on restart), making it a good cache prefix leader.
 

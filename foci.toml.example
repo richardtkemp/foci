@@ -562,6 +562,7 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # decay_half_life = 10.0                  # days until the recency boost halves
 # decay_boost = 1.0                       # max recency multiplier is 1 + this
 # evergreen_patterns = []                 # globs for memory files that never age out
+# daily_digest = false                    # chat sessions: add headings of today's + yesterday's memory/YYYY-MM-DD.md to the prompt end
 
 # [[memory.sources]]
 # name = "shared"

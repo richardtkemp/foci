@@ -327,7 +327,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 					}
 				}
 				return bs.SystemBlocks(), extra
-			}),
+			}, dailyDigestFunc(p.acfg.Workspace, func() bool { return p.resolvedLive.Load().MemorySearch.DailyDigest })),
 			Model: model,
 			// Re-inject the session's effort at every launch so a bounce
 			// (post-compaction reload, idle respawn) keeps the level the user
@@ -1119,11 +1119,21 @@ func delegatedSystemPrompt(envBlock string, workspaceBlocks, extraBlocks []provi
 // rebuilds the environment block for a given session platform (so the ## Platform
 // block matches the session's messaging platform); platformFor resolves that
 // platform from the session key.
-func newDelegatedSystemPromptFunc(buildEnv func(sessionPlatform string) string, platformFor func(sessionKey string) string, reload func() (workspaceBlocks, extraBlocks []provider.SystemBlock)) func(sessionKey string) string {
+//
+// digest (nil = none) returns the session's daily-memory digest (#2827), ""
+// for a session that gets none; it goes LAST so everything before it stays a
+// prefix shared across sessions.
+func newDelegatedSystemPromptFunc(buildEnv func(sessionPlatform string) string, platformFor func(sessionKey string) string, reload func() (workspaceBlocks, extraBlocks []provider.SystemBlock), digest func(sessionKey string) string) func(sessionKey string) string {
 	return func(sessionKey string) string {
 		envBlock := buildEnv(platformFor(sessionKey))
 		ws, extra := reload()
-		return delegatedSystemPrompt(envBlock, ws, extra)
+		p := delegatedSystemPrompt(envBlock, ws, extra)
+		if digest != nil {
+			if d := digest(sessionKey); d != "" && p != "" {
+				p += "\n\n" + d
+			}
+		}
+		return p
 	}
 }
 

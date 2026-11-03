@@ -16,6 +16,7 @@ import (
 	"foci/internal/route"
 	"foci/internal/skills"
 	"foci/internal/suggestion"
+	"foci/internal/timeutil"
 	"foci/internal/tools"
 	"foci/internal/workspace"
 	"foci/shared/prompts"
@@ -419,4 +420,21 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 	inst.testActiveWorkOverride.Store(-1)
 	ag.LiveConfigFn = inst.LiveConfig
 	return inst
+}
+
+// dailyDigestFunc returns the per-session daily-memory digest generator both
+// prompt builders use (#2827): the headings of today's and yesterday's
+// memory/YYYY-MM-DD.md, for a root chat session of an agent with
+// memory.daily_digest on, else "". enabled is read at each call, so the flag
+// applies from the next session start (hot:"session"). The builders call it
+// once per session start (delegated: SystemPromptFunc; API: the per-session
+// cached system blocks), so the text is a snapshot that does not move
+// mid-session and bust the prompt cache.
+func dailyDigestFunc(workspaceDir string, enabled func() bool) func(sessionKey string) string {
+	return func(sessionKey string) string {
+		if !enabled() || !workspace.IsUserChatSession(sessionKey) {
+			return ""
+		}
+		return workspace.DailyMemoryDigest(workspaceDir, timeutil.Now())
+	}
 }

@@ -419,6 +419,7 @@ type ResolvedMemorySearch struct {
 	DecayHalfLife      float64
 	DecayBoost         float64
 	EvergreenPatterns  []string
+	DailyDigest        bool
 }
 
 func resolveMemorySearch(m MemoryConfig) ResolvedMemorySearch {
@@ -432,6 +433,7 @@ func resolveMemorySearch(m MemoryConfig) ResolvedMemorySearch {
 		DecayHalfLife:      DerefFloat(m.DecayHalfLife),
 		DecayBoost:         DerefFloat(m.DecayBoost),
 		EvergreenPatterns:  m.EvergreenPatterns,
+		DailyDigest:        DerefBool(m.DailyDigest),
 	}
 }
 

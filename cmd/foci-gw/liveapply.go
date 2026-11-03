@@ -195,6 +195,8 @@ var (
 		"tools.max_file_read_bytes", "agent.tools.max_file_read_bytes",
 		"tools.http_max_spill_bytes", "agent.tools.http_max_spill_bytes",
 		"memory.search_backend", "agent.memory.search_backend",
+		// #2827: read by the system-prompt builders at each session start.
+		"memory.daily_digest", "agent.memory.daily_digest",
 		"tools.todo_format", "agent.tools.todo_format",
 		"tools.explore_max_depth", "agent.tools.explore_max_depth",
 		"tools.spawn_reserve_percent", "agent.tools.spawn_reserve_percent",

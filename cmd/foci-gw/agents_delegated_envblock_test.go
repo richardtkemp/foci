@@ -107,7 +107,7 @@ func TestNewDelegatedSystemPromptFunc_RetainsEnvBlock(t *testing.T) {
 
 	buildEnv := func(string) string { return env }
 	platformFor := func(string) string { return "" }
-	fn := newDelegatedSystemPromptFunc(buildEnv, platformFor, reload)
+	fn := newDelegatedSystemPromptFunc(buildEnv, platformFor, reload, nil)
 	got := fn("test/c1")
 
 	for _, want := range []string{"## Backend", "## Foci Shell Tools", "foci_todo", "CRAFT content", "Available Skills"} {

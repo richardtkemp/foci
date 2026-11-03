@@ -55,3 +55,31 @@ func TestBuildSystemBlocks_SkillsLast(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildSystemBlocks_DailyDigestLastAndFrozen (#2827): the per-session
+// daily-memory digest is appended after the skills (it is the only
+// per-session, daily-changing block, so nothing shared may trail it) and is a
+// snapshot: a second build in the same session returns the first text even
+// when the digest source has moved on.
+func TestBuildSystemBlocks_DailyDigestLastAndFrozen(t *testing.T) {
+	t.Parallel()
+	digest := "## Recent Memory (headings only)\nv1"
+	a := &Agent{
+		Bootstrap:         workspace.NewBootstrap(t.TempDir(), nil),
+		ExtraSystemBlocks: []provider.SystemBlock{{Type: "text", Text: "SKILL CONTENT"}},
+		DailyDigestFunc:   func(string) string { return digest },
+	}
+	first := a.buildSystemBlocks("test/c1")
+	if n := len(first); n < 2 || first[n-1].Text != digest || first[n-2].Text != "SKILL CONTENT" {
+		t.Fatalf("want [..., skills, digest], got %+v", first)
+	}
+	digest = "## Recent Memory (headings only)\nv2"
+	again := a.buildSystemBlocks("test/c1")
+	if got := again[len(again)-1].Text; got != "## Recent Memory (headings only)\nv1" {
+		t.Errorf("digest changed mid-session: %q", got)
+	}
+	a.DailyDigestFunc = func(string) string { return "" }
+	if other := a.buildSystemBlocks("test/c2"); other[len(other)-1].Text != "SKILL CONTENT" {
+		t.Errorf("empty digest must add no block, got last %q", other[len(other)-1].Text)
+	}
+}

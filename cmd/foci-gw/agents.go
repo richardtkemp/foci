@@ -339,6 +339,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	ag.Tools = registry
 	ag.ServerTools = out.serverTools
 	ag.EnvironmentBlockFunc = envBlockFunc
+	ag.DailyDigestFunc = dailyDigestFunc(acfg.Workspace, func() bool { return resolvedLive.Load().MemorySearch.DailyDigest })
 	ag.AsyncNotifier = notifier
 	ag.Model = resolvedModel
 	ag.Format = defaultFormat
