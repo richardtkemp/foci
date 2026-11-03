@@ -101,12 +101,15 @@ if [[ -z "$match" ]]; then
 fi
 
 # mdq's selector parser chokes on characters that are common in real headings:
-# backticks, angle brackets, square brackets. Two fixes:
-#   1. Strip backticks — mdq matches a heading's plain text content, not its
+# backticks, angle brackets, square brackets, double quotes. The fixes:
+#   1. Strip the heading marker and any further leading '#': mdq's title for
+#      '## #2827 foo' is '2827 foo', so a selector with the '#' matches nothing.
+#   2. Strip backticks — mdq matches a heading's plain text content, not its
 #      markdown source, so '#### `foo`' matches on "foo", not "`foo`".
-#   2. Wrap in double quotes — mdq's quoted-string syntax is a literal match,
-#      so <, [ and friends are not parsed as selector syntax.
-clean=$(echo "$match" | sed 's/^#* //' | sed 's/`//g')
+#   3. Wrap in double quotes — mdq's quoted-string syntax is a literal match,
+#      so <, [ and friends are not parsed as selector syntax. A backslash or '"' in
+#      the heading would end or bend that literal, so escape both.
+clean=$(echo "$match" | sed -E 's/^[#[:space:]]+//; s/`//g; s/\\/\\\\/g; s/"/\\"/g')
 if (( raw )); then
     mdq --raw "# \"$clean\"" "$file"
 else

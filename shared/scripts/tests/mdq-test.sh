@@ -452,4 +452,66 @@ check "#2006 pasted heading containing ' | ' still resolves (rc)" "0" "$pipe_rc"
 check "#2006 pasted heading containing ' | ' still resolves (out)" \
     "$("$REAL_MDQ" '# "Cost | Benefit"' "$SUB")" "$pipe_out"
 
+# Headings that start with '#' or contain '"' or '\' (real ones: '## #2827 memory
+# digest', '## LESSON: an "odd" one'). The binary drops a leading '#' from the
+# title, so an exact selector matched nothing and the raw slice could not find the
+# heading again; an unescaped '"' was a selector syntax error. All of them came
+# back empty and exit 1.
+HF="$TMP/heading-shapes.md"
+cat > "$HF" <<'EOF'
+# Doc
+
+## #2827 memory digest (landed 18:2x)
+hash body
+
+### Sub of hash
+sub body
+
+## # spaced hash
+spaced body
+
+## LESSON: an "odd" one (#2491)
+quote body
+
+## Path C:\temp here
+backslash body
+
+## #1 and "both" of them
+both body
+
+## C#
+sharp body
+
+## Plain
+plain body
+EOF
+hs_case() { # name, pattern, heading line, line after the section ('' = EOF)
+    local start end want got rc
+    start=$(grep -nF -x -- "$3" "$HF" | cut -d: -f1)
+    if [[ -n "$4" ]]; then end=$(( $(grep -nF -x -- "$4" "$HF" | cut -d: -f1) - 1 )); else end=$(wc -l < "$HF"); fi
+    want=$(sed -n "${start},${end}p" "$HF")
+    got=$("$MDS" "$HF" "$2"); rc=$?
+    check "heading shapes: mds $1 (rc)" "0" "$rc"
+    check "heading shapes: mds $1 (source bytes)" "$want" "$got"
+}
+hs_case "leading hash, by word"    "digest"                 '## #2827 memory digest (landed 18:2x)' '## # spaced hash'
+hs_case "leading hash, by #N"      "#2827"                  '## #2827 memory digest (landed 18:2x)' '## # spaced hash'
+hs_case "hash then space"          "spaced"                 '## # spaced hash'                      '## LESSON: an "odd" one (#2491)'
+hs_case "double quotes"            "LESSON"                 '## LESSON: an "odd" one (#2491)'       '## Path C:\temp here'
+hs_case "double quotes, in query"  'an "odd" one'           '## LESSON: an "odd" one (#2491)'       '## Path C:\temp here'
+hs_case "backslash"                "temp"                   '## Path C:\temp here'                  '## #1 and "both" of them'
+hs_case "leading hash and quotes"  "both"                   '## #1 and "both" of them'              '## C#'
+hs_case "trailing hash untouched"  "C#"                     '## C#'                                 '## Plain'
+hs_case "plain heading untouched"  "Plain"                  '## Plain'                              ''
+# The same shapes pasted straight into mdq, the wrapper's promise since #737.
+hash_want=$(sed -n '/^## #2827/,/^sub body$/p' "$HF")
+hash_got=$("$MDQ" '## #2827 memory digest' "$HF"); hash_rc=$?
+check "heading shapes: pasted '## #N' into mdq (rc)" "0" "$hash_rc"
+check "heading shapes: pasted '## #N' into mdq (source bytes)" "$hash_want" "$hash_got"
+# The rendered path takes the same selector.
+rend_got=$("$MDS" "$HF" "LESSON" --render); rend_rc=$?
+check "heading shapes: mds --render with quotes (rc)" "0" "$rend_rc"
+check "heading shapes: mds --render with quotes (out)" \
+    "$("$REAL_MDQ" '# "LESSON: an \"odd\" one (#2491)"' "$HF")" "$rend_got"
+
 exit $RC
