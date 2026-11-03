@@ -143,7 +143,7 @@ func TestClientTool_WireArgs(t *testing.T) {
 func TestClientTool_DescriptionListsEveryAction(t *testing.T) {
 	tool := NewClientTool(func() (AppInvoker, bool) { return nil, false })
 	want := []string{"tasker_list", "tasker_perform", "set_alarm", "set_timer", "call",
-		"contact_lookup", "clipboard", "open_url", "location", "ring_phone"}
+		"contact_lookup", "clipboard", "open_url", "location", "ring_phone", "read_notifications", "health"}
 	if got := clientActionNames(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("actions %v, want %v", got, want)
 	}
@@ -255,6 +255,10 @@ func TestClientShellFunc_RestWords(t *testing.T) {
 			map[string]any{"action": "location"}},
 		{`foci_client ring_phone --seconds 5`,
 			map[string]any{"action": "ring_phone", "seconds": 5.0}},
+		{`foci_client health steps --from 2026-11-01 --limit 5`,
+			map[string]any{"action": "health", "args": []any{"steps"}, "from": "2026-11-01", "limit": 5.0}},
+		{`foci_client read_notifications`,
+			map[string]any{"action": "read_notifications"}},
 		{`foci_client --action clipboard "a b" c`,
 			map[string]any{"action": "clipboard", "args": []any{"a b", "c"}}},
 	}
@@ -287,4 +291,80 @@ func TestClientShellFunc_RestWords(t *testing.T) {
 	if !strings.Contains(help, "Usage: foci_client <action> [args...]") || !strings.Contains(help, "set_alarm <HH:MM>") {
 		t.Errorf("help lacks the usage or the action list:\n%s", help)
 	}
+}
+
+// #2809: health's arguments are checked here; a bad call never reaches the phone.
+func TestClientTool_HealthRefusesBadArguments(t *testing.T) {
+	cases := []struct{ params, want string }{
+		{`{"action":"health","type":"stepz"}`, "type: unknown data type"},
+		{`{"action":"health","from":"2026-11-01"}`, "need a data type"},
+		{`{"action":"health","type":"steps","from":"yesterday"}`, "from:"},
+		{`{"action":"health","type":"steps","to":"2026-13-01"}`, "to:"},
+		{`{"action":"health","type":"steps","from":"2026-11-02","to":"2026-11-01"}`, "is not after"},
+		{`{"action":"health","type":"steps","from":"2026-11-01T10:00:00Z","to":"2026-11-01T10:00:00Z"}`, "is not after"},
+		{`{"action":"health","type":"steps","limit":0}`, "limit:"},
+		{`{"action":"health","type":"steps","limit":1001}`, "cap"},
+		{`{"action":"health","type":"steps","limit":"lots"}`, "limit:"},
+		{`{"action":"read_notifications","args":["extra"]}`, "unexpected extra argument"},
+	}
+	for _, c := range cases {
+		inv := &routingInvoker{}
+		got := execClient(t, inv, c.params)
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%s: got %q, want it to contain %q", c.params, got, c.want)
+		}
+		if len(inv.calls) != 0 {
+			t.Errorf("%s: reached the phone: %v", c.params, inv.calls)
+		}
+	}
+}
+
+func TestClientTool_HealthAndNotificationsWireArgs(t *testing.T) {
+	cases := []struct {
+		params, action string
+		want           map[string]any
+	}{
+		{`{"action":"read_notifications"}`, "read_notifications", map[string]any{}},
+		{`{"action":"health"}`, "health", map[string]any{}},
+		{`{"action":"health","args":["steps"]}`, "health", map[string]any{"type": "steps", "limit": float64(healthDefaultLimit)}},
+		{`{"action":"health","type":"sleep","from":"2026-11-01","to":"2026-11-01","limit":"5"}`, "health",
+			map[string]any{"type": "sleep", "from": "2026-11-01", "to": "2026-11-01", "limit": float64(5)}},
+		{`{"action":"health","type":"weight","from":"2026-11-01T10:00:00Z","limit":7}`, "health",
+			map[string]any{"type": "weight", "from": "2026-11-01T10:00:00Z", "limit": float64(7)}},
+	}
+	for _, c := range cases {
+		inv := &routingInvoker{}
+		execClient(t, inv, c.params)
+		if want := []string{clientDeviceTool + "/" + c.action}; !reflect.DeepEqual(inv.calls, want) {
+			t.Fatalf("%s: calls %v, want %v", c.params, inv.calls, want)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(inv.lastArgs, &got); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: args %v, want %v", c.params, got, c.want)
+		}
+	}
+}
+
+// A phone app from #2802 does not know the two new actions: the agent is told to
+// update the app, not handed a raw action list.
+func TestClientTool_NewActionOnOlderAppSaysUpdate(t *testing.T) {
+	inv := &errorResultInvoker{res: fap.ToolResult{Status: fap.ToolStatusError, Error: "unknown action: health (expected one of tasker_list)"}}
+	got := execClient(t, inv, `{"action":"health"}`)
+	if !strings.Contains(got, "update the foci app") {
+		t.Errorf("got %q, want an update-the-app error", got)
+	}
+	// Any other device error passes through untouched.
+	inv = &errorResultInvoker{res: fap.ToolResult{Status: fap.ToolStatusError, Error: "health is switched off"}}
+	if got := execClient(t, inv, `{"action":"health"}`); !strings.Contains(got, "switched off") {
+		t.Errorf("got %q", got)
+	}
+}
+
+type errorResultInvoker struct{ res fap.ToolResult }
+
+func (e *errorResultInvoker) InvokeTool(context.Context, string, string, json.RawMessage) (fap.ToolResult, error) {
+	return e.res, nil
 }

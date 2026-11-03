@@ -93,6 +93,10 @@ type clientParams struct {
 	Task     string          `json:"task"`
 	Par1     string          `json:"par1"`
 	Par2     string          `json:"par2"`
+	Type     string          `json:"type"`
+	From     string          `json:"from"`
+	To       string          `json:"to"`
+	Limit    json.RawMessage `json:"limit"`
 }
 
 // clientActionSpec describes one action: the named params its bare words fill
@@ -115,6 +119,31 @@ const (
 	// timerMaxSeconds is Android's AlarmClock.EXTRA_LENGTH range (1..86400).
 	timerMaxSeconds = 24 * 60 * 60
 )
+
+// health action defaults. The window and the record cap keep one call from
+// pouring weeks of heart-rate samples into the agent's context.
+const (
+	healthDefaultDays  = 7
+	healthDefaultLimit = 100
+	healthMaxLimit     = 1000
+)
+
+// healthTypes is every Health Connect data type the app can read (Dick's ruling
+// "Health:all!"). Keep in step with HealthDataType in foci-client.
+var healthTypes = []string{
+	"active_calories_burned", "basal_body_temperature", "basal_metabolic_rate", "blood_glucose",
+	"blood_pressure", "body_fat", "body_temperature", "body_water_mass", "bone_mass", "cervical_mucus",
+	"cycling_pedaling_cadence", "distance", "elevation_gained", "exercise", "floors_climbed", "heart_rate",
+	"heart_rate_variability", "height", "hydration", "intermenstrual_bleeding", "lean_body_mass",
+	"menstruation_flow", "menstruation_period", "mindfulness", "nutrition", "ovulation_test",
+	"oxygen_saturation", "planned_exercise", "power", "respiratory_rate", "resting_heart_rate",
+	"sexual_activity", "skin_temperature", "sleep", "speed", "steps", "steps_cadence",
+	"total_calories_burned", "vo2_max", "weight", "wheelchair_pushes",
+	"medical_allergies_intolerances", "medical_conditions", "medical_laboratory_results",
+	"medical_medications", "medical_personal_details", "medical_practitioner_details",
+	"medical_pregnancy", "medical_procedures", "medical_social_history", "medical_vaccines",
+	"medical_visits", "medical_vital_signs",
+}
 
 var clientActions = []clientActionSpec{
 	{name: "tasker_list", usage: "tasker_list — the Tasker tasks the user allowlisted in the app",
@@ -197,6 +226,11 @@ var clientActions = []clientActionSpec{
 			}
 			return map[string]any{"seconds": secs}, nil
 		}},
+	{name: "read_notifications", usage: "read_notifications — the notifications in the phone's shade right now: app, title, text, time. No history (default off in the app)",
+		build: func(p *clientParams) (map[string]any, error) { return map[string]any{}, nil }},
+	{name: "health", usage: fmt.Sprintf("health [type] [--from WHEN] [--to WHEN] [--limit N] — Health Connect data, newest first: steps, sleep, heart_rate, weight, exercise, nutrition and every other type; no type lists all %d and which are granted. WHEN is YYYY-MM-DD (phone local, --to inclusive) or RFC 3339; default the last %d days, %d records, at most %d (default off in the app)", len(healthTypes), healthDefaultDays, healthDefaultLimit, healthMaxLimit),
+		positional: []string{"type"},
+		build:      buildHealthArgs},
 }
 
 func clientActionByName(name string) (clientActionSpec, bool) {
@@ -366,6 +400,95 @@ func parseRingSeconds(raw json.RawMessage) (int, error) {
 	return int(n), nil
 }
 
+// buildHealthArgs checks the health action's arguments. No type asks for the
+// list of data types, which takes no other argument.
+func buildHealthArgs(p *clientParams) (map[string]any, error) {
+	t := strings.TrimSpace(p.Type)
+	if t == "" {
+		if p.From != "" || p.To != "" || (len(p.Limit) > 0 && string(p.Limit) != "null") {
+			return nil, errors.New("type: empty; --from, --to and --limit need a data type")
+		}
+		return map[string]any{}, nil
+	}
+	known := false
+	for _, h := range healthTypes {
+		known = known || h == t
+	}
+	if !known {
+		return nil, fmt.Errorf("type: unknown data type %q (known: %s)", t, strings.Join(healthTypes, ", "))
+	}
+	args := map[string]any{"type": t}
+	from, fromDate, err := parseHealthWhen("from", p.From)
+	if err != nil {
+		return nil, err
+	}
+	to, toDate, err := parseHealthWhen("to", p.To)
+	if err != nil {
+		return nil, err
+	}
+	if !from.IsZero() && !to.IsZero() && fromDate == toDate {
+		// Two dates may be equal (--to is inclusive: that one day); two instants may not.
+		if to.Before(from) || (!toDate && to.Equal(from)) {
+			return nil, fmt.Errorf("to: %q is not after from %q", p.To, p.From)
+		}
+	}
+	if !from.IsZero() {
+		args["from"] = strings.TrimSpace(p.From)
+	}
+	if !to.IsZero() {
+		args["to"] = strings.TrimSpace(p.To)
+	}
+	limit, err := parseHealthLimit(p.Limit)
+	if err != nil {
+		return nil, err
+	}
+	args["limit"] = limit
+	return args, nil
+}
+
+// parseHealthWhen reads a window bound: YYYY-MM-DD (the phone applies its own
+// time zone) or RFC 3339. Empty returns the zero time. The bool says it was a date.
+func parseHealthWhen(name, s string) (time.Time, bool, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false, nil
+	}
+	if d, err := time.Parse(time.DateOnly, s); err == nil {
+		return d, true, nil
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, false, nil
+	}
+	return time.Time{}, false, fmt.Errorf("%s: %q is neither YYYY-MM-DD nor RFC 3339", name, s)
+}
+
+// parseHealthLimit reads the optional record cap: a JSON number or a numeric
+// string (the shell's flag value).
+func parseHealthLimit(raw json.RawMessage) (int, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return healthDefaultLimit, nil
+	}
+	var n float64
+	if err := json.Unmarshal(raw, &n); err != nil {
+		var s string
+		if err2 := json.Unmarshal(raw, &s); err2 != nil {
+			return 0, fmt.Errorf("limit: %s is not a number", raw)
+		}
+		v, err3 := strconv.ParseFloat(strings.TrimSpace(s), 64)
+		if err3 != nil {
+			return 0, fmt.Errorf("limit: %q is not a number", s)
+		}
+		n = v
+	}
+	if n < 1 || n != float64(int(n)) {
+		return 0, fmt.Errorf("limit: %v must be a whole number of at least 1", n)
+	}
+	if n > healthMaxLimit {
+		return 0, fmt.Errorf("limit: %v is more than the cap of %d records", n, healthMaxLimit)
+	}
+	return int(n), nil
+}
+
 // fillPositional maps the shell's bare words onto the action's named params,
 // skipping params already given by name. The last param takes every remaining
 // word (space-joined) when the action joins; otherwise extra words are an error.
@@ -386,12 +509,14 @@ func fillPositional(spec clientActionSpec, p *clientParams) error {
 		"text":     func(v string) { p.Text = &v },
 		"url":      func(v string) { p.URL = v },
 		"seconds":  func(v string) { p.Seconds, _ = json.Marshal(v) },
+		"type":     func(v string) { p.Type = v },
 	}
 	isSet := map[string]bool{
 		"task": p.Task != "", "par1": p.Par1 != "", "par2": p.Par2 != "",
 		"time": p.Time != "", "label": p.Label != "", "duration": p.Duration != "",
 		"number": p.Number != "", "name": p.Name != "", "text": p.Text != nil,
 		"url": p.URL != "", "seconds": len(p.Seconds) > 0 && string(p.Seconds) != "null",
+		"type": p.Type != "",
 	}
 	var free []string
 	for _, s := range spec.positional {
@@ -426,7 +551,7 @@ Actions:`)
 		b.WriteString(a.usage)
 	}
 	b.WriteString(`
-The user switches each action on or off in the app (Settings > Advanced > Phone actions) and grants there the Android permission it needs; a switched-off or ungranted action is refused with an error saying so. Calls, contact lookup and location start switched off. Nothing prompts the user at call time.
+The user switches each action on or off in the app (Settings > Advanced > Phone actions) and grants there the Android permission it needs; a switched-off or ungranted action is refused with an error saying so. Calls, contact lookup, location, read_notifications and health start switched off. Nothing prompts the user at call time.
 Returns the phone's result (what was done, or the data asked for), or an error string: no phone connected, a phone that cannot run the action (desktop app, or a phone app that needs an update), or a phone that did not answer in time.`)
 	return b.String()
 }
@@ -466,7 +591,11 @@ func NewClientTool(invoker func() (AppInvoker, bool)) *Tool {
 				"seconds": {"type": "integer", "description": "ring_phone: how long to ring (default 30, at most 300)"},
 				"task": {"type": "string", "description": "tasker_perform: the Tasker task name, from tasker_list"},
 				"par1": {"type": "string", "description": "tasker_perform: first param (%par1). For structured args, JSON-stringify into this slot."},
-				"par2": {"type": "string", "description": "tasker_perform: second param (%par2)"}
+				"par2": {"type": "string", "description": "tasker_perform: second param (%par2)"},
+				"type": {"type": "string", "description": "health: the data type, e.g. steps, sleep, heart_rate, weight; omit to list every type and whether it is granted"},
+				"from": {"type": "string", "description": "health: start of the window, YYYY-MM-DD (phone local) or RFC 3339; default 7 days before to"},
+				"to": {"type": "string", "description": "health: end of the window, YYYY-MM-DD (phone local, that whole day) or RFC 3339; default now"},
+				"limit": {"type": "integer", "description": "health: most records to return, newest first (default 100, at most 1000)"}
 			},
 			"required": ["action"]
 		}`),
@@ -506,10 +635,19 @@ func NewClientTool(invoker func() (AppInvoker, bool)) *Tool {
 			if err != nil {
 				return TextResult(clientInvokeErrorText(spec.name, err)), nil
 			}
+			if res.Status == fap.ToolStatusError && strings.HasPrefix(res.Error, phoneUnknownActionPrefix) {
+				// An app older than this server's action list answers this way.
+				return TextResult(clientInvokeErrorText(spec.name, errAppTooOld)), nil
+			}
 			return TextResult(clientResultText(res)), nil
 		},
 	}
 }
+
+// phoneUnknownActionPrefix starts the error FociClientToolHandler returns for an
+// action it does not know. The server checked the action, so the app is older
+// than the server.
+const phoneUnknownActionPrefix = "unknown action:"
 
 const noPhoneConnectedMsg = "Error: no Android device connected: the foci app is not open on any device. Ask the user to open the foci app on their phone."
 

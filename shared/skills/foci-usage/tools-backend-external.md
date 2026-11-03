@@ -26,11 +26,12 @@ Per-tool reference for the Claude Code (shell) backend. How `foci_*` shell funct
 - Booleans are presence-only flags, so `--incognito` can only turn incognito ON. To start on the persistent profile pass JSON: `foci_browser '{"action":"start","incognito":false}'`.
 - Use `--returnPath` on `screenshot`, or the base64 image lands in your output.
 
-### `foci_client` — act on the user's Android phone (alarms, timers, calls, contacts, clipboard, links, location, ring, Tasker)
+### `foci_client` — act on the user's Android phone (alarms, timers, calls, contacts, clipboard, links, location, ring, notifications, health, Tasker)
 - Only registered when the `app` platform is configured for this agent — presence of the tool doesn't guarantee a phone is actually connected right now.
 - Shape: `foci_client <action> [words...] [flags...]`. Words after the action fill its arguments in order; quote a multi-word label. `foci_client --help` lists every action, e.g. `foci_client set_alarm 07:30 "Take T to nursery" --days mon,wed`, `foci_client set_timer 2m tea`, `foci_client open_url https://example.com`, `foci_client tasker_perform NAME [par1] [par2]`.
 - `set_alarm` takes a clock time and weekdays only (no date) and sets it silently in the Clock app.
-- The user switches each action on in the app and grants its permission there (Settings > Advanced > Phone actions). A switched-off or ungranted action comes back as an error naming what is missing; nothing prompts the user. `call`, `contact_lookup` and `location` start switched off.
+- `read_notifications` returns what is in the shade now, not history. `health` with no type lists every data type and whether it is granted; `foci_client health steps --from 2026-11-01 --to 2026-11-03` reads one type, newest first (default the last 7 days, 100 records). Check `truncated` before you count records. For a sum use `total` or `total_<unit>`, from which Health Connect removes duplicates; adding up records from a phone and a watch counts steps twice. Those fields are absent when Health Connect gives no total.
+- The user switches each action on in the app and grants its permission there (Settings > Advanced > Phone actions). A switched-off or ungranted action comes back as an error naming what is missing; nothing prompts the user. `call`, `contact_lookup`, `location`, `read_notifications` and `health` start switched off.
 - The Tasker allowlist is empty by default — the user opts tasks in via the app's Advanced settings before `tasker_perform` can reach them.
 - No phone, no capable phone (desktop only), a phone app needing an update, and no answer in time each give a plain error string in the result (not a tool failure).
 - A Tasker task can reply `"pending"` if it's still running on-device past the sync window; the server keeps waiting up to ~60s for the real result. Only a task that *also* blows that budget comes back pending-with-no-result — that result is dropped.
