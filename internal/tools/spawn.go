@@ -1419,7 +1419,18 @@ func (s *Spawner) launchBackground(ctx context.Context, agent SpawnAgent, parent
 	}
 	pending := fmt.Sprintf("%s started in background.\nName: %s\nSpawn: %s\nBranch: %s\nTimeout: %s\nPrompt: %s\nResults will be delivered when complete. Send it more with spawn_send; check on it with spawn_status (by its name or id).",
 		kind, running.Label(), running.ID, running.BranchKey, timeout, truncatePromptPreview(prompt))
-	return s.runBackground(ctx, agent, parent, running, []string{prompt}, spawnCtx, cancel, pending)
+	return s.runBackground(ctx, agent, parent, running, []string{s.hostOf(running).withSteerNotice(prompt)}, spawnCtx, cancel, pending)
+}
+
+// withSteerNotice adds to a background spawn's task the paragraph its backend
+// declares for how a mid-turn spawn_send looks (#2833). It goes to the model
+// only: the tracker, the log and the app keep what the parent wrote. nil
+// receiver: the spawn's agent is gone, so there is no backend to ask.
+func (s *Spawner) withSteerNotice(task string) string {
+	if s == nil || s.deps.Delegated == nil || s.deps.Delegated.Spec.SpawnSteerNotice == "" {
+		return task
+	}
+	return task + "\n\n" + s.deps.Delegated.Spec.SpawnSteerNotice
 }
 
 // startBackgroundCharacter runs a character spawn in the background (#2643):

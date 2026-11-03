@@ -118,7 +118,7 @@ func (s *Spawner) RestoreSpawns() {
 			s.deliver(rec.Parent, rec.ID, rec.Result)
 		}
 		report(rec.Parent).resumed = append(report(rec.Parent).resumed, label)
-		texts := []string{spawnRestartNotice(rec.Prompt)}
+		texts := []string{host.withSteerNotice(spawnRestartNotice(rec.Prompt))}
 		if host.deps.TakeUndelivered != nil {
 			texts = append(texts, host.deps.TakeUndelivered(rec.BranchKey)...)
 		}

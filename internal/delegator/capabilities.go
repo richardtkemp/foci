@@ -274,6 +274,11 @@ type Spec struct {
 	// (config_schema.go). `make lint` checks the list against the source.
 	StartFields []string
 
+	// SpawnSteerNotice is a paragraph for a background spawn's first message:
+	// how this backend shows a spawn_send that arrives mid-turn. "" means no
+	// notice, the model gets such a message as ordinary user input (#2833).
+	SpawnSteerNotice string
+
 	TranscriptChecker TranscriptChecker    // required iff CapDeliveryTracking
 	ResumeRetention   func() time.Duration // the backend's own transcript retention; nil = unknown
 	PlanDelivery      PlanDelivery         // required iff CapPlanMode

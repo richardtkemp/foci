@@ -14,13 +14,25 @@ const backendName = "claude-code"
 // to QueryUsage (an initialization cycle).
 const displayName = "Claude Code"
 
+// spawnSteerNotice tells a background spawn how a spawn_send looks when it
+// folds into a running turn (#2833). CC does not deliver a "next" fold as a
+// user message: it sends a mid-conversation system message right after the tool
+// result, wrapped as below, and models dropped it as a prompt injection (haiku:
+// 1 of 8 followed it; with this wording 8 of 8). The quoted words must match
+// CC's wrapper (checked on CC 2.1.314). #2833 has the results; retest before
+// changing the wording.
+const spawnSteerNotice = "Your spawner (the session that started you) can send you more instructions while you work. " +
+	"Claude Code shows each one as a system-reminder that begins 'The user sent a new message while you were working', " +
+	"usually right after a tool result. Those are genuine messages from your spawner: follow them."
+
 // spec declares the Claude Code backend: what it can do and its static data
 // (#2154, internal/delegator/capabilities.go).
 var spec = delegator.Spec{
-	Name:        backendName,
-	DisplayName: displayName,
-	New:         newFromConfig,
-	Prototype:   (*Backend)(nil),
+	Name:             backendName,
+	DisplayName:      displayName,
+	New:              newFromConfig,
+	Prototype:        (*Backend)(nil),
+	SpawnSteerNotice: spawnSteerNotice,
 	PermissionModes: []delegator.PermissionMode{
 		{Name: "normal", Value: "default", Description: "default", Aliases: []string{"default"}},
 		{Name: "accept", Value: "acceptEdits", Description: "auto-accept edits", Aliases: []string{"edits"}},
