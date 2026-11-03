@@ -854,12 +854,17 @@ func main() {
 					_ = out.Flush()
 				}
 			}
+			// A real CC call always reads or writes the prompt cache, and
+			// since #2509 foci treats only cache tokens > 0 as evidence that
+			// a session is warm (last_cache_touch). Report them, or no stub
+			// session ever enters keepalive's warm window (#2834).
 			resultEnv := map[string]any{
 				"type":   "result",
 				"result": reply,
 				"usage": map[string]any{
-					"input_tokens":  0,
-					"output_tokens": 0,
+					"input_tokens":            0,
+					"output_tokens":           0,
+					"cache_read_input_tokens": stubCacheReadTokens,
 				},
 			}
 			// OmitSessionIDInResult: drop the session_id key on result
@@ -1109,6 +1114,11 @@ func appendTranscript(sessionID string, rec map[string]any) error {
 	_, err = f.Write(append(b, '\n'))
 	return err
 }
+
+// stubCacheReadTokens is the cache_read_input_tokens every normal turn's
+// result reports. Constant, so a keepalive fork never reads less than its
+// source and trips the #2509 fork-shortfall warning.
+const stubCacheReadTokens = 1000
 
 // ackUUID is the uuid of the user message the stub is answering; emit stamps
 // it as user_message_uuids on assistant and result envelopes, as real CC does
