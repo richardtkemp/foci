@@ -132,3 +132,28 @@ func (b *Backend) cycleTurn(spawnTurn string, at time.Time) accounting.Turn {
 	}
 	return t
 }
+
+// bookCompaction books a finished compaction of the session's own thread as a
+// compaction turn of its own (source compaction), closed at once (#2825). It
+// is the row the ledger's staleness guard matches on: without it,
+// CurrentContextFill kept the pre-compaction fill as current forever, because
+// codex sends no usage of its own for the compaction (the report right after
+// it has every class of `last` at 0, which bookCycle skips).
+//
+// The turn carries no call: codex does not report what the compaction call
+// spent over the app-server. It is booked at completion even when a foci turn
+// is open (codex's own mid-turn auto-compaction), so that turn's fill reads as
+// unknown (0) until the next turn, never as the pre-compaction size.
+func (b *Backend) bookCompaction(at time.Time) {
+	session := b.startOpts.SessionKey
+	if session == "" {
+		session = accounting.NoSession
+	}
+	if err := accounting.RecordTurn(accounting.Turn{
+		TurnID: accounting.MintTurnID(session, accounting.KindCompaction, at), Session: session,
+		AgentID: b.agentID, Backend: accounting.BackendCodex, Source: accounting.SourceCompaction,
+		StartedAt: at, EndedAt: at, ActivityClosedAt: at,
+	}); err != nil {
+		b.logWarnf("book compaction turn: %v", err)
+	}
+}

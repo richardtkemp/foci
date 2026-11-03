@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"foci/internal/delegator"
@@ -420,7 +421,11 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 	case "contextCompaction":
 		// Shown as a tool under delegator.CompactionToolName, which the agent
 		// layer's tool count skips: compaction is internal bookkeeping, not a
-		// call the model made.
+		// call the model made. It is booked as a compaction turn (#2825), so
+		// the ledger no longer reports the pre-compaction fill as current.
+		// Only the session's own thread reaches here: a child thread's items
+		// go to handleSubagentNotification.
+		b.bookCompaction(time.Now().UTC())
 		b.compactMu.Lock()
 		if b.compactDoneCh != nil {
 			close(b.compactDoneCh)

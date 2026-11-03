@@ -1961,7 +1961,14 @@ open gets an autonomous turn of its own. A child thread's cycles (subAgentActivi
 booked on the turn that SPAWNED it (`subagentTracker` records it at first sight, #1880) —
 before the switch they were consumed unread, so codex subagent spend was missing. The
 `turnCalc` accumulator and its per-turn `CostAsOf` are gone; `stashedUsage` is context fill
-only. Tested against `codex/testdata/tokenusage_synthetic.json`: the #1855 live cycles plus
+only. A compaction (`item/completed` with a `contextCompaction` item on the session's own
+thread, whether foci's `/compact` or codex's own auto-compaction) is a `source='compaction'`
+turn of its own with no call, closed at once (`bookCompaction`, #2825): codex reports no usage
+for the compaction call, and the `thread/tokenUsage/updated` after it has every class of
+`last` at 0 (only `last.totalTokens` set), which books nothing. Without that turn
+`Ledger.CurrentContextFill`'s staleness guard had nothing to match, and the pre-compaction
+fill stayed current. It is booked even inside an open foci turn, so that turn's fill reads as
+unknown (0) until the next turn. Tested against `codex/testdata/tokenusage_synthetic.json`: the #1855 live cycles plus
 SYNTHETIC child-thread and re-delivery notifications; replace them with a real capture when
 one is available.
 
