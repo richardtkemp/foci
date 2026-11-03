@@ -11,7 +11,7 @@ foci's **own** general-purpose tools, which a CC agent gets from CC instead:
 - **`read`**, **`write`**, **`edit`** (exact string replacement), **`shell`** — files and shell.
 - **`tmux`** — persistent terminals by name: `start|send|read|list|kill|watch|unwatch`. `watch` sends async inactivity notifications.
 - **`browser`** — headless browser actions (only if the browser feature is enabled in config).
-- **`spawn`** — a sub-call to a model. `name` is required: short, unique among this session's spawns that `spawn_status` lists (`all` is reserved); the user sees the spawn by it, and `spawn_send`, `spawn_status` and `spawn_stop` take it in place of the id. Model group `powerful|fast|cheap`. Timeout: 120 s direct, 3600 s background, 86400 s max. Modes:
+- **`spawn`** — a sub-call to a model. `name` is required, unique in this session (`all` is reserved); the user sees the spawn by it, and the other spawn tools take it in place of the id. Model group `powerful|fast|cheap`. Timeout: 120 s direct, 3600 s background, 86400 s max. Modes:
 - `character` (default): your system prompt and tools, not this conversation, so the prompt must carry the whole task. Direct, or background with `background=true`.
 - `clone`: a background fork of this session; the result arrives later as a message. Use it only when the task needs too much of the conversation to write down.
 - `raw`: just your prompt, the cheapest isolated call. `explore`: direct, read-only, cheap model, restricted tools.
@@ -25,8 +25,6 @@ foci's **own** general-purpose tools, which a CC agent gets from CC instead:
 - **`bitwarden_search` / `bitwarden_unlock`** — vault access (only if configured).
 - **`mcp`** — call tools exposed by connected MCP servers.
 
-(Each is enabled only when its backing store/feature is configured; otherwise it isn't offered.)
-
 ## Shared tools (also on the backend, as shell functions)
 
 Same behaviour as the backend's `foci_*` functions. Below are only the behaviours the schema does not tell you.
@@ -37,11 +35,11 @@ Same behaviour as the backend's `foci_*` functions. Below are only the behaviour
 - **`todo`** — `tag` **replaces** the whole tag set (and tags parsed from the text); it never appends.
 - **`remind`** — passive by default (injected as context when due); `wake` actively wakes the session.
 - **`memory_search`** — stemmed full-text; memory files rank above chat. `session#rowID` pulls the surrounding messages.
-- **`http_request`** — `{{secret:NAME}}` resolves server-side: in headers against the secret's `allowed_hosts`, in body/form fields only with `allowed_in_body`. `basic_auth` takes `user:password` (templates resolved, then base64-encoded; the token is redacted from output), e.g. `'{{secret:NAME}}:'` for a key-as-username. Returns the body only unless `include_headers: true`.
+- **`http_request`** — `{{secret:NAME}}` resolves server-side: in headers against the secret's `allowed_hosts`, in body/form fields only with `allowed_in_body`. `basic_auth` takes `user:password` (templates resolved; the token is redacted from output), e.g. `'{{secret:NAME}}:'` for a key-as-username. Returns the body only unless `include_headers: true`.
 - **`web_fetch`** — Readability → Markdown; large pages truncated. Not for downloading files (use `http_request`).
 - **`web_search`** — Brave Search; titles, URLs and descriptions only.
 - **`summary`** — targeted extraction from a file by a cheap model; never a whole-file dump.
-- **`set_session_alias`** — chat sessions only (errors on a branch). Call once after the first exchange, under 5 words. It won't overwrite a manual rename (it replies that the user named the chat by hand) unless you pass `force`, which is only for when the user explicitly asks for the rename.
-- **`client`** — act on the user's phone: alarms, timers, calls, contacts, clipboard, links, location, ring, and the Tasker bridge (`tasker_list`/`tasker_perform`). Offered when the app platform is configured, but offered ≠ connected: with no phone it returns a plain error string. Each action works only if the user switched it on AND granted its permission in the app (Settings > Advanced > Phone actions); call, contact_lookup and location start off. The error says which is missing — relay it, do not retry. The Tasker allowlist is **empty by default**; structured Tasker args go JSON-stringified in `par1`. A task still running after ~60s returns pending, and its later result is dropped.
+- **`set_session_alias`** — chat sessions only (errors on a branch). Call once after the first exchange, under 5 words. It won't overwrite a manual rename unless you pass `force`, which is only for an explicit user request.
+- **`client`** — act on the user's phone: alarms, timers, calls, contacts, clipboard, links, location, ring, Tasker. Offered ≠ connected (no phone: an error). Each action needs the user to enable it and grant its permission in the app (Settings > Advanced > Phone actions); the error names what is missing — relay it, do not retry. Tasker allowlist is empty by default; args go JSON in `par1`.
 - **`close_session`** — closes your own app chat as if the user closed it (tab leaves every device; history stays; the user's next message reopens it). Only when nothing is outstanding or the user asks. `mark_read: true` also marks the chat read once this turn ends, final reply included. Offered when the app platform is configured.
 - **`whoami`** — read-only report of your own foci identity: agent id, session key, chat id, platform, backend, transport and model (on backends this is `foci_whoami`, same report). The go-to source for the chat id `send_to_session` addressing needs; missing values come back as `none`/`unknown`, never guessed.
