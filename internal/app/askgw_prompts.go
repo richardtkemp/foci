@@ -118,7 +118,11 @@ func (s *askgwPromptSet) snapshot() fap.AskgwPrompts {
 // when unknown.
 func (h *Hub) presentAskgw(id, header, text, host string, buttons []platform.ButtonChoice, onChoice func(data string)) bool {
 	if !h.askgwReachable() {
-		appLog.Infof("askgw: no device can show prompt %s (none connected or push-wakeable with %s), falling back to the agent chat", id, featureAskgwPrompts)
+		if h.tokens.askgwSeenSinceStart() {
+			appLog.Infof("askgw: no device can show prompt %s (none connected or push-wakeable with %s), falling back to the agent chat", id, featureAskgwPrompts)
+		} else {
+			appLog.Infof("askgw: no device can show prompt %s (none has advertised %s since this gateway started: the list is in memory, so a restart empties it until a device reconnects), falling back to the agent chat", id, featureAskgwPrompts)
+		}
 		return false
 	}
 	choices := make([]fap.Choice, 0, len(buttons))

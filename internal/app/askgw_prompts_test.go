@@ -1,10 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -14,6 +16,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"foci/internal/fap"
+	flog "foci/internal/log"
 	"foci/internal/platform"
 )
 
@@ -365,6 +368,49 @@ func TestAskgwPresent_OfflineCapableNeedsPush(t *testing.T) {
 	h.tokens.setAskgw("phone", true)
 	if h.presentAskgw("p1", "", "x", "", askgwButtons, func(string) {}) {
 		t.Fatal("offline capable device but no pusher: presentAskgw = true, want false")
+	}
+}
+
+// A fallback caused by the in-memory capability list being empty after a
+// restart names that cause (#2758). A fallback after a capable device has said
+// hello has another cause, so it must not blame the restart.
+func TestAskgwPresent_FallbackLogNamesRestartReset(t *testing.T) {
+	var buf bytes.Buffer
+	flog.SetOutput(&buf)
+	flog.SetLevel(flog.INFO)
+	t.Cleanup(func() { flog.SetOutput(os.Stderr); flog.SetLevel(flog.INFO) })
+	const resetCause = "since this gateway started"
+	refuse := func(h *Hub, what string) string {
+		t.Helper()
+		buf.Reset()
+		if h.presentAskgw("p1", "", "x", "", askgwButtons, func(string) {}) {
+			t.Fatalf("%s: presentAskgw = true, want false", what)
+		}
+		line := buf.String()
+		if !strings.Contains(line, "p1") || !strings.Contains(line, "falling back to the agent chat") {
+			t.Fatalf("%s: no fallback line for p1 at INFO: %q", what, line)
+		}
+		return line
+	}
+
+	h := newTestHub() // a restart: nothing has said hello
+	if line := refuse(h, "fresh hub"); !strings.Contains(line, resetCause) {
+		t.Errorf("fresh hub: line does not name the reset: %q", line)
+	}
+	h.tokens.setAskgw("oldphone", false)
+	if line := refuse(h, "old-build hello only"); !strings.Contains(line, resetCause) {
+		t.Errorf("old-build hello only: line does not name the reset: %q", line)
+	}
+
+	// No pusher, so an offline capable device cannot be woken: not a reset.
+	h.tokens.setAskgw("phone", true)
+	if line := refuse(h, "capable device offline"); strings.Contains(line, resetCause) {
+		t.Errorf("capable device offline: line blames the reset: %q", line)
+	}
+	// A downgrade removes the device from the list; the reset is still not why.
+	h.tokens.setAskgw("phone", false)
+	if line := refuse(h, "capable device downgraded"); strings.Contains(line, resetCause) {
+		t.Errorf("capable device downgraded: line blames the reset: %q", line)
 	}
 }
 

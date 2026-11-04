@@ -55,6 +55,9 @@ type pushTokens struct {
 	tokens   map[string]string // deviceId → FCM registration token
 	readWake map[string]bool   // deviceId → its latest hello advertised featureReadWake
 	askgw    map[string]bool   // deviceId → its latest hello advertised featureAskgwPrompts (#2707)
+	// askgwSeen is whether any hello advertised featureAskgwPrompts since this
+	// process started. It never clears, so a downgrade does not read as a restart.
+	askgwSeen bool
 }
 
 func newPushTokens() *pushTokens {
@@ -73,10 +76,20 @@ func (p *pushTokens) setAskgw(deviceID string, ok bool) {
 	p.mu.Lock()
 	if ok {
 		p.askgw[deviceID] = true
+		p.askgwSeen = true
 	} else {
 		delete(p.askgw, deviceID)
 	}
 	p.mu.Unlock()
+}
+
+// askgwSeenSinceStart reports whether any hello has advertised
+// featureAskgwPrompts since this process started. False is the state a restart
+// leaves: see setAskgw.
+func (p *pushTokens) askgwSeenSinceStart() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.askgwSeen
 }
 
 // askgwTargetsExcluding is targetsExcluding limited to devices that can show
