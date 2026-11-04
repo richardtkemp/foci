@@ -513,10 +513,45 @@ func runAgentCommand(ctx context.Context, cmds *command.Registry, cc command.Com
 	if !ok {
 		return result, false
 	}
-	if err := platform.SendDocAndRemove(connMgr.ForSessionOrPrimary(sessionKey, agentID), 0, result.DocPath, ""); err != nil {
-		httpLog.Warnf("command dispatch: send document: %v", err)
+	if err := sendCommandDoc(connMgr, agentID, sessionKey, result.DocPath); err != nil {
+		result = withUndeliveredDocNote(result, err)
 	}
 	return result, true
+}
+
+// sendCommandDoc delivers a command's temp document to the asking session's
+// chat through the one outbound cascade, removes it, and logs where it went. A
+// fallback to the primary keeps the session's own chat when the key names one;
+// only a chatless key lands in the primary's default chat, and that is a WARN.
+func sendCommandDoc(connMgr platform.ConnectionManager, agentID, sessionKey, path string) error {
+	if path == "" {
+		return nil
+	}
+	conn, outcome := route.ConnFor(connMgr, agentID, sessionKey, route.PolicyFallback)
+	chatID := attachmentChatID(conn, promptToSessionChat, sessionKey)
+	err := platform.SendDocAndRemove(conn, chatID, path, "")
+	logf := httpLog.Infof
+	if err != nil || (outcome == route.DeliveredViaPrimary && session.ChatIDFromKey(sessionKey) == 0) {
+		logf = httpLog.Warnf
+	}
+	logf("command dispatch: document for session %s: outcome=%s chat=%d err=%v", sessionKey, outcome, chatID, err)
+	return err
+}
+
+// withUndeliveredDocNote makes the reply say the document did not go out: the
+// command's own text can claim that it did ("Diff for X sent"). Parts is copied,
+// because it belongs to the command.
+func withUndeliveredDocNote(result command.Response, err error) command.Response {
+	note := fmt.Sprintf("⚠️ The document was not delivered and has been removed: %v", err)
+	switch {
+	case len(result.Parts) > 0:
+		result.Parts = append(result.Parts[:len(result.Parts):len(result.Parts)], note)
+	case strings.TrimSpace(result.Text) == "":
+		result.Text = note
+	default:
+		result.Text += "\n\n" + note
+	}
+	return result
 }
 
 // dispatchAgentCommand adapts runAgentCommand to the HTTP layer's agent

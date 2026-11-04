@@ -948,16 +948,25 @@ func prependRequestOrigin(sessionIdx *session.SessionIndex, agentID string, conn
 }
 
 // sendPromptAttachment sends a prompt's attachment to the chat the prompt's
-// buttons go to. On Telegram/Discord the plain SendDocument targets the LAST
-// chat, which differs from the buttons' chat when two users share the bot
-// (#2275), so the target is resolved explicitly: the default chat for approval
-// prompts, the session's chat for questions — both falling back to the default
-// and then the last chat (the destination rule of SendTextWithButtons /
-// chatIDForSession). A connection that does not address chats itself (the app,
-// already session-bound) uses SendDocument unchanged.
+// buttons go to (the destination rule of attachmentChatID).
 func sendPromptAttachment(conn platform.Connection, kind backendPromptKind, sessionKey, attachmentPath string) error {
+	if chatID := attachmentChatID(conn, kind, sessionKey); chatID != 0 {
+		return conn.SendDocumentToChat(chatID, attachmentPath, "")
+	}
+	return conn.SendDocument(attachmentPath, "")
+}
+
+// attachmentChatID names the chat a session's document goes to on conn; 0 means
+// the plain SendDocument. On Telegram/Discord the plain SendDocument targets
+// the LAST chat, which differs from the buttons' chat when two users share the
+// bot (#2275), so the target is resolved explicitly: the default chat for
+// approval prompts, the session's chat for questions and command documents —
+// both falling back to the default and then the last chat (the destination rule
+// of SendTextWithButtons / chatIDForSession). A connection that does not address
+// chats itself (the app, already session-bound) uses SendDocument unchanged.
+func attachmentChatID(conn platform.Connection, kind backendPromptKind, sessionKey string) int64 {
 	if _, ok := conn.(platform.SessionButtonSender); !ok {
-		return conn.SendDocument(attachmentPath, "")
+		return 0
 	}
 	chatID := session.ChatIDFromKey(conn.DefaultSessionKey())
 	if kind == promptToSessionChat {
@@ -968,10 +977,7 @@ func sendPromptAttachment(conn platform.Connection, kind backendPromptKind, sess
 	if chatID == 0 {
 		chatID = conn.ChatID()
 	}
-	if chatID == 0 {
-		return conn.SendDocument(attachmentPath, "") // last-chat fallback, as the keyboard send does
-	}
-	return conn.SendDocumentToChat(chatID, attachmentPath, "")
+	return chatID
 }
 
 // buildDelegatedSystemPrompt concatenates workspace bootstrap blocks and the

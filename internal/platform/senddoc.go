@@ -1,6 +1,13 @@
 package platform
 
-import "os"
+import (
+	"errors"
+	"os"
+)
+
+// ErrNoSender is SendDocAndRemove's error when there is no connection to send
+// through: the document was dropped, which must not read as a delivery.
+var ErrNoSender = errors.New("no live connection")
 
 // SendDocAndRemove delivers the temp file at path via s — to chatID if
 // nonzero, otherwise s's default chat — and then removes path, regardless of
@@ -11,16 +18,25 @@ import "os"
 // anyone noticed (#1511). path == "" is a no-op (mirrors the `if X.DocPath !=
 // ""` guard every prior call site had).
 //
-// Returns the send error (nil on success, no-op, or nil s) so callers that
-// want to log a failed send still can; most existing call sites discard it,
-// preserving prior behaviour.
+// A document that did not go out is lost once this returns, so the failure is
+// logged here, where no caller can forget it (#2760). The error is also
+// returned (ErrNoSender for a nil s) for a caller that can tell the user;
+// a caller with nobody to tell discards it.
 func SendDocAndRemove(s Sender, chatID int64, path, caption string) error {
 	if path == "" {
 		return nil
 	}
 	defer func() { _ = os.Remove(path) }()
+	err := sendDoc(s, chatID, path, caption)
+	if err != nil {
+		platformLog.Warnf("document not delivered, removing it (chat %d): %v", chatID, err)
+	}
+	return err
+}
+
+func sendDoc(s Sender, chatID int64, path, caption string) error {
 	if s == nil {
-		return nil
+		return ErrNoSender
 	}
 	if chatID != 0 {
 		return s.SendDocumentToChat(chatID, path, caption)

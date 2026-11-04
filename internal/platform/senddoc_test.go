@@ -1,10 +1,14 @@
 package platform
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"foci/internal/log"
 )
 
 // docSendRecorder is a minimal Sender stub that records which of
@@ -89,14 +93,55 @@ func TestSendDocAndRemove_EmptyPathIsNoop(t *testing.T) {
 }
 
 func TestSendDocAndRemove_NilSenderStillRemovesFile(t *testing.T) {
-	// Mirrors cmd/foci-gw/http_handlers.go's POST /command site: no live
-	// connection for the session must still remove the temp file, not just
-	// skip the send.
+	// No live connection for the session must still remove the temp file, not
+	// just skip the send, and must not read as a delivery.
 	path := writeTempFile(t)
-	if err := SendDocAndRemove(nil, 0, path, ""); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err := SendDocAndRemove(nil, 0, path, ""); !errors.Is(err, ErrNoSender) {
+		t.Fatalf("err = %v, want ErrNoSender", err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Error("file should be removed even with a nil sender")
+	}
+}
+
+func TestSendDocAndRemove_LogsUndelivered(t *testing.T) {
+	// Most callers discard the returned error, so the helper itself must leave
+	// a line when a document is lost: the file is gone once it returns.
+	for name, send := range map[string]func(path string) error{
+		"failed send": func(path string) error {
+			return SendDocAndRemove(&docSendRecorder{err: errors.New("upload refused")}, 42, path, "")
+		},
+		"nil sender": func(path string) error { return SendDocAndRemove(nil, 42, path, "") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			log.SetOutput(&buf)
+			t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+			path := writeTempFile(t)
+			if err := send(path); err == nil {
+				t.Fatal("want an error")
+			}
+			out := buf.String()
+			if !strings.Contains(out, "WARN") || !strings.Contains(out, "chat 42") {
+				t.Errorf("want a WARN naming chat 42, got: %q", out)
+			}
+		})
+	}
+}
+
+func TestSendDocAndRemove_DeliveredAndNoopDoNotLog(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	if err := SendDocAndRemove(&docSendRecorder{}, 42, writeTempFile(t), ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := SendDocAndRemove(nil, 42, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "WARN") {
+		t.Errorf("no document was lost, got: %q", buf.String())
 	}
 }
