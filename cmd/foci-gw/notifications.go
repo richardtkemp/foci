@@ -27,9 +27,10 @@ import (
 //
 // Probes run concurrently but the pass waits for all to settle before
 // returning, so a not-authenticated agent's re-login gate is reliably active
-// before handleRestartAndFirstRun injects any startup turns. The per-probe
-// auth-status check is near-instant; its 15s timeout only bites on a wedged
-// binary.
+// before handleRestartAndFirstRun injects any startup turns. The auth-status
+// check is usually near-instant, but it can refresh the OAuth token over the
+// network. A probe that is not done in 15s reports 'indeterminate' here and runs
+// on detached, so this pass blocks for at most about 15s (see ccstream/readiness.go).
 func checkDelegatedReadiness(ctx context.Context, agents map[string]*agentInstance, agentOrder []string) {
 	var wg sync.WaitGroup
 	for _, agentID := range agentOrder {
