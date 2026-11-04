@@ -176,11 +176,7 @@ func FormatText(q *Question, index, total int) string {
 	// List options with descriptions. With no options the question is
 	// typed-answer-only, so hint that the user should reply by typing.
 	if len(q.Options) > 0 {
-		if q.IsMulti() {
-			// This text is the single-select fallback for a multiSelect question
-			// (#2308): only the native app's form offers checkboxes.
-			b.WriteString("\n\n_Several may apply, but pick the one that fits best here (or type your answer)._")
-		}
+		writeMultiSelectHint(&b, q)
 		b.WriteString("\n")
 		for i, opt := range q.Options {
 			b.WriteString("\n")
@@ -208,6 +204,41 @@ func FormatButtonText(q *Question, index, total int) string {
 		b.WriteString("\n\n_Reply with your answer._")
 	}
 	return b.String()
+}
+
+// FormatDescribedButtonText is FormatButtonText for a surface whose callers write
+// option descriptions for the reader (the foci-native ask, #2764): the buttons
+// carry the labels and cannot carry a description, so only an option with a
+// description is listed, unnumbered. It keeps the multiSelect fallback hint.
+func FormatDescribedButtonText(q *Question, index, total int) string {
+	var b strings.Builder
+	writeHeaderAndQuestion(&b, q, index, total)
+	if len(q.Options) == 0 {
+		b.WriteString("\n\n_Reply with your answer._")
+		return b.String()
+	}
+	writeMultiSelectHint(&b, q)
+	listed := false
+	for _, opt := range q.Options {
+		if opt.Description == "" {
+			continue
+		}
+		if !listed {
+			b.WriteString("\n")
+			listed = true
+		}
+		b.WriteString(fmt.Sprintf("\n**%s** — %s", opt.Label, opt.Description))
+	}
+	return b.String()
+}
+
+// writeMultiSelectHint tells a reader of the single-select fallback for a
+// multiSelect question (#2308) that they can only pick one here: only the native
+// app's form offers checkboxes.
+func writeMultiSelectHint(b *strings.Builder, q *Question) {
+	if q.IsMulti() {
+		b.WriteString("\n\n_Several may apply, but pick the one that fits best here (or type your answer)._")
+	}
 }
 
 // writeHeaderAndQuestion writes the bold header (or "Question N/M" for a

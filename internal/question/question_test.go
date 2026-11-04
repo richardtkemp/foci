@@ -239,3 +239,24 @@ func TestParse_PlainStringOptions(t *testing.T) {
 		t.Fatal("expected error for numeric option")
 	}
 }
+
+// TestFormatDescribedButtonText (#2764): the buttons carry the labels, so only a
+// description, which no button can show, is listed; the typed-answer and
+// multiSelect hints stay.
+func TestFormatDescribedButtonText(t *testing.T) {
+	q := &Question{Header: "H", Question: "Which?", Options: []Option{{Label: "Plain"}, {Label: "Rich", Description: "detail"}}}
+	got := FormatDescribedButtonText(q, 0, 2)
+	if want := "**H** (1/2)\n\nWhich?\n\n**Rich** — detail"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if got := FormatDescribedButtonText(&Question{Question: "Q", Options: []Option{{Label: "A"}}}, 0, 1); got != "Q" {
+		t.Errorf("no descriptions: got %q, want only the question", got)
+	}
+	if got := FormatDescribedButtonText(&Question{Question: "Q"}, 0, 1); !strings.Contains(got, "Reply with your answer") {
+		t.Errorf("no options: got %q, want the typed-answer hint", got)
+	}
+	multi := &Question{Question: "Q", MultiSelect: true, Options: []Option{{Label: "A"}}}
+	if got := FormatDescribedButtonText(multi, 0, 1); !strings.Contains(got, "pick the one") {
+		t.Errorf("multiSelect: got %q, want the fallback hint", got)
+	}
+}

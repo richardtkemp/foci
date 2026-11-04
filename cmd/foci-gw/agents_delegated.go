@@ -262,14 +262,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// owner's default chat, questions in the asking session's chat.
 	permPromptFn, questionPromptFn := backendPromptFuncs(backendPromptDeps{
 		ag: ag, connMgr: connMgr, sessionIdx: sessionIdx, agentID: agentID,
-		live:  depthSessionLive,
-		owner: tools.SpawnBranchOwner,
-		chatClosed: func(sk string) bool {
-			// A cross-agent spawn's owner is the caller's session (#2730),
-			// whose chat belongs to the caller's agent.
-			closed, known := app.SessionChatClosed(chatAgentID(sk, agentID), sk)
-			return known && closed
-		},
+		live:       depthSessionLive,
+		owner:      tools.SpawnBranchOwner,
+		chatClosed: spawnerChatClosed(agentID),
 		defaultSession: func() string {
 			if sessionIdx == nil {
 				return ""

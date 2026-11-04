@@ -18,6 +18,7 @@ Asynchronous: the tool posts the question(s) and returns at once. The agent shou
 - **Persisted** to the session index (`agent_metadata`) on every change and restored at startup (24h TTL), so a pending ask survives a restart. `store == nil` = in-memory only.
 - Request IDs are colon-free and auto-namespaced by agentID.
 - **Nothing is dropped, nothing lingers (#2080/#1868):** an answer to an ask foci no longer holds (expired, cancelled, lost in a restart) arrives as `[SYSTEM: LATE ANSWER …]` with the question, ask time and choice; the app deletes the dead prompt (`interactive.remove`). WIRING "Late answers and dead prompts".
+- **An ask nobody can see is refused (#2764):** the presenter returns an error (a spawn's owner's chat is closed, or no chat could show it). The tool call fails with the reason; a queued ask or a later question tells the agent by message instead.
 - **Expiry is not a cancel (#2091):** TTL sweeps send `question.ExpiredData`, never `CancelData`, so the agent hears "your ask expired" (`expiredAskNotice`), not "the user CANCELLED". A new expiry path must do the same.
 - `/pause` marks the ask paused (buttons still resolve; text no longer answers). `/resume` un-pauses.
 

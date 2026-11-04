@@ -1,8 +1,13 @@
 package main
 
 import (
+	"errors"
+	"fmt"
+	"strings"
 	"time"
 
+	"foci/internal/app"
+	"foci/internal/delegator"
 	"foci/internal/platform"
 	"foci/internal/question"
 	"foci/internal/route"
@@ -20,8 +25,18 @@ import (
 // the session's chat. An ask from a spawn's branch is shown in the spawn's
 // owner's chat instead, or the next of chats that can show it (#2630), named
 // as the spawn's.
-func newAskPresentFn(agentID string, connMgr platform.ConnectionManager, chats askChats) tools.AskPresentFn {
-	return func(sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) string {
+//
+// The gates a backend prompt has apply here too (#2764): a spawn whose owner's
+// chat is closed has nobody to ask (chatClosed, #2684), and a question no chat
+// could show is refused with the reason (#2608). Either way the returned error
+// tells the ask layer that nobody saw it.
+func newAskPresentFn(agentID string, connMgr platform.ConnectionManager, chats askChats, chatClosed func(sessionKey string) bool) tools.AskPresentFn {
+	return func(sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, error) {
+		targets := chats.of(sessionKey)
+		if askOwnerChatClosed(targets, sessionKey, chatClosed) {
+			askLog.Warnf("%s", delegator.UnattendedQuestionLog(sessionKey, spawnerChatClosedLabel, summary+" (its spawner's chat "+targets[0]+" is closed)"))
+			return "", errors.New(delegator.UnattendedQuestionMessage)
+		}
 		buttons := make([]platform.ButtonChoice, len(choices))
 		for i, c := range choices {
 			buttons[i] = platform.ButtonChoice{Label: c.Label, Data: c.Data}
@@ -42,7 +57,8 @@ func newAskPresentFn(agentID string, connMgr platform.ConnectionManager, chats a
 		// #2630: a spawn's question goes to its current owner, falling back
 		// up the chain when that chat cannot show it. A failed send leaves no
 		// prompt entry, so msgID is free for the next chat.
-		for _, target := range chats.of(sessionKey) {
+		var failures []string
+		for _, target := range targets {
 			body := text
 			if target != sessionKey {
 				body = prependSpawnOrigin(tools.Spawns, sessionKey, body)
@@ -50,14 +66,33 @@ func newAskPresentFn(agentID string, connMgr platform.ConnectionManager, chats a
 			platformMsgID, err := platform.SendInteractiveMessageWithID(sessionChatResolver(connMgr, target, chatAgentID(target, agentID)), msgID, summary, body, buttons, onClick, onExpire)
 			if err != nil {
 				askLog.Warnf("present question for session=%s in %s failed: %v", sessionKey, target, err)
+				failures = append(failures, fmt.Sprintf("%s: %v", target, err))
 				continue
 			}
 			if target != sessionKey {
 				askLog.Infof("question for session=%s shown in %s (the spawn's owner chain)", sessionKey, target)
 			}
-			return platformMsgID
+			return platformMsgID, nil
 		}
-		return ""
+		return "", fmt.Errorf("foci could not show this question to the user in any chat (%s), so nobody saw it", strings.Join(failures, "; "))
+	}
+}
+
+// askOwnerChatClosed reports that an ask's chats are a spawn's owner chain (only a
+// spawn's first chat differs from the asking session, newAskChats) and the owner's
+// chat is closed. As for a backend prompt (postBackendPrompt), a closed owner stops the
+// walk: the chain's other chats are not where this spawn's user is looking.
+func askOwnerChatClosed(targets []string, sessionKey string, chatClosed func(string) bool) bool {
+	return chatClosed != nil && targets[0] != sessionKey && chatClosed(targets[0])
+}
+
+// spawnerChatClosed is the chatClosed gate of an agent's backend prompts and asks
+// (#2684, #2764): the chat is known to the app and closed. A cross-agent spawn's
+// owner is the caller's session (#2730), whose chat belongs to the caller's agent.
+func spawnerChatClosed(agentID string) func(sessionKey string) bool {
+	return func(sk string) bool {
+		closed, known := app.SessionChatClosed(chatAgentID(sk, agentID), sk)
+		return known && closed
 	}
 }
 
@@ -111,11 +146,17 @@ func newAskChats(owner func(branchKey string) (string, bool), d backendPromptDep
 // presenter — for any other transport (Telegram/Discord don't implement
 // BatchButtonSender) or when the app client is offline/uncapable. So chat
 // platforms and legacy app clients keep the one-question-at-a-time flow unchanged.
-func newAskPresentBatchFn(agentID string, connMgr platform.ConnectionManager, chats askChats) tools.AskPresentBatchFn {
+// A spawn whose owner's chat is closed also gets false: the sequential presenter
+// refuses it and reports why (#2764).
+func newAskPresentBatchFn(agentID string, connMgr platform.ConnectionManager, chats askChats, chatClosed func(sessionKey string) bool) tools.AskPresentBatchFn {
 	return func(sessionKey, promptID string, qs []question.Question, onResponse func(answers []string)) bool {
+		targets := chats.of(sessionKey)
+		if askOwnerChatClosed(targets, sessionKey, chatClosed) {
+			return false
+		}
 		// #2630: the first of the ask's chats that can take the form; none =
 		// sequential, which walks the same chats.
-		for _, target := range chats.of(sessionKey) {
+		for _, target := range targets {
 			bs, ok := connMgr.ForSessionOrPrimary(target, chatAgentID(target, agentID)).(platform.BatchButtonSender)
 			if !ok {
 				continue // not the app (or no addressable conn)

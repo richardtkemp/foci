@@ -50,7 +50,7 @@ func TestAskFromSpawnShownInOwner(t *testing.T) {
 			hub := &fakeAppHub{bound: tc.bound}
 			chats := newAskChats(owner, backendPromptDeps{sessionIdx: idx, agentID: "main", live: func(k string) bool { return k != l2 }})
 			msgID := fmt.Sprintf("ask-2630-%d", i)
-			id := newAskPresentFn("main", hub, chats)(spawn, msgID, "Which way?", "Q", askChoices(), func(string) {})
+			id, _ := newAskPresentFn("main", hub, chats, nil)(spawn, msgID, "Which way?", "Q", askChoices(), func(string) {})
 			t.Cleanup(func() { platform.CancelInteractiveMessage(msgID, "done") })
 
 			if id == "" || len(hub.shownIn) != 1 || hub.shownIn[0] != tc.want {

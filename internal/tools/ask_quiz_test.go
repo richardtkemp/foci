@@ -295,9 +295,9 @@ func TestAsk_QuizRevealPostedOnceSequential(t *testing.T) {
 		defer mu.Unlock()
 		events = append(events, ev)
 	}
-	present := func(sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(string)) string {
+	present := func(sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(string)) (string, error) {
 		record("present")
-		return ""
+		return "", nil
 	}
 	closeMsg := func(msgID, finalText string) { record("close") }
 	rec := &quizRevealRecorder{}

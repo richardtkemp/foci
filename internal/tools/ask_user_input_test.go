@@ -190,7 +190,7 @@ func TestAskDelivery_SystemKinds(t *testing.T) {
 		f := newUserRouteFixture()
 		s := f.state()
 		qs := []question.Question{{Question: "pick", Options: []question.Option{{Label: "A"}}}}
-		primary, _ := s.start(askSession, qs, nil, graderConfig{})
+		primary, _, _ := s.start(askSession, qs, nil, graderConfig{})
 		s.start(askSession, qs, nil, graderConfig{}) // queued behind the primary
 
 		// Age the queued ask past the TTL, then resolve the primary: the

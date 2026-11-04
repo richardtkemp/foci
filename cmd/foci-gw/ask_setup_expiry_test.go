@@ -42,7 +42,7 @@ func TestAskPrompt_ExpiryResolvesAsExpired(t *testing.T) {
 	choices := []question.Choice{{Label: "Yes", Data: "qa:0"}, {Label: "Cancel", Data: question.CancelData}}
 
 	var presented, restored []string
-	newAskPresentFn("a", mgr, nil)("a/s", "ask-2091-present-q0", "Q?", "Q", choices, func(d string) { presented = append(presented, d) })
+	newAskPresentFn("a", mgr, nil, nil)("a/s", "ask-2091-present-q0", "Q?", "Q", choices, func(d string) { presented = append(presented, d) })
 	newAskRestoreFn("a", mgr, nil)("a/s", "ask-2091-restore-q0", "m-2", choices, func(d string) { restored = append(restored, d) })
 
 	platform.CleanupExpiredInteractive(-time.Hour) // every entry is older than a cutoff in the future

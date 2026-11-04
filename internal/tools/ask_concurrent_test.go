@@ -455,9 +455,9 @@ func TestAsk_QueuedAskExpiresAtPresentationTime(t *testing.T) {
 	st := newAskState(p.present, nil, d.deliver, nil, nil, "test")
 
 	qs := []question.Question{{Question: "OLDER-Q"}}
-	older, _ := st.start(askSession, qs, nil, graderConfig{})
-	stale, staleQueued := st.start(askSession, []question.Question{{Question: "STALE-Q"}}, nil, graderConfig{})
-	fresh, freshQueued := st.start(askSession, []question.Question{{Question: "FRESH-Q"}}, nil, graderConfig{})
+	older, _, _ := st.start(askSession, qs, nil, graderConfig{})
+	stale, staleQueued, _ := st.start(askSession, []question.Question{{Question: "STALE-Q"}}, nil, graderConfig{})
+	fresh, freshQueued, _ := st.start(askSession, []question.Question{{Question: "FRESH-Q"}}, nil, graderConfig{})
 	if !staleQueued || !freshQueued {
 		t.Fatalf("start reported queued=%v/%v for asks behind a live one, want both queued", staleQueued, freshQueued)
 	}

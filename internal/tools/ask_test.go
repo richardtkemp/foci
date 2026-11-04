@@ -25,17 +25,22 @@ type fakePresenter struct {
 	lastChoices   []question.Choice
 	onResponse    func(string)
 	platformMsgID string // returned from present (simulates the platform-side message id)
+	fail          error  // present returns this once failAfter presents have succeeded
+	failAfter     int
 }
 
-func (f *fakePresenter) present(sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) string {
+func (f *fakePresenter) present(sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.presents++
+	if f.fail != nil && f.presents > f.failAfter {
+		return "", f.fail
+	}
 	f.lastMsgID = msgID
 	f.lastText = text
 	f.lastChoices = choices
 	f.onResponse = onResponse
-	return f.platformMsgID
+	return f.platformMsgID, nil
 }
 
 func (f *fakePresenter) answer(data string) {

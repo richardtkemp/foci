@@ -365,7 +365,7 @@ var toolTable = []toolEntry{
 	{name: "ask", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {
 		chats := d.askChats()
 		t, router := tools.NewAskTool(
-			newAskPresentFn(d.p.acfg.ID, d.connMgr, chats),
+			newAskPresentFn(d.p.acfg.ID, d.connMgr, chats, spawnerChatClosed(d.p.acfg.ID)),
 			newAskRestoreFn(d.p.acfg.ID, d.connMgr, chats),
 			d.askDeliver,
 			func(msgID, finalText string) { _ = platform.CancelInteractiveMessage(msgID, finalText) },
@@ -373,7 +373,7 @@ var toolTable = []toolEntry{
 			// The user-input delivery route (#2233): answer batches, late
 			// answers and the cancel notice dispatch like typed messages.
 			tools.WithUserInputDeliver(d.askUserDeliver),
-			tools.WithBatchPresent(newAskPresentBatchFn(d.p.acfg.ID, d.connMgr, chats)),
+			tools.WithBatchPresent(newAskPresentBatchFn(d.p.acfg.ID, d.connMgr, chats, spawnerChatClosed(d.p.acfg.ID))),
 			tools.WithBatchRestore(newAskRestoreBatchFn(d.p.acfg.ID, d.connMgr, chats)),
 			tools.WithRemove(newAskRemoveFn(d.p.acfg.ID, d.connMgr, chats)),
 			// Quiz reveals (#1316): after a chat user answers a quiz question,

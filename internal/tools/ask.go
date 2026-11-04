@@ -68,11 +68,15 @@ type graderConfig struct {
 // It must be non-blocking. msgID is a unique, colon-free identifier for the
 // interactive message (the platform uses it to route the click back).
 //
-// It returns the platform-side message id of the posted message (empty if it
-// could not be posted, or the platform has no addressable id). The ask layer
-// persists this so a restart can address the same message for cancel/expiry
-// edits — see AskRestoreFn.
-type AskPresentFn func(sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) string
+// It returns the platform-side message id of the posted message (empty if the
+// platform has no addressable id). The ask layer persists this so a restart can
+// address the same message for cancel/expiry edits — see AskRestoreFn.
+//
+// A non-nil error means nobody will see the question, and its text is the reason
+// the agent is given: the ask layer drops the ask and tells the agent, because a
+// question on no screen has no expiry sweep and would stay pending until a
+// restart (#2764).
+type AskPresentFn func(sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, error)
 
 // AskPresentBatchFn presents ALL of an ask's questions at once as a single
 // batched prompt (native app only) and arranges for onResponse to be called once
@@ -425,7 +429,10 @@ func (a *askState) nextRequestID() string {
 // as its own self-contained form, which is what makes it unambiguous which ask a
 // typed answer belongs to; a chat transport has no such affordance, so there the
 // ask waits and promoteQueued presents it when the primary resolves.
-func (a *askState) start(sessionKey string, qs []question.Question, originalInput json.RawMessage, grader graderConfig) (string, bool) {
+//
+// A non-nil error means the question could not be shown to anyone: the ask is
+// gone again, and the error is the agent's whole answer (#2764).
+func (a *askState) start(sessionKey string, qs []question.Question, originalInput json.RawMessage, grader graderConfig) (string, bool, error) {
 	reqID := a.nextRequestID()
 	p := &pendingAsk{
 		requestID:     reqID,
@@ -458,7 +465,12 @@ func (a *askState) start(sessionKey string, qs []question.Question, originalInpu
 		if a.tryPresentBatch(p) {
 			presented = true
 		} else if !busy {
-			a.presentCurrent(p)
+			if err := a.presentCurrent(p); err != nil {
+				askLog.Warnf("session=%s req=%s ask could not be shown, dropped: %v", sessionKey, reqID, err)
+				a.mu.Lock()
+				a.resolveLocked(p)
+				return reqID, false, err
+			}
 			presented = true
 		}
 	}
@@ -466,7 +478,7 @@ func (a *askState) start(sessionKey string, qs []question.Question, originalInpu
 		askLog.Infof("session=%s req=%s queued behind the session's active ask (%d ahead of it) — coexisting asks are app-only",
 			sessionKey, reqID, len(siblings))
 	}
-	return reqID, !presented
+	return reqID, !presented, nil
 }
 
 // primaryLocked returns the session's PRIMARY ask: the oldest one that is actually
@@ -528,7 +540,9 @@ func (a *askState) promoteQueued(sessionKey string) {
 		a.mu.Unlock()
 		askLog.Infof("session=%s req=%s promoted from the queue — presenting now", sessionKey, p.requestID)
 		if !a.tryPresentBatch(p) {
-			a.presentCurrent(p)
+			if err := a.presentCurrent(p); err != nil {
+				a.failPresent(p, err)
+			}
 		}
 		return
 	}
@@ -575,13 +589,14 @@ func (a *askState) tryPresentBatch(p *pendingAsk) bool {
 }
 
 // presentCurrent shows the question the accumulator is currently positioned on.
-func (a *askState) presentCurrent(p *pendingAsk) {
+// An error means nobody will see it; the caller owns ending the ask.
+func (a *askState) presentCurrent(p *pendingAsk) error {
 	q := p.acc.Current()
 	if q == nil {
-		return
+		return nil
 	}
 	idx := p.acc.Index()
-	text := question.FormatText(q, idx, p.acc.Total())
+	text := question.FormatDescribedButtonText(q, idx, p.acc.Total())
 	summary := q.Header
 	if summary == "" {
 		summary = "Question"
@@ -590,9 +605,12 @@ func (a *askState) presentCurrent(p *pendingAsk) {
 	// colon-free id derived from the request id and the question index.
 	msgID := questionMsgID(p.requestID, idx)
 	if a.present != nil {
-		platformMsgID := a.present(p.sessionKey, msgID, text, summary, question.Choices(q), func(data string) {
+		platformMsgID, err := a.present(p.sessionKey, msgID, text, summary, question.Choices(q), func(data string) {
 			a.handleResponse(p.requestID, data)
 		})
+		if err != nil {
+			return err
+		}
 		// Record where this question landed so a restart can address it for
 		// cancel/expiry edits, then checkpoint. (If the ask was already
 		// resolved by a racing click, p is gone from byReqID and persistLocked
@@ -602,6 +620,52 @@ func (a *askState) presentCurrent(p *pendingAsk) {
 		a.persistLocked()
 		a.mu.Unlock()
 	}
+	return nil
+}
+
+// failPresent ends an ask whose next question could not be shown to anyone
+// (#2764), for the paths with no tool call left to return an error to: a queued
+// ask's promotion and the next question of a sequence. The agent is waiting, so
+// it is always told; this is not the trivial notice the #1302 cold-cache gate
+// exists for. Answers already given are the user's input and are delivered with
+// the notice.
+func (a *askState) failPresent(p *pendingAsk, cause error) {
+	a.mu.Lock()
+	if a.byReqID[p.requestID] != p {
+		a.mu.Unlock()
+		return // resolved by a racing click or /complete
+	}
+	idx, total := p.acc.Index(), p.acc.Total()
+	answeredQs := p.acc.Questions()[:idx]
+	answers, multi := p.acc.Answers(), p.acc.Multi()
+	a.removeLocked(p)
+	a.persistLocked()
+	a.mu.Unlock()
+
+	askLog.Warnf("session=%s req=%s ask could not be shown, dropped (%d/%d answered): %v", p.sessionKey, p.requestID, idx, total, cause)
+	if idx == 0 {
+		a.deliverMsg(deliverSystem, p.sessionKey, p.requestID, fmt.Sprintf(
+			"[SYSTEM: your `ask` request (req %s) was dropped without being shown to the user, so nothing was answered. Reason: %v]",
+			p.requestID, cause))
+	} else {
+		a.deliverPartial(p, answeredQs, answers, multi, idx, total,
+			formatUndeliveredBatch(answeredQs, answers, multi, idx, total, cause))
+	}
+	a.promoteQueued(p.sessionKey)
+}
+
+// deliverPartial delivers an ask's answered subset: raw as it is, or through the
+// ask's grader, told the set is partial, off the caller's goroutine (mirrors the
+// full-answer path). Shared by /complete and failPresent. Caller has already
+// removed p from the registry, and qs, answers and multi are a snapshot of it.
+func (a *askState) deliverPartial(p *pendingAsk, qs []question.Question, answers map[string]string, multi map[string]question.MultiAnswer, answered, total int, raw string) {
+	if p.grader.path == "" {
+		a.deliverMsg(deliverUserInput, p.sessionKey, p.requestID, raw)
+		return
+	}
+	go func() {
+		a.deliverMsg(deliverUserInput, p.sessionKey, p.requestID, a.runGrader(p, qs, answers, multi, raw, true, answered, total))
+	}()
 }
 
 // handleResponse records one answer and either presents the next question or,
@@ -612,11 +676,13 @@ func (a *askState) handleResponse(requestID, data string) {
 	p := a.byReqID[requestID]
 	if p == nil {
 		a.mu.Unlock()
+		logNoAskForAnswer(requestID, data)
 		return
 	}
 	q := p.acc.Current()
 	if q == nil {
 		a.mu.Unlock()
+		logNoAskForAnswer(requestID, data)
 		return
 	}
 	if data == question.ExpiredData {
@@ -662,7 +728,9 @@ func (a *askState) handleResponse(requestID, data string) {
 	}
 
 	if !done {
-		a.presentCurrent(p)
+		if err := a.presentCurrent(p); err != nil {
+			a.failPresent(p, err)
+		}
 		return
 	}
 
@@ -671,6 +739,17 @@ func (a *askState) handleResponse(requestID, data string) {
 	a.resolveLocked(p)
 
 	a.deliverBatch(p)
+}
+
+// logNoAskForAnswer records an answer that reached the ask layer for an ask it no
+// longer holds: nothing can deliver it, so the log is its only trace (#2764). An
+// expiry of a resolved ask carries no answer, so it stays out of WARN.
+func logNoAskForAnswer(requestID, data string) {
+	if data == question.ExpiredData {
+		askLog.Debugf("req=%s expiry for an ask that has already resolved", requestID)
+		return
+	}
+	askLog.Warnf("req=%s answer %q for an ask foci no longer holds: dropped", requestID, answerEcho(data))
 }
 
 // deliverBatch assembles the final answers (running the grader if one is set) and
@@ -703,6 +782,7 @@ func (a *askState) handleBatchResponse(requestID string, answers []string) {
 	p := a.byReqID[requestID]
 	if p == nil {
 		a.mu.Unlock()
+		logNoAskForAnswer(requestID, strings.Join(answers, ", "))
 		return
 	}
 	askLog.Debugf("session=%s req=%s batch response: %d answers, accumulator at idx=%d/%d",
@@ -1272,9 +1352,7 @@ func (a *askState) completeSession(sessionKey string) (answered, total int, ok b
 	answeredQs := p.acc.Questions()[:idx]
 	answers := p.acc.Answers()
 	multi := p.acc.Multi()
-	sess := p.sessionKey
 	curMsgID := questionMsgID(p.requestID, idx) // the still-displayed question
-	hasGrader := p.grader.path != ""
 	a.resolveLocked(p)
 
 	// Close the still-live current question so its Cancel/option buttons can't be
@@ -1284,17 +1362,8 @@ func (a *askState) completeSession(sessionKey string) (answered, total int, ok b
 		a.closeMsg(curMsgID, "⏹ Completed early")
 	}
 
-	raw := formatPartialBatch(answeredQs, answers, multi, idx, total)
-	if !hasGrader {
-		a.deliverMsg(deliverUserInput, sess, p.requestID, raw)
-		return idx, total, true
-	}
-	// Grader configured: run it on the partial set off the caller's goroutine
-	// (mirrors the full-answer path) so the slash-command handler returns at once;
-	// the graded result is delivered to the agent when ready.
-	go func() {
-		a.deliverMsg(deliverUserInput, sess, p.requestID, a.runGrader(p, answeredQs, answers, multi, raw, true, idx, total))
-	}()
+	// A grader runs off this goroutine, so the slash-command handler returns at once.
+	a.deliverPartial(p, answeredQs, answers, multi, idx, total, formatPartialBatch(answeredQs, answers, multi, idx, total))
 	return idx, total, true
 }
 
@@ -1315,6 +1384,16 @@ func formatAnswerBatch(qs []question.Question, answers map[string]string, multi 
 func formatPartialBatch(qs []question.Question, answers map[string]string, multi map[string]question.MultiAnswer, answered, total int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[SYSTEM: the user completed your `ask` request early, answering %d of %d questions. Only the answered selections follow; the remaining %d were left unanswered on purpose — act on what you have, don't re-ask the rest unless genuinely needed.]\n", answered, total, total-answered)
+	writeAnswerBody(&b, qs, answers, multi)
+	return b.String()
+}
+
+// formatUndeliveredBatch renders the inbound message for an ask that ended early
+// because its next question could not be shown to anyone (#2764): the answers so
+// far, and why the rest were never asked.
+func formatUndeliveredBatch(qs []question.Question, answers map[string]string, multi map[string]question.MultiAnswer, answered, total int, cause error) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "[SYSTEM: your `ask` request ended early: the user answered %d of %d questions, and the next could not be shown to them, so the remaining %d were never asked. Reason: %v]\n", answered, total, total-answered, cause)
 	writeAnswerBody(&b, qs, answers, multi)
 	return b.String()
 }
@@ -1759,7 +1838,10 @@ func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn
 				return ToolResult{}, fmt.Errorf("ask: grader_args set but no grader executable given")
 			}
 
-			reqID, queued := state.start(sessionKey, in.Questions, params, grader)
+			reqID, queued, err := state.start(sessionKey, in.Questions, params, grader)
+			if err != nil {
+				return ToolResult{}, fmt.Errorf("ask: %w", err)
+			}
 			status, note := "asked", "Posted to the user. Their answers will arrive later as a new message — end your turn now; do not wait."
 			if queued {
 				status, note = "queued", "NOT posted yet: this session already has a question on the user's screen, and this transport cannot show two at once. Your ask is queued and will be presented when that one is answered. Its answers still arrive later as a new message — end your turn now; do not wait, and do not re-ask."

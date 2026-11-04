@@ -136,7 +136,7 @@ func TestAskToolTable_WiresUserInputDeliver(t *testing.T) {
 		p:              p,
 		path:           pathAPI,
 		registry:       registry,
-		connMgr:        stubConnMgr{},
+		connMgr:        oneConnMgr{conn: &buttonStubConn{stubConn{sessionKey: "test/main"}}},
 		agLazy:         func() *agent.Agent { return nil },
 		wakeFn:         stubWakeFn,
 		askDeliver:     sys.fn,
@@ -252,6 +252,7 @@ func TestAskExecRegistry_WiresUserInputDeliver(t *testing.T) {
 	p.ctx = context.Background()
 	p.agentResolverFn = func(string) *agentInstance { return &agentInstance{ag: target} }
 
+	p.connMgr = oneConnMgr{conn: &buttonStubConn{stubConn{sessionKey: "test/main"}}}
 	registry := buildExecRegistry(p, stubWakeFn, nil, func() *agent.Agent { return target })
 	startAskAndAnswer(t, registry, target)
 	wantUserInputEnvelope(t, envs)
@@ -278,6 +279,7 @@ func TestConfigureAPI_WiresUserInputAskDeliver(t *testing.T) {
 	p.store = store
 	p.agentResolverFn = func(string) *agentInstance { return &agentInstance{ag: target} }
 
+	p.connMgr = oneConnMgr{conn: &buttonStubConn{stubConn{sessionKey: "test/main"}}}
 	// The same preamble setupAgent runs before configureAPI (see
 	// TestConfigureAPI_SummariserCarriesRouting).
 	shared := resolveSharedSetup(p)
