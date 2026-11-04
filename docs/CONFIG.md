@@ -766,8 +766,6 @@ Tool behavior settings (global-only fields). Fields that can be overridden per-a
 | `tmux_cols` | int | `300` | Window width (columns) applied via `resize-window` after `tmux new-session`. |
 | `tmux_rows` | int | `30` | Window height (rows) applied via `resize-window` after `tmux new-session`. |
 | `exec_default_timeout` | int | `30` | Default timeout for exec commands in seconds. |
-| `tmux_command_timeout` | string | `"5s"` | Timeout for tmux control commands. Go duration format. |
-| `web_fetch_max_bytes` | int | `1048576` | Max bytes to read from web fetch (1MB default). |
 | `summary_context_turns` | int | `5` | Number of recent conversation turns included as context when auto-summarising oversized tool results. |
 | `summary_context_chars` | int | `6000` | Max characters of conversation context sent to the cheap model for auto-summary. |
 | `tmux_memory_check_interval` | string | `"5m"` | How often to check tmux server RSS. Go duration format. `"0"` disables monitoring. |
@@ -1245,6 +1243,7 @@ Global defaults set in `[tools]`, overridable per-agent via `[agents.tools]`. Pe
 | `max_upload_file_size` | int | `52428800` | Max file size in bytes for multipart/form-data file uploads (default 50MB). Global: `[tools]`. |
 | `max_file_read_bytes` | int | `52428800` | Max file size in bytes the `read`/`edit` tools will load. Files larger than this are refused by stat size before being read into memory (large-file OOM guard); use `offset`/`limit` for big files. Global: `[tools]`, per-agent: `[[agents]].tools`. |
 | `http_max_spill_bytes` | int | `52428800` | Ceiling on `http_request` response bytes retained (default 50MB). Text responses longer than the inline preview (capped at `max_result_chars`; 1MB if that is 0) spill the full body to disk so it isn't discarded (an explicit `max_response_bytes` is a hard cap: nothing past it is kept or spilled) — the agent reads it via the tool-result guard (API path) or by streaming it through `foci-call` (delegated path). This ceiling bounds disk use for untrusted remote bodies; bodies beyond it are truncated on disk (logged). Global: `[tools]`, per-agent: `[[agents]].tools`. |
+| `web_fetch_max_bytes` | int | `1048576` | Max bytes of a response the builtin `web_fetch` reads (default 1 MiB; `0` means the default, a negative value is refused). A longer response is cut at this limit and the result ends with a note that says so. Does not apply to `fetch_provider = "anthropic"`. Applies live. Global: `[tools]`, per-agent: `[[agents]].tools`. |
 | `search_provider` | string | `"brave"` | Web search provider: `"brave"` (client-side, needs `brave_api_key`) or `"anthropic"` (server-side). Brave is recommended: Anthropic's server-side search returns encrypted content blobs that massively inflate token counts (observed: 256k tokens from just two searches) and bypass the tool result size guard entirely. Brave results are client-side, guardable, and far more token-efficient. Global: `[tools]`. |
 | `fetch_provider` | string | `"builtin"` | Web fetch provider. See [TOOLS.md](TOOLS.md) for provider details. Global: `[tools]`. |
 | `todo_format` | string | `"lines"` | Todo list rendering format: `"lines"` (one item per line) or `"table"` (tabular layout). Global: `[tools]`. |

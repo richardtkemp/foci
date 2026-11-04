@@ -128,3 +128,24 @@ func TestToolAccess_UnknownNameRejected(t *testing.T) {
 		})
 	}
 }
+
+// #2770: web_fetch_max_bytes resolves from the global value, an agent overrides
+// it, and an explicit 0 reaches the consumer, which treats it as the default.
+func TestWebFetchMaxBytes_Resolve(t *testing.T) {
+	const global = "web_fetch_max_bytes = 2000"
+	for _, tc := range []struct {
+		name  string
+		agent string
+		want  int64
+	}{
+		{"global", "", 2000},
+		{"agent override", "web_fetch_max_bytes = 3000", 3000},
+		{"agent zero", "web_fetch_max_bytes = 0", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolvedToolsFor(t, global, tc.agent).WebFetchMaxBytes; got != tc.want {
+				t.Errorf("WebFetchMaxBytes = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}

@@ -60,7 +60,6 @@ search_limit = 50
 [tools]
 exec_default_timeout = 60
 max_summary_chars = 500000
-tmux_command_timeout = "10s"
 web_fetch_max_bytes = 2097152
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -121,11 +120,8 @@ web_fetch_max_bytes = 2097152
 	if DerefInt(cfg.Tools.MaxSummaryChars) != 500000 {
 		t.Errorf("Tools.MaxSummaryChars = %d, want 500000", cfg.Tools.MaxSummaryChars)
 	}
-	if cfg.Tools.TmuxCommandTimeout != "10s" {
-		t.Errorf("Tools.TmuxCommandTimeout = %q, want 10s", cfg.Tools.TmuxCommandTimeout)
-	}
-	if cfg.Tools.WebFetchMaxBytes != 2097152 {
-		t.Errorf("Tools.WebFetchMaxBytes = %d, want 2097152", cfg.Tools.WebFetchMaxBytes)
+	if got := DerefInt64(cfg.Tools.WebFetchMaxBytes); got != 2097152 {
+		t.Errorf("Tools.WebFetchMaxBytes = %d, want 2097152", got)
 	}
 }
 
@@ -171,11 +167,9 @@ id = "test"
 	if cfg.Tools.MaxSummaryChars != nil {
 		t.Errorf("default Tools.MaxSummaryChars should be nil (code default at use time), got %v", cfg.Tools.MaxSummaryChars)
 	}
-	if cfg.Tools.TmuxCommandTimeout != "5s" {
-		t.Errorf("default Tools.TmuxCommandTimeout = %q, want 5s", cfg.Tools.TmuxCommandTimeout)
-	}
-	if cfg.Tools.WebFetchMaxBytes != 1048576 {
-		t.Errorf("default Tools.WebFetchMaxBytes = %d, want 1048576", cfg.Tools.WebFetchMaxBytes)
+	// The tag must match the fallback const (1 MiB, the limit hardcoded before #2770).
+	if got := DerefInt64(cfg.Tools.WebFetchMaxBytes); got != DefaultWebFetchMaxBytes {
+		t.Errorf("default Tools.WebFetchMaxBytes = %d, want %d", got, DefaultWebFetchMaxBytes)
 	}
 }
 

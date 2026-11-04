@@ -671,7 +671,6 @@ bind = "127.0.0.1"
 # tmux_rows = 30
 # exec_auto_background = 10
 # exec_default_timeout = 30
-# tmux_command_timeout = "5s"
 # web_fetch_max_bytes = 1048576
 # max_concurrent_spawns = 10
 # explore_max_depth = 100                # max tool loops for explore spawn mode

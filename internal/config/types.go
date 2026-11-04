@@ -611,6 +611,11 @@ const DefaultVoiceHTTPTimeout = "60s"
 // (mirrors the ToolConfig default tag). Guards against large-file OOM.
 const DefaultMaxFileReadBytes int64 = 50 << 20 // 50 MiB
 
+// DefaultWebFetchMaxBytes is the fallback limit on the response bytes web_fetch
+// reads, when [tools] web_fetch_max_bytes is unset or 0 (mirrors the ToolConfig
+// default tag).
+const DefaultWebFetchMaxBytes int64 = 1 << 20 // 1 MiB
+
 // VoiceConfig holds TTS/STT settings.
 // Global: [voice], per-agent: [[agents]].voice.*
 type VoiceConfig struct {
@@ -666,6 +671,7 @@ type ToolConfig struct {
 	MaxUploadFileSize   *int64  `toml:"max_upload_file_size"  default:"52428800"  hot:"immediate" desc:"Maximum file size, in bytes, the upload tool will accept (default 50 MiB); larger files are rejected"`                                                                                                           // 50MB
 	MaxFileReadBytes    *int64  `toml:"max_file_read_bytes"   default:"52428800"  hot:"immediate" desc:"Maximum file size, in bytes, the read and edit tools will load (default 50 MiB); larger files must be read with an offset/limit range"`                                                                          // 50MB
 	HTTPMaxSpillBytes   *int64  `toml:"http_max_spill_bytes"  default:"52428800"  hot:"immediate" desc:"Maximum bytes of an http_request response body kept at all (default 50 MiB): text past the inline preview (capped at max_result_chars) is saved to a file on disk, and anything beyond this ceiling is dropped"` // 50MB
+	WebFetchMaxBytes    *int64  `toml:"web_fetch_max_bytes"   default:"1048576"   hot:"immediate" desc:"Maximum bytes of a response the builtin web_fetch reads (default 1 MiB, 0 means the default); a longer response is cut there and the result says so"`
 	TmuxAutopilot       *bool   `toml:"tmux_autopilot"        default:"true"      desc:"Automatically watch a tmux pane's output after you send it input, and stop watching once it goes quiet, without needing manual watch/unwatch calls"`
 	TmuxWatchThreshold  *string `toml:"tmux_watch_threshold"  default:"30s"       desc:"How long a tmux pane must produce no new output before a watch is considered idle and reports back (default 30s)" type:"duration"`
 	TmuxSessionTTL      *string `toml:"tmux_session_ttl"      default:"24h"       desc:"Idle tmux sessions are automatically killed after being inactive this long (default 24h); set to 0 to disable auto-kill" type:"duration"`
@@ -1247,11 +1253,9 @@ type ToolsConfig struct {
 	ToolConfig    // global tool behavioral defaults (resolved via Merge with per-agent)
 
 	TempDir                 string   `toml:"temp_dir"                   default:"/tmp/foci/tool-results" desc:"Where to write large tool result files (default /tmp/foci/tool-results)"`
-	TmuxCols                int      `toml:"tmux_cols"                  default:"300"       desc:"Number of columns for the tmux terminal window created for running shell commands"` // tmux window columns on start (default 300)
-	TmuxRows                int      `toml:"tmux_rows"                  default:"30"        desc:"Number of rows for the tmux terminal window created for running shell commands"`    // tmux window rows on start (default 30)
-	ExecDefaultTimeout      int      `toml:"exec_default_timeout"       default:"30"        desc:"Default number of seconds a shell command may run before it is timed out"`          // default timeout for exec commands in seconds (default 30)
-	TmuxCommandTimeout      string   `toml:"tmux_command_timeout"       default:"5s" desc:"Timeout for tmux control commands (default 5s)" type:"duration"`
-	WebFetchMaxBytes        int      `toml:"web_fetch_max_bytes"        default:"1048576" desc:"Maximum bytes to read from a web fetch result (default 1 MiB)"`
+	TmuxCols                int      `toml:"tmux_cols"                  default:"300"       desc:"Number of columns for the tmux terminal window created for running shell commands"`    // tmux window columns on start (default 300)
+	TmuxRows                int      `toml:"tmux_rows"                  default:"30"        desc:"Number of rows for the tmux terminal window created for running shell commands"`       // tmux window rows on start (default 30)
+	ExecDefaultTimeout      int      `toml:"exec_default_timeout"       default:"30"        desc:"Default number of seconds a shell command may run before it is timed out"`             // default timeout for exec commands in seconds (default 30)
 	ToolCallPreviewChars    int      `toml:"tool_call_preview_chars"    default:"450"       desc:"Maximum characters of a tool call's parameters shown in the Telegram preview message"` // max chars for tool call param preview in Telegram (default 450)
 	TmuxMemoryCheckInterval string   `toml:"tmux_memory_check_interval" default:"5m" desc:"How often to check tmux RSS for memory limits (default 5m, 0 disables)" type:"duration"`
 	TmuxMemoryWarn          string   `toml:"tmux_memory_warn"           default:"10%" desc:"RSS threshold to warn about tmux memory use (percentage of RAM or absolute like 2gb; default 10%)"`

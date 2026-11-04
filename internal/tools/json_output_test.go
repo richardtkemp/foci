@@ -42,7 +42,7 @@ func TestWebFetchJSONOutput(t *testing.T) {
 	defer srv.Close()
 	params, _ := json.Marshal(map[string]any{"url": srv.URL + "/old"})
 
-	text, err := NewWebFetchTool().Execute(context.Background(), params)
+	text, err := NewWebFetchTool(nil).Execute(context.Background(), params)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestWebFetchJSONOutput(t *testing.T) {
 		t.Fatalf("text form changed: %+v", text)
 	}
 
-	r, err := NewWebFetchTool().Execute(jsonCtx(), params)
+	r, err := NewWebFetchTool(nil).Execute(jsonCtx(), params)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -24,7 +24,7 @@ func runWebFetch(t *testing.T, status int, header map[string]string, body []byte
 	}))
 	defer server.Close()
 	params, _ := json.Marshal(map[string]interface{}{"url": server.URL, "raw": raw})
-	return NewWebFetchTool().Execute(context.Background(), params)
+	return NewWebFetchTool(nil).Execute(context.Background(), params)
 }
 
 func TestWebFetchBotChallengeIsAnError(t *testing.T) {

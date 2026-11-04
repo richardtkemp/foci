@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/config"
+
 	readability "github.com/go-shiori/go-readability"
 	"golang.org/x/net/html"
 )
@@ -95,7 +97,7 @@ func TestWebFetchSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tool := NewWebFetchTool()
+	tool := NewWebFetchTool(nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": server.URL,
 	})
@@ -122,7 +124,7 @@ func TestWebFetchRaw(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tool := NewWebFetchTool()
+	tool := NewWebFetchTool(nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": server.URL,
 		"raw": true,
@@ -149,7 +151,7 @@ func TestWebFetchReadabilityFallback(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tool := NewWebFetchTool()
+	tool := NewWebFetchTool(nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": server.URL,
 	})
@@ -180,7 +182,7 @@ func TestWebFetchMarkdownStructure(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tool := NewWebFetchTool()
+	tool := NewWebFetchTool(nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": server.URL,
 	})
@@ -272,7 +274,7 @@ func TestWebFetchThinExtraction(t *testing.T) {
 			}))
 			defer server.Close()
 
-			tool := NewWebFetchTool()
+			tool := NewWebFetchTool(nil)
 			params, _ := json.Marshal(map[string]interface{}{"url": server.URL})
 			result, err := tool.Execute(context.Background(), params)
 			if err != nil {
@@ -296,7 +298,7 @@ func TestWebFetchNoTruncation(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tool := NewWebFetchTool()
+	tool := NewWebFetchTool(nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": server.URL,
 	})
@@ -320,7 +322,7 @@ func TestWebFetchServerError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tool := NewWebFetchTool()
+	tool := NewWebFetchTool(nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": server.URL,
 	})
@@ -432,7 +434,7 @@ func TestWebSearchAPIError(t *testing.T) {
 func TestWebFetchInvalidURL(t *testing.T) {
 	// Proves that a URL with no scheme/host returns an error rather than making a network request.
 	t.Parallel()
-	tool := NewWebFetchTool()
+	tool := NewWebFetchTool(nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": "not-a-valid-url",
 	})
@@ -446,7 +448,7 @@ func TestWebFetchInvalidURL(t *testing.T) {
 func TestWebFetchToolName(t *testing.T) {
 	// Proves that the web_fetch tool is registered with the correct name for tool dispatch.
 	t.Parallel()
-	tool := NewWebFetchTool()
+	tool := NewWebFetchTool(nil)
 	if tool.Name != "web_fetch" {
 		t.Errorf("name = %q, want %q", tool.Name, "web_fetch")
 	}
@@ -564,7 +566,7 @@ func fetchFixture(t *testing.T, file string) string {
 	}))
 	defer server.Close()
 	params, _ := json.Marshal(map[string]interface{}{"url": server.URL})
-	result, err := NewWebFetchTool().Execute(context.Background(), params)
+	result, err := NewWebFetchTool(nil).Execute(context.Background(), params)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -729,7 +731,7 @@ func TestWebFetchStubExtractionFallsBackToWholePage(t *testing.T) {
 	}))
 	defer server.Close()
 	params, _ := json.Marshal(map[string]interface{}{"url": server.URL})
-	result, err := NewWebFetchTool().Execute(context.Background(), params)
+	result, err := NewWebFetchTool(nil).Execute(context.Background(), params)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -835,5 +837,93 @@ func TestContentRegionsBaseline(t *testing.T) {
 		if strings.Contains(out.String(), gone) {
 			t.Errorf("rejected region %q still in the baseline", gone)
 		}
+	}
+}
+
+// #2770: tools.web_fetch_max_bytes limits the bytes read, is read on each call,
+// and a body cut at the limit says so in the result.
+func TestWebFetch_MaxBytes(t *testing.T) {
+	const size = 100
+	body := strings.Repeat("a", size-1) + "z" // the last byte tells a whole body from a cut one
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/html" {
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte("<html><body><p>" + body + "</p></body></html>"))
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer server.Close()
+
+	fetch := func(t *testing.T, limit func() int64, path string, raw bool) string {
+		t.Helper()
+		params, _ := json.Marshal(map[string]any{"url": server.URL + path, "raw": raw})
+		result, err := NewWebFetchTool(limit).Execute(context.Background(), params)
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		return result.Text
+	}
+	fixed := func(n int64) func() int64 { return func() int64 { return n } }
+	const note = "foci: response cut at"
+
+	t.Run("over the limit: cut, with a note", func(t *testing.T) {
+		got := fetch(t, fixed(size-1), "/", false)
+		if strings.Contains(got, "z") {
+			t.Errorf("byte past the limit was returned: %q", got)
+		}
+		if !strings.HasPrefix(got, strings.Repeat("a", size-1)) {
+			t.Errorf("bytes inside the limit are missing: %q", got)
+		}
+		if !strings.Contains(got, note) || !strings.Contains(got, "99 bytes") {
+			t.Errorf("no truncation note naming the limit: %q", got)
+		}
+	})
+	t.Run("exactly the limit: whole, no note", func(t *testing.T) {
+		got := fetch(t, fixed(size), "/", false)
+		if got != body {
+			t.Errorf("got %q, want the whole body and nothing else", got)
+		}
+	})
+	t.Run("html path carries the note", func(t *testing.T) {
+		got := fetch(t, fixed(40), "/html", false)
+		if !strings.Contains(got, note) {
+			t.Errorf("no truncation note: %q", got)
+		}
+	})
+	t.Run("raw path carries the note", func(t *testing.T) {
+		got := fetch(t, fixed(40), "/html", true)
+		if !strings.Contains(got, note) {
+			t.Errorf("no truncation note: %q", got)
+		}
+	})
+	t.Run("read on each call", func(t *testing.T) {
+		limit := int64(10)
+		tool := NewWebFetchTool(func() int64 { return limit })
+		params, _ := json.Marshal(map[string]any{"url": server.URL})
+		for _, tc := range []struct {
+			limit    int64
+			wantNote bool
+		}{{10, true}, {size, false}} {
+			limit = tc.limit
+			r, err := tool.Execute(context.Background(), params)
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if strings.Contains(r.Text, note) != tc.wantNote {
+				t.Errorf("limit %d: wantNote=%v, got %q", tc.limit, tc.wantNote, r.Text)
+			}
+		}
+	})
+	for name, limit := range map[string]func() int64{"nil": nil, "zero": fixed(0), "negative": fixed(-1)} {
+		t.Run(name+" limit uses the default", func(t *testing.T) {
+			if got := fetch(t, limit, "/", false); got != body {
+				t.Errorf("got %q, want the whole body", got)
+			}
+			if got := webFetchLimit(limit); got != config.DefaultWebFetchMaxBytes {
+				t.Errorf("webFetchLimit = %d, want %d", got, config.DefaultWebFetchMaxBytes)
+			}
+		})
 	}
 }

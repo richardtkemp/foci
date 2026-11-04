@@ -11,13 +11,18 @@ import (
 	"strings"
 	"time"
 
+	"foci/internal/config"
+
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/go-shiori/dom"
 	readability "github.com/go-shiori/go-readability"
 	"golang.org/x/net/html"
 )
 
-func NewWebFetchTool() *Tool {
+// NewWebFetchTool builds the web_fetch tool. maxBytes is read on each call, so a
+// live edit of web_fetch_max_bytes applies to the next fetch; nil or a
+// non-positive value means config.DefaultWebFetchMaxBytes.
+func NewWebFetchTool(maxBytes func() int64) *Tool {
 	return &Tool{
 		Name:        "web_fetch",
 		ExecExport:  true,
@@ -39,7 +44,7 @@ func NewWebFetchTool() *Tool {
 			"required": ["url"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return webFetch(ctx, params)
+			return webFetch(ctx, params, webFetchLimit(maxBytes))
 		},
 	}
 }
@@ -218,8 +223,9 @@ func hasAttr(n *html.Node, key string) bool {
 // parseReadableWithTimeout runs readability extraction under a wall-clock
 // timeout. readability/html.Parse is not context-cancellable, so on timeout the
 // background goroutine is left to finish (and exit) on its own via the buffered
-// channel — bounded in practice because the network body is capped at 1 MiB and
-// the x/net bump removes the known infinite-loop inputs.
+// channel — bounded in practice because the network body is capped by
+// web_fetch_max_bytes (default 1 MiB) and the x/net bump removes the known
+// infinite-loop inputs.
 func parseReadableWithTimeout(body []byte, parsed *url.URL, timeout time.Duration) (readability.Article, error) {
 	type result struct {
 		article readability.Article
@@ -473,7 +479,33 @@ func isStructuredContentType(ct string) bool {
 	return false
 }
 
-func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+// truncatedBodyNote is appended to a result whose body was cut at
+// web_fetch_max_bytes (#2770), so a partial page does not read as the whole one.
+const truncatedBodyNote = "\n\n---\n_[foci: response cut at %d bytes (tools.web_fetch_max_bytes); the rest was not read.]_"
+
+// readCapped reads at most limit bytes of r and reports whether r held more. A
+// body of exactly limit bytes is not truncated.
+func readCapped(r io.Reader, limit int64) (body []byte, truncated bool, err error) {
+	body, err = io.ReadAll(io.LimitReader(r, limit))
+	if err != nil || int64(len(body)) < limit {
+		return body, false, err
+	}
+	var probe [1]byte
+	n, _ := io.ReadFull(r, probe[:])
+	return body, n > 0, nil
+}
+
+// webFetchLimit returns the effective read limit for one fetch.
+func webFetchLimit(maxBytes func() int64) int64 {
+	if maxBytes != nil {
+		if v := maxBytes(); v > 0 {
+			return v
+		}
+	}
+	return config.DefaultWebFetchMaxBytes
+}
+
+func webFetch(ctx context.Context, params json.RawMessage, maxBytes int64) (ToolResult, error) {
 	p, err := UnmarshalParams[struct {
 		URL string `json:"url"`
 		Raw bool   `json:"raw"`
@@ -504,9 +536,17 @@ func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	body, truncated, err := readCapped(resp.Body, maxBytes)
+	if err != nil {
+		return ToolResult{}, fmt.Errorf("read response: %w", err)
+	}
+
 	// done renders the content in the caller's form: the text itself, or for
 	// --json the object documented in the tool's JSONOutput.
 	done := func(content string) (ToolResult, error) {
+		if truncated {
+			content += fmt.Sprintf(truncatedBodyNote, maxBytes)
+		}
 		if !WantsJSON(ctx) {
 			return TextResult(content), nil
 		}
@@ -517,11 +557,6 @@ func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			ContentType string `json:"content_type"`
 			Content     string `json:"content"`
 		}{p.URL, resp.Request.URL.String(), resp.StatusCode, resp.Header.Get("Content-Type"), content})
-	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
-	if err != nil {
-		return ToolResult{}, fmt.Errorf("read response: %w", err)
 	}
 
 	// #1889: a bot-shield interstitial or an empty result is a failed fetch,

@@ -518,7 +518,7 @@ graceful_shutdown_timeout = "invalid"
 			wantErr: "graceful_shutdown_timeout",
 		},
 		{
-			name: "invalid tools tmux_command_timeout",
+			name: "negative tools web_fetch_max_bytes",
 			toml: `
 [groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
@@ -526,9 +526,22 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 [[agents]]
 id = "test"
 [tools]
-tmux_command_timeout = "invalid"
+web_fetch_max_bytes = -1
 `,
-			wantErr: "tmux_command_timeout",
+			wantErr: "web_fetch_max_bytes",
+		},
+		{
+			name: "negative agent web_fetch_max_bytes",
+			toml: `
+[groups]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
+[[agents]]
+id = "test"
+[agents.tools]
+web_fetch_max_bytes = -1
+`,
+			wantErr: "web_fetch_max_bytes",
 		},
 	}
 

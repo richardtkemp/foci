@@ -194,6 +194,7 @@ var (
 		"tools.max_upload_file_size", "agent.tools.max_upload_file_size",
 		"tools.max_file_read_bytes", "agent.tools.max_file_read_bytes",
 		"tools.http_max_spill_bytes", "agent.tools.http_max_spill_bytes",
+		"tools.web_fetch_max_bytes", "agent.tools.web_fetch_max_bytes",
 		"memory.search_backend", "agent.memory.search_backend",
 		// #2827: read by the system-prompt builders at each session start.
 		"memory.daily_digest", "agent.memory.daily_digest",

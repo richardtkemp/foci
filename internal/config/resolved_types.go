@@ -120,6 +120,7 @@ type ResolvedTool struct {
 	MaxUploadFileSize   int64
 	MaxFileReadBytes    int64
 	HTTPMaxSpillBytes   int64
+	WebFetchMaxBytes    int64
 	TmuxAutopilot       bool
 	TmuxWatchThreshold  string
 	TmuxSessionTTL      string
@@ -138,6 +139,7 @@ func resolveTool(m ToolConfig) ResolvedTool {
 		MaxUploadFileSize:   DerefInt64(m.MaxUploadFileSize),
 		MaxFileReadBytes:    DerefInt64(m.MaxFileReadBytes),
 		HTTPMaxSpillBytes:   DerefInt64(m.HTTPMaxSpillBytes),
+		WebFetchMaxBytes:    DerefInt64(m.WebFetchMaxBytes),
 		TmuxAutopilot:       DerefBool(m.TmuxAutopilot),
 		TmuxWatchThreshold:  DerefStr(m.TmuxWatchThreshold),
 		TmuxSessionTTL:      DerefStr(m.TmuxSessionTTL),

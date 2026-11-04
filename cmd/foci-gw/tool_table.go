@@ -260,7 +260,8 @@ var toolTable = []toolEntry{
 				d.p.cfg.Tools.WebFetchMaxUses, d.p.cfg.Tools.WebFetchAllowedDomains, d.p.cfg.Tools.WebFetchBlockedDomains))
 			return nil
 		}
-		return tools.NewWebFetchTool()
+		live := d.p.resolvedLive
+		return tools.NewWebFetchTool(func() int64 { return live.Load().Tools.WebFetchMaxBytes })
 	}},
 
 	{name: "memory_search", paths: pathBoth, enabled: func(d *toolDeps) bool { return len(d.p.memBackends) > 0 },

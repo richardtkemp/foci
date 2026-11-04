@@ -61,6 +61,20 @@ func validateIntRange(value, min, max int, fieldName string) error {
 	return nil
 }
 
+// validateWebFetchMaxBytes rejects a negative tools.web_fetch_max_bytes at the
+// global and each agent level (#2770). Zero is allowed and means the default.
+func validateWebFetchMaxBytes(cfg *Config) error {
+	if v := DerefInt64(cfg.Tools.WebFetchMaxBytes); v < 0 {
+		return fmt.Errorf("[tools] web_fetch_max_bytes = %d: must not be negative", v)
+	}
+	for _, a := range cfg.Agents {
+		if v := DerefInt64(a.Tools.WebFetchMaxBytes); v < 0 {
+			return fmt.Errorf("agent %q [tools] web_fetch_max_bytes = %d: must not be negative", a.ID, v)
+		}
+	}
+	return nil
+}
+
 // validateNonNegative checks that value is >= 0.
 func validateNonNegative(value int, fieldName string) error {
 	if value < 0 {
@@ -296,6 +310,9 @@ func (cfg *Config) Validate(knownBackends []string) error {
 	if err := validateBehaviorTurnLimits(cfg); err != nil {
 		return err
 	}
+	if err := validateWebFetchMaxBytes(cfg); err != nil {
+		return err
+	}
 
 	// Live-session caps and idle timeouts (#2280).
 	if err := validateLiveSessions(cfg); err != nil {
@@ -504,7 +521,6 @@ func (cfg *Config) Validate(knownBackends []string) error {
 		{"logging", "warning_proactive_activity_threshold", cfg.Logging.WarningProactiveActivityThreshold},
 		{"logging", "rotation_period", cfg.Logging.RotationPeriod},
 		{"logging", "retention_period", cfg.Logging.RetentionPeriod},
-		{"tools", "tmux_command_timeout", cfg.Tools.TmuxCommandTimeout},
 		{"resources", "memory_guard_interval", cfg.Resources.MemoryGuardInterval},
 		{"http", "graceful_shutdown_timeout", cfg.HTTP.GracefulShutdownTimeout},
 		{"sessions", "archive_after", cfg.Sessions.ArchiveAfter},
