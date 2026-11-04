@@ -1663,7 +1663,7 @@ Data flow:
 - **Subprocess group boundary:** `procx.Setup` (`internal/procx`) drops the `foci-secrets` group from spawned children and, after the startup probe, clears the ambient capability set on every OS thread (`syscall.AllThreadsSyscall`; needs the `CGO_ENABLED=0` build, else it fails closed) so children can't inherit `CAP_SETGID` and re-add the group. The foci user is granted the group per-process (systemd `SupplementaryGroups` / `setpriv --groups` / `runuser --supp-group`), never as an `/etc/group` member. See [SECRETS.md](SECRETS.md).
 - **Outbound SSRF:** `web_fetch` and `http_request` share one SSRF-safe `*http.Client` (`internal/tools/safehttp.go`): its dialer validates each resolved IP at connect time (blocking loopback/private/link-local/metadata/unspecified, defeating DNS rebinding) and re-checks every redirect hop.
 
-**Bitwarden integration** (`secrets/bitwarden/`): Optional dynamic secret store. Depends only on `log` (leaf package). Two-tier aisudo model:
+**Bitwarden integration** (`secrets/bitwarden/`): Optional dynamic secret store. Depends only on `log` and `procx`. Two-tier aisudo model:
 - Metadata refresh: `sudo -u bitwarden bw list items` (allowlisted, auto-approved)
 - Password fetch: `sudo -u bitwarden bw get password <id>` (requires Telegram approval)
 - Template syntax: `{{secret:bw.UUID}}` — resolved in both `http_request` and `shell` (approval-gated, safe for both)
@@ -2040,9 +2040,7 @@ write; the book closes only its activity. Every process writes its baseline (the
 just settled join the process total, and `checkDivergence` compares, per model, CC's cost
 since launch (`modelUsage.costUSD` less the launch baseline's) with the ledger's price of
 everything booked in the process that CC counts: beyond `delegator.CostDivergenceTolerance`
-(3%, both sides under $0.01 skipped, a model with an unpriced call skipped, a model with
-prompt-size price tiers skipped — a TEMPORARY workaround for CC bug #84223, #2382: the
-remainder has no prompt size to pick a tier from) it alarms
+(3%, both sides under $0.01 skipped, a model with an unpriced call skipped) it alarms
 `invCostDivergence`, the interrupted calls' price shown beside (CC counts them nowhere). A
 remainder's TTL solve makes its own window match CC's cost exactly, so the check bites on
 the counted calls' rates and on an unsolved remainder. `checkOverhead` alarms
@@ -2558,10 +2556,10 @@ When `stream_output = true` and `streaming = true`, model output is shown in the
 
 ## Discord Bot (`discord/`)
 
-Same architecture as Telegram (receiver + agentMessagePump + commandWorker + per-session agent workers), connected via a single WebSocket gateway instead of HTTP long-polling. Uses the same thin `platform.MessageQueue` filter-and-throttle helper. Commands drain `mq.CmdChan()` before pulling the main channel, preserving the original priority-drain behaviour.
+Same architecture as Telegram (receiver + agentMessagePump + commandWorker + per-session agent workers), connected via a WebSocket gateway instead of HTTP long-polling. Uses the same thin `platform.MessageQueue` filter-and-throttle helper. Commands drain `mq.CmdChan()` before pulling the main channel, preserving the original priority-drain behaviour.
 
 **Key differences from Telegram:**
-- **Gateway:** Single `discordgo.Session` WebSocket connection shared across all agents, vs one HTTP poller per Telegram bot.
+- **Gateway:** One `discordgo.Session` WebSocket connection per bot (`setupDiscordBots`, `discord/agent_setup.go`), vs one HTTP poller per Telegram bot.
 - **Message limit:** 2000 chars (vs 4096). `splitMessage` handles Markdown-aware splitting with code fence close/reopen.
 - **Formatting:** Discord speaks Markdown natively — no HTML conversion needed. Pass-through from agent output.
 - **Streaming:** Default edit interval 1200ms (vs 250ms) due to stricter rate limits. Max 1900 chars per edit.

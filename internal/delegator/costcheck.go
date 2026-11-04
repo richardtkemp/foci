@@ -5,22 +5,29 @@ import (
 	"math"
 )
 
-// Cost-divergence checking, shared by every delegated backend (#1674).
+// Cost-divergence checking for the delegated backends that report a cost (#1674).
 //
 // foci prices every delegated turn itself, from the modelinfo table applied to
 // real token counts, and that figure is authoritative. Backends still report a
-// cost of their own, and this is the only thing that still reads it: if the two
-// disagree, our pricing table has gone stale, a model has started resolving to
-// the wrong family, or a rate changed upstream.
+// cost of their own. If the two disagree, our pricing table has gone stale, a
+// model has started resolving to the wrong family, or a rate changed upstream.
 //
-// Nothing else would notice any of those, because our number is the one that
-// gets stored. This check is the alarm — it is the mechanism that makes the
-// pricing table's maintenance cost visible instead of silent.
+// Nothing else would notice any of those, because the cost views report our
+// number. This check is the alarm — it is the mechanism that makes the pricing
+// table's maintenance cost visible instead of silent.
 //
-// Deliberately one implementation across backends rather than one per backend,
-// including for opencode whose per-message cost is not cumulative and could
-// arguably be trusted: a single rule is what makes a warning mean exactly one
-// thing wherever it fires.
+// The alarm is not the only reader of the backend's figure (#2111). Each report
+// is stored verbatim in backend_reports. In ccstream, ccbook.go also solves a
+// remainder's 5m/1h cache-write split from CC's cost (splitRemainderTTL, the one
+// reader that moves foci's own price), records it on a refusal (cc_cost_usd) and
+// bounds overhead against it (checkOverhead), and expectations.go alarms if CC's
+// cumulative cost falls.
+//
+// One tolerance and one alarm (invCostDivergence) across backends, so a warning
+// means one thing wherever it fires. The comparison differs by what the backend
+// reports: CostDivergence below is per call, for opencode's per-message cost;
+// ccBook.checkDivergence is per model and per process, for CC's cumulative cost.
+// codex reports no cost, so it has no check.
 
 const (
 	// CostDivergenceTolerance is the fraction by which foci's own priced figure

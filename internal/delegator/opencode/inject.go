@@ -14,7 +14,8 @@
 // Steer divergence from ccstream (plan §Steer): opencode has no
 // mid-turn queue, so SourceSteer arriving mid-turn is buffered in
 // b.steerBuf and flushed via flushSteerBuf when the dispatcher's
-// OnSessionIdle fires (handlers.go). ccstream's "fold into the current
+// OnSessionIdle fires (handlers.go), or when the abort drain's backstop
+// timer fires first (abortDrainComplete). ccstream's "fold into the current
 // ask()" has no opencode equivalent.
 
 package opencode
@@ -462,9 +463,13 @@ func buildPromptBody(text string, attachments []delegator.Attachment, noReply bo
 // completion callback"; in practice OnSessionIdle always passes a non-nil
 // TurnEvents that fires OnTurnComplete.
 //
-// flushSteerBuf is called from the dispatcher goroutine (handlers.go), so it
-// holds the same serial-execution guarantee as the rest of the
-// handler methods — no extra locking needed beyond steerBuf access.
+// flushSteerBuf has callers on two goroutines: onSessionIdle on the dispatcher
+// goroutine (handlers.go), and abortDrainComplete, which also runs on the abort
+// backstop timer's goroutine. It therefore does NOT have the handler methods'
+// serial-execution guarantee. Taking the buffer under turnMu is what stops a
+// steer being sent twice: only one caller gets a non-empty buffer, and the
+// other returns without sending. beginTurn takes turnMu again itself, so the
+// two steps are not one atomic hold.
 func (b *Backend) flushSteerBuf(ctx context.Context, turnFactory func() *delegator.TurnEvents) error {
 	b.turnMu.Lock()
 	buf := b.steerBuf

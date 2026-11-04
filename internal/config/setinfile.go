@@ -606,9 +606,12 @@ func errNotUTF8(s string) error {
 // (double-quoted): `"` and `\` are escaped, \b \t \n \f \r stand for
 // themselves, and every other control character (U+0000–U+001F and U+007F)
 // becomes \uXXXX. Everything else — printable and non-ASCII alike — is
-// written as-is. This is the ONE encoder for every string this package
-// writes into foci.toml; Go's %q is not a substitute (it emits \a, \v and
-// \xff, which TOML rejects or misreads).
+// written as-is. This is the ONE encoder for free-form strings this package
+// writes into foci.toml; Go's %q is not a substitute for those (it emits \a,
+// \v and \xff, which TOML rejects or misreads). The FieldDuration and
+// FieldSchedule cases do use %q: only on a value that has already passed
+// time.ParseDuration or ParseSchedule, whose accepted characters %q leaves
+// as they are.
 func encodeTOMLBasicString(s string) (string, error) {
 	if !utf8.ValidString(s) {
 		return "", errNotUTF8(s)
