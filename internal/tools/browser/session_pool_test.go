@@ -190,12 +190,9 @@ func TestSessionPoolPersistentProfileExclusive(t *testing.T) {
 	if err != nil || !strings.Contains(res.Text, "incognito: off") {
 		t.Fatalf("first persistent start: %v %q", err, res.Text)
 	}
-	res, err = tool.Execute(tools.WithSessionKey(context.Background(), "test/c2"), start)
-	if err != nil {
-		t.Fatalf("second persistent start: %v", err)
-	}
-	if !strings.Contains(res.Text, "persistent browser profile is already open") {
-		t.Errorf("second session's persistent start = %q, want the profile-in-use error", res.Text)
+	_, err = tool.Execute(tools.WithSessionKey(context.Background(), "test/c2"), start)
+	if err == nil || !strings.Contains(err.Error(), "persistent browser profile is already open") {
+		t.Errorf("second session's persistent start: err = %v, want the profile-in-use error", err)
 	}
 }
 

@@ -2,6 +2,7 @@ package browser
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"foci/internal/tools"
 	"io"
@@ -145,14 +146,14 @@ func resolveRef(mgr *BrowserManager, ref string) (*rod.Element, error) {
 func browserSnapshot(mgr *BrowserManager) (tools.ToolResult, error) {
 	page, err := mgr.getPage()
 	if err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: %v", err)}, nil
+		return tools.ToolResult{}, err
 	}
 
 	mgr.WaitDOMStable(page)
 
 	snap, err := mgr.CaptureSnapshot()
 	if err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error capturing snapshot: %v", err)}, nil
+		return tools.ToolResult{}, fmt.Errorf("capturing snapshot: %w", err)
 	}
 
 	return tools.ToolResult{Text: snap.String()}, nil
@@ -160,22 +161,22 @@ func browserSnapshot(mgr *BrowserManager) (tools.ToolResult, error) {
 
 func browserNavigate(mgr *BrowserManager, p browserParams) (tools.ToolResult, error) {
 	if p.URL == "" {
-		return tools.ToolResult{Text: "Error: url required"}, nil
+		return tools.ToolResult{}, errors.New("url required")
 	}
 
 	page, err := mgr.getPage()
 	if err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: %v", err)}, nil
+		return tools.ToolResult{}, err
 	}
 
 	mgr.ResetSnapshot()
 
 	pt := mgr.withTimeout(page, 0)
 	if err := pt.Navigate(p.URL); err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: navigation failed: %v", err)}, nil
+		return tools.ToolResult{}, fmt.Errorf("navigation failed: %w", err)
 	}
 	if err := pt.WaitLoad(); err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: wait load failed: %v", err)}, nil
+		return tools.ToolResult{}, fmt.Errorf("wait load failed: %w", err)
 	}
 
 	return withAutoSnapshot(mgr, fmt.Sprintf("Navigated to %s", p.URL)), nil
@@ -184,7 +185,7 @@ func browserNavigate(mgr *BrowserManager, p browserParams) (tools.ToolResult, er
 func browserClick(mgr *BrowserManager, p browserParams) (tools.ToolResult, error) {
 	el, err := resolveRef(mgr, p.Ref)
 	if err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: %v", err)}, nil
+		return tools.ToolResult{}, err
 	}
 
 	desc := p.Element
@@ -193,7 +194,7 @@ func browserClick(mgr *BrowserManager, p browserParams) (tools.ToolResult, error
 	}
 
 	if err := el.Click(proto.InputMouseButtonLeft, 1); err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: click failed: %v", err)}, nil
+		return tools.ToolResult{}, fmt.Errorf("click failed: %w", err)
 	}
 
 	return withAutoSnapshot(mgr, fmt.Sprintf("Clicked: %s", desc)), nil
@@ -205,7 +206,7 @@ func browserFill(mgr *BrowserManager, p browserParams) (tools.ToolResult, error)
 	fields := p.Fields
 	if len(fields) == 0 {
 		if p.Ref == "" {
-			return tools.ToolResult{Text: "Error: ref or fields required"}, nil
+			return tools.ToolResult{}, errors.New("ref or fields required")
 		}
 		fields = []fillField{{Ref: p.Ref, Value: p.Value}}
 	}
@@ -216,15 +217,15 @@ func browserFill(mgr *BrowserManager, p browserParams) (tools.ToolResult, error)
 	for _, f := range fields {
 		el, err := resolveRef(mgr, f.Ref)
 		if err != nil {
-			return tools.ToolResult{Text: fmt.Sprintf("Error: %v", err)}, nil
+			return tools.ToolResult{}, err
 		}
 
 		// Clear existing value then type new one
 		if err := el.SelectAllText(); err != nil {
-			return tools.ToolResult{Text: fmt.Sprintf("Error: select text failed for %s: %v", f.Ref, err)}, nil
+			return tools.ToolResult{}, fmt.Errorf("select text failed for %s: %w", f.Ref, err)
 		}
 		if err := el.Input(f.Value); err != nil {
-			return tools.ToolResult{Text: fmt.Sprintf("Error: fill failed for %s: %v", f.Ref, err)}, nil
+			return tools.ToolResult{}, fmt.Errorf("fill failed for %s: %w", f.Ref, err)
 		}
 
 		filledRefs = append(filledRefs, f.Ref)
@@ -240,10 +241,10 @@ func browserFill(mgr *BrowserManager, p browserParams) (tools.ToolResult, error)
 	if p.Submit {
 		page, err := mgr.getPage()
 		if err != nil {
-			return tools.ToolResult{Text: fmt.Sprintf("Error getting page for submit: %v", err)}, nil
+			return tools.ToolResult{}, fmt.Errorf("getting page for submit: %w", err)
 		}
 		if err := page.Keyboard.Press(input.Enter); err != nil {
-			return tools.ToolResult{Text: fmt.Sprintf("Error: submit (Enter) failed: %v", err)}, nil
+			return tools.ToolResult{}, fmt.Errorf("submit (Enter) failed: %w", err)
 		}
 		result += " and submitted"
 	}
@@ -253,12 +254,12 @@ func browserFill(mgr *BrowserManager, p browserParams) (tools.ToolResult, error)
 
 func browserSelect(mgr *BrowserManager, p browserParams) (tools.ToolResult, error) {
 	if len(p.Values) == 0 {
-		return tools.ToolResult{Text: "Error: values required"}, nil
+		return tools.ToolResult{}, errors.New("values required")
 	}
 
 	el, err := resolveRef(mgr, p.Ref)
 	if err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: %v", err)}, nil
+		return tools.ToolResult{}, err
 	}
 
 	desc := p.Element
@@ -267,7 +268,7 @@ func browserSelect(mgr *BrowserManager, p browserParams) (tools.ToolResult, erro
 	}
 
 	if err := el.Select(p.Values, true, rod.SelectorTypeText); err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: select failed: %v", err)}, nil
+		return tools.ToolResult{}, fmt.Errorf("select failed: %w", err)
 	}
 
 	return withAutoSnapshot(mgr, fmt.Sprintf("Selected %v in %s", p.Values, desc)), nil
@@ -275,21 +276,21 @@ func browserSelect(mgr *BrowserManager, p browserParams) (tools.ToolResult, erro
 
 func browserPress(mgr *BrowserManager, p browserParams) (tools.ToolResult, error) {
 	if p.Key == "" {
-		return tools.ToolResult{Text: "Error: key required"}, nil
+		return tools.ToolResult{}, errors.New("key required")
 	}
 
 	key, ok := keyMap[p.Key]
 	if !ok {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: unknown key %q — valid keys: Enter, Tab, Escape, Backspace, Delete, Home, End, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Space, PageUp, PageDown", p.Key)}, nil
+		return tools.ToolResult{}, fmt.Errorf("unknown key %q — valid keys: Enter, Tab, Escape, Backspace, Delete, Home, End, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Space, PageUp, PageDown", p.Key)
 	}
 
 	page, err := mgr.getPage()
 	if err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: %v", err)}, nil
+		return tools.ToolResult{}, err
 	}
 
 	if err := page.Keyboard.Press(key); err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: press failed: %v", err)}, nil
+		return tools.ToolResult{}, fmt.Errorf("press failed: %w", err)
 	}
 
 	return tools.ToolResult{Text: fmt.Sprintf("Pressed: %s", p.Key)}, nil
@@ -301,15 +302,15 @@ func browserPress(mgr *BrowserManager, p browserParams) (tools.ToolResult, error
 func browserNav(mgr *BrowserManager, errVerb, successMsg string, action func(*rod.Page) error) (tools.ToolResult, error) {
 	page, err := mgr.getPage()
 	if err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: %v", err)}, nil
+		return tools.ToolResult{}, err
 	}
 
 	mgr.ResetSnapshot()
 	if err := action(page); err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: %s failed: %v", errVerb, err)}, nil
+		return tools.ToolResult{}, fmt.Errorf("%s failed: %w", errVerb, err)
 	}
 	if err := page.WaitLoad(); err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: wait load failed: %v", err)}, nil
+		return tools.ToolResult{}, fmt.Errorf("wait load failed: %w", err)
 	}
 
 	return withAutoSnapshot(mgr, successMsg), nil
@@ -330,27 +331,27 @@ func browserReload(mgr *BrowserManager) (tools.ToolResult, error) {
 func browserScreenshot(mgr *BrowserManager, p browserParams) (tools.ToolResult, error) {
 	page, err := mgr.getPage()
 	if err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: %v", err)}, nil
+		return tools.ToolResult{}, err
 	}
 
 	var buf []byte
 	if p.FullPage {
 		buf, err = page.ScrollScreenshot(nil)
 		if err != nil {
-			return tools.ToolResult{Text: fmt.Sprintf("Error: scroll screenshot failed: %v", err)}, nil
+			return tools.ToolResult{}, fmt.Errorf("scroll screenshot failed: %w", err)
 		}
 	} else {
 		buf, err = page.Screenshot(false, &proto.PageCaptureScreenshot{
 			Format: proto.PageCaptureScreenshotFormatPng,
 		})
 		if err != nil {
-			return tools.ToolResult{Text: fmt.Sprintf("Error: screenshot failed: %v", err)}, nil
+			return tools.ToolResult{}, fmt.Errorf("screenshot failed: %w", err)
 		}
 	}
 
 	path, err := writeTempFileExcl("browser-screenshot-*.png", buf, mgr.FileMode)
 	if err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: save screenshot failed: %v", err)}, nil
+		return tools.ToolResult{}, fmt.Errorf("save screenshot failed: %w", err)
 	}
 
 	if p.RetPath {
@@ -364,22 +365,22 @@ func browserScreenshot(mgr *BrowserManager, p browserParams) (tools.ToolResult, 
 func browserPDF(mgr *BrowserManager) (tools.ToolResult, error) {
 	page, err := mgr.getPage()
 	if err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: %v", err)}, nil
+		return tools.ToolResult{}, err
 	}
 
 	reader, err := page.PDF(&proto.PagePrintToPDF{})
 	if err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: pdf failed: %v", err)}, nil
+		return tools.ToolResult{}, fmt.Errorf("pdf failed: %w", err)
 	}
 
 	buf, err := io.ReadAll(reader)
 	if err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: read pdf failed: %v", err)}, nil
+		return tools.ToolResult{}, fmt.Errorf("read pdf failed: %w", err)
 	}
 
 	path, err := writeTempFileExcl("browser-page-*.pdf", buf, mgr.FileMode)
 	if err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: save pdf failed: %v", err)}, nil
+		return tools.ToolResult{}, fmt.Errorf("save pdf failed: %w", err)
 	}
 
 	return tools.ToolResult{Text: fmt.Sprintf("PDF saved to: %s", path)}, nil
@@ -421,17 +422,17 @@ func writeTempFileExcl(pattern string, data []byte, mode os.FileMode) (string, e
 
 func browserEvaluate(mgr *BrowserManager, p browserParams) (tools.ToolResult, error) {
 	if p.Script == "" {
-		return tools.ToolResult{Text: "Error: script required"}, nil
+		return tools.ToolResult{}, errors.New("script required")
 	}
 
 	page, err := mgr.getPage()
 	if err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: %v", err)}, nil
+		return tools.ToolResult{}, err
 	}
 
 	result, err := page.Eval(p.Script)
 	if err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: evaluate failed: %v", err)}, nil
+		return tools.ToolResult{}, fmt.Errorf("evaluate failed: %w", err)
 	}
 
 	return tools.ToolResult{Text: fmt.Sprintf("Result: %v", result.Value)}, nil
@@ -440,19 +441,19 @@ func browserEvaluate(mgr *BrowserManager, p browserParams) (tools.ToolResult, er
 func browserWait(mgr *BrowserManager, p browserParams) (tools.ToolResult, error) {
 	page, err := mgr.getPage()
 	if err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: %v", err)}, nil
+		return tools.ToolResult{}, err
 	}
 
 	switch p.WaitType {
 	case "load":
 		if err := page.WaitLoad(); err != nil {
-			return tools.ToolResult{Text: fmt.Sprintf("Error: wait load failed: %v", err)}, nil
+			return tools.ToolResult{}, fmt.Errorf("wait load failed: %w", err)
 		}
 	case "idle":
 		wait := page.MustWaitRequestIdle()
 		wait()
 	default:
-		return tools.ToolResult{Text: fmt.Sprintf("Error: unknown waitType %q — use load or idle", p.WaitType)}, nil
+		return tools.ToolResult{}, fmt.Errorf("unknown waitType %q — use load or idle", p.WaitType)
 	}
 
 	return tools.ToolResult{Text: fmt.Sprintf("Wait completed: %s", p.WaitType)}, nil
@@ -460,13 +461,13 @@ func browserWait(mgr *BrowserManager, p browserParams) (tools.ToolResult, error)
 
 func browserStart(mgr *BrowserManager, p browserParams) (tools.ToolResult, error) {
 	if mgr.IsConnected() {
-		return tools.ToolResult{Text: "Error: browser is already running. Use close first to restart with different settings."}, nil
+		return tools.ToolResult{}, errors.New("browser is already running: use close first to restart with different settings")
 	}
 	if p.Incognito != nil {
 		mgr.incognito = *p.Incognito
 	}
 	if err := mgr.Start(); err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: %v", err)}, nil
+		return tools.ToolResult{}, err
 	}
 	mode := "on"
 	if !mgr.incognito {
@@ -477,7 +478,7 @@ func browserStart(mgr *BrowserManager, p browserParams) (tools.ToolResult, error
 
 func browserClose(mgr *BrowserManager) (tools.ToolResult, error) {
 	if err := mgr.Stop(); err != nil {
-		return tools.ToolResult{Text: fmt.Sprintf("Error: %v", err)}, nil
+		return tools.ToolResult{}, err
 	}
 	return tools.ToolResult{Text: "Browser closed"}, nil
 }

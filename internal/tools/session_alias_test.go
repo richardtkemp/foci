@@ -19,7 +19,7 @@ func runSetAlias(t *testing.T, tool *Tool, sessionKey, alias string) string {
 	params, _ := json.Marshal(map[string]string{"alias": alias})
 	res, err := tool.Execute(WithSessionKey(context.Background(), sessionKey), params)
 	if err != nil {
-		t.Fatalf("Execute: %v", err)
+		return "Error: " + err.Error()
 	}
 	return res.Text
 }

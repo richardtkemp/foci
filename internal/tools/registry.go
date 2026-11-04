@@ -29,8 +29,11 @@ type Tool struct {
 	Name        string
 	Description string
 	Parameters  json.RawMessage
-	Execute     func(ctx context.Context, params json.RawMessage) (ToolResult, error)
-	ExecExport  bool // expose as shell function inside exec calls via ExecBridge
+	// Execute returns a failure or refusal as its error, never as result text
+	// (#2841). The exec bridge turns the error into stderr and a non-zero exit;
+	// the API path turns it into an is_error tool result, and the turn goes on.
+	Execute    func(ctx context.Context, params json.RawMessage) (ToolResult, error)
+	ExecExport bool // expose as shell function inside exec calls via ExecBridge
 
 	// Positional declares schema parameters that appear as bare args in
 	// the generated shell function instead of --flag form. Multi-word

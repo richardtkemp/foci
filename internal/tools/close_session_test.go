@@ -20,7 +20,7 @@ func runCloseSessionArgs(t *testing.T, tool *Tool, sessionKey, args string) stri
 	}
 	res, err := tool.Execute(ctx, []byte(args))
 	if err != nil {
-		t.Fatalf("Execute: %v", err)
+		return "Error: " + err.Error()
 	}
 	return res.Text
 }

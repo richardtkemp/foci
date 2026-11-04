@@ -304,11 +304,7 @@ func TestBrowserInvalidRef(t *testing.T) {
 	// Try an invalid ref
 	params, _ = json.Marshal(map[string]any{"action": "click", "ref": "#login-button"})
 	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("click: %v", err)
-	}
-
-	if !strings.Contains(result.Text, "Error") {
+	if err == nil {
 		t.Errorf("expected error for invalid ref, got: %s", result.Text)
 	}
 }
@@ -486,11 +482,7 @@ func TestBrowserFillNoRefOrFields(t *testing.T) {
 	// Fill with no ref or fields
 	params = marshalParams(t, map[string]any{"action": "fill", "value": "test"})
 	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("fill: %v", err)
-	}
-
-	if !strings.Contains(result.Text, "Error") {
+	if err == nil {
 		t.Errorf("expected error for fill without ref/fields, got: %s", result.Text)
 	}
 }
@@ -665,10 +657,7 @@ func TestBrowserStart(t *testing.T) {
 	// Starting again while running → error.
 	params = marshalParams(t, map[string]any{"action": "start"})
 	result, err = tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("start: %v", err)
-	}
-	if !strings.Contains(result.Text, "Error") {
+	if err == nil {
 		t.Errorf("expected error for already-running browser, got: %s", result.Text)
 	}
 

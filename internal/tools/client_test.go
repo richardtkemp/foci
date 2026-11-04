@@ -37,12 +37,9 @@ func (f *fakeInvoker) InvokeTool(ctx context.Context, tool, action string, args 
 
 func TestClientTool_NoInvoker(t *testing.T) {
 	tool := NewClientTool(func() (AppInvoker, bool) { return nil, false })
-	res, err := tool.Execute(context.Background(), json.RawMessage(`{"action":"tasker_list"}`))
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if !strings.Contains(res.Text, "no Android device connected") {
-		t.Errorf("expected 'no Android device' message, got %q", res.Text)
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"action":"tasker_list"}`))
+	if err == nil || !strings.Contains(err.Error(), "no Android device connected") {
+		t.Errorf("expected 'no Android device' error, got %v", err)
 	}
 }
 
@@ -96,36 +93,27 @@ func TestClientTool_PerformAction(t *testing.T) {
 func TestClientTool_PendingResult(t *testing.T) {
 	fake := &fakeInvoker{result: fap.ToolResult{Status: "pending", Error: "still running"}}
 	tool := NewClientTool(func() (AppInvoker, bool) { return fake, true })
-	res, err := tool.Execute(context.Background(), json.RawMessage(`{"action":"tasker_perform","task":"slow"}`))
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if !strings.Contains(res.Text, "still running") || !strings.Contains(res.Text, "won't be delivered") {
-		t.Errorf("expected pending + not-delivered message, got %q", res.Text)
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"action":"tasker_perform","task":"slow"}`))
+	if err == nil || !strings.Contains(err.Error(), "still running") || !strings.Contains(err.Error(), "won't be delivered") {
+		t.Errorf("expected pending + not-delivered error, got %v", err)
 	}
 }
 
 func TestClientTool_ErrorResult(t *testing.T) {
 	fake := &fakeInvoker{result: fap.ToolResult{Status: "error", Error: "task not found"}}
 	tool := NewClientTool(func() (AppInvoker, bool) { return fake, true })
-	res, err := tool.Execute(context.Background(), json.RawMessage(`{"action":"tasker_perform","task":"ghost"}`))
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if !strings.Contains(res.Text, "task not found") {
-		t.Errorf("expected error text, got %q", res.Text)
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"action":"tasker_perform","task":"ghost"}`))
+	if err == nil || !strings.Contains(err.Error(), "task not found") {
+		t.Errorf("expected task-not-found error, got %v", err)
 	}
 }
 
 func TestClientTool_InvokeError(t *testing.T) {
 	fake := &fakeInvoker{err: errors.New("no live device")}
 	tool := NewClientTool(func() (AppInvoker, bool) { return fake, true })
-	res, err := tool.Execute(context.Background(), json.RawMessage(`{"action":"tasker_list"}`))
-	if err != nil {
-		t.Fatalf("err: %v", err) // InvokeTool errors are surfaced as tool result text, not Go error
-	}
-	if !strings.Contains(res.Text, "no live device") {
-		t.Errorf("expected error in result text, got %q", res.Text)
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"action":"tasker_list"}`))
+	if err == nil || !strings.Contains(err.Error(), "no live device") {
+		t.Errorf("expected the invoke error, got %v", err)
 	}
 }
 
@@ -139,8 +127,7 @@ func TestClientTool_CtxCancelPropagates(t *testing.T) {
 		cancel()
 	}()
 	_, err := tool.Execute(ctx, json.RawMessage(`{"action":"tasker_list"}`))
-	// Ctx cancel surfaces as an error result (invoker returns ctx.Err) which
-	// the tool wraps into the result text.
+	// Ctx cancel surfaces as an error (invoker returns ctx.Err).
 	if err != nil {
 		t.Logf("Execute returned Go err (acceptable): %v", err)
 	}

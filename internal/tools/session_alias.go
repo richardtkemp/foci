@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -51,46 +52,46 @@ func NewSetSessionAliasTool(idx AliasSetter, onChanged func(agentID, platform st
 				Force bool   `json:"force"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
-				return TextResult("Error: invalid parameters"), nil
+				return ToolResult{}, errors.New("invalid parameters")
 			}
 			alias := strings.TrimSpace(p.Alias)
 			if alias == "" {
-				return TextResult("Error: alias is required"), nil
+				return ToolResult{}, errors.New("alias is required")
 			}
 
 			sk := SessionKeyFromContext(ctx)
 			if sk == "" {
-				return TextResult("Error: no session key in context"), nil
+				return ToolResult{}, errors.New("no session key in context")
 			}
 			key, err := session.ParseSessionKey(sk)
 			if err != nil {
-				return TextResult(fmt.Sprintf("Error: parse session key: %v", err)), nil
+				return ToolResult{}, fmt.Errorf("parse session key: %w", err)
 			}
 			if key.Type != 'c' {
-				return TextResult("Alias can only be set on chat sessions."), nil
+				return ToolResult{}, errors.New("alias can only be set on chat sessions")
 			}
 
 			chatID := session.ChatIDFromKey(sk)
 			if chatID == 0 {
-				return TextResult("Error: no chat ID in session key"), nil
+				return ToolResult{}, errors.New("no chat ID in session key")
 			}
 
 			platform := idx.PlatformForChat(key.AgentID, chatID)
 			if platform == "" {
-				return TextResult("Error: no platform found for this chat"), nil
+				return ToolResult{}, errors.New("no platform found for this chat")
 			}
 
 			// Don't overwrite a user-set alias unless the user asked for it (#2166).
 			existing, _ := idx.GetChatMetadata(key.AgentID, platform, chatID, "alias")
 			isAuto, _ := idx.GetChatMetadata(key.AgentID, platform, chatID, "alias_auto")
 			if existing != "" && isAuto != "1" && !p.Force {
-				return TextResult(fmt.Sprintf("You ran set_session_alias without --force, but the user already set a name "+
+				return ToolResult{}, fmt.Errorf("you ran set_session_alias without --force, but the user already set a name "+
 					"for this chat by hand: %q. Typically you should not override a manually set name, but you may "+
-					"if you need to by using the --force flag.", existing)), nil
+					"if you need to by using the --force flag", existing)
 			}
 
 			if err := idx.SetChatAliasUnique(key.AgentID, platform, chatID, alias); err != nil {
-				return TextResult(fmt.Sprintf("Error setting alias: %v", err)), nil
+				return ToolResult{}, fmt.Errorf("setting alias: %w", err)
 			}
 			if onChanged != nil {
 				onChanged(key.AgentID, platform, chatID)
@@ -102,7 +103,7 @@ func NewSetSessionAliasTool(idx AliasSetter, onChanged func(agentID, platform st
 				autoFlag = ""
 			}
 			if e := idx.SetChatMetadata(key.AgentID, platform, chatID, "alias_auto", autoFlag); e != nil {
-				return TextResult(fmt.Sprintf("Alias set, but flag failed: %v", e)), nil
+				return ToolResult{}, fmt.Errorf("alias set, but flag failed: %w", e)
 			}
 			return TextResult(fmt.Sprintf("Set conversation name: %q", alias)), nil
 		},

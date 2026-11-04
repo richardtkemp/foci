@@ -606,20 +606,20 @@ func NewClientTool(invoker func() (AppInvoker, bool)) *Tool {
 			}
 			spec, ok := clientActionByName(p.Action)
 			if !ok {
-				return TextResult(fmt.Sprintf("Error: unknown action %q (actions: %s)", p.Action, strings.Join(clientActionNames(), ", "))), nil
+				return ToolResult{}, fmt.Errorf("unknown action %q (actions: %s)", p.Action, strings.Join(clientActionNames(), ", "))
 			}
 			if err := fillPositional(spec, &p); err != nil {
-				return TextResult("Error: " + err.Error()), nil
+				return ToolResult{}, err
 			}
 			args, err := spec.build(&p)
 			if err != nil {
-				return TextResult(fmt.Sprintf("Error: %s: %v. Nothing was sent to the phone.", spec.name, err)), nil
+				return ToolResult{}, fmt.Errorf("%s: %w. Nothing was sent to the phone", spec.name, err)
 			}
 			argsJSON, _ := json.Marshal(args)
 
 			inv, ok := invoker()
 			if !ok {
-				return TextResult(noPhoneConnectedMsg), nil
+				return ToolResult{}, errNoPhoneConnected
 			}
 
 			// Bound the wait even if the caller's ctx has no deadline. A device
@@ -633,13 +633,14 @@ func NewClientTool(invoker func() (AppInvoker, bool)) *Tool {
 				res, err = invokeLegacy(ctx, inv, spec.name, argsJSON)
 			}
 			if err != nil {
-				return TextResult(clientInvokeErrorText(spec.name, err)), nil
+				return ToolResult{}, clientInvokeError(spec.name, err)
 			}
 			if res.Status == fap.ToolStatusError && strings.HasPrefix(res.Error, phoneUnknownActionPrefix) {
 				// An app older than this server's action list answers this way.
-				return TextResult(clientInvokeErrorText(spec.name, errAppTooOld)), nil
+				return ToolResult{}, clientInvokeError(spec.name, errAppTooOld)
 			}
-			return TextResult(clientResultText(res)), nil
+			text, err := clientResultText(res)
+			return TextResult(text), err
 		},
 	}
 }
@@ -649,7 +650,7 @@ func NewClientTool(invoker func() (AppInvoker, bool)) *Tool {
 // than the server.
 const phoneUnknownActionPrefix = "unknown action:"
 
-const noPhoneConnectedMsg = "Error: no Android device connected: the foci app is not open on any device. Ask the user to open the foci app on their phone."
+var errNoPhoneConnected = errors.New("no Android device connected: the foci app is not open on any device. Ask the user to open the foci app on their phone")
 
 // errAppTooOld marks a phone whose app predates the client handler and the
 // action is not one its legacy Tasker handler can run.
@@ -670,28 +671,30 @@ func invokeLegacy(ctx context.Context, inv AppInvoker, action string, args json.
 	return inv.InvokeTool(ctx, legacyTaskerDeviceTool, legacyAction, args)
 }
 
-func clientInvokeErrorText(action string, err error) string {
+func clientInvokeError(action string, err error) error {
 	switch {
 	case errors.Is(err, ErrNoAppDevice):
-		return noPhoneConnectedMsg
+		return errNoPhoneConnected
 	case errors.Is(err, errAppTooOld):
-		return fmt.Sprintf("Error: the foci app on the phone is too old for %s. Ask the user to update the foci app on their phone. Nothing was done.", action)
+		return fmt.Errorf("the foci app on the phone is too old for %s. Ask the user to update the foci app on their phone. Nothing was done", action)
 	case errors.Is(err, ErrNoCapableDevice):
-		return "Error: no connected device can run foci_client: no phone has the foci app open (a desktop app cannot run phone actions). Ask the user to open the foci app on their phone."
+		return errors.New("no connected device can run foci_client: no phone has the foci app open (a desktop app cannot run phone actions). Ask the user to open the foci app on their phone")
 	case errors.Is(err, context.DeadlineExceeded):
-		return fmt.Sprintf("Error: the phone did not answer within %s; %s may or may not have run.", appToolInvokeTimeout, action)
+		return fmt.Errorf("the phone did not answer within %s; %s may or may not have run", appToolInvokeTimeout, action)
 	default:
-		return fmt.Sprintf("Error: %v", err)
+		return err
 	}
 }
 
-func clientResultText(res fap.ToolResult) string {
+// clientResultText reads the phone's answer. Only a completed action is a
+// result: anything else comes back as an error, so a script sees a non-zero exit.
+func clientResultText(res fap.ToolResult) (string, error) {
 	switch res.Status {
 	case fap.ToolStatusCompleted:
 		if len(res.Output) > 0 {
-			return string(res.Output)
+			return string(res.Output), nil
 		}
-		return "(task completed; no output)"
+		return "(task completed; no output)", nil
 	case fap.ToolStatusPending:
 		// Only reached if the task ran longer than appToolInvokeTimeout —
 		// the device kept it running but the server gave up waiting.
@@ -699,11 +702,11 @@ func clientResultText(res fap.ToolResult) string {
 		if res.Error != "" {
 			msg += " " + res.Error
 		}
-		return msg
+		return "", errors.New(msg)
 	case fap.ToolStatusError:
-		return fmt.Sprintf("Device tool error: %s", res.Error)
+		return "", fmt.Errorf("device tool error: %s", res.Error)
 	default:
-		return fmt.Sprintf("Unknown status %q: %s", res.Status, res.Error)
+		return "", fmt.Errorf("unknown status %q: %s", res.Status, res.Error)
 	}
 }
 

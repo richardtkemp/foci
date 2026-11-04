@@ -413,6 +413,6 @@ func dispatchBrowserAction(mgr *BrowserManager, p browserParams) (tools.ToolResu
 	case "close":
 		return browserClose(mgr)
 	default:
-		return tools.ToolResult{Text: fmt.Sprintf("Unknown action: %q", p.Action)}, nil
+		return tools.ToolResult{}, fmt.Errorf("unknown action: %q", p.Action)
 	}
 }

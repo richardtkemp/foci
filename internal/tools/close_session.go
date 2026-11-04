@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"foci/internal/session"
@@ -43,27 +44,27 @@ func NewCloseSessionTool(closeFn SessionCloser, readFn SessionReader) *Tool {
 			}
 			if len(raw) > 0 {
 				if err := json.Unmarshal(raw, &args); err != nil {
-					return TextResult(fmt.Sprintf("Error: invalid arguments: %v", err)), nil
+					return ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
 				}
 			}
 			sk := SessionKeyFromContext(ctx)
 			if sk == "" {
-				return TextResult("Error: no session key in context"), nil
+				return ToolResult{}, errors.New("no session key in context")
 			}
 			if InDepthLeaf(sk) {
 				// Dick 2026-10-28 (#2623): "Close session, yes block". The leaf's
 				// chat is part of the tree the root reads; closing it is the user's
 				// or the root's call, not the leaf's.
-				return TextResult("Error: close_session is not available in a depth leaf. This chat belongs to the depth tree: " +
-					"finish with depth_report and end your turn; the user or the root chat closes it."), nil
+				return ToolResult{}, errors.New("close_session is not available in a depth leaf. This chat belongs to the depth tree: " +
+					"finish with depth_report and end your turn; the user or the root chat closes it")
 			}
 			key, err := session.ParseSessionKey(sk)
 			if err != nil {
-				return TextResult(fmt.Sprintf("Error: parse session key: %v", err)), nil
+				return ToolResult{}, fmt.Errorf("parse session key: %w", err)
 			}
 			n, err := closeFn(key.AgentID, sk)
 			if err != nil {
-				return TextResult(fmt.Sprintf("Error: cannot close this chat: %v", err)), nil
+				return ToolResult{}, fmt.Errorf("cannot close this chat: %w", err)
 			}
 			msg := "Closed this chat. The user's next message in it reopens it."
 			if n == 0 {
@@ -77,7 +78,7 @@ func NewCloseSessionTool(closeFn SessionCloser, readFn SessionReader) *Tool {
 			r, err := readFn(key.AgentID, sk)
 			switch {
 			case err != nil:
-				msg += fmt.Sprintf(" Error: cannot mark it read: %v", err)
+				return ToolResult{}, fmt.Errorf("%s But cannot mark it read: %w", msg, err)
 			case r == 0:
 				msg += " Nothing to mark read: this session has no app chat."
 			default:

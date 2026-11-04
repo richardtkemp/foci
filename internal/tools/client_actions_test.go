@@ -30,12 +30,14 @@ func (r *routingInvoker) InvokeTool(ctx context.Context, tool, action string, ar
 
 func (r *routingInvoker) CanRunTool(tool string) bool { return r.canRun[tool] }
 
+// execClient returns the result text, or the error's text: what the model reads
+// either way.
 func execClient(t *testing.T, inv AppInvoker, params string) string {
 	t.Helper()
 	tool := NewClientTool(func() (AppInvoker, bool) { return inv, inv != nil })
 	res, err := tool.Execute(context.Background(), json.RawMessage(params))
 	if err != nil {
-		t.Fatalf("Execute(%s): Go error %v (want an error string)", params, err)
+		return "Error: " + err.Error()
 	}
 	return res.Text
 }
@@ -164,7 +166,7 @@ func TestClientTool_DescriptionListsEveryAction(t *testing.T) {
 
 // TestClientTool_NoDeviceErrorsAreDistinct (requirement 8): no phone, no
 // capable phone, a phone app too old, and no answer in time each read
-// differently, and none is a Go error.
+// differently, and each is an error.
 func TestClientTool_NoDeviceErrorsAreDistinct(t *testing.T) {
 	noInvoker := execClient(t, nil, `{"action":"set_alarm","time":"07:00"}`)
 	noApp := execClient(t, &routingInvoker{errFor: map[string]error{"client": ErrNoAppDevice}}, `{"action":"set_alarm","time":"07:00"}`)
