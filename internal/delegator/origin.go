@@ -12,3 +12,16 @@ import "fmt"
 func RedirectedOrigin(source, why string) string {
 	return fmt.Sprintf("↪️ **From %s** (%s)", source, why)
 }
+
+// PrependOrigin puts an origin note above text, with a blank line between. An
+// empty note leaves text unchanged; empty text (a file with no caption) leaves
+// the note alone.
+func PrependOrigin(note, text string) string {
+	if note == "" {
+		return text
+	}
+	if text == "" {
+		return note
+	}
+	return note + "\n\n" + text
+}

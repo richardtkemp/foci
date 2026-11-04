@@ -27,11 +27,11 @@ func (c *batchConn) SendInteractiveBatch(string, []platform.BatchQuestion, func(
 // owner's chat is open.
 func TestAskPresent_SpawnOwnerChatClosed(t *testing.T) {
 	const spawn, owner, root = "main/c1/b2", "main/c1/b1", "main/c1"
-	chats := askChats(func(sk string) []string {
+	chats := askChats(func(sk string) ([]string, bool) {
 		if sk == spawn {
-			return []string{owner, root}
+			return []string{owner, root}, true
 		}
-		return nil
+		return nil, false
 	})
 	for _, tc := range []struct {
 		name      string
@@ -76,7 +76,7 @@ func TestAskPresent_SpawnOwnerChatClosed(t *testing.T) {
 // prompts): when every chat fails, the presenter reports it, naming each failure,
 // so the ask layer does not keep an ask that is on no screen.
 func TestAskPresent_NoChatCanShowIt(t *testing.T) {
-	chats := askChats(func(string) []string { return []string{"main/c1/b1", "main/c1"} })
+	chats := askChats(func(string) ([]string, bool) { return []string{"main/c1/b1", "main/c1"}, true })
 	hub := &fakeAppHub{bound: map[string]bool{}}
 	id, err := newAskPresentFn("main", hub, chats, nil)("main/c1/b2", "ask-2764-none", "Q?", "Q", askChoices(), func(string) {})
 	if err == nil || id != "" {
@@ -92,7 +92,7 @@ func TestAskPresent_NoChatCanShowIt(t *testing.T) {
 // TestAskPresent_ChatsAfterAFailureStillTried: a failed first chat is not yet a
 // failure of the ask (#2630).
 func TestAskPresent_ChatsAfterAFailureStillTried(t *testing.T) {
-	chats := askChats(func(string) []string { return []string{"main/c1/b1", "main/c1"} })
+	chats := askChats(func(string) ([]string, bool) { return []string{"main/c1/b1", "main/c1"}, true })
 	hub := &fakeAppHub{bound: map[string]bool{"main/c1": true}}
 	t.Cleanup(func() { platform.CancelInteractiveMessage("ask-2764-walk", "done") })
 	_, err := newAskPresentFn("main", hub, chats, nil)("main/c1/b2", "ask-2764-walk", "Q?", "Q", askChoices(), func(string) {})

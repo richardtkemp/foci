@@ -23,7 +23,7 @@ There is **no branch-suppression policy** (`PolicyRootFallback`/`DeliverySuppres
 
 ## App media from a session with no conversation
 
-An app media send uses the session's own conversation, else the first chat of the family-tree walk (`backendPromptTargets`, through `app.SetSessionChats`), else it returns `errNoBinding`. A prompt attachment stays strict (`platform.OwnChatDocumentSender`): the prompt walk retries chat by chat, so an attachment that moved up by itself would appear once per retry.
+An app media send uses the session's own conversation, else the first chat of the family-tree walk (`backendPromptTargets`, through `app.SetSessionChats`), else it returns `errNoBinding`. A moved file's caption leads with its origin note (`originNote`, shared with backend prompts and `foci_ask`). A prompt attachment stays strict (`platform.OwnChatDocumentSender`): the prompt walk retries chat by chat, so an attachment that moved up by itself would appear once per retry.
 
 ## Unsolicited / agent-initiated delivery
 

@@ -32,7 +32,7 @@ import (
 // tells the ask layer that nobody saw it.
 func newAskPresentFn(agentID string, connMgr platform.ConnectionManager, chats askChats, chatClosed func(sessionKey string) bool) tools.AskPresentFn {
 	return func(sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, error) {
-		targets := chats.of(sessionKey)
+		targets, spawned := chats.route(sessionKey)
 		if askOwnerChatClosed(targets, sessionKey, chatClosed) {
 			askLog.Warnf("%s", delegator.UnattendedQuestionLog(sessionKey, spawnerChatClosedLabel, summary+" (its spawner's chat "+targets[0]+" is closed)"))
 			return "", errors.New(delegator.UnattendedQuestionMessage)
@@ -59,18 +59,18 @@ func newAskPresentFn(agentID string, connMgr platform.ConnectionManager, chats a
 		// prompt entry, so msgID is free for the next chat.
 		var failures []string
 		for _, target := range targets {
-			body := text
-			if target != sessionKey {
-				body = prependSpawnOrigin(tools.Spawns, sessionKey, body)
-			}
+			body := delegator.PrependOrigin(originNote(tools.Spawns, sessionKey, target, spawned, "question"), text)
 			platformMsgID, err := platform.SendInteractiveMessageWithID(sessionChatResolver(connMgr, target, chatAgentID(target, agentID)), msgID, summary, body, buttons, onClick, onExpire)
 			if err != nil {
 				askLog.Warnf("present question for session=%s in %s failed: %v", sessionKey, target, err)
 				failures = append(failures, fmt.Sprintf("%s: %v", target, err))
 				continue
 			}
-			if target != sessionKey {
+			switch {
+			case spawned:
 				askLog.Infof("question for session=%s shown in %s (the spawn's owner chain)", sessionKey, target)
+			case target != sessionKey:
+				askLog.Infof("question for session=%s shown in %s instead (own chat could not show it)", sessionKey, target)
 			}
 			return platformMsgID, nil
 		}
@@ -97,17 +97,22 @@ func spawnerChatClosed(agentID string) func(sessionKey string) bool {
 }
 
 // askChats lists, in order, the sessions whose chats an ask from a session
-// may be shown in (#2630); nil = only the asking session's own.
-type askChats func(sessionKey string) []string
+// may be shown in (#2630), and whether they are a spawn's owner chain (the shape
+// of backendPromptTargets); nil = only the asking session's own.
+type askChats func(sessionKey string) (targets []string, spawned bool)
+
+func (c askChats) route(sessionKey string) (targets []string, spawned bool) {
+	if c != nil {
+		if ts, spawned := c(sessionKey); len(ts) > 0 {
+			return ts, spawned
+		}
+	}
+	return []string{sessionKey}, false
+}
 
 func (c askChats) of(sessionKey string) []string {
-	if c == nil {
-		return []string{sessionKey}
-	}
-	if ts := c(sessionKey); len(ts) > 0 {
-		return ts
-	}
-	return []string{sessionKey}
+	targets, _ := c.route(sessionKey)
+	return targets
 }
 
 // first is the chat an ask's later hooks (restore, remove, reveal) address:
@@ -125,16 +130,16 @@ func (c askChats) first(sessionKey string) string { return c.of(sessionKey)[0] }
 // other session's ask stays in its own chat. owner is Spawner.BranchOwner
 // in the gateway (toolDeps.askChats).
 func newAskChats(owner func(branchKey string) (string, bool), d backendPromptDeps) askChats {
-	return func(sessionKey string) []string {
+	return func(sessionKey string) ([]string, bool) {
 		owner, ok := owner(sessionKey)
 		if !ok {
-			return nil
+			return nil, false
 		}
 		ts := promptTargets(d, owner)
 		if d.live != nil && !d.live(owner) && len(ts) > 1 {
 			ts = ts[1:]
 		}
-		return ts
+		return ts, true
 	}
 }
 
@@ -150,7 +155,7 @@ func newAskChats(owner func(branchKey string) (string, bool), d backendPromptDep
 // refuses it and reports why (#2764).
 func newAskPresentBatchFn(agentID string, connMgr platform.ConnectionManager, chats askChats, chatClosed func(sessionKey string) bool) tools.AskPresentBatchFn {
 	return func(sessionKey, promptID string, qs []question.Question, onResponse func(answers []string)) bool {
-		targets := chats.of(sessionKey)
+		targets, spawned := chats.route(sessionKey)
 		if askOwnerChatClosed(targets, sessionKey, chatClosed) {
 			return false
 		}
@@ -162,8 +167,8 @@ func newAskPresentBatchFn(agentID string, connMgr platform.ConnectionManager, ch
 				continue // not the app (or no addressable conn)
 			}
 			bqs := batchQuestionsFor(qs)
-			if target != sessionKey && len(bqs) > 0 {
-				bqs[0].Text = prependSpawnOrigin(tools.Spawns, sessionKey, bqs[0].Text)
+			if len(bqs) > 0 {
+				bqs[0].Text = delegator.PrependOrigin(originNote(tools.Spawns, sessionKey, target, spawned, "question"), bqs[0].Text)
 			}
 			batched, err := bs.SendInteractiveBatch(promptID, bqs, onResponse)
 			if err != nil {

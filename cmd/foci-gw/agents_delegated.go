@@ -569,7 +569,7 @@ type backendPromptDeps struct {
 // spawned=true); for any other session, promptTargets.
 func backendPromptTargets(d backendPromptDeps, sessionKey string) (targets []string, spawned bool) {
 	if d.owner != nil {
-		if ts := newAskChats(d.owner, d)(sessionKey); len(ts) > 0 {
+		if ts, spawned := newAskChats(d.owner, d)(sessionKey); spawned {
 			return ts, true
 		}
 	}
@@ -579,10 +579,11 @@ func backendPromptTargets(d backendPromptDeps, sessionKey string) (targets []str
 // appMediaChats is the walk an app media send takes when its session has no
 // conversation (#2755, Dick 2026-11-04: "send up"): the same chats, in the same
 // order, as a backend prompt from that session. The last step is the default
-// session on the app, because only an app conversation can take the file.
-func appMediaChats(idx *session.SessionIndex) func(agentID, sessionKey string) []string {
-	return func(agentID, sessionKey string) []string {
-		targets, _ := backendPromptTargets(backendPromptDeps{
+// session on the app, because only an app conversation can take the file. Each
+// chat carries the origin note the file takes if it lands there (#2844).
+func appMediaChats(idx *session.SessionIndex) func(agentID, sessionKey string) []app.SessionChat {
+	return func(agentID, sessionKey string) []app.SessionChat {
+		return mediaChats(backendPromptDeps{
 			sessionIdx: idx,
 			agentID:    agentID,
 			live:       depthSessionLive,
@@ -594,8 +595,16 @@ func appMediaChats(idx *session.SessionIndex) func(agentID, sessionKey string) [
 				return idx.DefaultSessionKeyForAgentOn(agentID, "app")
 			},
 		}, sessionKey)
-		return targets
 	}
+}
+
+func mediaChats(d backendPromptDeps, sessionKey string) []app.SessionChat {
+	targets, spawned := backendPromptTargets(d, sessionKey)
+	chats := make([]app.SessionChat, len(targets))
+	for i, target := range targets {
+		chats[i] = app.SessionChat{SessionKey: target, Note: originNote(tools.Spawns, sessionKey, target, spawned, "file")}
+	}
+	return chats
 }
 
 // depthSessionLive is backendPromptDeps.live in the gateway: a session of an
@@ -724,12 +733,7 @@ func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, 
 		if kind == promptToDefaultChat {
 			body = prependRequestOrigin(d.sessionIdx, chatAgent, conn, sessionKey, body)
 		}
-		body = prependSpawnOrigin(tools.Spawns, sessionKey, body)
-		// A spawn's prompt in its owner's chat is named by the spawn line
-		// above; it was never meant for the branch's own chat.
-		if target != sessionKey && !spawned {
-			body = delegator.RedirectedOrigin("session "+sessionKey, "its own chat cannot show this prompt") + "\n\n" + body
-		}
+		body = delegator.PrependOrigin(originNote(tools.Spawns, sessionKey, target, spawned, "prompt"), body)
 		// Attachment (e.g. the full ExitPlanMode plan markdown) is sent as a
 		// document before the keyboard so the user sees the content, then the
 		// Allow/Deny buttons — to the chat the buttons go to. A send failure is
@@ -898,27 +902,45 @@ func chatAgentID(sessionKey, fallback string) string {
 	return fallback
 }
 
-// prependSpawnOrigin names the spawn a prompt comes from (#2523). A clone
+// originNote is the one decision of what something from the session source says
+// about where it came from when it is shown in target's chat (#2844, Dick
+// 2026-11-04: "at least do not build a new one"). Backend prompts, foci_ask and
+// app media moved up the family tree all take their note from here. what names
+// the thing in the note's reason ("prompt", "question", "file").
+//
+// A spawn is named wherever it is shown (spawnOrigin). A session shown in a chat
+// that is not its own says so (delegator.RedirectedOrigin), unless the target is
+// on its spawn's owner chain (spawned): the spawn line names it, and it was never
+// meant for the branch's own chat. A send with no source session names nothing.
+func originNote(tr *tools.SpawnTracker, source, target string, spawned bool, what string) string {
+	note := spawnOrigin(tr, source)
+	if source == "" || target == source || spawned {
+		return note
+	}
+	return delegator.PrependOrigin(delegator.RedirectedOrigin("session "+source, "its own chat cannot show this "+what), note)
+}
+
+// spawnOrigin names the spawn a prompt comes from (#2523). A clone
 // spawn runs on its own branch session with its own backend, so its prompts
 // never block the parent's turn, but they reach the same chat and otherwise
 // read exactly like the parent's own: the owner must see which spawn asks.
 // A direct spawn's batch session is named too (#2684,
 // tools.SpawnOfSession). A cross-agent spawn names the agent it runs as
 // (#2730): its request is shown in the caller's chat, where the human must
-// see which agent asks. Text from any other session is returned unchanged.
-func prependSpawnOrigin(tr *tools.SpawnTracker, sessionKey, text string) string {
+// see which agent asks. Any other session has no such line: "".
+func spawnOrigin(tr *tools.SpawnTracker, sessionKey string) string {
 	id, label := "", ""
 	if _, sp, ok := tr.ForBranch(sessionKey); ok {
 		id, label = sp.ID, sp.Label()
 	} else if sp, ok := tools.SpawnOfSession(sessionKey); ok && sp.Direct {
 		id, label = sp.ID, sp.Label
 	} else {
-		return text
+		return ""
 	}
 	if session.IsCrossAgentSpawnKey(sessionKey) {
-		return fmt.Sprintf("🐣 **From %s's spawn %s:** %s", session.AgentIDFromKey(sessionKey), id, label) + "\n\n" + text
+		return fmt.Sprintf("🐣 **From %s's spawn %s:** %s", session.AgentIDFromKey(sessionKey), id, label)
 	}
-	return fmt.Sprintf("🐣 **From spawn %s:** %s", id, label) + "\n\n" + text
+	return fmt.Sprintf("🐣 **From spawn %s:** %s", id, label)
 }
 
 // backendPromptFuncs returns the two prompt closures the DelegatedManager

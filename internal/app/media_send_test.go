@@ -58,12 +58,16 @@ func mediaHub(t *testing.T) (h *Hub, live *convBinding, sock *wsClient, file str
 func walkTo(t *testing.T, targets ...string) *[]string {
 	t.Helper()
 	asked := &[]string{}
-	SetSessionChats(func(agentID, sessionKey string) []string {
+	chats := make([]SessionChat, len(targets))
+	for i, target := range targets {
+		chats[i] = SessionChat{SessionKey: target}
+	}
+	SetSessionChats(func(agentID, sessionKey string) []SessionChat {
 		if agentID != "ag" {
 			t.Errorf("walk asked for agent %q, want ag", agentID)
 		}
 		*asked = append(*asked, sessionKey)
-		return targets
+		return chats
 	})
 	t.Cleanup(func() { SetSessionChats(nil) })
 	return asked
@@ -238,5 +242,62 @@ func TestSendToChatTool_TellsTheTruth(t *testing.T) {
 	}
 	if got := mediaFrames(t, sock); len(got) != 1 || got[0].d["conversationId"] != "conv-live" {
 		t.Errorf("chat above: frames = %v, want one in conv-live", got)
+	}
+}
+
+// TestMediaSend_MovedFileCarriesOriginNote: a file that moved up the family tree
+// leads with the note the walk gives the chat it landed in, above any caption,
+// on every send method (#2844). The note comes from the walk, not this package.
+func TestMediaSend_MovedFileCarriesOriginNote(t *testing.T) {
+	const branch, chat, note = "ag/c7/b1", int64(99), "NOTE-FROM-WALK"
+	h, live, sock, file := mediaHub(t)
+	SetSessionChats(func(string, string) []SessionChat {
+		return []SessionChat{{SessionKey: "ag/c8", Note: "NOT-THIS-CHAT"}, {SessionKey: live.key(), Note: note}}
+	})
+	t.Cleanup(func() { SetSessionChats(nil) })
+
+	conn := h.BotForSession(branch)
+	for name, send := range mediaSends(file, chat) {
+		if err := send(conn); err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		frames := mediaFrames(t, sock)
+		if len(frames) != 1 {
+			t.Errorf("%s: emitted %d media frames, want 1", name, len(frames))
+			continue
+		}
+		want := note + "\n\ncap"
+		if strings.Contains(name, "Voice") { // the voice sends have no caption
+			want = note
+		}
+		if got := frames[0].d["caption"]; got != want {
+			t.Errorf("%s: caption = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// TestMediaSend_OwnChatHasNoNote: a file in its own chat has no note, and a
+// prompt attachment never has one, whatever the walk would say (#2844).
+func TestMediaSend_OwnChatHasNoNote(t *testing.T) {
+	h, live, sock, file := mediaHub(t)
+	SetSessionChats(func(string, string) []SessionChat {
+		return []SessionChat{{SessionKey: live.key(), Note: "NOTE-FROM-WALK"}}
+	})
+	t.Cleanup(func() { SetSessionChats(nil) })
+
+	conn := h.BotForSession(live.key())
+	for name, send := range map[string]func() error{
+		"SendDocument":        func() error { return conn.SendDocument(file, "cap") },
+		"SendDocumentOwnChat": func() error { return conn.SendDocumentOwnChat(file, "cap") },
+	} {
+		if err := send(); err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		frames := mediaFrames(t, sock)
+		if len(frames) != 1 || frames[0].d["caption"] != "cap" {
+			t.Errorf("%s: frames = %v, want one with caption cap and no note", name, frames)
+		}
 	}
 }

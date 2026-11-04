@@ -79,10 +79,10 @@ func TestPrependSpawnOrigin_KnownSpawns(t *testing.T) {
 	const parent, bk = "main/c26842", "main/c26842/b1"
 	tools.Spawns.Add(parent, tools.RunningSpawn{ID: "spawn-bg2684", BranchKey: bk, Name: "watch CI"}, func() {})
 	t.Cleanup(func() { tools.Spawns.Stop(parent) })
-	if got := prependSpawnOrigin(tools.Spawns, bk, "Allow?"); !strings.HasPrefix(got, "🐣 **From spawn spawn-bg2684:** watch CI") {
+	if got := spawnOrigin(tools.Spawns, bk); !strings.HasPrefix(got, "🐣 **From spawn spawn-bg2684:** watch CI") {
 		t.Errorf("background spawn prompt = %q, want it named", got)
 	}
-	if got := prependSpawnOrigin(tools.Spawns, "main/c26842/b2", "Allow?"); got != "Allow?" {
+	if got := spawnOrigin(tools.Spawns, "main/c26842/b2"); got != "" {
 		t.Errorf("a non-spawn session's prompt = %q, want it unchanged", got)
 	}
 }

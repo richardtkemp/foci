@@ -90,6 +90,10 @@ func TestL2_AppMedia_UnboundSessionSendsUp(t *testing.T) {
 	if m.ConversationID != convID {
 		t.Errorf("file landed in %s, want the agent's chat %s", m.ConversationID, convID)
 	}
+	// #2844: the moved file says where it came from.
+	if !strings.HasPrefix(m.Caption, "↪️ **From session ") || !strings.Contains(m.Caption, "report-l2") {
+		t.Errorf("caption = %q, want the origin note naming the session", m.Caption)
+	}
 	if !strings.Contains(h.Stderr(), "the session has no conversation") {
 		t.Errorf("no walk logged: the send did not go up the tree; stderr:\n%s", stderrTail(h.Stderr()))
 	}

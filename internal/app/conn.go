@@ -12,6 +12,7 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/command"
+	"foci/internal/delegator"
 	"foci/internal/fap"
 	"foci/internal/platform"
 	"foci/internal/question"
@@ -134,23 +135,30 @@ var (
 // refuses it if none can show it (#2608).
 var errNoBinding = errors.New("app: no conversation for session")
 
-// sessionChats lists, in order, the sessions whose chats may show a media send
-// from a session of an agent. The gateway owns the family-tree walk, so it
-// installs it (SetSessionChats); nil = the walk is not installed, and a session
-// has only its own chat.
+// SessionChat is one chat a media send may land in: the session whose chat it
+// is, and the origin note the file takes there (#2844).
+type SessionChat struct {
+	SessionKey string
+	Note       string
+}
+
+// sessionChats lists, in order, the chats that may show a media send from a
+// session of an agent. The gateway owns the family-tree walk and the origin note,
+// so it installs them (SetSessionChats); nil = the walk is not installed, and a
+// session has only its own chat.
 var (
 	sessionChatsMu sync.RWMutex
-	sessionChats   func(agentID, sessionKey string) []string
+	sessionChats   func(agentID, sessionKey string) []SessionChat
 )
 
 // SetSessionChats installs the walk behind sessionChats.
-func SetSessionChats(fn func(agentID, sessionKey string) []string) {
+func SetSessionChats(fn func(agentID, sessionKey string) []SessionChat) {
 	sessionChatsMu.Lock()
 	sessionChats = fn
 	sessionChatsMu.Unlock()
 }
 
-func sessionChatsOf(agentID, sessionKey string) []string {
+func sessionChatsOf(agentID, sessionKey string) []SessionChat {
 	sessionChatsMu.RLock()
 	fn := sessionChats
 	sessionChatsMu.RUnlock()
@@ -478,26 +486,27 @@ func (c *appConn) SendDocumentOwnChat(path, caption string) error {
 // (#2755, Dick 2026-11-04: "send up"): the session's own, else the first chat
 // up its family tree that has one (SetSessionChats). A session that no chat
 // can show gets errNoBinding, so the sender is never told "Sent" for a file
-// that went nowhere.
-func (c *appConn) mediaBinding(sessionKey string) (*convBinding, error) {
+// that went nowhere. note is the origin note of a file that moved (#2844); a
+// file in its own chat has none.
+func (c *appConn) mediaBinding(sessionKey string) (b *convBinding, note string, err error) {
 	if b := c.hub.bindingForSession(sessionKey); b != nil {
-		return b, nil
+		return b, "", nil
 	}
-	for _, target := range sessionChatsOf(c.agentID, sessionKey) {
-		if b := c.hub.bindingForSession(target); b != nil {
-			appLog.Infof("media for session %q (agent %s) sent to the chat of %s: the session has no conversation", sessionKey, c.agentID, target)
-			return b, nil
+	for _, chat := range sessionChatsOf(c.agentID, sessionKey) {
+		if b := c.hub.bindingForSession(chat.SessionKey); b != nil {
+			appLog.Infof("media for session %q (agent %s) sent to the chat of %s: the session has no conversation", sessionKey, c.agentID, chat.SessionKey)
+			return b, chat.Note, nil
 		}
 	}
-	return nil, fmt.Errorf("%w %q or any chat above it", errNoBinding, sessionKey)
+	return nil, "", fmt.Errorf("%w %q or any chat above it", errNoBinding, sessionKey)
 }
 
 func (c *appConn) sendMediaFile(sessionKey, path, caption, kind string) error {
-	b, err := c.mediaBinding(sessionKey)
+	b, note, err := c.mediaBinding(sessionKey)
 	if err != nil {
 		return err
 	}
-	return c.emitMediaFile(b, path, caption, kind)
+	return c.emitMediaFile(b, path, delegator.PrependOrigin(note, caption), kind)
 }
 
 func (c *appConn) emitMediaFile(b *convBinding, path, caption, kind string) error {
@@ -510,7 +519,7 @@ func (c *appConn) emitMediaFile(b *convBinding, path, caption, kind string) erro
 }
 
 func (c *appConn) sendMediaBytes(sessionKey string, data []byte, kind, name, mimeType string) error {
-	b, err := c.mediaBinding(sessionKey)
+	b, note, err := c.mediaBinding(sessionKey)
 	if err != nil {
 		return err
 	}
@@ -518,7 +527,7 @@ func (c *appConn) sendMediaBytes(sessionKey string, data []byte, kind, name, mim
 	if err != nil {
 		return err
 	}
-	c.emitMedia(b, meta, "")
+	c.emitMedia(b, meta, note)
 	return nil
 }
 

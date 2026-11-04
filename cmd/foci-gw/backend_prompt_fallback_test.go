@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"foci/internal/agent"
+	"foci/internal/app"
 	"foci/internal/platform"
 	"foci/internal/session"
 )
@@ -348,12 +349,36 @@ func TestAppMediaChats_WalksTheFamilyTree(t *testing.T) {
 		t.Fatalf("test setup: default session on the app = %q, want %q", got, deflt)
 	}
 
+	keys := func(chats []app.SessionChat) []string {
+		out := make([]string, len(chats))
+		for i, c := range chats {
+			out[i] = c.SessionKey
+		}
+		return out
+	}
 	got := appMediaChats(idx)("main", leaf)
-	if want := []string{leaf, parent, root, deflt}; !slices.Equal(got, want) {
-		t.Errorf("walk = %v, want %v", got, want)
+	if want := []string{leaf, parent, root, deflt}; !slices.Equal(keys(got), want) {
+		t.Errorf("walk = %v, want %v", keys(got), want)
 	}
 	// No session index: the key's own shape still gives the root.
-	if got, want := appMediaChats(nil)("main", leaf), []string{leaf, root}; !slices.Equal(got, want) {
+	if got, want := keys(appMediaChats(nil)("main", leaf)), []string{leaf, root}; !slices.Equal(got, want) {
 		t.Errorf("no index: walk = %v, want %v", got, want)
+	}
+	// #2844: every chat but the session's own carries the redirected note.
+	moved := "↪️ **From session " + leaf + "** (its own chat cannot show this file)"
+	for _, c := range got {
+		want := moved
+		if c.SessionKey == leaf {
+			want = ""
+		}
+		if c.Note != want {
+			t.Errorf("note in %s = %q, want %q", c.SessionKey, c.Note, want)
+		}
+	}
+	// A session-blind send has no source to name.
+	for _, c := range appMediaChats(idx)("main", "") {
+		if c.Note != "" {
+			t.Errorf("session-blind send: note in %s = %q, want none", c.SessionKey, c.Note)
+		}
 	}
 }
