@@ -463,12 +463,7 @@ var toolTable = []toolEntry{
 		enabled: func(d *toolDeps) bool { return d.p.cfg.Platform("app") != nil },
 		build: func(d *toolDeps) *tools.Tool {
 			return tools.NewClientTool(func() (tools.AppInvoker, bool) {
-				conn := d.connMgr.Primary(d.p.acfg.ID)
-				if conn == nil {
-					return nil, false
-				}
-				inv, ok := conn.(tools.AppInvoker)
-				return inv, ok
+				return appInvokerFor(d.connMgr, d.p.acfg.ID)
 			})
 		}},
 
@@ -755,4 +750,17 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 		d.out.spawner = d.spawner
 	}
 	return d.spawner
+}
+
+// appInvokerFor finds the agent's connection that can run device tools. It
+// searches every connection, not Primary: default_platform or the most recently
+// active session can make Primary a non-app connection, which would report "no
+// device" with a device attached (#2769).
+func appInvokerFor(connMgr platform.ConnectionManager, agentID string) (tools.AppInvoker, bool) {
+	for _, conn := range connMgr.AllForAgent(agentID) {
+		if inv, ok := conn.(tools.AppInvoker); ok {
+			return inv, true
+		}
+	}
+	return nil, false
 }

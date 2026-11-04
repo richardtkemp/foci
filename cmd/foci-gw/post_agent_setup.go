@@ -12,6 +12,7 @@ import (
 	"foci/internal/procx"
 	"foci/internal/resources"
 	"foci/internal/tools/tmux"
+	"foci/internal/warnings"
 )
 
 // warningHook wires log warnings into agent warning queues: it pushes to
@@ -101,9 +102,7 @@ func setupTmuxMemoryMonitor(
 				if anyNotifyEnabled(inst.LiveConfig(), cfg, func(n config.ResolvedNotify) bool { return n.InjectAgentWarnings.Enabled() }) {
 					continue
 				}
-				if conn := connMgr.Primary(inst.id); conn != nil {
-					conn.SendNotification(msg)
-				}
+				deliverTmuxMemoryNotice(connMgr, inst.id, inst.ag.ChatWarnings(), msg)
 			}
 		},
 		func() {
@@ -116,6 +115,25 @@ func setupTmuxMemoryMonitor(
 	)
 	tmuxMemMon.Start(ctx)
 	return tmuxMemMon.Stop
+}
+
+// deliverTmuxMemoryNotice sends a tmux memory notice to the agent's primary
+// connection. The monitor fires once per threshold crossing, so a skipped
+// notice is never repeated, and a KILL notice is the only record of which
+// sessions died. With no connection the notice joins the chat warning queue,
+// whose dispatcher holds it until a connection exists (#2769). ERROR gets it
+// past an errors-only queue: a direct send has no severity filter either.
+func deliverTmuxMemoryNotice(connMgr platform.ConnectionManager, agentID string, chat *warnings.Queue, msg string) {
+	if conn := connMgr.Primary(agentID); conn != nil {
+		conn.SendNotification(msg)
+		return
+	}
+	if chat != nil && chat.Enabled() {
+		mainLog.Infof("[%s] no live connection, queued tmux memory notice: %s", agentID, msg)
+		chat.Push("ERROR", "tmux-memory", msg)
+		return
+	}
+	mainLog.Warnf("[%s] no live connection and chat warnings are off, tmux memory notice not delivered: %s", agentID, msg)
 }
 
 // setupMemoryGuard starts the system memory guard if enabled. Returns a stop

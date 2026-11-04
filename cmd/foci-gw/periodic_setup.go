@@ -242,27 +242,13 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	}
 
 	// Chat warning dispatcher (platform notifications).
-	// PeerQueues: same cross-queue feedback prevention as above — a failed
-	// SendNotification (e.g. "no channel ID") must not enter the agent queue.
-	chatWarningDispatcher := warnings.NewDispatcher(warnings.DispatcherConfig{
-		Name:       "chat",
-		AgentID:    agentID,
-		Queue:      inst.ag.ChatWarnings(),
-		PeerQueues: []*warnings.Queue{inst.ag.Warnings()},
-		FormatFn: func(body string) string {
-			return "[system diagnostics]\n" + body
-		},
-		DispatchFn: func(warningText string) {
-			if conn := p.connMgr.Primary(agentID); conn != nil {
-				conn.SendNotification(warningText)
-			}
-		},
-		ActiveInterval:        warningActiveInterval,
-		InactiveInterval:      warningInactiveInterval,
-		ActivityThreshold:     warningActivityThreshold,
-		LastUserMessageTimeFn: lastUserMsgFn,
-		LastDispatchStore:     p.sessionIndex.PersistedTime(agentID, "warnings_dispatch_last:chat"),
-	})
+	chatWarningCfg := chatWarningConfig(p.connMgr, agentID, inst.ag.ChatWarnings(), inst.ag.Warnings())
+	chatWarningCfg.ActiveInterval = warningActiveInterval
+	chatWarningCfg.InactiveInterval = warningInactiveInterval
+	chatWarningCfg.ActivityThreshold = warningActivityThreshold
+	chatWarningCfg.LastUserMessageTimeFn = lastUserMsgFn
+	chatWarningCfg.LastDispatchStore = p.sessionIndex.PersistedTime(agentID, "warnings_dispatch_last:chat")
+	chatWarningDispatcher := warnings.NewDispatcher(chatWarningCfg)
 
 	ka.Enabled = kaEnabled
 	runner = periodic.New(periodic.RunnerConfig{
@@ -342,4 +328,37 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 
 	mainLog.Infof("agent %q periodic runner started (ka=%v bg=%v)", acfg.ID, kaEnabled, bg.Enabled)
 	return runner
+}
+
+// chatWarningConfig builds the addressing half of an agent's chat warning
+// dispatcher; the caller adds the cadence.
+//
+// With no connection the warnings stay queued (HoldFn), because a drained one
+// could not be sent again (#2769). They go out once a connection exists, such
+// as a platform still connecting in the background. The queue caps itself, so
+// an agent that never has a connection keeps only its newest warnings.
+//
+// PeerQueues: same cross-queue feedback prevention as the agent dispatcher — a
+// failed SendNotification (e.g. "no channel ID") must not enter the agent queue.
+func chatWarningConfig(connMgr platform.ConnectionManager, agentID string, chat, peer *warnings.Queue) warnings.DispatcherConfig {
+	return warnings.DispatcherConfig{
+		Name:       "chat",
+		AgentID:    agentID,
+		Queue:      chat,
+		PeerQueues: []*warnings.Queue{peer},
+		FormatFn: func(body string) string {
+			return "[system diagnostics]\n" + body
+		},
+		HoldFn: func() bool { return connMgr.Primary(agentID) == nil },
+		DispatchFn: func(warningText string) {
+			conn := connMgr.Primary(agentID)
+			if conn == nil {
+				// The connection went between HoldFn and here, and the queue is
+				// already drained. Both queues are suppressed, so this cannot loop.
+				warningLog.Warnf("[%s] connection lost during dispatch, chat warnings not delivered: %s", agentID, warningText)
+				return
+			}
+			conn.SendNotification(warningText)
+		},
+	}
 }
