@@ -392,7 +392,7 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 				if req.Human {
 					stampHumanCommandDispatch(d, inst, sessionKey)
 				}
-				writeJSONReceipt(w, result.Text, rcpt)
+				writeJSONReceipt(w, result.DisplayText(), rcpt)
 				return
 			}
 		}
@@ -670,7 +670,7 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 		// The receipt envelope /send's slash-command path uses: the command's
 		// reply plus where it landed, so `foci command -s <typo>` says the
 		// session was created instead of resetting a fresh empty one unseen.
-		writeJSONReceipt(w, result.Text, rcpt)
+		writeJSONReceipt(w, result.DisplayText(), rcpt)
 	}
 }
 

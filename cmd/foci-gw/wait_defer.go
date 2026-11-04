@@ -574,6 +574,6 @@ func (s *deferSweeper) deliverCommand(inst *agentInstance, r defersend.Record) e
 		return errDeferNotExecutable
 	}
 	deferLog.Infof("deferred command %d delivered (agent=%s session=%s kind=%s text_len=%d)",
-		r.ID, r.AgentID, r.SessionKey, r.EffectiveKind(), len(result.Text))
+		r.ID, r.AgentID, r.SessionKey, r.EffectiveKind(), len(result.DisplayText()))
 	return nil
 }

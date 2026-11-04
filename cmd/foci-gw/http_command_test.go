@@ -45,6 +45,39 @@ func TestCommand_HappyPath(t *testing.T) {
 	}
 }
 
+// TestCommand_PartsReply proves an HTTP caller gets a reply that answers in
+// Parts (/config table is the live one), on both endpoints that dispatch a
+// slash command: the parts rendered as one text, not an empty "response"
+// (#2842).
+func TestCommand_PartsReply(t *testing.T) {
+	t.Parallel()
+	table := &command.Command{
+		Name: "table",
+		Execute: func(_ context.Context, _ command.Request, _ command.CommandContext) (command.Response, error) {
+			return command.Response{Parts: []string{"Global", "Agent"}}, nil
+		},
+	}
+	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{table}})
+	mux := newTestMux(d)
+
+	for _, tc := range []struct{ path, body string }{
+		{"/command", `{"command":"/table"}`},
+		{"/send", `{"text":"/table"}`},
+	} {
+		w := postJSON(mux, tc.path, tc.body)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200; body: %s", tc.path, w.Code, w.Body.String())
+		}
+		var resp map[string]string
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("%s: decode %q: %v", tc.path, w.Body.String(), err)
+		}
+		if want := "Global\n\nAgent"; resp["response"] != want {
+			t.Errorf("%s: response = %q, want %q", tc.path, resp["response"], want)
+		}
+	}
+}
+
 // TestCommand_Unknown pins the behaviour for an unregistered command name:
 // the registry answers unknown names itself (with an "Unknown command"
 // suggestion message, found=true), so the endpoint returns 200 with that
