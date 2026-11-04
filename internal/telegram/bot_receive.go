@@ -8,9 +8,11 @@ import (
 	"time"
 	"unicode"
 
+	"foci/internal/agent"
 	"foci/internal/dispatch"
 	"foci/internal/platform"
 	"foci/internal/timeutil"
+	"foci/internal/usercmd"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -403,10 +405,16 @@ func (b *Bot) tryIntercept(ctx context.Context, qm *queuedMessage) bool {
 		UserID:    qm.userID,
 		ChatID:    qm.msg.Chat.Id,
 		Timestamp: time.Unix(int64(qm.msg.Date), 0),
+
+		ShellEligible: len(qm.attachments) == 0 && !qm.voice && qm.steer == platform.SteerDefault,
 	})
 	qm.text = result.Text // pick up any message transforms
 	if !result.Consumed {
 		return false
+	}
+	if result.ShellScript != "" {
+		b.runShellCommand(qm, result.ShellScript)
+		return true
 	}
 	if result.WizardReply != "" {
 		b.sendWizardStep(qm.msg.Chat.Id, result.WizardReply, result.WizardStep)
@@ -418,4 +426,21 @@ func (b *Bot) tryIntercept(ctx context.Context, qm *queuedMessage) bool {
 		return true
 	}
 	return true // silently consumed (stale command or idle secondary)
+}
+
+// runShellCommand hands a typed "!cmd" to the agent's shared flow (#2812): it
+// refuses, or runs the command, replies in plain text and starts the agent's turn.
+func (b *Bot) runShellCommand(qm *queuedMessage, script string) {
+	reply := func(text string) { b.sendReply(qm.msg, text) }
+	if b.agentRef == nil {
+		reply(usercmd.RefusedUnavailable)
+		return
+	}
+	pm := b.toPlatformMessage(qm.msg, *qm)
+	// A group message not addressed to the bot gets what any such message gets:
+	// silence. It runs nothing; the refusal below is for one addressed to the bot.
+	if !b.mq.IsAddressed(pm) {
+		return
+	}
+	b.agentRef.HandleTextCommand(platformName, agent.EnvelopeFromQueuedMessage(b.sessionKeyForQueuedMessage(pm), pm, b), script, reply)
 }

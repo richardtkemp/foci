@@ -118,6 +118,7 @@ const (
 
 	// app -> server
 	TypeCommand                = "command"
+	TypeShellCancel            = "shell.cancel"
 	TypeInteractiveResponse    = "interactive.response"
 	TypeInteractiveProgress    = "interactive.progress"
 	TypeWizardResponse         = "wizard.response"
@@ -599,6 +600,12 @@ type Notification struct {
 	// the chip's Text as before; a chip with no SkillURL (older server, or a
 	// SKILL.md read outside every skill root) has nothing to open.
 	SkillURL string `json:"skillUrl,omitempty"`
+	// Shell, when set, marks this notification as a "!cmd" shell chit (#2812). The
+	// row keeps MessageID (the user's message id, so the chit takes that message's
+	// place) from the running frame to the final one. Additive and optional: an
+	// app that predates it ignores the key and shows Text, which holds the command
+	// and its readable result.
+	Shell *ShellCommand `json:"shell,omitempty"`
 	// Ambient marks a notification that is a trace in the transcript, not news:
 	// it is stored, replayed and rendered like any other, but the server does not
 	// treat it as user-facing activity (no offline push, no conversation-list
@@ -857,6 +864,21 @@ type SubagentEnd struct {
 }
 
 func (SubagentEnd) Type() string { return TypeSubagentEnd }
+
+// ShellCommand is the chit data of a "!cmd" notification (#2812). State is
+// "running" until the final frame ("exited", "timed_out", "cancelled" or
+// "failed"; the values of usercmd.State*). The notification's Text holds the
+// command and, under the size limit, the whole output; over the limit, only its
+// start, and OutputBlobID names the whole saved output (GET /app/blob/<id>,
+// fetched only when the user opens the view). Command is secret-scrubbed.
+type ShellCommand struct {
+	RunID        string `json:"runId"`
+	State        string `json:"state"`
+	Command      string `json:"command"`
+	ExitCode     *int   `json:"exitCode,omitempty"` // set for state "exited"
+	OutputBlobID string `json:"outputBlobId,omitempty"`
+	OutputBytes  int64  `json:"outputBytes,omitempty"` // set with OutputBlobID
+}
 
 // ToolCall states (ToolCall.State).
 const (
@@ -1122,6 +1144,16 @@ type Command struct {
 	Name           string `json:"name"`
 	Args           string `json:"args,omitempty"`
 }
+
+// ShellCancel asks the server to kill a running "!cmd" shell command (#2812).
+// Unknown or finished runs are ignored: the chit's final state comes in its own
+// notification either way.
+type ShellCancel struct {
+	ConversationID string `json:"conversationId"`
+	RunID          string `json:"runId"`
+}
+
+func (ShellCancel) Type() string { return TypeShellCancel }
 
 // InteractiveResponse is a button tap / typed answer to a prompt. For a single
 // question the answer is in Data. For a BATCHED prompt (server sent

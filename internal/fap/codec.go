@@ -110,6 +110,8 @@ func decodeClient(t string, d json.RawMessage) (any, error) {
 		dst = &ClientMessage{}
 	case TypeCommand:
 		dst = &Command{}
+	case TypeShellCancel:
+		dst = &ShellCancel{}
 	case TypeInteractiveResponse:
 		dst = &InteractiveResponse{}
 	case TypeInteractiveProgress:
@@ -189,6 +191,8 @@ func derefClient(dst any) any {
 	case *AskgwResponse:
 		return *v
 	case *Command:
+		return *v
+	case *ShellCancel:
 		return *v
 	case *InteractiveResponse:
 		return *v

@@ -102,6 +102,16 @@ func newFrameStore(path string, ttl time.Duration) (*frameStore, error) {
 		// it deletes rows, so MaxSeq never goes backwards when the TTL removes a
 		// quiet conversation's last frame (#2197). The send path does not write
 		// it: while a conversation has frames, app_frames itself is the high-water.
+		// A "!cmd" chit that has not reached its final state (#2812). The row lives
+		// from the running frame to the final frame being recorded, so startup can
+		// close the chit of a command the restart killed.
+		`CREATE TABLE IF NOT EXISTS app_shell_runs (
+			run_id     TEXT    NOT NULL PRIMARY KEY,
+			conv_id    TEXT    NOT NULL,
+			agent_id   TEXT    NOT NULL,
+			message_id TEXT    NOT NULL,
+			command    TEXT    NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS app_conv_seq (
 			conv_id TEXT    NOT NULL PRIMARY KEY,
 			max_seq INTEGER NOT NULL
@@ -486,6 +496,53 @@ func (s *frameStore) DeletePrompt(promptID string) {
 	if _, err := s.db.Exec(`DELETE FROM app_prompts WHERE prompt_id = ?`, promptID); err != nil {
 		appLog.Errorf("frame store DeletePrompt (prompt=%s): %v", promptID, err)
 	}
+}
+
+// shellRunRow is one open row of app_shell_runs.
+type shellRunRow struct{ runID, convID, agentID, messageID, command string }
+
+// AddShellRun records a command whose chit is running.
+func (s *frameStore) AddShellRun(r shellRunRow) {
+	if s == nil {
+		return
+	}
+	if _, err := s.db.Exec(`INSERT OR REPLACE INTO app_shell_runs (run_id, conv_id, agent_id, message_id, command) VALUES (?, ?, ?, ?, ?)`,
+		r.runID, r.convID, r.agentID, r.messageID, r.command); err != nil {
+		appLog.Errorf("frame store AddShellRun (run=%s): %v", r.runID, err)
+	}
+}
+
+// DeleteShellRun drops a command whose final frame is recorded.
+func (s *frameStore) DeleteShellRun(runID string) {
+	if s == nil {
+		return
+	}
+	if _, err := s.db.Exec(`DELETE FROM app_shell_runs WHERE run_id = ?`, runID); err != nil {
+		appLog.Errorf("frame store DeleteShellRun (run=%s): %v", runID, err)
+	}
+}
+
+// OpenShellRuns lists commands with no recorded final frame.
+func (s *frameStore) OpenShellRuns() []shellRunRow {
+	if s == nil {
+		return nil
+	}
+	rows, err := s.db.Query(`SELECT run_id, conv_id, agent_id, message_id, command FROM app_shell_runs`)
+	if err != nil {
+		appLog.Errorf("frame store OpenShellRuns: %v", err)
+		return nil
+	}
+	defer func() { _ = rows.Close() }()
+	var out []shellRunRow
+	for rows.Next() {
+		var r shellRunRow
+		if err := rows.Scan(&r.runID, &r.convID, &r.agentID, &r.messageID, &r.command); err != nil {
+			appLog.Errorf("frame store OpenShellRuns scan: %v", err)
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 // legacyAsk is a stored interactive prompt that predates durable resolution

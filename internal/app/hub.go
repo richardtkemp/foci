@@ -68,6 +68,8 @@ const (
 // sockets. It implements platform.ConnectionSource[*appConn] so the generic
 // adapter can expose it as a platform.ConnectionManager.
 type Hub struct {
+	shellRuns shellRunRegistry // running "!cmd" commands, for cancel (#2812)
+
 	deps     platform.ProviderDeps
 	pairKeys *pairKeyStore
 	blobs    *blobStore
@@ -992,6 +994,7 @@ func (h *Hub) StartAll(context.Context) {
 	if restored > 0 {
 		appLog.Infof("restored %d binding(s) from durable store at startup", restored)
 	}
+	h.closeOrphanedShellRuns()
 	// One-time: resolve asks stored before durable resolution tracking existed,
 	// so a freshly-paired device doesn't replay them as fresh (#981).
 	if h.frames.NeedsLegacyAskSweep() {

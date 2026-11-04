@@ -23,6 +23,8 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -254,12 +256,19 @@ type Spec struct {
 	// Caps MUST declare every Capability.
 	Caps map[Capability]Support
 
-	DefaultModel       string        // launch model when neither the session nor config picks one
-	ModelcapsKey       string        // modelcaps record key ("family") for this backend
-	LedgerKey          string        // cost-ledger backend its turns book under (required)
-	ClosesTurnActivity bool          // closes each turn's ledger activity itself (CC: background subagents outlive the turn)
-	CacheTTL           time.Duration // prompt-cache TTL; 0 = unknown, config fallback
-	ForkNeedsRunning   bool          // fork is an RPC to a live server: start the parent first
+	DefaultModel       string // launch model when neither the session nor config picks one
+	ModelcapsKey       string // modelcaps record key ("family") for this backend
+	LedgerKey          string // cost-ledger backend its turns book under (required)
+	ClosesTurnActivity bool   // closes each turn's ledger activity itself (CC: background subagents outlive the turn)
+	// BashTimeout is the default foreground timeout of the backend's own Bash
+	// tool, the limit a chat "!" command gets on this backend (#2812). Each
+	// backend's spec cites where the value comes from. BashTimeoutEnv, when set,
+	// is the variable that overrides it, read from the agent's backend_config.env.
+	BashTimeout    time.Duration
+	BashTimeoutEnv string
+
+	CacheTTL         time.Duration // prompt-cache TTL; 0 = unknown, config fallback
+	ForkNeedsRunning bool          // fork is an RPC to a live server: start the parent first
 	// ConfigFamily names the global config section folded into the agent's
 	// backend_config: ConfigFamilyClaudeCode, ConfigFamilyOpencode or ""
 	// (none).
@@ -434,3 +443,21 @@ func As[T any](be Delegator) (T, bool) {
 	v, ok := be.(T)
 	return v, ok
 }
+
+// BashDefaultTimeout resolves the backend's Bash tool default for an agent whose
+// backend_config.env is env. An unset or unusable override, and a backend that
+// declares nothing, fall back: a command must never run with no limit.
+func (s Spec) BashDefaultTimeout(env map[string]string) time.Duration {
+	if s.BashTimeoutEnv != "" {
+		if ms, err := strconv.ParseInt(strings.TrimSpace(env[s.BashTimeoutEnv]), 10, 64); err == nil && ms > 0 {
+			return time.Duration(ms) * time.Millisecond
+		}
+	}
+	if s.BashTimeout > 0 {
+		return s.BashTimeout
+	}
+	return fallbackBashTimeout
+}
+
+// fallbackBashTimeout is for a backend whose spec declares no BashTimeout.
+const fallbackBashTimeout = 120 * time.Second

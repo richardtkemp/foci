@@ -26,6 +26,8 @@ import (
 	"foci/internal/suggestion"
 
 	"foci/internal/tools"
+	"foci/internal/tools/shell"
+	"foci/internal/usercmd"
 	"foci/internal/voice"
 	"foci/internal/workspace"
 	"foci/shared/prompts"
@@ -352,6 +354,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	ag.BatchPartialJoiner = al.BatchPartialJoiner
 	ag.MaxResultChars = sc.MaxResultChars
 	ag.ToolResultTempDir = p.cfg.Tools.TempDir
+	setupUserShell(ag, p, registry, usercmd.APITimeout(p.cfg.Tools.ExecDefaultTimeout))
 	ag.GroupResolver = groupResolver
 	ag.FallbackFunc = fallbackFn
 	ag.SummaryContextTurns = sc.SummaryContextTurns
@@ -469,4 +472,26 @@ func resolveMessageTransforms(acfg config.AgentConfig, cfg *config.Config) []con
 func resolveBlockedPaths(acfg config.AgentConfig, cfg *config.Config) []config.BlockedPath {
 	return config.SuperveneSlice(acfg.BlockedPaths, cfg.BlockedPaths,
 		func(b config.BlockedPath) string { return b.Path })
+}
+
+// setupUserShell wires chat "!" commands (#2812): on every backend they run with
+// foci's exec code, as the operator user in the workspace, under the default
+// timeout of the agent's own Bash tool.
+func setupUserShell(ag *agent.Agent, p setupParams, registry *tools.Registry, timeout time.Duration) {
+	resolvedLive := p.resolvedLive
+	cfg := p.cfg
+	acfg := p.acfg
+	ag.UserShell = &shell.UserRunner{
+		Store:          p.store.ForAgent(acfg.ID),
+		Bitwarden:      p.bwStore,
+		WorkDir:        acfg.Workspace,
+		Registry:       registry,
+		SpillThreshold: func() int64 { return int64(resolvedLive.Load().Summary.MaxResultChars) },
+		SpillTempDir:   cfg.Tools.TempDir,
+		ExtraEnv:       execExtraEnv(p),
+		Timeout:        func() time.Duration { return timeout },
+	}
+	ag.UserCommandOperators = func(platformID string) []string {
+		return config.ResolveOperatorAccess(cfg, acfg, platformID).Users
+	}
 }

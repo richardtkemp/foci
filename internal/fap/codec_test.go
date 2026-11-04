@@ -2,6 +2,7 @@ package fap
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -885,5 +886,35 @@ func TestToolCall_UnknownToOldDecoders(t *testing.T) {
 	known, conv, err := preToolCallClientDecode(wire, preKnown)
 	if err != nil || known || conv != "c9" {
 		t.Fatalf("old client decode = known %v conv %q err %v; want unknown, conv c9, no error", known, conv, err)
+	}
+}
+
+// A shell chit is a notification with one optional key; shell.cancel decodes to
+// its value type, as every client frame must for the hub's type switch (#2812).
+func TestShellCommandFrames(t *testing.T) {
+	code := 0
+	wire, err := Encode(Notification{ConversationID: "c", MessageID: "m", Text: "$ ls", Shell: &ShellCommand{RunID: "r", State: "exited", Command: "ls", ExitCode: &code}}, 1, 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"t":"notification"`, `"shell":{`, `"exitCode":0`} {
+		if !strings.Contains(wire, want) {
+			t.Errorf("wire %s lacks %s", wire, want)
+		}
+	}
+	plain, err := Encode(Notification{ConversationID: "c", Text: "x"}, 1, 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain, "shell") {
+		t.Errorf("a plain notification carries the key: %s", plain)
+	}
+	in, err := Decode(`{"t":"shell.cancel","id":"e","seq":1,"v":` + strconv.Itoa(ProtocolVersion) + `,"d":{"conversationId":"c","runId":"r"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, ok := in.Frame.(ShellCancel)
+	if !ok || f.ConversationID != "c" || f.RunID != "r" {
+		t.Errorf("frame = %#v", in.Frame)
 	}
 }

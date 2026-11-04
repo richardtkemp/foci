@@ -16,6 +16,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/tools"
+	"foci/internal/usercmd"
 )
 
 // sendRaw queues a socket-level (non-conversation-scoped) server frame, such as
@@ -191,6 +192,9 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 
 	case fap.ClientMessage:
 		h.routeUserTurn(client, f.ConversationID, f.AgentID, f.Text, h.resolveAttachments(f.Attachments), h.echoAttachmentRefs(f.Attachments), in.ID, in.Seq, platform.SteerPreferenceFromWire(f.Steer), f.TranscribeOnly)
+
+	case fap.ShellCancel:
+		h.shellRuns.cancel(f.ConversationID, f.RunID)
 
 	case fap.DepthAck:
 		h.handleDepthAction(client, f.ConversationID, f.LeafID, true)
@@ -1013,6 +1017,8 @@ func inboundConvID(frame any) string {
 		return f.ConversationID
 	case fap.Command:
 		return f.ConversationID
+	case fap.ShellCancel:
+		return f.ConversationID
 	case fap.ClientTyping:
 		return f.ConversationID
 	case fap.Read:
@@ -1055,6 +1061,13 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 		return
 	}
 
+	// A typed "!cmd" (#2812): only text with no attachment. A transcribe-only send
+	// never runs anything: its text is headed for the composer.
+	shellScript, isShell := "", false
+	if len(atts) == 0 && len(echoRefs) == 0 && !transcribeOnly {
+		shellScript, isShell = usercmd.Parse(text)
+	}
+
 	// Command interception: if the text is a routable command (/cmd or .cmd),
 	// divert to the command dispatch path instead of enqueuing an agent turn.
 	// This mirrors Telegram/Discord's interception pipeline — without it,
@@ -1084,7 +1097,7 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 
 	// Apply message transforms (mirrors the Telegram/Discord interceptor).
 	// A transform can rewrite the text or turn it into a command (e.g. "st" → "/stop").
-	if text != "" {
+	if text != "" && !isShell {
 		aid := agentID
 		if aid == "" {
 			aid = h.defaultAgentID()
@@ -1161,6 +1174,9 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 		// exists server-side yet appears on no device's roster until each one
 		// reconnects, which is #1558 through a second entry point.
 		h.pushRosterAll()
+	}
+	if isShell && h.startShellCommand(conn, b, shellScript, text, inID, deviceID, steer) {
+		return
 	}
 	text, atts, voiceTranscribed := h.transcribeVoice(conn, text, atts)
 	if transcribeOnly {

@@ -411,8 +411,9 @@ main
  ├── mcp           → log, procx, provider, tools, BurntSushi/toml, go-sdk/mcp
  ├── fap           (no internal deps — Foci App Protocol (FAP v1) wire types/codec: Envelope, ServerFrame/ClientFrame, ToolResult, ToolStatus* constants, NewULID; pure protocol leaf shared by app and tools so neither sits above the other)
  ├── tools         → turnevent, clock, config, convo, delegator, delegator/accounting, delegator/autoapprove, display, fap, log, memory, mermaid, modelinfo, peercred, platform, procx, prompts, provider, question, ratelimit, secrets, secrets/bitwarden, session, telemetry, tempdir, timeutil, tools/spill, voice (Registry, Tool, shared helpers, the exec-bridge generator, web, http, and most tool impls)
+ │     ├── usercmd        → (stdlib only) the "!cmd" trigger, states and result texts, #2812
  │     ├── tools/spill    → (stdlib only) shared spill-to-disk writer: bounded in-RAM head + overflow to temp file, optional total cap; used by tools/shell and the http tool
- │     ├── tools/shell    → tools, tools/spill, log, procx, secrets, secrets/bitwarden (the exec/shell tool; execbridge generator stays at root)
+ │     ├── tools/shell    → tools, tools/spill, log, procx, secrets, secrets/bitwarden, usercmd (the exec/shell tool; execbridge generator stays at root)
  │     ├── tools/tmux     → tools, log, display, procinfo, session, procx, prompts, tempdir (tmux session tool — 8 files)
  │     ├── tools/browser  → tools, config, log, tempdir, tools/browserjs (browser automation — imports root for Tool/ToolResult)
  │     └── tools/browserjs (no foci deps — vendored go-rod JS snippets)
@@ -445,17 +446,17 @@ main
   │   ├── delegator/sessionenv → tempdir (shared by codex/opencode + cmd/foci-codex-hook — per-session exec-bridge env file format, lifecycle, and the codex command wrap/unwrap)
   │   ├── delegator/codex      → delegator, delegator/accounting, delegator/autoapprove, delegator/hookbin, delegator/keyedmutex, delegator/sessionenv, log, modelcaps, modelinfo, procx, ratelimit, timeutil, usagehold (Codex app-server JSON-RPC; books its own calls in the cost ledger; registers "codex" via init())
   │   └── delegator/opencode   → delegator, delegator/accounting, delegator/autoapprove, delegator/keyedmutex, delegator/sessionenv, log, modelinfo, procinfo, procx, ratelimit, tempdir (HTTP/SSE OpenCode; books its own calls in the cost ledger; registers "opencode" via init())
- ├── agent         → turnevent, compaction, config, convo, delegator, delegator/accounting, display, log, memory, messages, modelcaps, modelinfo, nudge, platform, procx, prompts, provider, ratelimit, relogin, session, skills, telemetry, tempdir, timeutil, tools, turn, usagehold, warnings, workspace
+ ├── agent         → turnevent, compaction, config, convo, delegator, delegator/accounting, display, log, memory, messages, modelcaps, modelinfo, nudge, platform, procx, prompts, provider, ratelimit, relogin, session, skills, telemetry, tempdir, timeutil, tools, turn, usagehold, warnings, workspace, tools/shell, usercmd
  ├── periodic      → clock, config, delegator, log, memory, procx, prompts, provider, session, skills, timeutil, usagehold, warnings (NO agent)
- ├── dispatch      → command, platform, question, session, tools (shared command dispatch logic; platform wrappers delegate here)
+ ├── dispatch      → command, platform, question, session, tools, usercmd (shared command dispatch logic; platform wrappers delegate here)
  ├── turn          → turnevent, display, log, platform, tooldetail (shared turn rendering, tool call tracking, and tool-result display store for all platforms)
- ├── telegram      → agent, turnevent, chatmeta, command, config, dispatch, display, log, netretry, platform, question, secrets, session, skills, timeutil, tooldetail, toolformat, turn, voice
+ ├── telegram      → agent, turnevent, chatmeta, command, config, dispatch, display, log, netretry, platform, question, secrets, session, skills, timeutil, tooldetail, toolformat, turn, voice, usercmd
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
- ├── discord       → agent, turnevent, chatmeta, command, config, dispatch, display, log, netretry, platform, question, secrets, session, skills, timeutil, tooldetail, toolformat, turn, voice
+ ├── discord       → agent, turnevent, chatmeta, command, config, dispatch, display, log, netretry, platform, question, secrets, session, skills, timeutil, tooldetail, toolformat, turn, voice, usercmd
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
- ├── slack         → agent, chatmeta, config, log, netretry, platform, session, turn, turnevent
+ ├── slack         → agent, chatmeta, config, log, netretry, platform, session, turn, turnevent, usercmd
  │                  (Slack Socket Mode provider — see Slack Bot section; registers via init() like telegram/discord; blank-imported in main.go)
- ├── app           → agent, chatmeta, turnevent, command, config, delegator, dispatch, fap, log, memory, mermaid, platform, question, ratelimit, secrets, session, skills, sqlite, telemetry, tempdir, toolformat, tools, turn, voice (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
+ ├── app           → agent, chatmeta, turnevent, command, config, delegator, dispatch, fap, log, memory, mermaid, platform, question, ratelimit, secrets, session, skills, sqlite, telemetry, tempdir, toolformat, tools, turn, voice, usercmd (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
  ├── netretry      → log (startup-connect retry shared by telegram + discord + slack: Backoff schedule, Do loop, PermanentMarkers auth/transient split)
  ├── askgw         → clock, log, peercred, question (opt-in ask-gateway for external Apps — see Ask Gateway section)
  ├── telemetry     → turnevent, delegator/accounting, log, modelinfo, provider, session, go.opentelemetry.io/otel (+ sdk, otlptracehttp) — OpenTelemetry export of every turn to an OTLP/HTTP collector (Langfuse) plus scores/score configs over its REST API; wired from cmd/foci-gw (init), agent (turn spans), tools + cmd/foci-gw (cross-agent links). See "Tracing".
@@ -2415,6 +2416,33 @@ Both queues are independently rate-limited and severity-filtered at push time (`
 ### Tool Result Guard
 
 If a tool result exceeds `agent.MaxResultChars` (from config, default 15,000), the result is written to `agent.ToolResultTempDir` instead of injected directly. Before returning a guard message, the agent makes a side-call to a cheap model to auto-summarise the oversized content, including recent conversation context (configurable via `summary_context_turns` and `summary_context_chars`). The summary model is resolved via `agent.ResolveCallSite(config.CallSummarizeTool, sessionKey)`, which delegates to the `GroupResolver` (see Model Group Resolution below). In multi-model mode this routes to the `cheap` group; in single-model mode it uses the session model. The agent receives the summary plus a reference to the saved file for deeper inspection. If the cheap-model call fails (API error, context cancelled, resolution error), falls back to the original guard message with file path and contextual tool hints (e.g. `jq` for JSON, `mdq` for markdown). This prevents large results from bloating session history while giving the agent useful visibility into the content.
+
+## Chat shell commands (`usercmd/`, `tools/shell/usercommand.go`, `agent/usercmd.go`, #2812)
+
+A typed `!cmd` runs a shell command as the agent, and the output starts the agent's turn. `usercmd.Parse` is the one trigger rule: `!` immediately followed by a non-space, leading whitespace allowed, everything after the `!` (all lines) is one script. `! ls`, a lone `!`, a message with an attachment, voice, a `/steer`/`/queue` prefix, and every non-chat source (`send_to_session`, `/send`, webhooks, wakes) stay ordinary text: only the four receive paths below call `Parse`.
+
+**Receive paths.** Telegram and Discord: `dispatch.Interceptor.TryIntercept` (after the wizard, before `/repeat`'s record; a stale `!` is dropped like a stale slash command; an idle secondary bot drops it) returns `InterceptResult.ShellScript`, and `Bot.runShellCommand` hands it to `agent.HandleTextCommand`. Slack: `Manager.handleMessage` → `runShellCommand` → the same `HandleTextCommand`. App: `Hub.routeUserTurn` → `Hub.startShellCommand` (`app/shellcommand.go`).
+
+**Access (`Agent.UserCommandRefusal`).** The same people who may run every slash command: refused in every group chat; when the platform's resolved `operator_users` is non-empty the sender must be on it; otherwise the platform's `allowed_users` gate, already applied on the receive path, is the rule. App devices are not operator-gated (`command.OperatorPolicies`), and an app conversation is never a group, so the app skips this check. A refusal does not run, does not reach the agent, and gets a short reply. A Telegram or Discord group message not addressed to the bot (`MessageQueue.IsAddressed`) runs nothing and gets silence, like any such message. No approval prompt.
+
+**Running (`shell.UserRunner`).** `Run` calls `runForeground`, the one function that also runs the shell tool's foreground commands: operator user, the agent's workspace, process-group kill on cancel or timeout, `spill.Writer` capture, secret scrubbing. Set up by `setupUserShell` for every backend. Differences from the shell tool, by Dick's ruling: blocked paths are not checked and `sleep` is not refused; the `{{secret:}}` refusal (`checkSecretTemplates`) stays. A spilled file is rewritten scrubbed (`scrubFile`, bounded memory, 64 KiB overlap). **Known gap: codex's own sandbox is not applied to `!` commands.**
+
+**Timeout (`usercmd.APITimeout`, `delegator.Spec.BashDefaultTimeout`), the default foreground timeout of the agent's own Bash tool:**
+
+| Backend | Timeout |
+|---|---|
+| API | `[tools] exec_default_timeout` (built-in 30 s) |
+| Claude Code | `BASH_DEFAULT_TIMEOUT_MS` from `backend_config.env`, else 120 s |
+| codex | 10 s (`DEFAULT_EXEC_COMMAND_TIMEOUT_MS`, codex-rs `core/src/exec.rs`) |
+| opencode | `OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS` from `backend_config.env`, else 120 s |
+
+**What the agent gets (`Agent.RunUserCommand`, `EnqueueUserCommandResult`).** Output under `max_result_chars` in full; over it, `guardToolResult` (the API shell tool's code) gives the saved path plus a summary, or the pointer fallback. A delegated agent has no API client, so its summary runs on its own backend (`Agent.ResultSummariser`, the batch summariser `foci_summary` uses). The message is an ordinary `Enqueue`, so mid-turn it joins the context like any queued message. `Automated` keeps it out of the typed-answer captures: a command's output never answers a pending ask.
+
+**App chit.** The chit is an additive `shell` object on the `notification` frame (`fap.ShellCommand`: `runId`, `state`, `command`, `exitCode`, `outputBlobId`, `outputBytes`), so an app that predates it shows `text`, which holds the command and a readable result, and meets no new frame type. `messageId` is the user's message id, so the running frame replaces the user's bubble and the final frame replaces the running one. Both are `Ambient` (no push, no preview). Over the limit the saved file moves into the blob store (`blobStore.adopt`, normal blob TTL) and only `outputBlobId` and the start of the output travel in the frame; the app fetches `GET /app/blob/<id>` when the view opens. `shell.cancel` (client→server, `Hub.shellRuns`) cancels a run of that conversation. **Restart:** `app_shell_runs` in `app-frames.db` holds each run from before its running frame until its final frame is recorded, and `Hub.closeOrphanedShellRuns` (from `StartAll`) gives what is left a final `failed` frame. The agent is not told about a run a restart killed.
+
+**Text platforms.** `Result.ReplyText`: a fenced plain-text reply; under the limit the whole output through the platform's own splitter, over it the start and the saved path, which always fits one message. No cancel (out of scope).
+
+**System prompt.** `writePlatform` (`userCommandNote`) writes the `!` sentence in code, as it does the math and mermaid lines, so a stale workspace copy of `platform-<name>.md` cannot hide it.
 
 ## Slash Commands (`command/`)
 

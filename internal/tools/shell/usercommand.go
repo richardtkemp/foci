@@ -1,0 +1,171 @@
+package shell
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"time"
+
+	"foci/internal/secrets"
+	"foci/internal/secrets/bitwarden"
+	"foci/internal/tools"
+	"foci/internal/usercmd"
+)
+
+// UserRunner runs chat "!" commands for one agent (#2812): the same user, cwd,
+// capture, spill and scrubbing as the shell tool (runForeground), on every
+// backend. Dick's rulings differ from the shell tool in the checks: blocked
+// paths are not checked and sleep is not refused; the {{secret:}} refusal stays.
+// The agent's own shell tool is untouched and keeps all its checks.
+type UserRunner struct {
+	Store          *secrets.Store
+	Bitwarden      *bitwarden.Store
+	WorkDir        string
+	Registry       *tools.Registry // foci_* shell functions; nil = none
+	SpillThreshold func() int64    // [summary] max_result_chars; <=0 = defaultSpillThreshold
+	SpillTempDir   string
+	ExtraEnv       []string
+	Timeout        func() time.Duration
+}
+
+// Check refuses a script the runner will not run, as the shell tool refuses it.
+func (r *UserRunner) Check(script string) error {
+	return checkSecretTemplates(script)
+}
+
+// Redact scrubs secret values from text, exactly as shell tool output is.
+func (r *UserRunner) Redact(text string) string {
+	return redactSecrets(text, r.Store, r.Bitwarden)
+}
+
+// Run runs script and waits for it. Cancelling ctx kills the command's process
+// group and reports StateCancelled. The result's ForAgent is left for the caller
+// (the agent's result guard decides it).
+func (r *UserRunner) Run(ctx context.Context, script string) usercmd.Result {
+	res := usercmd.Result{Command: r.Redact(script), Timeout: r.Timeout()}
+
+	if r.SpillTempDir != "" {
+		if err := os.MkdirAll(r.SpillTempDir, 0o700); err != nil {
+			execLog.Warnf("create spill dir %s: %v", r.SpillTempDir, err)
+		}
+	}
+	st := int64(defaultSpillThreshold)
+	if r.SpillThreshold != nil {
+		if v := r.SpillThreshold(); v > 0 {
+			st = v
+		}
+	}
+
+	cmd := script
+	if r.Bitwarden != nil {
+		resolved, err := r.Bitwarden.Resolve(cmd)
+		if err != nil {
+			res.State = usercmd.StateFailed
+			res.Detail = r.Redact(fmt.Sprintf("resolve bitwarden secrets: %v", err))
+			return res
+		}
+		cmd = resolved
+	}
+
+	runCtx, cancel := context.WithTimeout(ctx, res.Timeout)
+	defer cancel()
+	out, err := runForeground(runCtx, cmd, false, r.WorkDir, r.Registry, "combined", st, r.SpillTempDir, r.ExtraEnv)
+	if err != nil {
+		res.State = usercmd.StateFailed
+		res.Detail = r.Redact(err.Error())
+		return res
+	}
+	_ = out.combined.Close()
+
+	switch {
+	case out.err == nil:
+		res.State = usercmd.StateExited
+	case ctx.Err() != nil:
+		res.State = usercmd.StateCancelled
+	case errors.Is(runCtx.Err(), context.DeadlineExceeded):
+		res.State = usercmd.StateTimedOut
+	default:
+		var exitErr *exec.ExitError
+		if errors.As(out.err, &exitErr) {
+			res.State = usercmd.StateExited
+			res.ExitCode = exitErr.ExitCode()
+		} else {
+			res.State = usercmd.StateFailed
+			res.Detail = r.Redact(out.err.Error())
+		}
+	}
+
+	if out.combined.Spilled() {
+		res.File = out.combined.FilePath()
+		res.Size = out.combined.Total()
+		if err := scrubFile(res.File, r.Redact); err != nil {
+			// A saved file that could not be scrubbed must not be handed on.
+			execLog.Errorf("scrub saved output %s: %v", res.File, err)
+			out.combined.Cleanup()
+			res.File = ""
+			res.State = usercmd.StateFailed
+			res.Detail = "could not scrub the saved output"
+			return res
+		}
+	}
+	res.Output = r.Redact(out.combined.String())
+	return res
+}
+
+const (
+	scrubChunkBytes = 1 << 20
+	// scrubOverlapBytes must be at least the longest secret value: it is the tail
+	// of each chunk held back so a value split across two reads is still found.
+	// The longest values in use are PEM private keys of a few KB.
+	scrubOverlapBytes = 64 << 10
+)
+
+// scrubFile rewrites a saved output file with redact applied, in bounded memory
+// (a command's output has no total cap). Spilled shell output otherwise reaches
+// disk unscrubbed, and this file is handed to the agent and the app.
+func scrubFile(path string, redact func(string) string) error {
+	in, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+	// Beside the original (a spill file's name is already unique), so the rename
+	// below stays on one filesystem.
+	tmp, err := os.OpenFile(path+".scrub", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }() // a no-op after the rename
+	if err := scrubStream(in, tmp, redact); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
+}
+
+func scrubStream(in io.Reader, out io.Writer, redact func(string) string) error {
+	buf := make([]byte, scrubChunkBytes)
+	carry := ""
+	for {
+		n, readErr := io.ReadFull(in, buf)
+		if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+			return readErr
+		}
+		text := redact(carry + string(buf[:n]))
+		if readErr != nil { // the last chunk
+			_, err := io.WriteString(out, text)
+			return err
+		}
+		keep := min(scrubOverlapBytes, len(text))
+		if _, err := io.WriteString(out, text[:len(text)-keep]); err != nil {
+			return err
+		}
+		carry = text[len(text)-keep:]
+	}
+}

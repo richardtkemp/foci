@@ -139,17 +139,9 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 		return tools.ToolResult{}, fmt.Errorf("sleep is not allowed via exec — use remind for timed check-ins instead")
 	}
 
-	// Block regular secret templates — secrets must not reach child processes.
-	// Bitwarden secrets (bw.*) are allowed because they're approval-gated via aisudo.
-	// Secret refs inside foci_http_request args are also allowed — the template
-	// is passed as a literal string to the tool server which resolves it safely.
 	cmd := p.Command
-	if refs := secrets.FindSecretRefs(cmd); refs != nil {
-		for _, ref := range refs {
-			if !bitwarden.IsBitwardenRef(ref) && !allSecretRefsInHTTPRequestScope(cmd) {
-				return tools.ToolResult{}, fmt.Errorf("{{secret:}} templates are not allowed in exec — use the http_request tool or foci_http_request shell function instead")
-			}
-		}
+	if err := checkSecretTemplates(cmd); err != nil {
+		return tools.ToolResult{}, err
 	}
 	// Resolve bitwarden secret templates (approval-gated, safe for exec)
 	if bwStore != nil {
@@ -184,11 +176,55 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 	return execDirect(ctx, cmd, p.Command, timeout, false, store, bwStore, workDir, registry, p.OutputMode, spillThreshold, spillTempDir, extraEnv)
 }
 
+// checkSecretTemplates blocks regular secret templates — secrets must not reach
+// child processes. Bitwarden secrets (bw.*) are allowed because they're
+// approval-gated via aisudo. Secret refs inside foci_http_request args are also
+// allowed — the template is passed as a literal string to the tool server which
+// resolves it safely.
+func checkSecretTemplates(cmd string) error {
+	if refs := secrets.FindSecretRefs(cmd); refs != nil {
+		for _, ref := range refs {
+			if !bitwarden.IsBitwardenRef(ref) && !allSecretRefsInHTTPRequestScope(cmd) {
+				return fmt.Errorf("{{secret:}} templates are not allowed in exec — use the http_request tool or foci_http_request shell function instead")
+			}
+		}
+	}
+	return nil
+}
+
 // execDirect runs a command and waits for completion (original behavior).
 func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Duration, background bool, store *secrets.Store, bwStore *bitwarden.Store, workDir string, registry *tools.Registry, outputMode string, spillThreshold int64, spillTempDir string, extraEnv []string) (tools.ToolResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	out, err := runForeground(ctx, cmd, background, workDir, registry, outputMode, spillThreshold, spillTempDir, extraEnv)
+	if err != nil {
+		return tools.ToolResult{}, err
+	}
+
+	if outputMode == "separated" {
+		result := tools.TextResult(formatSeparatedResult(out.stdout.String(), out.stderr.String(), out.err, store, bwStore))
+		applySpillResult(&result, out.stdout, out.stderr, nil)
+		return result, nil
+	}
+	result := tools.TextResult(formatResult(out.combined.String(), out.err, ctx, timeout, displayCmd, store, bwStore))
+	applySpillResult(&result, nil, nil, out.combined)
+	return result, nil
+}
+
+// runOutput is what runForeground captured: the spill writers for the output
+// mode in use, and the command's exit error.
+type runOutput struct {
+	stdout, stderr, combined *spill.Writer
+	err                      error
+}
+
+// runForeground runs cmd under ctx and waits for it. Cancelling ctx (or its
+// deadline) kills the command's whole process group. It is the one place that
+// runs, captures and spills a foreground command: the shell tool (execDirect)
+// and chat "!" commands (UserRunner.Run) both go through it. The returned error
+// is a failure to start; the command's own failure is runOutput.err.
+func runForeground(ctx context.Context, cmd string, background bool, workDir string, registry *tools.Registry, outputMode string, spillThreshold int64, spillTempDir string, extraEnv []string) (*runOutput, error) {
 	// Create exec bridge for tool piping (skipped for background mode and nil registry)
 	var bridge *tools.ExecBridge
 	if !background && registry != nil {
@@ -234,15 +270,15 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 	// Use pipes with LimitReader to cap memory usage (Bug #115)
 	stdout, err := proc.StdoutPipe()
 	if err != nil {
-		return tools.ToolResult{}, fmt.Errorf("create stdout pipe: %w", err)
+		return nil, fmt.Errorf("create stdout pipe: %w", err)
 	}
 	stderr, err := proc.StderrPipe()
 	if err != nil {
-		return tools.ToolResult{}, fmt.Errorf("create stderr pipe: %w", err)
+		return nil, fmt.Errorf("create stderr pipe: %w", err)
 	}
 
 	if err := proc.Start(); err != nil {
-		return tools.ToolResult{}, fmt.Errorf("start command: %w", err)
+		return nil, fmt.Errorf("start command: %w", err)
 	}
 
 	// Read stdout and stderr concurrently with process exit.
@@ -253,14 +289,7 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 	// open), kill the entire process group to unblock the readers.
 	err = waitAndReap(proc, doneRead, stdout, stderr)
 
-	if outputMode == "separated" {
-		result := tools.TextResult(formatSeparatedResult(stdoutSpill.String(), stderrSpill.String(), err, store, bwStore))
-		applySpillResult(&result, stdoutSpill, stderrSpill, nil)
-		return result, nil
-	}
-	result := tools.TextResult(formatResult(combinedSpill.String(), err, ctx, timeout, displayCmd, store, bwStore))
-	applySpillResult(&result, nil, nil, combinedSpill)
-	return result, nil
+	return &runOutput{stdout: stdoutSpill, stderr: stderrSpill, combined: combinedSpill, err: err}, nil
 }
 
 // execWithAutoBackground starts a command and returns early if it exceeds the threshold.

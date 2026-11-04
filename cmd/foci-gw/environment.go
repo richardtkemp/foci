@@ -339,7 +339,10 @@ func writePlatform(b *strings.Builder, platform string, searchDirs []string, dia
 	// copy of that file cannot drop it or keep it past its prerequisites (#2739).
 	math := mathRenders(platform)
 	diagrams := platform == "app" && diagramsRender
-	if notes == "" && !math && !diagrams {
+	// Same reason as the math line: a stale workspace copy of the file must not
+	// hide a capability (#2812).
+	shellCommands := userCommandNote(platform)
+	if notes == "" && !math && !diagrams && shellCommands == "" {
 		return
 	}
 	b.WriteString("\n## Platform\n")
@@ -355,6 +358,25 @@ func writePlatform(b *strings.Builder, platform string, searchDirs []string, dia
 		b.WriteString(mermaidNote)
 		b.WriteString("\n")
 	}
+	if shellCommands != "" {
+		b.WriteString(shellCommands)
+		b.WriteString("\n")
+	}
+}
+
+// userCommandNote tells the agent about chat "!" commands (#2812) on each
+// platform where they work, or "" where they do not.
+func userCommandNote(platform string) string {
+	const head = "**The user can run a shell command from the chat.** A message of `!` followed by a command " +
+		"(`!ls /`, no space after the `!`) runs it as you, in your workspace, "
+	const tail = " The output then arrives as a message to you: reply to it."
+	switch platform {
+	case "app":
+		return head + "without reaching you as text. The user sees the result as a chip they can open." + tail
+	case "telegram", "discord", "slack":
+		return head + "and the user gets its output as a plain-text reply." + tail
+	}
+	return ""
 }
 
 // mermaidNote tells the agent that mermaid diagrams render in the app. Written

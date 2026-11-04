@@ -113,8 +113,15 @@ func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, ses
 
 	// Try to auto-summarise via Haiku (skip if disabled or result exceeds MaxSummaryChars)
 	maxSummaryChars := a.maxSummaryChars()
-	if a.autoSummarise() && client != nil && a.GroupResolver != nil && (maxSummaryChars <= 0 || resultLen <= maxSummaryChars) {
-		if summary := a.summariseToolResult(ctx, client, sessionKey, toolName, turnModel, result, messages, fpath); summary != "" {
+	if a.autoSummarise() && (maxSummaryChars <= 0 || resultLen <= maxSummaryChars) {
+		summary := ""
+		switch {
+		case client != nil && a.GroupResolver != nil:
+			summary = a.summariseToolResult(ctx, client, sessionKey, toolName, turnModel, result, messages, fpath)
+		case a.ResultSummariser != nil:
+			summary = a.batchSummariseToolResult(ctx, sessionKey, toolName, result, fpath)
+		}
+		if summary != "" {
 			return summary
 		}
 	}
@@ -189,6 +196,23 @@ func (a *Agent) summariseToolResult(ctx context.Context, _ provider.Client, sess
 	}
 
 	return fmt.Sprintf("[Auto-summary by %s — full output (%d chars) saved to %s]\n\n%s", model, utf8.RuneCountInString(result), savedPath, summary)
+}
+
+// batchSummariseToolResult is summariseToolResult for a delegated agent, which
+// has no API client: the summary runs as a batch on the agent's own backend.
+// Returns "" on failure (caller falls back to the pointer).
+func (a *Agent) batchSummariseToolResult(ctx context.Context, sessionKey, toolName, result, savedPath string) string {
+	summary, err := a.ResultSummariser.Summarise(tools.WithSessionKey(ctx, sessionKey), []byte(result),
+		"Summarise this tool output. First give a general overview, then list the key sections or data points with exact quotes and their addresses (line numbers, section headers, JSON paths, or key names) so the reader knows exactly where to look for details.",
+		savedPath)
+	if err != nil {
+		a.logger().Warnf("session=%s auto-summary failed for %s: %v", sessionKey, toolName, err)
+		return ""
+	}
+	if summary == "" {
+		return ""
+	}
+	return fmt.Sprintf("[Auto-summary — full output saved to %s]\n\n%s", savedPath, summary)
 }
 
 // recentContext extracts text from the last N conversation turns,

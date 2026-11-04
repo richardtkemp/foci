@@ -77,6 +77,8 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// what's actually wired in (no hand-list to drift).
 	agLazy := func() *agent.Agent { return ag }
 	registry := buildExecRegistry(p, shared.wakeScheduleFn, shared.wakeCancelFn, agLazy)
+	setupUserShell(ag, p, registry, spec.BashDefaultTimeout(backendConfig.Env))
+	ag.ResultSummariser = newBatchSummariser(p, agLazy)
 
 	// Build auto-approve rules from resolved config. bakedPerms is the same
 	// frozen snapshot, reused below so the environment block's Command
@@ -1241,34 +1243,7 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, wakeC
 		return resolveTTS(p.ttsMap, p.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls)
 	}
 
-	// Delegated agents dispatch the summary tool through the agent's own
-	// DelegatedManager.RunBatch (BatchSummariser) — i.e. through whichever
-	// backend (claude-code, codex, opencode) the agent is actually configured
-	// to use (#1317). The model is the agent's batch_model (its folded
-	// backend_config) when set, else the agent's own model — never a fixed
-	// name the backend may not resolve (#2032). (API agents use
-	// APISummariser.)
-	//
-	// The runner closure resolves ag.DelegatedManager lazily: buildExecRegistry
-	// runs BEFORE configureDelegated assigns ag.DelegatedManager (see below),
-	// so capturing it now would capture nil — by the time Summarise() actually
-	// executes, setup has long finished.
-	batchSummariser := tools.NewBatchSummariser(func() tools.BatchRunner {
-		if agLazy == nil {
-			return nil
-		}
-		a := agLazy()
-		if a == nil || a.DelegatedManager == nil {
-			return nil
-		}
-		return a.DelegatedManager
-	}, func() string {
-		if a := agLazy(); a != nil && a.DelegatedManager != nil {
-			return a.DelegatedManager.BatchModel
-		}
-		return ""
-	},
-		acfg.Workspace, acfg.ID, func() int { return p.resolvedLive.Load().Summary.MaxSummaryInputChars })
+	batchSummariser := newBatchSummariser(p, agLazy)
 
 	// Register the exec-exported subset from the single data-driven table (see
 	// tool_table.go) — the same source of truth that drives the API path. The
@@ -1388,4 +1363,37 @@ func liveRules[R any](agentID, configPath string, protect func(string) error, ki
 		last = rules
 		return last
 	}
+}
+
+// newBatchSummariser builds a delegated agent's summariser.
+func newBatchSummariser(p setupParams, agLazy func() *agent.Agent) *tools.BatchSummariser {
+	acfg := p.acfg
+	// Delegated agents dispatch the summary tool through the agent's own
+	// DelegatedManager.RunBatch (BatchSummariser) — i.e. through whichever
+	// backend (claude-code, codex, opencode) the agent is actually configured
+	// to use (#1317). The model is the agent's batch_model (its folded
+	// backend_config) when set, else the agent's own model — never a fixed
+	// name the backend may not resolve (#2032). (API agents use
+	// APISummariser.)
+	//
+	// The runner closure resolves ag.DelegatedManager lazily: buildExecRegistry
+	// runs BEFORE configureDelegated assigns ag.DelegatedManager (see below),
+	// so capturing it now would capture nil — by the time Summarise() actually
+	// executes, setup has long finished.
+	return tools.NewBatchSummariser(func() tools.BatchRunner {
+		if agLazy == nil {
+			return nil
+		}
+		a := agLazy()
+		if a == nil || a.DelegatedManager == nil {
+			return nil
+		}
+		return a.DelegatedManager
+	}, func() string {
+		if a := agLazy(); a != nil && a.DelegatedManager != nil {
+			return a.DelegatedManager.BatchModel
+		}
+		return ""
+	},
+		acfg.Workspace, acfg.ID, func() int { return p.resolvedLive.Load().Summary.MaxSummaryInputChars })
 }

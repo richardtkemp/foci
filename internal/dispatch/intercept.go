@@ -8,6 +8,7 @@ import (
 	"foci/internal/command"
 	"foci/internal/platform"
 	"foci/internal/question"
+	"foci/internal/usercmd"
 )
 
 // StaleCommandAge is the maximum age of a slash command before it is dropped.
@@ -77,6 +78,10 @@ type InterceptMessage struct {
 	UserID    string
 	ChatID    int64
 	Timestamp time.Time // message creation time; zero skips staleness check
+
+	// ShellEligible marks a message a person typed, with no attachment and no
+	// delivery prefix: the only kind whose leading '!' can be a shell command.
+	ShellEligible bool
 }
 
 // InterceptResult describes what happened during message interception.
@@ -93,6 +98,10 @@ type InterceptResult struct {
 	// option. Platforms send WizardReply with wizard buttons (WizardButtons,
 	// "wz:" callbacks) when it is set; nil means a plain-text reply.
 	WizardStep *question.Question
+
+	// ShellScript is set when the message is a "!cmd" shell command (#2812); the
+	// caller runs it (agent.HandleTextCommand).
+	ShellScript string
 
 	// Text is the final message text after any transforms have been applied.
 	// Always set — either the original text or the transformed version.
@@ -118,6 +127,23 @@ func (i *Interceptor) TryIntercept(ctx context.Context, msg *InterceptMessage) I
 		}
 		if result, docPath, ok := i.Commands.HandleMessage(scope, msg.Text); ok {
 			return InterceptResult{Consumed: true, WizardReply: result, WizardDocPath: docPath, WizardStep: wizardStepIfAny(i.Commands, scope), Text: msg.Text}
+		}
+	}
+
+	// A typed "!cmd" (#2812). After the wizard, which owns typed input while it
+	// runs; before /repeat's record, so a command is never replayed as a message.
+	// An idle secondary bot has no session to run it for: the drop below applies.
+	if msg.ShellEligible && !(i.IsSecondary && i.SessionKeyFn != nil && i.SessionKeyFn() == "") {
+		if script, ok := usercmd.Parse(msg.Text); ok {
+			// Same reasoning as a stale slash command: a replay after a restart must
+			// not execute.
+			if !msg.Timestamp.IsZero() {
+				if age := time.Since(msg.Timestamp); age > StaleCommandAge {
+					i.LogWarnf("dropping stale shell command (age=%s)", age.Truncate(time.Second))
+					return InterceptResult{Consumed: true, Text: msg.Text}
+				}
+			}
+			return InterceptResult{Consumed: true, ShellScript: script, Text: msg.Text}
 		}
 	}
 

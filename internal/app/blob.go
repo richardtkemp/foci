@@ -340,6 +340,25 @@ func (s *blobStore) putFile(srcPath, kind string) (*blobMeta, error) {
 	return s.put(f, kind, name, mimeByName(name))
 }
 
+// adopt moves an on-disk file into the store, with the same TTL as any blob. It
+// is uncapped: the file is already on this disk, and a copy would double it.
+func (s *blobStore) adopt(srcPath, kind, name, mimeType string) (*blobMeta, error) {
+	id := fap.NewULID()
+	path := filepath.Join(s.dir, id+blobExt(name))
+	if err := moveFile(srcPath, path); err != nil {
+		return nil, err
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	meta := &blobMeta{id: id, path: path, mime: mimeType, kind: kind, name: name, size: fi.Size(), created: time.Now()}
+	s.mu.Lock()
+	s.blobs[id] = meta
+	s.mu.Unlock()
+	return meta, nil
+}
+
 // putBytes stores an in-memory payload (e.g. TTS audio).
 func (s *blobStore) putBytes(data []byte, kind, name, mimeType string) (*blobMeta, error) {
 	return s.put(bytes.NewReader(data), kind, name, mimeType)

@@ -14,6 +14,7 @@ import (
 	"foci/internal/netretry"
 	"foci/internal/platform"
 	"foci/internal/session"
+	"foci/internal/usercmd"
 )
 
 // Manager is the one shared Slack connection state: the router (config), the
@@ -231,7 +232,7 @@ func (m *Manager) handleMessage(msg inboundMessage) {
 	}
 	sessionKey := sessionKeyFor(agentID, target)
 	core.fireOnUserMessage()
-	if !core.enq.Enqueue(agent.Envelope{
+	env := agent.Envelope{
 		SessionKey:  sessionKey,
 		Text:        msg.Text,
 		UserID:      msg.User,
@@ -240,7 +241,12 @@ func (m *Manager) handleMessage(msg inboundMessage) {
 		ReceivedAt:  time.Now(),
 		Original:    msg,
 		Driver:      (&Conn{core: core}).boundTo(sessionKey),
-	}) {
+	}
+	if script, ok := usercmd.Parse(msg.Text); ok && len(msg.Files) == 0 {
+		m.runShellCommand(core, env, script)
+		return
+	}
+	if !core.enq.Enqueue(env) {
 		// A refused enqueue (the agent's inbox queue is full) drops the
 		// message: the sender sees nothing, so the drop must be visible
 		// here (#2459 req 1's "never silently" delivery hygiene; A2 owns
@@ -303,4 +309,27 @@ func (m *Manager) handlePress(press pressEvent) {
 			core.logger().Warnf("press edit: %v", err)
 		}
 	}
+}
+
+// shellCommander is the agent's shared "!cmd" flow (#2812). *agent.Agent
+// satisfies it; an enqueue-only test fake gets the refusal.
+type shellCommander interface {
+	HandleTextCommand(platformID string, base agent.Envelope, script string, reply func(string))
+}
+
+// runShellCommand hands a typed "!cmd" to the agent. Text after an @mention is
+// a command too, and the group rule refuses it.
+func (m *Manager) runShellCommand(core *agentCore, env agent.Envelope, script string) {
+	view := (&Conn{core: core}).boundTo(env.SessionKey)
+	reply := func(text string) {
+		if err := view.SendText(text); err != nil {
+			m.slackLog().Warnf("agent %s: shell command reply: %v", core.agentID, err)
+		}
+	}
+	sc, ok := core.enq.(shellCommander)
+	if !ok {
+		reply(usercmd.RefusedUnavailable)
+		return
+	}
+	sc.HandleTextCommand(platformName, env, script, reply)
 }

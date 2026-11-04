@@ -22,6 +22,7 @@ import (
 	"foci/internal/skills"
 	"foci/internal/telemetry"
 	"foci/internal/tools"
+	"foci/internal/tools/shell"
 	"foci/internal/turnevent"
 	"foci/internal/warnings"
 	"foci/internal/workspace"
@@ -131,6 +132,9 @@ type Agent struct {
 	BatchPartialJoiner            string                                  // separator between batched partial messages (default "")
 	MaxResultChars                int                                     // max chars for tool result before writing to file (0 disables)
 	ToolResultTempDir             string                                  // where to write large tool results
+	UserShell                     *shell.UserRunner                       // runs chat "!" commands (#2812); nil refuses them
+	UserCommandOperators          func(platformID string) []string        // a platform's resolved operator_users, for "!" commands
+	ResultSummariser              tools.Summariser                        // summarises an oversized result on a delegated agent (no API client); nil on API agents
 	SummaryContextTurns           int                                     // recent conversation turns for summary context
 	SummaryContextChars           int                                     // max chars of context to send to cheap model
 	MaxSummaryChars               int                                     // max chars to auto-summarise (skip cheap model above this)
