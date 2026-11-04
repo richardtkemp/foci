@@ -123,15 +123,42 @@ var (
 	_ turn.SessionSubagentDeliverer = (*appConn)(nil)
 )
 
-// errNoBinding is returned by ButtonSender sends when the session has no app
-// conversation binding at all. A conversation whose device is merely offline
-// keeps its binding (restored at startup, frames buffered for replay), so the
-// usual cause is a branch session (fork, spawn) that is not a depth leaf: it
-// has no conversation of its own. A failed send registers no prompt, so there
-// is no expiry to deny it later; the gateway's backend prompt path offers the
-// prompt to the parent and default sessions instead, and refuses it if none
-// can show it (#2608).
-var errNoBinding = errors.New("app: no live socket for conversation")
+// errNoBinding is returned by ButtonSender sends and by media sends when the
+// session has no app conversation binding at all (a media send: nor has any
+// chat up its family tree, see mediaBinding). A conversation whose device is
+// merely offline keeps its binding (restored at startup, frames buffered for
+// replay), so the usual cause is a branch session (fork, spawn) that is not a
+// depth leaf: it has no conversation of its own. A failed send registers no
+// prompt, so there is no expiry to deny it later; the gateway's backend prompt
+// path offers the prompt to the parent and default sessions instead, and
+// refuses it if none can show it (#2608).
+var errNoBinding = errors.New("app: no conversation for session")
+
+// sessionChats lists, in order, the sessions whose chats may show a media send
+// from a session of an agent. The gateway owns the family-tree walk, so it
+// installs it (SetSessionChats); nil = the walk is not installed, and a session
+// has only its own chat.
+var (
+	sessionChatsMu sync.RWMutex
+	sessionChats   func(agentID, sessionKey string) []string
+)
+
+// SetSessionChats installs the walk behind sessionChats.
+func SetSessionChats(fn func(agentID, sessionKey string) []string) {
+	sessionChatsMu.Lock()
+	sessionChats = fn
+	sessionChatsMu.Unlock()
+}
+
+func sessionChatsOf(agentID, sessionKey string) []string {
+	sessionChatsMu.RLock()
+	fn := sessionChats
+	sessionChatsMu.RUnlock()
+	if fn == nil {
+		return nil
+	}
+	return fn(agentID, sessionKey)
+}
 
 // --- identity ---
 
@@ -436,11 +463,44 @@ func (c *appConn) SendVoiceDataToChat(chatID int64, audioData []byte) error {
 	return c.sendMediaBytes(c.SessionKeyForChat(chatID), audioData, fap.MediaVoice, "voice.mp3", "audio/mpeg")
 }
 
-func (c *appConn) sendMediaFile(sessionKey, path, caption, kind string) error {
-	b := c.hub.bindingForSession(sessionKey)
+// SendDocumentOwnChat implements platform.OwnChatDocumentSender: the document
+// goes to this session's own conversation or nowhere. It returns errNoBinding
+// and does not walk up the family tree.
+func (c *appConn) SendDocumentOwnChat(path, caption string) error {
+	b := c.hub.bindingForSession(c.SessionKey())
 	if b == nil {
-		return nil
+		return errNoBinding
 	}
+	return c.emitMediaFile(b, path, caption, fap.MediaDocument)
+}
+
+// mediaBinding resolves the conversation a media send for sessionKey lands in
+// (#2755, Dick 2026-11-04: "send up"): the session's own, else the first chat
+// up its family tree that has one (SetSessionChats). A session that no chat
+// can show gets errNoBinding, so the sender is never told "Sent" for a file
+// that went nowhere.
+func (c *appConn) mediaBinding(sessionKey string) (*convBinding, error) {
+	if b := c.hub.bindingForSession(sessionKey); b != nil {
+		return b, nil
+	}
+	for _, target := range sessionChatsOf(c.agentID, sessionKey) {
+		if b := c.hub.bindingForSession(target); b != nil {
+			appLog.Infof("media for session %q (agent %s) sent to the chat of %s: the session has no conversation", sessionKey, c.agentID, target)
+			return b, nil
+		}
+	}
+	return nil, fmt.Errorf("%w %q or any chat above it", errNoBinding, sessionKey)
+}
+
+func (c *appConn) sendMediaFile(sessionKey, path, caption, kind string) error {
+	b, err := c.mediaBinding(sessionKey)
+	if err != nil {
+		return err
+	}
+	return c.emitMediaFile(b, path, caption, kind)
+}
+
+func (c *appConn) emitMediaFile(b *convBinding, path, caption, kind string) error {
 	meta, err := c.hub.blobs.putFile(path, kind)
 	if err != nil {
 		return err
@@ -450,9 +510,9 @@ func (c *appConn) sendMediaFile(sessionKey, path, caption, kind string) error {
 }
 
 func (c *appConn) sendMediaBytes(sessionKey string, data []byte, kind, name, mimeType string) error {
-	b := c.hub.bindingForSession(sessionKey)
-	if b == nil {
-		return nil
+	b, err := c.mediaBinding(sessionKey)
+	if err != nil {
+		return err
 	}
 	meta, err := c.hub.blobs.putBytes(data, kind, name, mimeType)
 	if err != nil {

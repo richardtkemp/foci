@@ -26,6 +26,7 @@ type fakeAppHub struct {
 	mu      sync.Mutex
 	bound   map[string]bool
 	shownIn []string
+	docs    []string
 	texts   []string
 }
 
@@ -47,7 +48,7 @@ func (c *fakeAppConn) SendTextWithButtons(text string, _ []platform.ButtonChoice
 	c.hub.mu.Lock()
 	defer c.hub.mu.Unlock()
 	if !c.hub.bound[c.sessionKey] {
-		return "", errors.New("app: no live socket for conversation")
+		return "", errors.New("app: no conversation for session")
 	}
 	c.hub.shownIn = append(c.hub.shownIn, c.sessionKey)
 	c.hub.texts = append(c.hub.texts, text)
@@ -163,7 +164,7 @@ func TestBackendPrompt_UndeliverableIsRefused(t *testing.T) {
 		hub  *fakeAppHub
 		want string
 	}{
-		{"send fails everywhere", &fakeAppHub{}, "no live socket"},
+		{"send fails everywhere", &fakeAppHub{}, "no conversation for session"},
 		{"no connection at all", &fakeAppHub{noConns: true}, "no connection"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -272,5 +273,87 @@ func TestPromptTargets_CrossAgentSpawnReachesNoChat(t *testing.T) {
 	got := promptTargets(backendPromptDeps{defaultSession: func() string { return "helen/c9" }}, key)
 	if !slices.Equal(got, []string{key}) {
 		t.Fatalf("targets = %v, want only the spawn's own session", got)
+	}
+}
+
+// SendDocument is appConn's plain send (#2755): it lands up the family tree,
+// whichever target asked. SendDocumentOwnChat is its strict one.
+func (c *fakeAppConn) SendDocument(string, string) error {
+	c.hub.mu.Lock()
+	defer c.hub.mu.Unlock()
+	c.hub.docs = append(c.hub.docs, "up the tree from "+c.sessionKey)
+	return nil
+}
+
+func (c *fakeAppConn) SendDocumentOwnChat(string, string) error {
+	c.hub.mu.Lock()
+	defer c.hub.mu.Unlock()
+	if !c.hub.bound[c.sessionKey] {
+		return errors.New("app: no conversation for session")
+	}
+	c.hub.docs = append(c.hub.docs, c.sessionKey)
+	return nil
+}
+
+// TestBackendPrompt_AttachmentOnlyWhereTheButtonsAre: an app media send goes up
+// the family tree (#2755), but a prompt's attachment stays strict. The prompt
+// walk retries chat by chat, so an attachment that went up by itself would
+// appear once per retry, possibly in a chat that never gets the buttons.
+func TestBackendPrompt_AttachmentOnlyWhereTheButtonsAre(t *testing.T) {
+	t.Parallel()
+	const reqID = "req-2755-attachment"
+	hub := &fakeAppHub{bound: map[string]bool{"main/c1": true}}
+	rec := &failRecorder{}
+	approval, _ := backendPromptFuncs(backendPromptDeps{
+		ag:         &agent.Agent{DelegatedManager: &agent.DelegatedManager{}},
+		connMgr:    hub,
+		agentID:    "main",
+		failPrompt: rec.fail,
+	})
+	approval("main/c1/b100", reqID, "Allow the plan?", "Plan", "/tmp/plan.md", promptChoices())
+	t.Cleanup(func() { platform.CancelInteractiveMessage(reqID, "done") })
+
+	if rec.calls != 0 || !slices.Equal(hub.shownIn, []string{"main/c1"}) {
+		t.Fatalf("shown in %v (refusals %d), want [main/c1]", hub.shownIn, rec.calls)
+	}
+	if !slices.Equal(hub.docs, []string{"main/c1"}) {
+		t.Errorf("attachment sent as %v, want once, in [main/c1]", hub.docs)
+	}
+}
+
+// TestAppMediaChats_WalksTheFamilyTree: the walk the app's media sends use is
+// the backend prompt walk: own chat, recorded ancestors, root, then the default
+// session on the app, whatever the agent's default platform is.
+func TestAppMediaChats_WalksTheFamilyTree(t *testing.T) {
+	t.Parallel()
+	const (
+		leaf   = "main/c1/b200"
+		parent = "main/c1/b100"
+		root   = "main/c1"
+		deflt  = "main/c9"
+	)
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { idx.Close() })
+	idx.Upsert(session.SessionIndexEntry{SessionKey: leaf, ParentSessionKey: parent, Status: session.SessionStatusActive})
+	if err := idx.SetChatMetadata("main", "app", 9, "is_default", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.SetChatMetadata("main", "telegram", 5, "is_default", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if got := idx.DefaultSessionKeyForAgentOn("main", "app"); got != deflt {
+		t.Fatalf("test setup: default session on the app = %q, want %q", got, deflt)
+	}
+
+	got := appMediaChats(idx)("main", leaf)
+	if want := []string{leaf, parent, root, deflt}; !slices.Equal(got, want) {
+		t.Errorf("walk = %v, want %v", got, want)
+	}
+	// No session index: the key's own shape still gives the root.
+	if got, want := appMediaChats(nil)("main", leaf), []string{leaf, root}; !slices.Equal(got, want) {
+		t.Errorf("no index: walk = %v, want %v", got, want)
 	}
 }

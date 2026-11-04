@@ -21,6 +21,10 @@ There is **no branch-suppression policy** (`PolicyRootFallback`/`DeliverySuppres
 
 `route.Broadcast(cm, agentID)` returns every live connection on all platforms: the set for agent-wide notices (mana / rate-limit / max-tokens) and `PolicyBroadcast`. The caller picks the method per connection (`SendNotification` for notices, `SendText` for messages).
 
+## App media from a session with no conversation
+
+An app media send uses the session's own conversation, else the first chat of the family-tree walk (`backendPromptTargets`, through `app.SetSessionChats`), else it returns `errNoBinding`. A prompt attachment stays strict (`platform.OwnChatDocumentSender`): the prompt walk retries chat by chat, so an attachment that moved up by itself would appear once per retry.
+
 ## Unsolicited / agent-initiated delivery
 
 Restart changelogs, scheduled wakes, proactive warnings, backgrounded async-tool results and cross-agent `send_to_session` all use ONE primitive: **`deliverToSessionChat()`** (`cmd/foci-gw/agents_notify.go`). It runs a system-injected turn on the target session, serialised on that session's inbox worker (so it waits behind a pending `foci_ask` instead of racing platform turns), and renders to the session's chat via `route.ConnFor(..., route.PolicyFallback)`. No own connection → primary chat (`DeliveredViaPrimary`). Nothing live → the turn still runs into the JSONL, unrendered.

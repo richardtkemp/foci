@@ -414,6 +414,17 @@ type SessionMessageEditor interface {
 	EditSessionMessage(sessionKey, msgID, text string) error
 }
 
+// OwnChatDocumentSender is optionally implemented by connections whose plain
+// SendDocument can land above the addressed session, in another chat of its
+// family tree (the app, #2755). A backend prompt's attachment must land exactly
+// where its buttons do: the prompt walk retries chat by chat, so an attachment
+// that moved up on its own would appear once per retry.
+type OwnChatDocumentSender interface {
+	// SendDocumentOwnChat sends the document to this connection's own session's
+	// chat, or fails when that chat does not exist.
+	SendDocumentOwnChat(path, caption string) error
+}
+
 // DetailAttacher is optionally implemented by connections that can attach a
 // large supplementary payload (e.g. a compaction summary) to an
 // already-sent message, addressable by its platform message ID. Only the

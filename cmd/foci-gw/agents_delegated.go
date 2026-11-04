@@ -579,6 +579,28 @@ func backendPromptTargets(d backendPromptDeps, sessionKey string) (targets []str
 	return promptTargets(d, sessionKey), false
 }
 
+// appMediaChats is the walk an app media send takes when its session has no
+// conversation (#2755, Dick 2026-11-04: "send up"): the same chats, in the same
+// order, as a backend prompt from that session. The last step is the default
+// session on the app, because only an app conversation can take the file.
+func appMediaChats(idx *session.SessionIndex) func(agentID, sessionKey string) []string {
+	return func(agentID, sessionKey string) []string {
+		targets, _ := backendPromptTargets(backendPromptDeps{
+			sessionIdx: idx,
+			agentID:    agentID,
+			live:       depthSessionLive,
+			owner:      tools.SpawnBranchOwner,
+			defaultSession: func() string {
+				if idx == nil {
+					return ""
+				}
+				return idx.DefaultSessionKeyForAgentOn(agentID, "app")
+			},
+		}, sessionKey)
+		return targets
+	}
+}
+
 // depthSessionLive is backendPromptDeps.live in the gateway: a session of an
 // agent with depth mode is live unless it is a done depth leaf
 // (DepthManager.SessionLive); every other session is live.
@@ -948,8 +970,13 @@ func prependRequestOrigin(sessionIdx *session.SessionIndex, agentID string, conn
 }
 
 // sendPromptAttachment sends a prompt's attachment to the chat the prompt's
-// buttons go to (the destination rule of attachmentChatID).
+// buttons go to (the destination rule of attachmentChatID). On the app that is
+// the target's own conversation only (platform.OwnChatDocumentSender), so the
+// target that cannot show the buttons shows no attachment either (#2755).
 func sendPromptAttachment(conn platform.Connection, kind backendPromptKind, sessionKey, attachmentPath string) error {
+	if own, ok := conn.(platform.OwnChatDocumentSender); ok {
+		return own.SendDocumentOwnChat(attachmentPath, "")
+	}
 	if chatID := attachmentChatID(conn, kind, sessionKey); chatID != 0 {
 		return conn.SendDocumentToChat(chatID, attachmentPath, "")
 	}
