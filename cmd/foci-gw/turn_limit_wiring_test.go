@@ -80,6 +80,33 @@ func TestWireAgentPlatformCallbacks_TurnQueuedNotifyDeliversToSessionChat(t *tes
 	}
 }
 
+// TestWireAgentPlatformCallbacks_PromptAnswerRefusedNotifyDeliversToSessionChat
+// proves the #2762 notice leaves the gateway, to the session whose user typed the
+// refused answer and not as a broadcast. Without the wiring the hook stays nil and
+// the user never learns that the answer did not reach the prompt.
+func TestWireAgentPlatformCallbacks_PromptAnswerRefusedNotifyDeliversToSessionChat(t *testing.T) {
+	t.Parallel()
+	conn := &sessionNotifyConn{stubConn: &stubConn{sessionKey: "x/c1"}}
+	connMgr := &sessionRoutingConnMgr{conn: conn}
+	acfg := config.AgentConfig{ID: "x"}
+	live := config.NewLiveValue(config.Resolve(&config.Config{}, acfg))
+
+	ag := &agent.Agent{}
+	wireAgentPlatformCallbacks(ag, acfg, live, connMgr, nil)
+
+	if ag.PromptAnswerRefusedNotifyFunc == nil {
+		t.Fatal("PromptAnswerRefusedNotifyFunc is nil after wiring")
+	}
+	ag.PromptAnswerRefusedNotifyFunc("x/c1", "refused text")
+
+	if len(conn.toSession) != 1 || conn.toSession[0] != "x/c1|refused text" {
+		t.Errorf("SendNotificationToSession calls = %v, want exactly [x/c1|refused text]", conn.toSession)
+	}
+	if len(conn.broadcasts) != 0 {
+		t.Errorf("SendNotification calls = %v, want none", conn.broadcasts)
+	}
+}
+
 // TestConfigureUniversalWiresTurnLimiters proves the #2281 turn limits leave the
 // resolved config and reach the agent: configureUniversal must build the per-agent
 // limiter from the resolved [behavior] cascade and install the ONE shared

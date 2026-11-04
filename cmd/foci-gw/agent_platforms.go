@@ -100,6 +100,12 @@ func wireAgentPlatformCallbacks(
 		route.NotifySessionChat(connMgr, acfg.ID, sessionKey, text)
 	}
 
+	// Refused typed answer (#2762) — the chat that typed it is told that the
+	// backend prompt did not get the answer and is still waiting.
+	ag.PromptAnswerRefusedNotifyFunc = func(sessionKey, text string) {
+		route.NotifySessionChat(connMgr, acfg.ID, sessionKey, text)
+	}
+
 	// Max tokens — broadcast to every surface
 	ag.MaxTokensWarnFunc.Add(func(warn string) {
 		broadcastNotify("⚠️ " + warn)

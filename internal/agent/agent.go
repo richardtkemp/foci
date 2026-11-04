@@ -203,6 +203,11 @@ type Agent struct {
 	UsageHeldDriver        func(sessionKey string) Driver
 	UsageHeldInjectRestore func(sessionKey string, d DurableInject, id string)
 
+	// PromptAnswerRefusedNotifyFunc tells sessionKey's chat that a typed answer
+	// did not reach the backend prompt waiting for it (#2762). Fired in its own
+	// goroutine. Nil = no notice.
+	PromptAnswerRefusedNotifyFunc func(sessionKey, text string)
+
 	TurnQueuedNotifyFunc func(sessionKey, text string) // fired (in its own goroutine) when a user turn must wait for a turn-limit slot; nil = no queued notice
 
 	platforms  map[string]platform.Sender // per-agent platforms (telegram, discord, etc.); key = platform name

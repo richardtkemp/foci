@@ -1216,7 +1216,7 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 	if conn.OnUserMessage != nil {
 		conn.OnUserMessage()
 	}
-	conn.agentRef.Enqueue(agent.Envelope{
+	accepted := conn.agentRef.Enqueue(agent.Envelope{
 		SessionKey:  b.key(),
 		Text:        text,
 		Attachments: atts,
@@ -1231,6 +1231,12 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 		// it too), so the backend's consumption ack can tick it ✓✓ (#2050).
 		Ref: delegator.InputRef{ConversationID: convID, MessageID: inID},
 	})
+	if !accepted {
+		// The durable echo above went to every device, so the refusal does too,
+		// and it survives a reconnect: an ErrorFrame reaches only this socket.
+		appLog.Warnf("conversation %s: message refused by the agent inbox (session %s)", convID, b.key())
+		b.send(fap.ServerMessage{ConversationID: convID, MessageID: fap.NewULID(), Role: "system", Text: agent.InboxRefusedNotice})
+	}
 }
 
 // transcribeVoice replaces voice attachments with their STT transcript, merged

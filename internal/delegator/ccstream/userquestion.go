@@ -146,7 +146,10 @@ func (b *Backend) RespondToQuestion(requestID, choice string) error {
 	}
 
 	// All questions answered, and this call claimed pp, so nothing else reads or
-	// writes it any more: send the combined response.
+	// writes it any more: send the combined response. The claim ended the prompt
+	// whether or not the response is written: nothing can answer it now, so it
+	// must not keep WaitForPermission parked (#2762).
+	defer b.outstanding.Resolve(requestID)
 	updatedInput, err := buildUpdatedInput(pp.originalInput, pp.answers)
 	if err != nil {
 		return fmt.Errorf("ccstream: build updatedInput: %w", err)
@@ -158,12 +161,7 @@ func (b *Backend) RespondToQuestion(requestID, choice string) error {
 		ToolUseID:              pp.toolUseID,
 		DecisionClassification: "user_temporary",
 	}
-	if err := b.writer.SendControlResponse(requestID, resp); err != nil {
-		return err
-	}
-
-	b.outstanding.Resolve(requestID)
-	return nil
+	return b.writer.SendControlResponse(requestID, resp)
 }
 
 // recordQuestionAnswer records choice as the answer to requestID's current

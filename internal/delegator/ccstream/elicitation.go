@@ -569,6 +569,10 @@ func coerceElicAnswer(prop elicProperty, choice string) (interface{}, error) {
 // carries the accumulated answers as a content object; decline/cancel send no
 // content.
 func (b *Backend) finishElicitation(pe *pendingElicitation, action string) error {
+	// The caller claimed pe, which ended the prompt whether or not the response
+	// is written: nothing can answer it now, so it must not keep WaitForPermission
+	// parked (#2762).
+	defer b.outstanding.Resolve(pe.requestID)
 	resp := &ElicitationResponsePayload{Action: action}
 	if action == "accept" && len(pe.answers) > 0 {
 		raw, err := json.Marshal(pe.answers)
@@ -578,12 +582,7 @@ func (b *Backend) finishElicitation(pe *pendingElicitation, action string) error
 		resp.Content = raw
 	}
 
-	if err := b.writer.SendControlResponse(pe.requestID, resp); err != nil {
-		return err
-	}
-
-	b.outstanding.Resolve(pe.requestID)
-	return nil
+	return b.writer.SendControlResponse(pe.requestID, resp)
 }
 
 // ---------------------------------------------------------------------------

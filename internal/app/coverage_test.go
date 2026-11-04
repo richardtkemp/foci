@@ -22,11 +22,12 @@ import (
 
 // fakeAgent is a minimal agentCore that captures the enqueued envelope.
 type fakeAgent struct {
-	env   *agent.Envelope
-	scope skills.ReadScope
+	env    *agent.Envelope
+	scope  skills.ReadScope
+	refuse bool // Enqueue refuses every envelope
 }
 
-func (f *fakeAgent) Enqueue(e agent.Envelope) bool { f.env = &e; return true }
+func (f *fakeAgent) Enqueue(e agent.Envelope) bool { f.env = &e; return !f.refuse }
 func (f *fakeAgent) MetaStatus(string) string      { return "" }
 func (f *fakeAgent) CacheExpiryMs(_ string, at time.Time) int64 {
 	return at.Add(5 * time.Minute).UnixMilli()
@@ -688,6 +689,53 @@ func TestRouteUserTurn_FiresOnUserMessage(t *testing.T) {
 	h.routeUserTurn(c, "conv-1", "ag", "hello world", nil, nil, "env-1", 1, platform.SteerDefault, false)
 	if !fired {
 		t.Fatal("OnUserMessage did not fire on inbound user message")
+	}
+}
+
+// TestRouteUserTurn_InboxRefusalIsReported pins #2762 (audit A5): the user echo
+// has already told every device that the message was sent, so a refused enqueue
+// must reach them too, as a durable system message that survives a reconnect.
+func TestRouteUserTurn_InboxRefusalIsReported(t *testing.T) {
+	h := newTestHub()
+	fa := registerFakeAgent(h, "ag")
+	fa.refuse = true
+	c := fakeClientFor(h)
+
+	h.routeUserTurn(c, "conv-1", "ag", "hello", nil, nil, "env-1", 1, platform.SteerDefault, false)
+
+	var roles []string
+	notice := ""
+	for _, d := range drain(t, c) {
+		if d.t != fap.TypeMessage {
+			continue
+		}
+		role, _ := d.d["role"].(string)
+		roles = append(roles, role)
+		if role == "system" {
+			notice, _ = d.d["text"].(string)
+		}
+	}
+	if len(roles) != 2 || roles[0] != "user" || roles[1] != "system" {
+		t.Fatalf("message roles = %v, want the user echo and then one system notice", roles)
+	}
+	if !strings.Contains(notice, "not delivered") {
+		t.Errorf("notice = %q", notice)
+	}
+}
+
+// TestRouteUserTurn_AcceptedSendsNoNotice is its fail-arm: an accepted message
+// gets the echo only.
+func TestRouteUserTurn_AcceptedSendsNoNotice(t *testing.T) {
+	h := newTestHub()
+	registerFakeAgent(h, "ag")
+	c := fakeClientFor(h)
+
+	h.routeUserTurn(c, "conv-1", "ag", "hello", nil, nil, "env-1", 1, platform.SteerDefault, false)
+
+	for _, d := range drain(t, c) {
+		if d.t == fap.TypeMessage && d.d["role"] == "system" {
+			t.Errorf("unexpected system message on an accepted send: %v", d.d)
+		}
 	}
 }
 

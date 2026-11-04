@@ -75,7 +75,12 @@ func (b *Bot) handoffToAgent(qm platform.QueuedMessage) {
 		b.logger().Debugf("handoffToAgent: no session key for chatID=%d", qm.ChatID)
 		return
 	}
-	b.agentRef.Enqueue(agent.EnvelopeFromQueuedMessage(sk, qm, b))
+	if !b.agentRef.Enqueue(agent.EnvelopeFromQueuedMessage(sk, qm, b)) {
+		b.logger().Warnf("handoffToAgent: agent inbox refused a message for session %s", sk)
+		if err := b.SendTextToChat(qm.ChatID, agent.InboxRefusedNotice); err != nil {
+			b.logger().Warnf("handoffToAgent: refusal notice for chat %d: %v", qm.ChatID, err)
+		}
+	}
 }
 
 // sessionKeyForQueuedMessage resolves the session key a queued message's

@@ -307,6 +307,10 @@ type SteerEntry struct {
 	RecvText   string
 }
 
+// InboxRefusedNotice is what a chat is told when Enqueue refuses a user message
+// that the front end has already shown as sent (#2762).
+const InboxRefusedNotice = "⚠️ That message was not delivered to the agent. Send it again."
+
 // inboxChanSize is the per-session channel buffer. Matches the legacy
 // MessageQueue default; over-quota sessions get drop+warn rather than
 // blocking the receive path.
@@ -734,6 +738,9 @@ func (a *Agent) StopInbox() {
 //	in-flight + text-only + API backend    → AppendSteer (drained at tool boundary)
 //	user-input injection (an ask answer)   → the same steer paths, else push to channel (#2233)
 //	otherwise (idle, or has attachments)   → push to session's channel
+//
+// A front end that has already shown a user's message as sent reports a false
+// result in that chat, with InboxRefusedNotice (#2762).
 //
 // Returns true when the envelope was accepted — queued, dispatched, or
 // intentionally consumed (steer, plan-cancel, ask answer, re-login code) —

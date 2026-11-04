@@ -1203,8 +1203,15 @@ func (e *elicitationBackendDT) RespondToElicitation(reqID, text string) error {
 // untouched.
 func TestAnswerPendingBackendPrompt(t *testing.T) {
 	t.Parallel()
+	answerPrompt := func(be delegator.Delegator, texts []string) bool {
+		consumed, refused := answerPendingBackendPrompt(log.NewComponentLogger("delegated"), be, "test/s", texts)
+		if refused != nil {
+			t.Errorf("refused = %v on a backend that accepts", refused)
+		}
+		return consumed
+	}
 	q := &questionBackendDT{pendingQuestion: "req-q"}
-	if !answerPendingBackendPrompt(log.NewComponentLogger("delegated"), q, "test/s", []string{"  yes please  "}) {
+	if !answerPrompt(q, []string{"  yes please  "}) {
 		t.Fatal("pending question + text: want consumed")
 	}
 	if q.answeredReqID != "req-q" || q.answeredText != "yes please" {
@@ -1212,7 +1219,7 @@ func TestAnswerPendingBackendPrompt(t *testing.T) {
 	}
 
 	e := &elicitationBackendDT{pendingElicitation: "req-e"}
-	if !answerPendingBackendPrompt(log.NewComponentLogger("delegated"), e, "test/s", []string{"field value"}) {
+	if !answerPrompt(e, []string{"field value"}) {
 		t.Fatal("pending elicitation + text: want consumed")
 	}
 	if e.answeredReqID != "req-e" || e.answeredText != "field value" {
@@ -1220,13 +1227,13 @@ func TestAnswerPendingBackendPrompt(t *testing.T) {
 	}
 
 	q2 := &questionBackendDT{pendingQuestion: "req-q"}
-	if answerPendingBackendPrompt(log.NewComponentLogger("delegated"), q2, "test/s", []string{"   "}) {
+	if answerPrompt(q2, []string{"   "}) {
 		t.Error("whitespace-only text must fall through to a normal turn")
 	}
-	if answerPendingBackendPrompt(log.NewComponentLogger("delegated"), q2, "test/s", nil) {
+	if answerPrompt(q2, nil) {
 		t.Error("empty batch must fall through to a normal turn")
 	}
-	if answerPendingBackendPrompt(log.NewComponentLogger("delegated"), &questionBackendDT{}, "test/s", []string{"hello"}) {
+	if answerPrompt(&questionBackendDT{}, []string{"hello"}) {
 		t.Error("no pending prompt: text must not be consumed")
 	}
 }

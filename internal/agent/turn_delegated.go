@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -193,29 +194,53 @@ func (t *DelegatedTransport) InjectNudges(ts *TurnState) {
 // message can safely run as a turn — but these prompts block CC mid-turn, and
 // anything written to CC while it is asking is taken as the answer anyway.
 // Skipping capture would just deliver the same answer with worse bookkeeping.
-func answerPendingBackendPrompt(lg *log.ComponentLogger, be delegator.Delegator, sessionKey string, texts []string) bool {
+//
+// A refused answer (#2762) has two outcomes, decided by whether the prompt still
+// waits. Still waiting (a value the field rejects, a failed opencode POST): the
+// text is consumed and refused carries the reason for the user. It must not fall
+// through: the worker would park in WaitForPermission behind this prompt, and the
+// user's corrected answer would queue behind the worker and never reach it. No
+// longer waiting (a button click won the race, or the backend claimed the prompt
+// and the write failed): consumed is false and the text runs as ordinary input.
+func answerPendingBackendPrompt(lg *log.ComponentLogger, be delegator.Delegator, sessionKey string, texts []string) (consumed bool, refused error) {
 	if len(texts) == 0 {
-		return false
+		return false, nil
 	}
 	text := strings.TrimSpace(texts[0])
 	if text == "" {
-		return false
+		return false, nil
+	}
+	answer := func(kind, reqID string, respond func(string, string) error, pending func() string) (bool, error) {
+		lg.Debugf("session=%s intercepting text as %s answer: %q", sessionKey, kind, text)
+		err := respond(reqID, text)
+		switch {
+		case err == nil:
+			return true, nil
+		case pending() == reqID:
+			lg.Warnf("session=%s %s %s refused the typed answer and is still waiting: %v", sessionKey, kind, reqID, err)
+			return true, err
+		default:
+			lg.Warnf("session=%s %s %s did not take the typed answer and is no longer waiting: %v (running the text as normal input)", sessionKey, kind, reqID, err)
+			return false, nil
+		}
 	}
 	if qr, ok := delegator.As[delegator.QuestionResponder](be); ok {
 		if reqID := qr.HasPendingQuestion(); reqID != "" {
-			lg.Debugf("session=%s intercepting text as question answer: %q", sessionKey, text)
-			_ = qr.RespondToQuestion(reqID, text)
-			return true
+			return answer("question", reqID, qr.RespondToQuestion, qr.HasPendingQuestion)
 		}
 	}
 	if er, ok := delegator.As[delegator.ElicitationResponder](be); ok {
 		if reqID := er.HasPendingElicitation(); reqID != "" {
-			lg.Debugf("session=%s intercepting text as elicitation answer: %q", sessionKey, text)
-			_ = er.RespondToElicitation(reqID, text)
-			return true
+			return answer("elicitation", reqID, er.RespondToElicitation, er.HasPendingElicitation)
 		}
 	}
-	return false
+	return false, nil
+}
+
+// promptAnswerRefusedNotice is the chat notice for a typed answer that the
+// backend refused while its prompt keeps waiting (#2762).
+func promptAnswerRefusedNotice(refused error) string {
+	return fmt.Sprintf("⚠️ Your answer did not reach the waiting prompt: %v. The prompt is still waiting. Send the answer again, or use its buttons.", refused)
 }
 
 // --- Phase 3: Core execution ---
@@ -290,12 +315,21 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// consumed as an answer — they wait below (WaitForPermission + the
 	// SourceSystem retry loop) until the prompt resolves and the turn
 	// completes.
-	if answersPrompts && answerPendingBackendPrompt(t.logger(), be, ts.SessionKey, ts.Texts) {
-		ts.inputDelivered = true // the answer resumes the backend's running turn
-		// ...which owns the run's delivery, as with a folded follow-up below.
-		ts.foldedFollowUp = true
-		close(ts.CompletionChan)
-		return nil
+	if answersPrompts {
+		if consumed, refused := answerPendingBackendPrompt(t.logger(), be, ts.SessionKey, ts.Texts); consumed {
+			// The answer resumes the backend's running turn; a refused answer
+			// reached nothing, so this turn did not run (#2446, #2762).
+			ts.inputDelivered = refused == nil
+			// That turn owns the run's delivery, as with a folded follow-up
+			// below. So the refusal goes out as a notice: a turn error here
+			// would finalize that turn's sink mid-run (#2366).
+			ts.foldedFollowUp = true
+			if refused != nil && a.PromptAnswerRefusedNotifyFunc != nil {
+				go a.PromptAnswerRefusedNotifyFunc(ts.SessionKey, promptAnswerRefusedNotice(refused))
+			}
+			close(ts.CompletionChan)
+			return nil
+		}
 	}
 
 	// Wait for any outstanding permission prompt to resolve before sending
