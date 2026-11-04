@@ -95,12 +95,14 @@ func sameOriginOrNone(r *http.Request) bool {
 
 // conn is per-connection state.
 type conn struct {
-	ws  *websocket.Conn
-	cfg *HandlerConfig
+	ws     *websocket.Conn
+	cfg    *HandlerConfig
+	connID string
 
-	writeMu sync.Mutex // serializes all WebSocket writes (text + binary)
-	turnMu  sync.Mutex // serializes agent turns (prevents concurrent STT→agent→TTS)
-	audioMu sync.Mutex // protects recording state and buffer
+	writeMu  sync.Mutex // serializes all WebSocket writes (text + binary)
+	failOnce sync.Once  // the first failed write logs and closes; see writeFailed
+	turnMu   sync.Mutex // serializes agent turns (prevents concurrent STT→agent→TTS)
+	audioMu  sync.Mutex // protects recording state and buffer
 
 	turnSem chan struct{} // bounds in-flight turn goroutines; nil = unbounded
 
@@ -150,8 +152,9 @@ func Handler(cfg HandlerConfig) http.HandlerFunc {
 		voice_wsLog.Infof("connected (conn=%s)", connID)
 
 		c := &conn{
-			ws:  ws,
-			cfg: &cfg,
+			ws:     ws,
+			cfg:    &cfg,
+			connID: connID,
 		}
 		if cfg.MaxConcurrentTurns > 0 {
 			c.turnSem = make(chan struct{}, cfg.MaxConcurrentTurns)
@@ -168,7 +171,6 @@ func Handler(cfg HandlerConfig) http.HandlerFunc {
 			})
 		}
 		if err := c.sendJSON(ConnectedMsg{Type: "connected", Agents: items}); err != nil {
-			voice_wsLog.Errorf("send connected (conn=%s): %v", connID, err)
 			return
 		}
 
@@ -191,7 +193,11 @@ func Handler(cfg HandlerConfig) http.HandlerFunc {
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
 
-		go c.pingLoop(ctx)
+		go func() {
+			ticker := time.NewTicker(pingPeriod)
+			defer ticker.Stop()
+			c.pingLoop(ctx, ticker.C)
+		}()
 
 		// Read loop.
 		for {
@@ -383,7 +389,10 @@ func (c *conn) processAudio(ctx context.Context, connID string, audio []byte, sa
 	}
 
 	// Send transcription to client.
-	_ = c.sendJSON(TranscriptionMsg{Type: "transcription", Text: text})
+	if err := c.sendJSON(TranscriptionMsg{Type: "transcription", Text: text}); err != nil {
+		voice_wsLog.Warnf("turn dropped before agent call, %d bytes of input unprocessed (session=%s, conn=%s)", len(text), c.sessionKey, connID)
+		return
+	}
 
 	// Run agent pipeline with transcribed text.
 	c.runAgentPipeline(ctx, connID, text)
@@ -405,8 +414,12 @@ func (c *conn) processText(ctx context.Context, connID string, text string) {
 // runAgentPipeline handles the response_start → agent call → response_text → TTS → response_end flow.
 // Must be called with turnMu held.
 func (c *conn) runAgentPipeline(ctx context.Context, connID string, text string) {
-	// response_start
-	_ = c.sendJSON(ResponseStartMsg{Type: "response_start"})
+	// response_start. A socket that cannot carry this cannot carry the answer,
+	// so don't run a turn nobody can receive.
+	if err := c.sendJSON(ResponseStartMsg{Type: "response_start"}); err != nil {
+		voice_wsLog.Warnf("turn dropped before agent call, %d bytes of input unprocessed (session=%s, conn=%s)", len(text), c.sessionKey, connID)
+		return
+	}
 
 	// Call agent.
 	resp, err := c.cfg.HandleMessage(ctx, c.agentID, c.sessionKey, text)
@@ -418,7 +431,10 @@ func (c *conn) runAgentPipeline(ctx context.Context, connID string, text string)
 	}
 
 	// response_text (final=true)
-	_ = c.sendJSON(ResponseTextMsg{Type: "response_text", Content: resp, Final: true})
+	if err := c.sendJSON(ResponseTextMsg{Type: "response_text", Content: resp, Final: true}); err != nil {
+		voice_wsLog.Warnf("reply lost, %d bytes undelivered (session=%s, conn=%s)", len(resp), c.sessionKey, connID)
+		return
+	}
 
 	// TTS — non-fatal if it fails.
 	tts := c.cfg.AgentTTS(c.agentID)
@@ -452,19 +468,37 @@ func (c *conn) sendAudioChunks(data []byte) {
 		c.writeMu.Unlock()
 
 		if err != nil {
-			voice_wsLog.Warnf("write binary (session=%s): %v", c.sessionKey, err)
+			c.writeFailed("audio chunk", err)
 			return
 		}
 	}
 }
 
-// sendJSON marshals v as JSON and sends it as a text frame.
+// sendJSON marshals v as JSON and sends it as a text frame. A failure is already
+// reported through writeFailed, so a caller checks the error only to stop work.
 func (c *conn) sendJSON(v interface{}) error {
 	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
-
 	_ = c.ws.SetWriteDeadline(time.Now().Add(writeWait))
-	return c.ws.WriteJSON(v)
+	err := c.ws.WriteJSON(v)
+	c.writeMu.Unlock()
+
+	if err != nil {
+		c.writeFailed(fmt.Sprintf("%T", v), err)
+	}
+	return err
+}
+
+// writeFailed handles a failed write to the peer. gorilla's write errors are
+// sticky, so nothing more can reach the client on this connection, yet the read
+// side can stay up until pongWait expires and accept turns whose answers would
+// vanish. So the first failure logs and closes: that ends the read loop, which
+// cancels in-flight work, and the client sees the disconnect and can reconnect.
+// Close does not take writeMu, so it also unblocks a write stuck on a dead peer.
+func (c *conn) writeFailed(frame string, err error) {
+	c.failOnce.Do(func() {
+		voice_wsLog.Warnf("write %s failed, closing connection (conn=%s): %v", frame, c.connID, err)
+		_ = c.ws.Close()
+	})
 }
 
 // sendError sends an error message to the client.
@@ -472,21 +506,19 @@ func (c *conn) sendError(msg string) {
 	_ = c.sendJSON(ErrorMsg{Type: "error", Message: msg})
 }
 
-// pingLoop sends periodic WebSocket pings.
-func (c *conn) pingLoop(ctx context.Context) {
-	ticker := time.NewTicker(pingPeriod)
-	defer ticker.Stop()
-
+// pingLoop sends a WebSocket ping on each tick.
+func (c *conn) pingLoop(ctx context.Context, ticks <-chan time.Time) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-ticks:
 			c.writeMu.Lock()
 			_ = c.ws.SetWriteDeadline(time.Now().Add(writeWait))
 			err := c.ws.WriteMessage(websocket.PingMessage, nil)
 			c.writeMu.Unlock()
 			if err != nil {
+				c.writeFailed("ping", err)
 				return
 			}
 		}

@@ -3245,6 +3245,8 @@ audio_start{sample_rate} → binary frames (raw PCM) → audio_end
 - `turnMu` — serializes agent turns (prevents concurrent STT→agent→TTS pipelines)
 - `audioMu` — protects recording state and audio buffer
 
+**Write failures (#2761):** every write goes through `conn.writeFailed` on error: the first failure logs at Warn and closes the socket, which ends the read loop, cancels in-flight work and lets the client reconnect. A failure on `transcription` or `response_start` drops the turn before the agent call; a failure on `response_text` logs `reply lost` and skips TTS. A write the kernel accepted for a peer that is already gone cannot be seen here; the 60s pong deadline catches that case.
+
 **Wiring in `main.go`:** Callback-based (`HandlerConfig`) — `ListAgents` reads the agent registry (`agentRegistry.All`, so a hot-added agent is listed), `HandleMessage` calls `inst.ag.HandleMessage` with `voice` trigger, `AgentTTS` resolves per-agent TTS via `resolveTTS(ttsMap, cfg.TTS, agentTTSID, agentRate, replacements)` which also wraps with word replacements (entry → `[voice]` → per-agent `[voice]`, merged). Gate: `cfg.HTTP.WSEnabled && len(sttMap) > 0`.
 
 ## Facet (`platform/botpool.go`, `telegram/manager.go`, `telegram/bot.go`)
