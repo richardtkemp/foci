@@ -54,9 +54,9 @@ var spec = delegator.Spec{
 		delegator.CapActivity:       delegator.Yes(),
 		delegator.CapAutonomousRuns: delegator.No("does not track background work"),
 		delegator.CapTurnAdoption:   delegator.NotApplicable("no autonomous runs to adopt"),
-		delegator.CapStopSubagents:  delegator.NotApplicable("codex has no subagents"),
+		delegator.CapStopSubagents:  delegator.NotApplicable("foci turns codex's own subagents off (agents.enabled=false)"),
 		delegator.CapStopCommands:   delegator.No("no API to stop a background command"),
-		delegator.CapSubagentStatus: delegator.NotApplicable("codex has no subagents"),
+		delegator.CapSubagentStatus: delegator.NotApplicable("foci turns codex's own subagents off (agents.enabled=false)"),
 
 		delegator.CapPermissionResponse: delegator.Yes(),
 		delegator.CapPermissionRules:    delegator.No("approvals are accept or decline only"),
@@ -96,7 +96,7 @@ var spec = delegator.Spec{
 	ConfigKeys: []string{"binary", "model", "sandbox", "approvals_reviewer", "api_key", delegator.FociVersionConfigKey},
 	StartFields: []string{
 		"WorkDir", "SystemPrompt", "Model", "AgentID", "Label", "ResumeSessionID", "SessionKey",
-		"BatchOnly", "BatchAccess", "DepthLeaf", "Env", "AutoApproveRules", "Effort", "CompactionPromptFunc",
+		"BatchOnly", "BatchAccess", "Env", "AutoApproveRules", "Effort", "CompactionPromptFunc",
 	},
 }
 

@@ -16,8 +16,8 @@ import (
 
 // fixtureLines is testdata/tokenusage_synthetic.json's notifications, in
 // order: the four REAL cycles of one turn (#1855 capture), a verbatim
-// re-delivery of the last, the parent opening a child thread, and two
-// SYNTHETIC child cycles with cache writes and reasoning set.
+// re-delivery of the last, and two SYNTHETIC cycles with cache writes and
+// reasoning set.
 func fixtureLines(t *testing.T) [][]byte {
 	t.Helper()
 	data, err := os.ReadFile("testdata/tokenusage_synthetic.json")
@@ -55,7 +55,6 @@ func ledgerFacade(t *testing.T) (*Backend, *delegator.ExpectationGuard, *[]accou
 
 	b, g := guardedBackend(t)
 	b.agentID = "gil"
-	b.subagents = newSubagentTracker()
 	b.mu.Lock()
 	b.model = "gpt-5.1-codex-max"
 	b.mu.Unlock()
@@ -138,42 +137,42 @@ func TestCodexCyclesAreCallsOnTheTurn(t *testing.T) {
 
 	calls := readCycles(t, path)
 	if len(calls) != 6 {
-		t.Fatalf("calls = %d, want 4 parent cycles + 2 child cycles (the re-delivery booked once)", len(calls))
+		t.Fatalf("calls = %d, want 4 real cycles + 2 synthetic (the re-delivery booked once)", len(calls))
 	}
 	var sum map[string]int = map[string]int{}
 	for _, c := range calls[:4] {
 		if c.turn != "test/session@1" || c.actor != "" || !strings.HasPrefix(c.key, "th_1:") {
-			t.Errorf("parent cycle = %+v, want a th_1 call on the open turn", c)
+			t.Errorf("real cycle = %+v, want a th_1 call on the open turn", c)
 		}
 		for k, n := range c.tokens {
 			sum[k] += n
 		}
 	}
 	if sum["input"] != 9241 || sum["output"] != 151 || sum["cache_read"] != 53376 {
-		t.Errorf("parent cycles sum to %v, want input 9241 output 151 cache_read 53376", sum)
+		t.Errorf("real cycles sum to %v, want input 9241 output 151 cache_read 53376", sum)
 	}
 	if got := sum["input"] + sum["cache_read"]; got != 62617 {
 		t.Errorf("input+cache_read = %d, want codex's own total.inputTokens 62617", got)
 	}
 	if calls[3].key != "th_1:62768" {
-		t.Errorf("last parent key = %q, want thread:running total th_1:62768", calls[3].key)
+		t.Errorf("last real key = %q, want thread:running total th_1:62768", calls[3].key)
 	}
-	child := calls[4]
-	if child.actor != "call_1" || child.turn != "test/session@1" {
-		t.Errorf("child cycle = %+v, want the subagent's call on the spawning turn", child)
+	cw := calls[4]
+	if cw.actor != "" || cw.turn != "test/session@1" {
+		t.Errorf("synthetic cycle = %+v, want a th_1 call on the open turn", cw)
 	}
-	if child.tokens["cache_write"] != 4096 || child.tokens["output"] != 300 || child.tokens["reasoning"] != 0 ||
-		!strings.Contains(child.detail, `"reasoning_output_tokens":120`) {
-		t.Errorf("child classes = %v detail %s, want cache_write 4096, output 300 (reasoning inside it, in detail)", child.tokens, child.detail)
+	if cw.tokens["cache_write"] != 4096 || cw.tokens["output"] != 300 || cw.tokens["reasoning"] != 0 ||
+		!strings.Contains(cw.detail, `"reasoning_output_tokens":120`) {
+		t.Errorf("synthetic classes = %v detail %s, want cache_write 4096, output 300 (reasoning inside it, in detail)", cw.tokens, cw.detail)
 	}
 	if n := g.Count(expectBackend, invTotalIsSumOfLast); n != 0 {
 		t.Errorf("conservation violated %d times on consistent traffic", n)
 	}
-	// The one child cycle with cache writes alarms: no codex model publishes a
+	// The one cycle with cache writes alarms: no codex model publishes a
 	// cache-write rate, and an unpriced class is NULL and loud, never $0.
 	if len(*alarms) != 1 || (*alarms)[0].Invariant != accounting.InvClassNoRate ||
 		!strings.Contains((*alarms)[0].Detail, "cache_write") {
-		t.Errorf("alarms = %+v, want exactly the child's unpriced cache_write", *alarms)
+		t.Errorf("alarms = %+v, want exactly the unpriced cache_write", *alarms)
 	}
 	db, err := sqlite.OpenReadOnly(path)
 	if err != nil {
@@ -187,41 +186,24 @@ func TestCodexCyclesAreCallsOnTheTurn(t *testing.T) {
 	}
 }
 
-// TestCodexChildConservationIsChecked: a child thread's running total that
-// does not grow by its cycle is a conservation break, reported like the
-// parent's — before the switch a child's usage was never read at all.
-func TestCodexChildConservationIsChecked(t *testing.T) {
+// TestCodexConservationIsChecked: a running total that does not grow by its
+// cycle is a conservation break.
+func TestCodexConservationIsChecked(t *testing.T) {
 	b, g, _, _ := ledgerFacade(t)
 	lines := fixtureLines(t)
-	for _, line := range lines[:7] {
+	for _, line := range lines[:6] {
 		b.dispatch(line)
 	}
-	broken := strings.Replace(string(lines[7]), `"inputTokens": 18500`, `"inputTokens": 99999`, 1)
-	if broken == string(lines[7]) {
-		broken = strings.Replace(string(lines[7]), `"inputTokens":18500`, `"inputTokens":99999`, 1)
+	broken := strings.Replace(string(lines[6]), `"inputTokens": 81117`, `"inputTokens": 99999`, 1)
+	if broken == string(lines[6]) {
+		broken = strings.Replace(string(lines[6]), `"inputTokens":81117`, `"inputTokens":99999`, 1)
 	}
-	if broken == string(lines[7]) {
-		t.Fatalf("fixture premise: child total not found in %s", lines[7])
+	if broken == string(lines[6]) {
+		t.Fatalf("fixture premise: running total not found in %s", lines[6])
 	}
 	b.dispatch([]byte(broken))
 	if n := g.Count(expectBackend, invTotalIsSumOfLast); n != 1 {
-		t.Errorf("conservation violations = %d, want 1 for the child's broken total", n)
-	}
-}
-
-// TestCodexChildOutlivesItsTurn: a codex child can outlive the turn that
-// spawned it; its later cycles are still that turn's spend (#1880), not the
-// turn open when they arrive.
-func TestCodexChildOutlivesItsTurn(t *testing.T) {
-	b, _, _, path := ledgerFacade(t)
-	lines := fixtureLines(t)
-	b.dispatch(lines[5]) // the parent opens the child during turn @1
-	openLedgerTurn(t, b, "test/session@2")
-	b.dispatch(lines[6])
-
-	calls := readCycles(t, path)
-	if len(calls) != 1 || calls[0].turn != "test/session@1" || calls[0].actor != "call_1" {
-		t.Fatalf("calls = %+v, want the child's cycle on its spawning turn @1", calls)
+		t.Errorf("conservation violations = %d, want 1 for the broken total", n)
 	}
 }
 

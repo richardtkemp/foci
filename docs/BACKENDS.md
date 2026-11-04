@@ -190,9 +190,9 @@ Why not:
 - `compaction_summary`: codex: compaction output is server-side encrypted.
 - `autonomous_runs`: codex: does not track background work; opencode: does not track background work.
 - `turn_adoption`: codex (n/a): no autonomous runs to adopt; opencode (n/a): no autonomous runs to adopt.
-- `stop_subagents`: codex (n/a): codex has no subagents; opencode: no API to stop a running subagent.
+- `stop_subagents`: codex (n/a): foci turns codex's own subagents off (agents.enabled=false); opencode: no API to stop a running subagent.
 - `stop_commands`: codex: no API to stop a background command; opencode: no API to stop a background command.
-- `subagent_status`: codex (n/a): codex has no subagents.
+- `subagent_status`: codex (n/a): foci turns codex's own subagents off (agents.enabled=false).
 - `permission_rules`: codex: approvals are accept or decline only; opencode: "always" is sent as opencode's own remember flag, not a foci rule.
 - `questions`: codex: the app-server has no question tool.
 - `elicitation`: codex: the app-server does not surface MCP elicitation requests; opencode: opencode does not surface MCP elicitation requests.
@@ -278,18 +278,18 @@ grepped for each ✗. Row IDs are not renumbered, so the gaps are the removed ro
 
 | ID | Feature | What | ccstream | opencode | codex |
 |---|---|---|---|---|---|
-| S1 | Lifecycle events | `OnSubagentStart` / `OnSubagentEnd` | ✓ | ✓ | ✓ |
-| S2 | Subagent text | `OnSubagentText` | ✓ | [24] | ✓ |
-| S3 | Spawn prompt | Start event carries the instruction given to the subagent | ✓ | ✗ | ✗ |
-| S4 | Reactivation runs | Re-woken subagent opens run 2, 3, ... under the same group | ✓ | n/a [25] | ✓ |
-| S5 | Follow-up to running subagent | `OnSubagentPrompt` | ✓ | ✗ | ✗ |
-| S6 | Status / running list | `SetOnSubagentStatus`, `SetOnSubagentRunning` (status line, pending-work gate) | ✓ | ✓ | ✗ [26] |
+| S1 | Lifecycle events | `OnSubagentStart` / `OnSubagentEnd` | ✓ | ✓ | n/a [26] |
+| S2 | Subagent text | `OnSubagentText` | ✓ | [24] | n/a [26] |
+| S3 | Spawn prompt | Start event carries the instruction given to the subagent | ✓ | ✗ | n/a [26] |
+| S4 | Reactivation runs | Re-woken subagent opens run 2, 3, ... under the same group | ✓ | n/a [25] | n/a [26] |
+| S5 | Follow-up to running subagent | `OnSubagentPrompt` | ✓ | ✗ | n/a [26] |
+| S6 | Status / running list | `SetOnSubagentStatus`, `SetOnSubagentRunning` (status line, pending-work gate) | ✓ | ✓ | n/a [26] |
 | S7 | Background commands | Track `run_in_background` shells as pending work | ✓ | ✗ | ✗ |
-| S8 | Stop subagents / commands | `/stop subagents`, `/stop commands` | ✓ | ✗ | ✗ |
-| S9 | Nested subagents | Grandchild attribution to the depth-1 chit | ✓ | ✗ [27] | ✗ [27] |
+| S8 | Stop subagents / commands | `/stop subagents`, `/stop commands` | ✓ | ✗ | ✗ [26] |
+| S9 | Nested subagents | Grandchild attribution to the depth-1 chit | ✓ | ✗ [27] | n/a [26] |
 | S10 | Workflow agents | Tail `local_workflow` runs | ✓ | n/a [28] | n/a [28] |
-| S11 | Subagent model | Record the model each subagent actually ran | ✓ | ✗ | ✗ |
-| S12 | Subagent spend | Subagent calls booked with an actor in the ledger | ✓ | ✓ | ✓ |
+| S11 | Subagent model | Record the model each subagent actually ran | ✓ | ✗ | n/a [26] |
+| S12 | Subagent spend | Subagent calls booked with an actor in the ledger | ✓ | ✓ | n/a [26] |
 
 ### 6. Compaction and context
 
@@ -399,7 +399,7 @@ Generated from each backend's `Spec.ConfigKeys` / `Spec.StartFields` (`internal/
 | `BatchOnly` | ✗ | ✓ | ✗ |
 | `SkipPermissions` | ✓ | ✗ | ✓ |
 | `BatchAccess` | ✓ | ✓ | ✓ |
-| `DepthLeaf` | ✓ | ✓ | ✓ |
+| `DepthLeaf` | ✓ | ✗ | ✓ |
 | `ExecRegistry` | manager | manager | manager |
 | `Env` | ✓ | ✓ | ✓ |
 | `AutoApproveRules` | ✓ | ✓ | ✓ |
@@ -528,11 +528,9 @@ Notes:
 24. opencode surfaces only completed child text parts, no deltas (`oc/handlers.go:handleChildEvent`).
     ccstream also tails foreground subagent transcripts (`cc/subagent_tail.go`).
 25. Hard-coded run 1 in `oc/handlers.go` ("opencode has no reactivation → run 1").
-26. codex keeps its own `subagentTracker` (`cx/subagent.go`) instead of
-    `dg/agent_tracker.go:SubagentTracker`, and has no `SetOnSubagentStatus`/`SetOnSubagentRunning`.
-    So no status-line subagent detail, no running list, and no pending-work gate on codex.
-27. Not handled. Whether opencode child sessions or codex child threads can themselves spawn
-    children was not verified.
+26. foci turns codex's own subagents off (`-c agents.enabled=false`, `cx/lifecycle.go:appServerArgs`,
+    #2839), so there is nothing to report. A codex agent delegates with `foci_spawn`.
+27. Not handled. Whether opencode child sessions can themselves spawn children was not verified.
 28. Workflow runs are a Claude Code feature (`local_workflow` tasks, `cc/workflow_tail.go`).
 29. The agent sends `/compact <foci prompt>` on every call (`ag/compaction.go:runDelegatedCompact`).
     opencode ignores that text: its plugin's `session.compacting` hook reads a file written at
@@ -543,8 +541,8 @@ Notes:
     ccstream and opencode, which had no caller and were deleted in #2154.)
 31. Agent-layer generic: closes the backend keeping the resume id; codex re-sends
     `baseInstructions` on `thread/resume` (`cx/lifecycle.go:resumeThread`).
-32. A codex child that outlives its turn still reads `still_running` false early (not yet
-    handled for codex).
+32. codex has no spend that outlives a turn on the wire: its subagents are off (see 26), and
+    an auto_review guardian thread sends no usage (#2840).
 33. opencode and codex book each message/usage event as it arrives, so there is no cumulative
     counter to rebase.
 34. codex engages on `rateLimitReachedType`, not on a window at 100% (a workspace with credits

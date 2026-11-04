@@ -7,8 +7,7 @@
 // — unique and monotonic per thread, and the same key if codex replays the
 // notification, which the ledger then books once. The running total itself is
 // stored as a cumulative backend report, and the conservation check (total
-// grows by exactly last, checkTokenUsage) runs on every notification, a child
-// thread's included.
+// grows by exactly last, checkTokenUsage) runs on every notification.
 //
 // Tested against a synthetic fixture built from the documented schema plus
 // the #1855 live captures (testdata/tokenusage_synthetic.json). Codex is
@@ -56,10 +55,12 @@ var (
 	}
 )
 
-// bookCycle books one API cycle as a call. actor is "" for the session's own
-// thread, else the subagent the child thread belongs to; spawnTurn is that
-// subagent's spawning turn ("" for the session's own thread).
-func (b *Backend) bookCycle(p *tokenUsageParams, actor, spawnTurn string) {
+// bookCycle books one API cycle of the session's own thread as a call.
+//
+// codex's auto_review reviewer spends tokens on its own guardian thread, and
+// none of that reaches the wire (live 0.166.0, #2840): those figures exist only
+// in the guardian's rollout file, so they are not booked here.
+func (b *Backend) bookCycle(p *tokenUsageParams) {
 	last, total := p.TokenUsage.Last, p.TokenUsage.Total
 	if last.InputTokens == 0 && last.OutputTokens == 0 && last.CacheWriteInputTokens == 0 {
 		return // a notification that reports no cycle
@@ -76,7 +77,7 @@ func (b *Backend) bookCycle(p *tokenUsageParams, actor, spawnTurn string) {
 	if model != "" {
 		model = "codex/" + model
 	}
-	turn := b.cycleTurn(spawnTurn, at)
+	turn := b.cycleTurn(at)
 	detail := map[string]any{"codex_thread": p.ThreadID}
 	if p.TurnID != "" {
 		detail["codex_turn"] = p.TurnID
@@ -88,7 +89,7 @@ func (b *Backend) bookCycle(p *tokenUsageParams, actor, spawnTurn string) {
 		fmt.Sprintf("thread %s cycle %s", p.ThreadID, key), accounting.UnseenUsageKeys(p.rawUsage, codexUsageKeys))
 	if _, err := accounting.Live().RecordCall(turn, accounting.Call{
 		Key: key, Backend: accounting.BackendCodex, Provider: "openai", Model: model,
-		Session: turn.Session, AgentID: b.agentID, TurnID: turn.TurnID, Actor: actor,
+		Session: turn.Session, AgentID: b.agentID, TurnID: turn.TurnID,
 		Kind: accounting.KindCall, Finality: accounting.FinalityCompleted, ClassMethod: accounting.ClassMethodUnknown,
 		BilledAt: at, Tokens: cycleTokens(last), Detail: detail,
 	}, &accounting.Report{
@@ -109,22 +110,19 @@ func (b *Backend) openTurnID() string {
 	return ""
 }
 
-// cycleTurn is the turn a cycle is booked on: a subagent's spawning turn, else
-// the foci turn open now, else — a cycle codex ran with no foci turn open —
-// an autonomous turn of the cycle's own, closed at once. The agent layer
+// cycleTurn is the turn a cycle is booked on: the foci turn open now, else — a
+// cycle codex ran with no foci turn open — an autonomous turn of the cycle's
+// own, closed at once. The agent layer
 // recorded an open turn's facts at its start; naming it here with only its id
 // never overwrites them.
-func (b *Backend) cycleTurn(spawnTurn string, at time.Time) accounting.Turn {
+func (b *Backend) cycleTurn(at time.Time) accounting.Turn {
 	session := b.startOpts.SessionKey
 	if session == "" {
 		session = accounting.NoSession
 	}
 	t := accounting.Turn{
-		TurnID: spawnTurn, Session: session, AgentID: b.agentID, Backend: accounting.BackendCodex,
+		TurnID: b.openTurnID(), Session: session, AgentID: b.agentID, Backend: accounting.BackendCodex,
 		Source: accounting.SourceAutonomous, StartedAt: at,
-	}
-	if t.TurnID == "" {
-		t.TurnID = b.openTurnID()
 	}
 	if t.TurnID == "" {
 		t.TurnID = accounting.MintTurnID(session, accounting.KindCall, at)

@@ -197,127 +197,48 @@ func TestDispatch_AgentMessageDelta_DoesNotDoubleTurnText(t *testing.T) {
 	}
 }
 
-// TestDispatch_CollabAgentToolCall_DeterministicOrderAndCounted is the
-// collabAgentToolCall is no longer interpreted — see logUnhandledCollabItem.
-// foci has never observed one on the wire (two codex versions, collab mode on,
-// collaboration.* tools demonstrably used), so the old handling was an
-// interpretation of a payload nobody had seen. This pins the replacement
-// contract: the raw item reaches the log at WARN so the first real specimen is
-// captured, subagent state is left completely alone, and the item still counts
-// as a tool call.
-func TestDispatch_CollabAgentToolCall_IsLoggedNotInterpreted(t *testing.T) {
+// TestDispatch_CodexSubagentItemsAreIgnored: foci turns codex's own subagents
+// off (agents.enabled=false, #2839). If a subAgentActivity or
+// collabAgentToolCall item still arrives on a session's thread, it drives no
+// callback, enters no tool count, and logs no WARN however often it comes. The
+// payloads are the live shapes (#2839 capture, 0.166.0; wait_agent, 0.164.0).
+func TestDispatch_CodexSubagentItemsAreIgnored(t *testing.T) {
 	b := newTestBackend(t)
-	b.subagents = newSubagentTracker()
-
 	var touched []string
 	b.sessionEvents.Store(&delegator.SessionEvents{
-		OnSubagentStart:  func(g, l, p string, r int) { touched = append(touched, "start") },
-		OnSubagentText:   func(g, text string, r int) { touched = append(touched, "text") },
-		OnSubagentPrompt: func(g, p string, r int) { touched = append(touched, "prompt") },
-		OnSubagentEnd:    func(g string, r int) { touched = append(touched, "end") },
+		OnSubagentStart: func(g, l, p string, r int) { touched = append(touched, "subagent start") },
+		OnSubagentText:  func(g, text string, r int) { touched = append(touched, "subagent text") },
+		OnSubagentEnd:   func(g string, r int) { touched = append(touched, "subagent end") },
+		OnText:          func(string) { touched = append(touched, "text") },
+		OnToolStart:     func(id, name, args string) { touched = append(touched, "tool start "+name) },
+		OnToolEnd:       func(id, name, out string, isErr bool) { touched = append(touched, "tool end "+name) },
 	})
-
-	var mu sync.Mutex
-	var logged []string
-	log.SetWarnHook(func(level log.Level, component, msg string) {
-		mu.Lock()
-		defer mu.Unlock()
+	var warns []string
+	log.SetWarnHook(func(level log.Level, _ string, msg string) {
 		if level.String() == "WARN" {
-			logged = append(logged, msg)
+			warns = append(warns, msg)
 		}
 	})
 	t.Cleanup(func() { log.SetWarnHook(nil) })
 
-	const raw = `{"type":"collabAgentToolCall","id":"c1","tool":"spawnAgent","receiverThreadIds":["agent-9"],"agentsStates":{"zzz":{"message":"third"},"aaa":{"message":"first"}}}`
-	b.dispatch([]byte(`{"method":"item/completed","params":{"threadId":"th_1","turnId":"tu_1","item":` + raw + `}}`))
-
-	if len(touched) != 0 {
-		t.Errorf("collab item drove subagent callbacks %v — it must not, the payload is unverified", touched)
+	items := []string{
+		`{"type":"subAgentActivity","id":"call_1","kind":"started","agentThreadId":"child","agentPath":"/root/child","model":"gpt-6.1-sol","reasoningEffort":"medium"}`,
+		`{"type":"subAgentActivity","id":"call_2","kind":"interacted","agentThreadId":"child","agentPath":"/root/child","model":null,"reasoningEffort":null}`,
+		`{"type":"subAgentActivity","id":"subagent-completed-t1","kind":"completed","agentThreadId":"child","agentPath":"/root/child"}`,
+		`{"type":"collabAgentToolCall","id":"call_w","tool":"wait","status":"completed","senderThreadId":"th","receiverThreadIds":[],"agentsStates":{},"prompt":null,"model":null}`,
+		`{"type":"collabAgentToolCall","id":"call_s","tool":"spawnAgent","senderThreadId":"th","receiverThreadIds":["child"],"agentsStates":{}}`,
 	}
-
-	// The WHOLE payload must survive to the log: a specimen is only useful if
-	// nothing was dropped on the way, so assert distinctive fields from every
-	// part of it rather than that some warning fired.
-	var found string
-	mu.Lock()
-	for _, m := range logged {
-		if strings.Contains(m, "collabAgentToolCall") {
-			found = m
-		}
-	}
-	mu.Unlock()
-	if found == "" {
-		t.Fatal("no WARN logged for a collabAgentToolCall — the first real specimen would vanish silently")
-	}
-	for _, frag := range []string{`"tool":"spawnAgent"`, `"receiverThreadIds":["agent-9"]`, `"message":"third"`} {
-		if !strings.Contains(found, frag) {
-			t.Errorf("logged payload is missing %s — a truncated specimen cannot be acted on:\n%s", frag, found)
-		}
-	}
-}
-
-// TestDispatch_CollabWait_ShownAsToolNotWarned pins the handling of the first
-// real collabAgentToolCall specimens (codex 0.164.0, wait_agent): the started
-// and completed items become one wait_agent tool call, matched by item ID,
-// with no WARN and no subagent callbacks. The payloads are copied verbatim
-// from foci.log. A failed wait must end as an error.
-func TestDispatch_CollabWait_ShownAsToolNotWarned(t *testing.T) {
-	b := newTestBackend(t)
-	b.subagents = newSubagentTracker()
-
-	type toolEv struct {
-		kind, id, name string
-		isErr          bool
-	}
-	var tools []toolEv
-	var touched []string
-	b.sessionEvents.Store(&delegator.SessionEvents{
-		OnToolStart: func(id, name, args string) { tools = append(tools, toolEv{"start", id, name, false}) },
-		OnToolEnd: func(id, name, out string, isErr bool) {
-			tools = append(tools, toolEv{"end", id, name, isErr})
-		},
-		OnSubagentStart: func(g, l, p string, r int) { touched = append(touched, "start") },
-		OnSubagentEnd:   func(g string, r int) { touched = append(touched, "end") },
-	})
-
-	var mu sync.Mutex
-	var warned []string
-	log.SetWarnHook(func(level log.Level, component, msg string) {
-		mu.Lock()
-		defer mu.Unlock()
-		warned = append(warned, msg)
-	})
-	t.Cleanup(func() { log.SetWarnHook(nil) })
-
-	const started = `{"type":"collabAgentToolCall","id":"call_fa05ab633b7f446bb6fd5f5944255bcb","tool":"wait","status":"inProgress","senderThreadId":"01a1827a-8452-7562-a4db-0e691df3079e","receiverThreadIds":[],"prompt":null,"model":null,"reasoningEffort":null,"agentsStates":{}}`
-	const completed = `{"type":"collabAgentToolCall","id":"call_fa05ab633b7f446bb6fd5f5944255bcb","tool":"wait","status":"completed","senderThreadId":"01a1827a-8452-7562-a4db-0e691df3079e","receiverThreadIds":[],"prompt":null,"model":null,"reasoningEffort":null,"agentsStates":{}}`
-	const failed = `{"type":"collabAgentToolCall","id":"call_w2","tool":"wait","status":"failed","senderThreadId":"th_1","receiverThreadIds":[],"agentsStates":{}}`
-	b.dispatch([]byte(`{"method":"item/started","params":{"threadId":"th_1","turnId":"tu_1","item":` + started + `}}`))
-	b.dispatch([]byte(`{"method":"item/completed","params":{"threadId":"th_1","turnId":"tu_1","item":` + completed + `}}`))
-	b.dispatch([]byte(`{"method":"item/completed","params":{"threadId":"th_1","turnId":"tu_1","item":` + failed + `}}`))
-
-	want := []toolEv{
-		{"start", "call_fa05ab633b7f446bb6fd5f5944255bcb", "wait_agent", false},
-		{"end", "call_fa05ab633b7f446bb6fd5f5944255bcb", "wait_agent", false},
-		{"end", "call_w2", "wait_agent", true},
-	}
-	if len(tools) != len(want) {
-		t.Fatalf("tool events = %+v, want %+v", tools, want)
-	}
-	for i := range want {
-		if tools[i] != want[i] {
-			t.Errorf("tool event %d = %+v, want %+v", i, tools[i], want[i])
+	for range 3 {
+		for _, it := range items {
+			b.dispatch([]byte(`{"method":"item/started","params":{"threadId":"th","turnId":"t","item":` + it + `}}`))
+			b.dispatch([]byte(`{"method":"item/completed","params":{"threadId":"th","turnId":"t","item":` + it + `}}`))
 		}
 	}
 	if len(touched) != 0 {
-		t.Errorf("wait drove subagent callbacks %v — subAgentActivity owns the subagent lifecycle", touched)
+		t.Errorf("callbacks fired: %v", touched)
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	for _, m := range warned {
-		if strings.Contains(m, "collabAgentToolCall") {
-			t.Errorf("wait still WARNs as unhandled: %s", m)
-		}
+	if len(warns) != 0 {
+		t.Errorf("WARNs logged: %v", warns)
 	}
 }
 

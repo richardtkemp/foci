@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// unclaimedGrace is how long a thread that matches no session and no known
-// subagent may go unregistered before its lines are reported as lost.
+// unclaimedGrace is how long a thread that matches no session may go
+// unregistered before its lines are reported as lost.
 //
 // codex sends a thread's first notifications before foci can register the
 // thread (#2700). A fork's mcpServer/startupStatus/updated and
@@ -24,7 +24,7 @@ import (
 const unclaimedGrace = 30 * time.Second
 
 // unclaimedThread is what the reader has seen from one thread that matched no
-// session and no known subagent and has not been claimed since.
+// session and has not been claimed since.
 type unclaimedThread struct {
 	firstSeen time.Time
 	methods   map[string]int
@@ -41,10 +41,9 @@ type unclaimedLines struct {
 }
 
 // noteUnclaimed records that a line for thread id arrived when the thread
-// matched no session and no known subagent. The WARN for it is deferred: it is
-// logged by flushUnclaimed only if the thread is still unclaimed after
-// unclaimedGrace, and never if registerThread, registerChild or registerFork
-// claims it first.
+// matched no session. The WARN for it is deferred: it is logged by
+// flushUnclaimed only if the thread is still unclaimed after unclaimedGrace,
+// and never if registerThread or registerFork claims it first.
 // The line itself is not held back: dispatch hands it to the owner at once
 // (dispatchLost), exactly as before.
 func (b *Backend) noteUnclaimed(id, method string, now time.Time) {
@@ -74,9 +73,9 @@ func (b *Backend) noteUnclaimed(id, method string, now time.Time) {
 }
 
 // claimUnclaimed forgets thread id's deferred lost-line WARN: the thread has
-// been registered to a session, bound as a subagent or recorded as a fork, so
-// its early lines were not lost, only early. Called by registerThread,
-// registerChild and registerFork after they release threadMapMu.
+// been registered to a session or recorded as a fork, so its early lines were
+// not lost, only early. Called by registerThread and registerFork after they
+// release threadMapMu.
 func (b *Backend) claimUnclaimed(id string) {
 	p := b.process()
 	u := &p.unclaimed
@@ -143,13 +142,10 @@ func (b *Backend) stopUnclaimed() {
 	p.flushUnclaimed(time.Now(), true)
 }
 
-// threadClaimed reports whether thread id now belongs to a session or a known
-// subagent. Takes threadMapMu (read) under unclaimed.mu, the permitted order.
+// threadClaimed reports whether thread id now belongs to a session or is a
+// fork awaiting one. Takes threadMapMu (read) under unclaimed.mu, the permitted order.
 func (b *Backend) threadClaimed(id string) bool {
-	if b.facadeForThread(id) != nil || b.parentOfChild(id) != nil || b.isPendingFork(id) {
-		return true
-	}
-	return b.subagents != nil && b.subagents.isChild(id)
+	return b.facadeForThread(id) != nil || b.isPendingFork(id)
 }
 
 // lostWarning is the lost-line WARN text for thread id: every method seen
@@ -167,7 +163,7 @@ func (b *Backend) lostWarning(id string, methods map[string]int) string {
 			parts[i] = fmt.Sprintf("%s (x%d)", m, n)
 		}
 	}
-	return fmt.Sprintf("lost message: %s for thread %s matches no session and no known subagent; "+
+	return fmt.Sprintf("lost message: %s for thread %s matches no session; "+
 		"handed it to the app-server owner (session %s), whose chat may show it",
 		strings.Join(parts, ", "), id, b.startOpts.SessionKey)
 }

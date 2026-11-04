@@ -391,15 +391,6 @@ type itemEnvelope struct {
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 	// webSearch fields
 	Query string `json:"query,omitempty"`
-	// subAgentActivity fields
-	Kind          string `json:"kind,omitempty"`
-	AgentPath     string `json:"agentPath,omitempty"`
-	AgentThreadID string `json:"agentThreadId,omitempty"`
-	// collabAgentToolCall fields
-	Prompt            string                 `json:"prompt,omitempty"`
-	ReceiverThreadIDs []string               `json:"receiverThreadIds,omitempty"`
-	SenderThreadID    string                 `json:"senderThreadId,omitempty"`
-	AgentsStates      map[string]collabState `json:"agentsStates,omitempty"`
 	// agentMessage fields. Phase distinguishes mid-turn narration from the
 	// terminal answer (live-verified against codex app-server 0.144.5's
 	// generate-json-schema output AND a live turn: "commentary" precedes a
@@ -423,21 +414,6 @@ type fileChangeEntry struct {
 type patchChangeKind struct {
 	Type     string `json:"type"`
 	MovePath string `json:"move_path,omitempty"`
-}
-
-// collabToolWait is the collabAgentToolCall tool value codex 0.164.0 sends for
-// wait_agent, the only collab tool observed on the wire (see
-// logUnhandledCollabItem). waitAgentToolName is what foci shows for it: the
-// name the model itself calls.
-const (
-	collabToolWait    = "wait"
-	waitAgentToolName = "wait_agent"
-)
-
-// collabState is one entry in a collabAgentToolCall's agentsStates map.
-type collabState struct {
-	Status  string `json:"status,omitempty"`
-	Message string `json:"message,omitempty"`
 }
 
 // rateLimitSnapshot is codex's RateLimitSnapshot (account/rateLimits/read and

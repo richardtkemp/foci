@@ -147,27 +147,11 @@
    }
   },
   {
-   "note": "SYNTHETIC: the parent's subAgentActivity opens a child thread (observed shape, #1588)",
-   "line": {
-    "method": "item/completed",
-    "params": {
-     "threadId": "th_1",
-     "item": {
-      "type": "subAgentActivity",
-      "id": "call_1",
-      "kind": "started",
-      "agentPath": "worker",
-      "agentThreadId": "th_child"
-     }
-    }
-   }
-  },
-  {
-   "note": "SYNTHETIC: child thread cycle (documented schema; cacheWriteInputTokens and reasoningOutputTokens set)",
+   "note": "SYNTHETIC: a cycle with cache writes and reasoning set (documented schema)",
    "line": {
     "method": "thread/tokenUsage/updated",
     "params": {
-     "threadId": "th_child",
+     "threadId": "th_1",
      "tokenUsage": {
       "last": {
        "inputTokens": 9000,
@@ -178,25 +162,25 @@
        "totalTokens": 9300
       },
       "total": {
-       "inputTokens": 9000,
-       "cachedInputTokens": 0,
+       "inputTokens": 71617,
+       "cachedInputTokens": 53376,
        "cacheWriteInputTokens": 4096,
-       "outputTokens": 300,
+       "outputTokens": 451,
        "reasoningOutputTokens": 120,
-       "totalTokens": 9300
+       "totalTokens": 72068
       },
       "modelContextWindow": 258400
      },
-     "turnId": "tc_1"
+     "turnId": "tu_1"
     }
    }
   },
   {
-   "note": "SYNTHETIC: child thread cycle (documented schema; cacheWriteInputTokens and reasoningOutputTokens set)",
+   "note": "SYNTHETIC: a cycle with cache writes and reasoning set (documented schema)",
    "line": {
     "method": "thread/tokenUsage/updated",
     "params": {
-     "threadId": "th_child",
+     "threadId": "th_1",
      "tokenUsage": {
       "last": {
        "inputTokens": 9500,
@@ -207,16 +191,16 @@
        "totalTokens": 9580
       },
       "total": {
-       "inputTokens": 18500,
-       "cachedInputTokens": 8192,
+       "inputTokens": 81117,
+       "cachedInputTokens": 61568,
        "cacheWriteInputTokens": 4096,
-       "outputTokens": 380,
+       "outputTokens": 531,
        "reasoningOutputTokens": 120,
-       "totalTokens": 18880
+       "totalTokens": 81648
       },
       "modelContextWindow": 258400
      },
-     "turnId": "tc_1"
+     "turnId": "tu_1"
     }
    }
   }

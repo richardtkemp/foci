@@ -67,7 +67,6 @@ func TestForkEarlyLinesAreNotReportedLost(t *testing.T) {
 	branch := &Backend{
 		cfg:       map[string]any{},
 		lg:        log.NewComponentLogger("codex"),
-		subagents: newSubagentTracker(),
 		startOpts: delegator.StartOptions{SessionKey: "codex/owner/b1"},
 		shared:    owner,
 	}
@@ -85,22 +84,6 @@ func TestForkEarlyLinesAreNotReportedLost(t *testing.T) {
 	owner.turnMu.Unlock()
 	if stashed != nil {
 		t.Errorf("the fork's replayed token usage was stashed as the owner's: %+v", stashed)
-	}
-}
-
-// TestChildBindingClaimsEarlyLines: a subagent child's lines that came before
-// the child was bound are not lost once registerChild binds it.
-func TestChildBindingClaimsEarlyLines(t *testing.T) {
-	owner, peer, _, _, _ := newSharedPair(t)
-	stopUnclaimedTimer(t, owner)
-	warns := captureWarns(t)
-
-	owner.dispatch([]byte(`{"method":"thread/goal/cleared","params":{"threadId":"child-early"}}`))
-	owner.registerChild("child-early", peer)
-
-	owner.flushUnclaimed(time.Now().Add(10*unclaimedGrace), false)
-	if got := lostWarns(warns()); len(got) != 0 {
-		t.Errorf("a child bound after its early line was reported lost: %q", got)
 	}
 }
 

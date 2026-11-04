@@ -46,9 +46,7 @@ func (b *Backend) dispatch(line []byte) {
 		var x struct {
 			ThreadID string `json:"threadId"`
 			Thread   struct {
-				ID             string `json:"id"`
-				ParentThreadID string `json:"parentThreadId"`
-				ForkedFromID   string `json:"forkedFromId"`
+				ID string `json:"id"`
 			} `json:"thread"`
 		}
 		_ = json.Unmarshal(env.Params, &x)
@@ -61,38 +59,12 @@ func (b *Backend) dispatch(line []byte) {
 			target.dispatchLocal(line)
 			return
 		}
-		// A subagent's child thread is NOT a foci session, so it resolves to no
-		// facade and would fall through to the process owner below — handing
-		// the owner the child's turn/completed (ending the parent's live turn
-		// with the child's answer), the child's message deltas (streamed into
-		// the user's chat as the parent's text) and the child's token usage.
-		// The child belongs to the session that SPAWNED it, which is the owner
-		// only when that session launched the shared app-server; the
-		// process-wide childParents map answers which. A child's own
-		// thread/started carries parentThreadId (codex 0.164.0 schema: "only
-		// set if this thread is a subagent"), so a child can be bound before
-		// its parent's subAgentActivity item is seen, whichever arrives first.
+		// A thread that is no foci session resolves to no facade. Codex's own
+		// subagents are off (agents.enabled=false, #2839) and its auto_review
+		// guardian threads send nothing on the wire (live 0.166.0, #2840), so
+		// nothing is expected here but a fork's or a resume's early lines.
 		if target == nil && id != "" {
-			parent := p.parentOfChild(id)
-			if parent == nil && x.Thread.ParentThreadID != "" {
-				parent = p.facadeForThread(x.Thread.ParentThreadID)
-				if parent == nil {
-					// A grandchild: its parent is itself a child.
-					parent = p.parentOfChild(x.Thread.ParentThreadID)
-				}
-				if parent != nil {
-					p.registerChild(id, parent)
-				}
-			}
-			if parent == nil && b.subagents != nil && b.subagents.isChild(id) {
-				parent = b
-			}
-			if parent != nil {
-				parent.dispatchChild(id, line, env.ID, env.Method, env.Params)
-				return
-			}
-			// Neither a session's thread nor a known child: nothing says whose
-			// it is. It still goes to the owner (dropping could strand a
+			// Nothing says whose it is. It still goes to the owner (dropping could strand a
 			// prompt nobody answers), and is reported lost, naming where it
 			// came from — but only if the thread is still unclaimed after
 			// unclaimedGrace (noteUnclaimed). codex sends a fork's and a
@@ -125,18 +97,18 @@ func (b *Backend) dispatch(line []byte) {
 }
 
 // lostMarked prefixes text with the origin marker while the owner is handling
-// a lost line (one whose thread matches no session and no known subagent), and
+// a lost line (one whose thread matches no session), and
 // returns it unchanged otherwise. Reader goroutine only.
 func (b *Backend) lostMarked(text string) string {
 	if b.lostThread == "" {
 		return text
 	}
 	return delegator.RedirectedOrigin("codex thread "+b.lostThread,
-		"it matches no session or subagent, so it is shown here") + "\n\n" + text
+		"it matches no session, so it is shown here") + "\n\n" + text
 }
 
-// dispatchLost handles a lost line (its thread matches no session and no known
-// subagent) on the app-server owner. Only what the user must see reaches the
+// dispatchLost handles a lost line (its thread matches no session) on the
+// app-server owner. Only what the user must see reaches the
 // owner, marked with its origin (lostMarked); nothing touches the owner's own
 // turn or accounting state. Before this, the line went through dispatchLocal
 // like the owner's own, so a lost turn/completed ended the owner's live turn
@@ -201,22 +173,6 @@ func (b *Backend) dispatchLost(line []byte, id *int64, method string, params jso
 	default:
 		b.logDebugf("lost %s for thread %s consumed", method, b.lostThread)
 	}
-}
-
-// dispatchChild handles one line from a subagent's child thread on the facade
-// that spawned it. A server request (an approval prompt: it has both an id and
-// a method) goes through the parent's ordinary request path, so the prompt
-// lands in the PARENT's chat, is answered through the parent's pending map, and
-// the response goes back over the shared connection with codex's own request
-// id (respondApproval writes via process().writer). Everything else is a
-// notification for the subagent UI. Server requests used to be consumed here
-// as notifications, which left a child's approval unanswered.
-func (b *Backend) dispatchChild(threadID string, line []byte, id *int64, method string, params json.RawMessage) {
-	if id != nil {
-		b.dispatchLocal(line)
-		return
-	}
-	b.handleSubagentNotification(threadID, method, params)
 }
 
 func (b *Backend) dispatchLocal(line []byte) {

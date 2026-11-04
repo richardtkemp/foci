@@ -11,12 +11,9 @@ import (
 )
 
 // facadeCapture records everything one facade would show in its own chat:
-// subagent-panel events, ordinary text, and approval prompts.
+// ordinary text and approval prompts.
 type facadeCapture struct {
 	mu       sync.Mutex
-	starts   []string
-	texts    []string
-	ends     int
 	chatText []string
 	deltas   []string
 	prompts  []string
@@ -25,11 +22,8 @@ type facadeCapture struct {
 
 func (c *facadeCapture) attach(b *Backend) {
 	b.AttachSessionEvents(&delegator.SessionEvents{
-		OnSubagentStart: func(g, _, _ string, _ int) { c.mu.Lock(); c.starts = append(c.starts, g); c.mu.Unlock() },
-		OnSubagentText:  func(_, text string, _ int) { c.mu.Lock(); c.texts = append(c.texts, text); c.mu.Unlock() },
-		OnSubagentEnd:   func(string, int) { c.mu.Lock(); c.ends++; c.mu.Unlock() },
-		OnText:          func(s string) { c.mu.Lock(); c.chatText = append(c.chatText, s); c.mu.Unlock() },
-		OnTextDelta:     func(s string) { c.mu.Lock(); c.deltas = append(c.deltas, s); c.mu.Unlock() },
+		OnText:      func(s string) { c.mu.Lock(); c.chatText = append(c.chatText, s); c.mu.Unlock() },
+		OnTextDelta: func(s string) { c.mu.Lock(); c.deltas = append(c.deltas, s); c.mu.Unlock() },
 	})
 	b.permPromptFn = func(itemID, text, _, _ string, _ []delegator.PromptChoice) {
 		c.mu.Lock()
@@ -50,7 +44,6 @@ func newSharedPair(t *testing.T) (owner, peer *Backend, oc, pc *facadeCapture, w
 			lg:           log.NewComponentLogger("codex"),
 			pendingRPC:   make(map[int64]chan rpcReply),
 			pendingPerms: make(map[int64]*pendingApproval),
-			subagents:    newSubagentTracker(),
 			startOpts:    delegator.StartOptions{SessionKey: key},
 		}
 	}
@@ -87,86 +80,6 @@ func captureWarns(t *testing.T) func() []string {
 	}
 }
 
-// TestNonOwnerSubagentReachesItsParentNotTheOwner is the regression for the
-// 2026-10-29 leak: a session that did NOT launch the shared app-server spawns
-// a subagent, and the child's final message and approval prompt showed up in
-// the OWNER's chat. Every line is fed through owner.dispatch, as the owner's
-// reader does. The child's text, its approval prompt and its run end must reach
-// the peer, the owner must see none of it, and answering the prompt from the
-// peer must write codex's own request id back to the shared connection.
-func TestNonOwnerSubagentReachesItsParentNotTheOwner(t *testing.T) {
-	owner, peer, oc, pc, wire := newSharedPair(t)
-	warns := captureWarns(t)
-
-	// The peer's own thread reports the spawn.
-	owner.dispatch([]byte(`{"method":"item/completed","params":{"threadId":"thread-peer","turnId":"tp","item":` + string(activityItem("call_spawn", "started", "child-1")) + `}}`))
-	// The child's own traffic, all tagged with the child's thread id.
-	owner.dispatch([]byte(`{"method":"item/completed","params":{"threadId":"child-1","turnId":"tc","item":{"type":"agentMessage","id":"m1","text":"Implemented and committed 859dc1de","phase":"final_answer"}}}`))
-	owner.dispatch([]byte(`{"id":77,"method":"item/commandExecution/requestApproval","params":{"threadId":"child-1","turnId":"tc","itemId":"cmd-1","command":"git add x"}}`))
-	owner.dispatch([]byte(`{"method":"turn/completed","params":{"threadId":"child-1","turn":{"id":"tc","status":"completed"}}}`))
-
-	if len(pc.starts) != 1 || len(pc.texts) != 1 || pc.texts[0] != "Implemented and committed 859dc1de" || pc.ends != 1 {
-		t.Errorf("peer subagent panel: starts=%v texts=%q ends=%d, want 1 start, the child's message, 1 end", pc.starts, pc.texts, pc.ends)
-	}
-	if len(pc.prompts) != 1 || pc.prompts[0] != "cmd-1" {
-		t.Errorf("peer prompts = %v, want the child's approval cmd-1 in the PARENT's chat", pc.prompts)
-	}
-	if len(oc.starts)+len(oc.texts)+oc.ends+len(oc.chatText)+len(oc.prompts) != 0 {
-		t.Errorf("owner saw the peer's child: starts=%v texts=%q ends=%d chat=%q prompts=%v", oc.starts, oc.texts, oc.ends, oc.chatText, oc.prompts)
-	}
-	if len(owner.pendingPerms) != 0 {
-		t.Errorf("owner holds a pending approval for the peer's child: %+v", owner.pendingPerms)
-	}
-
-	if err := peer.RespondToPermission("cmd-1", delegator.PermissionDecision{Allow: true}); err != nil {
-		t.Fatalf("peer could not answer its child's approval: %v", err)
-	}
-	if got := wire.String(); !strings.Contains(got, `"id":77`) || !strings.Contains(got, `"accept"`) {
-		t.Errorf("response on the shared connection = %q, want id 77 with decision accept", got)
-	}
-	for _, w := range warns() {
-		if strings.Contains(w, "lost message") {
-			t.Errorf("a routed child line was reported lost: %s", w)
-		}
-	}
-}
-
-// TestChildBoundFromThreadStartedParent covers the other arrival order: the
-// child's thread/started (which carries parentThreadId for a subagent) comes
-// before the parent's subAgentActivity item. The child must already route to
-// the peer, so its approval prompt is not handed to the owner.
-func TestChildBoundFromThreadStartedParent(t *testing.T) {
-	owner, _, oc, pc, _ := newSharedPair(t)
-
-	owner.dispatch([]byte(`{"method":"thread/started","params":{"thread":{"id":"child-2","parentThreadId":"thread-peer"}}}`))
-	owner.dispatch([]byte(`{"id":78,"method":"item/commandExecution/requestApproval","params":{"threadId":"child-2","turnId":"tc","itemId":"cmd-2","command":"ls"}}`))
-
-	if len(pc.prompts) != 1 || pc.prompts[0] != "cmd-2" {
-		t.Errorf("peer prompts = %v, want cmd-2", pc.prompts)
-	}
-	if len(oc.prompts) != 0 {
-		t.Errorf("owner prompted for the peer's child: %v", oc.prompts)
-	}
-}
-
-// TestOwnersOwnChildApprovalIsPrompted: a child of the OWNER's session used to
-// have its approval request consumed as a subagent notification (the old
-// isChild path took every method), so nobody was asked and the child waited
-// forever. It must now prompt in the owner's chat.
-func TestOwnersOwnChildApprovalIsPrompted(t *testing.T) {
-	owner, _, oc, pc, _ := newSharedPair(t)
-
-	owner.dispatch([]byte(`{"method":"item/completed","params":{"threadId":"thread-owner","turnId":"to","item":` + string(activityItem("call_spawn", "started", "child-3")) + `}}`))
-	owner.dispatch([]byte(`{"id":79,"method":"item/commandExecution/requestApproval","params":{"threadId":"child-3","turnId":"tc","itemId":"cmd-3","command":"ls"}}`))
-
-	if len(oc.prompts) != 1 || oc.prompts[0] != "cmd-3" {
-		t.Errorf("owner prompts = %v, want cmd-3", oc.prompts)
-	}
-	if len(pc.prompts) != 0 {
-		t.Errorf("peer prompted for the owner's child: %v", pc.prompts)
-	}
-}
-
 // TestUnknownThreadGoesToOwnerAsLost pins ruling 2: a line for a thread that
 // is no session's and no known subagent's is still handed to the owner (so a
 // prompt is not stranded), with a WARN naming the method and thread. A closed
@@ -175,7 +88,7 @@ func TestOwnersOwnChildApprovalIsPrompted(t *testing.T) {
 // from the WARN: a facade's own thread/started can precede the response that
 // registers it.
 func TestUnknownThreadGoesToOwnerAsLost(t *testing.T) {
-	owner, peer, oc, pc, _ := newSharedPair(t)
+	owner, _, oc, _, _ := newSharedPair(t)
 	stopUnclaimedTimer(t, owner)
 	warns := captureWarns(t)
 
@@ -196,17 +109,6 @@ func TestUnknownThreadGoesToOwnerAsLost(t *testing.T) {
 		t.Errorf("lost WARN = %q, want it to name the thread and the method", lost)
 	}
 
-	// A closed parent's child no longer resolves to it.
-	owner.dispatch([]byte(`{"method":"item/completed","params":{"threadId":"thread-peer","turnId":"tp","item":` + string(activityItem("call_spawn", "started", "child-5")) + `}}`))
-	owner.unregisterChildrenOf(peer)
-	owner.dispatch([]byte(`{"id":81,"method":"item/commandExecution/requestApproval","params":{"threadId":"child-5","turnId":"tc","itemId":"cmd-5","command":"ls"}}`))
-	if len(pc.prompts) != 0 {
-		t.Errorf("closed peer still received its child's prompt: %v", pc.prompts)
-	}
-	if len(oc.prompts) != 2 {
-		t.Errorf("owner prompts = %v, want the orphaned child's approval handed to the owner", oc.prompts)
-	}
-
 	owner.flushUnclaimed(time.Now().Add(unclaimedGrace+time.Second), false)
 	before := len(warns())
 	owner.dispatch([]byte(`{"method":"thread/started","params":{"thread":{"id":"fresh-thread"}}}`))
@@ -217,13 +119,13 @@ func TestUnknownThreadGoesToOwnerAsLost(t *testing.T) {
 }
 
 // TestLostLineIsMarkedInOwnersChat pins Dick's ruling on lost lines: whatever
-// the owner shows from a thread that matches no session and no subagent — an
+// the owner shows from a thread that matches no session — an
 // approval prompt, a streamed message (marked once, on its first delta) and the
 // completed message — leads with the shared redirected-origin marker naming
 // the thread, while the owner's own text and prompts stay unmarked.
 func TestLostLineIsMarkedInOwnersChat(t *testing.T) {
 	owner, _, oc, _, _ := newSharedPair(t)
-	marker := delegator.RedirectedOrigin("codex thread stray-thread", "it matches no session or subagent, so it is shown here")
+	marker := delegator.RedirectedOrigin("codex thread stray-thread", "it matches no session, so it is shown here")
 
 	owner.dispatch([]byte(`{"id":90,"method":"item/commandExecution/requestApproval","params":{"threadId":"stray-thread","turnId":"t","itemId":"cmd-9","command":"ls"}}`))
 	owner.dispatch([]byte(`{"method":"item/agentMessage/delta","params":{"threadId":"stray-thread","turnId":"t","delta":"Hel"}}`))
@@ -340,11 +242,75 @@ func TestLostFailedTurnIsANoteNotTheOwnersError(t *testing.T) {
 	if lastErr != "" {
 		t.Errorf("owner's lastTurnError = %q, want empty", lastErr)
 	}
-	want := delegator.RedirectedOrigin("codex thread stray-thread", "it matches no session or subagent, so it is shown here") +
+	want := delegator.RedirectedOrigin("codex thread stray-thread", "it matches no session, so it is shown here") +
 		"\n\n" + turnFailedText("out of credits")
 	oc.mu.Lock()
 	defer oc.mu.Unlock()
 	if len(oc.chatText) != 1 || oc.chatText[0] != want {
 		t.Errorf("chat text = %q, want [%q]", oc.chatText, want)
+	}
+}
+
+// TestUnflaggedCodexChildStaysOutOfTheOwnersTurn is the guard if codex ever stops
+// honouring agents.enabled=false, or starts streaming a guardian thread. A child
+// announces its parent with thread/started and then streams its whole lifecycle.
+// foci has no child routing any more, so the child is a lost thread even though
+// its parent is a live session: the owner's turn stays open and its text and
+// usage stay the owner's, the child's message is shown only marked, and the
+// thread is reported once.
+func TestUnflaggedCodexChildStaysOutOfTheOwnersTurn(t *testing.T) {
+	owner, _, oc, pc, _ := newSharedPair(t)
+	stopUnclaimedTimer(t, owner)
+	warns := captureWarns(t)
+	got := openUsageTurn(owner)
+
+	for _, parent := range []string{"thread-owner", "thread-peer"} {
+		child := "child-of-" + parent
+		lines := []string{
+			`{"method":"thread/started","params":{"thread":{"id":"` + child + `","parentThreadId":"` + parent + `","source":{"subAgent":{"other":"guardian"}}}}}`,
+			`{"method":"turn/started","params":{"threadId":"` + child + `","turn":{"id":"tc","status":"inProgress"}}}`,
+			`{"method":"item/agentMessage/delta","params":{"threadId":"` + child + `","turnId":"tc","itemId":"m1","delta":"CHILD-DELTA"}}`,
+			`{"method":"item/completed","params":{"threadId":"` + child + `","turnId":"tc","item":{"type":"agentMessage","id":"m1","text":"CHILD-TEXT"}}}`,
+			strings.Replace(usageCycle1, `"threadId":"th_1"`, `"threadId":"`+child+`"`, 1),
+			`{"method":"turn/completed","params":{"threadId":"` + child + `","turn":{"id":"tc","status":"completed"}}}`,
+		}
+		for _, l := range lines {
+			owner.dispatch([]byte(l))
+		}
+	}
+
+	if *got != nil {
+		t.Fatalf("a child's turn/completed ended the owner's turn: %+v", **got)
+	}
+	owner.turnMu.Lock()
+	turnText, active := owner.turnText.String(), owner.turnActive
+	owner.turnMu.Unlock()
+	if !active || strings.Contains(turnText, "CHILD") {
+		t.Errorf("owner's turn: active=%v text=%q, want active with none of the child's text", active, turnText)
+	}
+	for _, s := range oc.chatText {
+		if strings.Contains(s, "CHILD-TEXT") && !strings.Contains(s, "child-of-") {
+			t.Errorf("child text shown unmarked in the owner's chat: %q", s)
+		}
+	}
+	if len(oc.chatText) != 2 {
+		t.Errorf("owner chat = %q, want each child's message once, marked (the lost-line guard)", oc.chatText)
+	}
+	if len(pc.chatText)+len(pc.deltas) != 0 {
+		t.Errorf("a non-owner parent received a child's lines: %q %q", pc.chatText, pc.deltas)
+	}
+
+	owner.flushUnclaimed(time.Now().Add(unclaimedGrace+time.Second), false)
+	if lost := lostWarns(warns()); len(lost) != 2 {
+		t.Errorf("lost WARNs = %q, want one per child thread", lost)
+	}
+
+	end := `{"method":"turn/completed","params":{"threadId":"thread-owner","turn":{"id":"to","status":"completed"}}}`
+	owner.dispatch([]byte(end))
+	if *got == nil {
+		t.Fatal("owner's turn did not complete")
+	}
+	if (*got).Usage != nil {
+		t.Errorf("a child's usage was booked to the owner's turn: %+v", *(*got).Usage)
 	}
 }
