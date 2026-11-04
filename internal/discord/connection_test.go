@@ -1,11 +1,13 @@
 package discord
 
 import (
+	"context"
 	"errors"
 	"foci/internal/platform"
 	"testing"
 	"time"
 
+	"foci/internal/agent"
 	"foci/internal/command"
 	"foci/internal/tooldetail"
 
@@ -230,6 +232,39 @@ func TestSetCommandContext(t *testing.T) {
 	b.SetCommandContext(command.CommandContext{})
 	if b.dispatcher == nil {
 		t.Fatal("expected dispatcher")
+	}
+}
+
+// TestDone_SecondaryBotEndsSessionThroughAgent is #2763: the ReleaseFunc that
+// SetCommandContext builds must hand the released key to the agent's session
+// end. ResetOrientTemplateFn is the probe: only that path reads it here.
+func TestDone_SecondaryBotEndsSessionThroughAgent(t *testing.T) {
+	b, _, _ := newTestBot(t, "")
+	b.commands.Register(command.DoneCommand())
+	pool := platform.NewPool[*Bot]("discord")
+	b.isSecondary = true
+	b.pool = pool
+	pool.Add(b)
+	b.SetSessionKeyDirect("a/c9/b1")
+
+	ended := make(chan struct{})
+	b.SetCommandContext(command.CommandContext{
+		Agent: &agent.Agent{ResetOrientTemplateFn: func() string {
+			close(ended)
+			return ""
+		}},
+	})
+
+	if outcome := b.dispatcher.DispatchCommand(context.Background(), "/done", 42, "111"); outcome.NotHandled {
+		t.Fatal("/done not handled")
+	}
+	if b.SessionKey() != "" {
+		t.Error("session key should be cleared after /done")
+	}
+	select {
+	case <-ended:
+	case <-time.After(30 * time.Second):
+		t.Fatal("/done did not end the session through the agent")
 	}
 }
 

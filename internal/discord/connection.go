@@ -315,9 +315,10 @@ func (b *Bot) SetCommandContext(cc command.CommandContext) {
 			if b.pool != nil {
 				b.pool.Release(b)
 			}
-			// Close any delegated branch backend so the CC process doesn't leak.
-			if sk != "" && cc.Agent != nil && cc.Agent.DelegatedManager != nil {
-				cc.Agent.DelegatedManager.ResetSession(sk)
+			// Form the session's memories, then close its backend so the CC
+			// process doesn't leak.
+			if sk != "" && cc.Agent != nil {
+				cc.Agent.EndDetachedSession(sk)
 			}
 			b.logger().Infof("secondary bot released")
 		}

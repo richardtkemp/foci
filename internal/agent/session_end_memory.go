@@ -151,6 +151,64 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 	a.RunSessionEndMemory(ctx, sessionKey, branchKey)
 }
 
+// detachedTurnWait bounds how long EndDetachedSession waits for a cancelled
+// turn to unwind before it gives up on the reflection.
+const detachedTurnWait = 30 * time.Second
+
+// EndDetachedSession ends a session whose chat has already been released (/done
+// on a facet bot): the reflection pass, then the backend closes. It returns at
+// once and does the work in the background, because the reflection can take
+// minutes and the caller is the bot's command worker. After /done nothing else
+// can end this key: it is no longer TTL-reclaimable (#2763).
+func (a *Agent) EndDetachedSession(sessionKey string) {
+	ctx := a.inboxCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go a.endDetachedSession(ctx, sessionKey, detachedTurnWait)
+}
+
+// endDetachedSession is the blocking body of EndDetachedSession. The caller's
+// /stop only cancels the turn, and RemapSession must not move a backend out from
+// under a turn that is still unwinding (ResetSession refuses that case). So it
+// waits for the turn to end first. A turn that outlasts turnWait loses the
+// reflection, and only the backend closes.
+func (a *Agent) endDetachedSession(ctx context.Context, sessionKey string, turnWait time.Duration) {
+	if a.waitTurnEnd(ctx, sessionKey, turnWait) {
+		orientTemplate := ""
+		if a.ResetOrientTemplateFn != nil {
+			orientTemplate = a.ResetOrientTemplateFn()
+		}
+		a.FireSessionEndMemory(ctx, sessionKey, orientTemplate, false)
+	} else {
+		a.taggedLog("session-end-memory").Warnf("skipping for %s: its cancelled turn did not end within %s", sessionKey, turnWait)
+	}
+	// When a reflection ran, it took the backend with it and this is a no-op.
+	if a.DelegatedManager != nil {
+		a.DelegatedManager.ResetSession(sessionKey)
+	}
+}
+
+// waitTurnEnd blocks until no turn is in flight on sessionKey, and reports
+// whether that happened within limit and before ctx ended.
+func (a *Agent) waitTurnEnd(ctx context.Context, sessionKey string, limit time.Duration) bool {
+	timer := time.NewTimer(limit)
+	defer timer.Stop()
+	for {
+		wait := a.InFlightWaitCh(sessionKey) // fetched before the check, so a change between them still wakes us
+		if !a.IsTurnInFlight(sessionKey) {
+			return true
+		}
+		select {
+		case <-wait:
+		case <-timer.C:
+			return false
+		case <-ctx.Done():
+			return false
+		}
+	}
+}
+
 // detectAndNotifySkillChanges diffs the current state of dirs (the same set
 // before was taken over) against before,
 // then splits the changes on whether their skill dir is a git repo

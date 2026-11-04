@@ -3287,7 +3287,7 @@ facet_bots = ["spare1"]          # shared pool (fallback)
            → bot.SendNotification("🎱 Forked from main.")
 ```
 
-Messages to the secondary bot route to the forked session. `/done` on the secondary bot detaches it and returns it to the pool.
+Messages to the secondary bot route to the forked session. `/done` on the secondary bot detaches it, returns it to the pool, and ends the session in the background: session-end memory, then the backend closes (`agent.EndDetachedSession`).
 
 **Bot pool** (`platform/botpool.go`): The generic `platform.Pool[B]` / `platform.BotManager[B]` — ONE implementation of LRU acquire, release on `/done`, TTL-based stale-session reclaim, and bot lifecycle, instantiated by both Telegram and Discord (`telegram/manager.go` and `discord/manager.go` are thin type aliases).
 
@@ -3479,6 +3479,7 @@ Flow (`agent.FireSessionEndMemory` in `internal/agent/session_end_memory.go`):
 Entry points:
 - `/reset` command → `agent.ResetSession` (`PrepareSessionEndMemory` → `Store.Reset` → `ClearSessionState` → background `RunSessionEndMemory`)
 - `Pool.Acquire` (TTL reclaim) → `ReclaimHook` → `agent.FireSessionEndMemory` (async) → clear session key
+- `/done` on a facet bot → `ReleaseFunc` (`Pool.Release`, then `agent.EndDetachedSession`) → background: wait for the cancelled turn to end (bounded; a turn that outlasts it loses the reflection) → `agent.FireSessionEndMemory` → close the backend (#2763)
 - Periodic runner (background branch completion) → `agent.FireSessionEndMemory` (async, skipMetaCheck=true)
 
 ## Reflection & Consolidation Timers
