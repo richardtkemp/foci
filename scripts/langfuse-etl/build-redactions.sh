@@ -16,7 +16,7 @@ OWNER="${3:-foci}"
 [ -r "$SRC" ] || { echo "cannot read $SRC — run with sudo" >&2; exit 1; }
 tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
 
-grep '=' "$SRC" | grep -Ev '(allowed_hosts|richardtkemp|denied_agents)' \
+grep '=' "$SRC" | grep -Ev '(allowed_hosts|allowed_agents|denied_agents|allowed_in_body|richardtkemp)' \
   | sed -E 's/^[^=]*=[[:space:]]*//' \
   | sed -E 's/^"(.*)"[[:space:]]*$/\1/; s/^'"'"'(.*)'"'"'[[:space:]]*$/\1/' \
   | while IFS= read -r v; do

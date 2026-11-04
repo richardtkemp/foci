@@ -689,6 +689,13 @@ func TestCronAndSecretsBoundaries(t *testing.T) {
 	if got := rewriteSecrets(sec, "bob", "rob"); got != want {
 		t.Errorf("rewriteSecrets:\n%s\nwant\n%s", got, want)
 	}
+	// The string form (#2866): each exact entry is renamed, and the line ends
+	// the list, so a later value is not touched.
+	strForm := "allowed_agents = \"bobby, bob,bob\" # bob\ndenied_agents = 'bob'\nx = \"bob\"\n"
+	strWant := "allowed_agents = \"bobby, rob,rob\" # bob\ndenied_agents = 'rob'\nx = \"bob\"\n"
+	if got := rewriteSecrets(strForm, "bob", "rob"); got != strWant {
+		t.Errorf("rewriteSecrets string form:\n%s\nwant\n%s", got, strWant)
+	}
 }
 
 // TestRenameKeepsConfigInode (#479 × #1281): foci.toml is

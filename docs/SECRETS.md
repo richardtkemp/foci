@@ -57,6 +57,18 @@ allowed_in_body = ["api_key"]    # only api_key can appear in request body; othe
 
 `allowed_in_body` lists the key names within the section that may appear in `http_request` body, body_file, or form_fields. Secrets not listed are restricted to headers only. See [Body Restriction](#body-restricted-secrets) below.
 
+### Metadata keys are not secrets
+
+`allowed_hosts`, `allowed_in_body`, `allowed_agents` and `denied_agents` configure a section. Their values are never redacted and never listed as secret names, whatever their TOML form, in global sections and in `[agents.<id>.*]` tables. `/secrets set` refuses these keys.
+
+Write them as arrays of strings. Other forms behave as follows:
+
+| Form | Example | Behaviour |
+|---|---|---|
+| String | `allowed_agents = "scout, researcher"` | Read as a comma-separated list, with a WARN in the log on each load. An empty string is an empty list, and `allowed_agents = ""` denies every agent. The next `Save` writes an array. |
+| Any other type, or an array with a non-string element | `allowed_agents = 5` | The file is rejected: `foci-gw` does not start, and a reload keeps the last good contents. The error names the section and the key. |
+| `allowed_agents` / `denied_agents` in an `[agents.<id>.*]` table, any form | | Ignored, with a WARN. These keys apply only to global sections. |
+
 ### `allowed_agents` / `denied_agents`
 
 Each section can restrict which agents may use its secrets. The two fields are **mutually exclusive** — set one or the other, never both:
@@ -129,7 +141,7 @@ A reload covers:
 - **`Redact`** — uses the current values, so a newly added or changed value is redacted immediately.
 - **Trace scrubbing** — every exported trace field is redacted with the current values, including `[agents.<id>.*]` override values, plus every value seen since startup (a value removed from the file stays scrubbed — a rotated-out credential can still appear in later output). The tracing endpoint and the Langfuse keys still need a restart.
 
-If the changed file cannot be read, does not parse, or fails validation (e.g. a section with both `allowed_agents` and `denied_agents`), the store keeps the **last good contents** and logs **one** warning per file state (not one per use); it retries as soon as the file changes again. A `secrets.toml` that did not exist at startup is picked up when it is created. The secrets file path and the default blocked paths stay blocked across reloads.
+If the changed file cannot be read, does not parse, or fails validation (e.g. a section with both `allowed_agents` and `denied_agents`, or a metadata key of the wrong type), the store keeps the **last good contents** and logs **one** warning per file state (not one per use); it retries as soon as the file changes again. A `secrets.toml` that did not exist at startup is picked up when it is created. The secrets file path and the default blocked paths stay blocked across reloads.
 
 In-process edits (`/secrets set` and friends) mutate the shared store directly and reach every agent on the next use. `Save` holds the store's write lock across its write, so concurrent readers never observe a half-written file from the gateway itself; an external writer without such coordination (an editor, `foci secrets set` in another process) can still produce a transient torn read, but the completed write is picked up on the next use. Mutators re-read the file before applying, so an unseen external edit is merged with — not silently overwritten by — the next in-process change.
 

@@ -416,10 +416,10 @@ func renderState(buf *strings.Builder, st *fileState) {
 		}
 		fmt.Fprintf(buf, "[%s]\n", sec)
 		writeKeyValues(buf, sections[sec])
-		writeStringArrayField(buf, "allowed_hosts", st.allowedHosts[sec])
-		writeStringArrayField(buf, "allowed_agents", st.allowedAgents[sec])
-		writeStringArrayField(buf, "denied_agents", st.deniedAgents[sec])
-		writeStringArrayField(buf, "allowed_in_body", st.allowedInBody[sec])
+		writeListField(buf, keyAllowedHosts, st.allowedHosts, sec)
+		writeListField(buf, keyAllowedAgents, st.allowedAgents, sec)
+		writeListField(buf, keyDeniedAgents, st.deniedAgents, sec)
+		writeListField(buf, keyAllowedInBody, st.allowedInBody, sec)
 	}
 
 	// Write [agents.*] sections
@@ -431,8 +431,8 @@ func renderState(buf *strings.Builder, st *fileState) {
 			buf.WriteByte('\n')
 			fmt.Fprintf(buf, "[agents.%s.%s]\n", agentID, sec)
 			writeKeyValues(buf, agentSections[sec])
-			writeStringArrayField(buf, "allowed_hosts", st.agentHosts[agentID][sec])
-			writeStringArrayField(buf, "allowed_in_body", st.agentAllowedInBody[agentID][sec])
+			writeListField(buf, keyAllowedHosts, st.agentHosts[agentID], sec)
+			writeListField(buf, keyAllowedInBody, st.agentAllowedInBody[agentID], sec)
 		}
 	}
 }
@@ -499,10 +499,15 @@ func writeKeyValues(buf *strings.Builder, pairs map[string]string) {
 	}
 }
 
-// writeStringArrayField writes a TOML array field (e.g. allowed_hosts,
-// allowed_agents) if non-empty.
-func writeStringArrayField(buf *strings.Builder, key string, values []string) {
-	if len(values) == 0 {
+// writeListField writes section's list from lists as a TOML array field. A
+// section that is present with an empty list is written too: the empty list
+// has its own meaning (allowed_agents = [] denies every agent, an agent table's
+// allowed_hosts = [] replaces the global list), and dropping it would widen
+// access on the next Save. The mutators delete a section's entry when its list
+// empties, so only a list the file spelled out as empty reaches this case.
+func writeListField(buf *strings.Builder, key string, lists map[string][]string, section string) {
+	values, ok := lists[section]
+	if !ok {
 		return
 	}
 	buf.WriteString(key)
@@ -572,36 +577,37 @@ func parseBytes(data []byte) (*fileState, error) {
 				if !ok {
 					return nil, fmt.Errorf("parse secrets: [agents.%s] must be a table, got %T", agentID, v)
 				}
-				flattenInto(agentID, agentTable, st)
+				if err := flattenInto(agentID, agentTable, st); err != nil {
+					return nil, err
+				}
 			}
 			continue
 		}
 		for key, value := range pairs {
+			if isMetadataKey(key) {
+				list, err := metadataList(section, key, value)
+				if err != nil {
+					return nil, err
+				}
+				switch key {
+				case keyAllowedHosts:
+					st.allowedHosts[section] = list
+				case keyAllowedAgents:
+					st.allowedAgents[section] = list
+				case keyDeniedAgents:
+					st.deniedAgents[section] = list
+				case keyAllowedInBody:
+					st.allowedInBody[section] = list
+				}
+				continue
+			}
 			switch v := value.(type) {
 			case string:
 				st.values[section+"."+key] = v
 			case int64:
 				st.values[section+"."+key] = strconv.FormatInt(v, 10)
-			case []interface{}:
-				strs := make([]string, 0, len(v))
-				for _, h := range v {
-					if hs, ok := h.(string); ok {
-						strs = append(strs, hs)
-					}
-				}
-				switch key {
-				case "allowed_hosts":
-					st.allowedHosts[section] = strs
-				case "allowed_agents":
-					st.allowedAgents[section] = strs
-				case "denied_agents":
-					st.deniedAgents[section] = strs
-				case "allowed_in_body":
-					st.allowedInBody[section] = strs
-				}
-				// silently skip other array keys
 			default:
-				// silently skip unknown types
+				// silently skip other types and array keys
 			}
 		}
 	}
@@ -617,44 +623,112 @@ func parseBytes(data []byte) (*fileState, error) {
 }
 
 // flattenInto parses one [agents.ID] sub-table and stores its values into
-// st.agentValues, st.agentHosts and st.agentAllowedInBody.
-func flattenInto(agentID string, table map[string]interface{}, st *fileState) {
+// st.agentValues, st.agentHosts and st.agentAllowedInBody. allowed_agents and
+// denied_agents have no meaning in an agent's own table, so they are ignored
+// with a warning, in any form. An error means a metadata key has the wrong type.
+func flattenInto(agentID string, table map[string]interface{}, st *fileState) error {
 	if st.agentValues[agentID] == nil {
 		st.agentValues[agentID] = make(map[string]string)
 	}
 	for section, v := range table {
 		subTable, ok := v.(map[string]interface{})
 		if !ok {
+			if isMetadataKey(section) {
+				secretsLog.Warnf("secrets.toml [agents.%s] %s is ignored: it must be inside an [agents.%s.<section>] table", agentID, section, agentID)
+			}
 			continue
 		}
+		where := "agents." + agentID + "." + section
 		for key, val := range subTable {
+			switch key {
+			case keyAllowedAgents, keyDeniedAgents:
+				secretsLog.Warnf("secrets.toml [%s] %s is ignored: it applies only to a global [%s] section", where, key, section)
+				continue
+			case keyAllowedHosts, keyAllowedInBody:
+				list, err := metadataList(where, key, val)
+				if err != nil {
+					return err
+				}
+				lists := st.agentHosts
+				if key == keyAllowedInBody {
+					lists = st.agentAllowedInBody
+				}
+				if lists[agentID] == nil {
+					lists[agentID] = make(map[string][]string)
+				}
+				lists[agentID][section] = list
+				continue
+			}
 			switch tv := val.(type) {
 			case string:
 				st.agentValues[agentID][section+"."+key] = tv
 			case int64:
 				st.agentValues[agentID][section+"."+key] = strconv.FormatInt(tv, 10)
-			case []interface{}:
-				strs := make([]string, 0, len(tv))
-				for _, h := range tv {
-					if hs, ok := h.(string); ok {
-						strs = append(strs, hs)
-					}
-				}
-				switch key {
-				case "allowed_hosts":
-					if st.agentHosts[agentID] == nil {
-						st.agentHosts[agentID] = make(map[string][]string)
-					}
-					st.agentHosts[agentID][section] = strs
-				case "allowed_in_body":
-					if st.agentAllowedInBody[agentID] == nil {
-						st.agentAllowedInBody[agentID] = make(map[string][]string)
-					}
-					st.agentAllowedInBody[agentID][section] = strs
-				}
 			}
 		}
 	}
+	return nil
+}
+
+// The metadata keys configure a section. Their values are not secrets, whatever
+// their TOML form: they are never redacted and never listed as secret names.
+const (
+	keyAllowedHosts  = "allowed_hosts"
+	keyAllowedAgents = "allowed_agents"
+	keyDeniedAgents  = "denied_agents"
+	keyAllowedInBody = "allowed_in_body"
+)
+
+// isMetadataKey reports whether key is a metadata key. The entry's key decides,
+// not its TOML type.
+func isMetadataKey(key string) bool {
+	switch key {
+	case keyAllowedHosts, keyAllowedAgents, keyDeniedAgents, keyAllowedInBody:
+		return true
+	}
+	return false
+}
+
+// metadataList reads a metadata key's value as a list. An array of strings is
+// the documented form. A string is read as a comma-separated list with a
+// warning, so the operator's intended list stays in force; an empty string is an
+// empty list, which for allowed_agents denies every agent. Any other value is
+// an error, which rejects the file like a section with both allowed_agents and
+// denied_agents: no list can be guessed from it, and carrying on could leave
+// the section unrestricted. where is the TOML table name. The warning and the
+// error name the table, the key and a type or count, never a value: a secret
+// pasted on the wrong line must not reach a log.
+func metadataList(where, key string, value interface{}) ([]string, error) {
+	switch v := value.(type) {
+	case string:
+		list := splitMetadataString(v)
+		secretsLog.Warnf("secrets.toml [%s] %s is a string: read it as a list of %d, write it as an array of strings", where, key, len(list))
+		return list, nil
+	case []interface{}:
+		list := make([]string, 0, len(v))
+		for _, elem := range v {
+			s, ok := elem.(string)
+			if !ok {
+				return nil, fmt.Errorf("parse secrets: [%s] %s must be an array of strings, got an element of type %T", where, key, elem)
+			}
+			list = append(list, s)
+		}
+		return list, nil
+	default:
+		return nil, fmt.Errorf("parse secrets: [%s] %s must be an array of strings, got %T", where, key, value)
+	}
+}
+
+// splitMetadataString splits a string-form metadata value on commas, dropping
+// surrounding space and empty entries.
+func splitMetadataString(s string) []string {
+	list := []string{}
+	for _, part := range strings.Split(s, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			list = append(list, part)
+		}
+	}
+	return list
 }
 
 // readFileNoFollow opens path for reading WITHOUT following a symlink

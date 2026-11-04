@@ -157,13 +157,17 @@ func (s *Store) Names() []string {
 // Set adds or updates a secret value by its flat key (e.g. "section.key").
 // The mutator first re-reads the file, so an external edit not yet observed
 // is merged rather than overwritten. The change is visible to every store
-// sharing the source; call Save on the root store to persist it.
+// sharing the source; call Save on the root store to persist it. A metadata
+// key (allowed_hosts and the others) is not a secret and is refused.
 func (s *Store) Set(name, value string) error {
 	if err := s.rootOnly(); err != nil {
 		return err
 	}
 	if err := s.notStatic(); err != nil {
 		return err
+	}
+	if _, key, _ := strings.Cut(name, "."); isMetadataKey(key) {
+		return fmt.Errorf("%s is a list setting, not a secret: use /secrets hosts or /secrets body, or write it in secrets.toml as an array of strings", key)
 	}
 	s.src.mutate(func(st *fileState) *fileState {
 		values := cloneMap(st.values)

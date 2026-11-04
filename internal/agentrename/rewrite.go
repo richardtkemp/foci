@@ -54,7 +54,8 @@ func (SystemCrontab) Install(content string) error {
 // rewriteSecrets returns secrets.toml content with every exact reference to
 // agent old renamed: the per-agent table headers [agents.<old>] and
 // [agents.<old>.<section>] (bare or quoted id), and each exact "<old>"
-// element of an allowed_agents / denied_agents list (one-line or multi-line).
+// element of an allowed_agents / denied_agents list (one-line, multi-line or
+// the comma-separated string form secrets.toml also accepts).
 // Everything else — values, comments, layout — is byte for byte the same.
 func rewriteSecrets(content, old, new string) string {
 	header := regexp.MustCompile(`^(\s*\[\s*agents\.)("?)` + regexp.QuoteMeta(old) + `("?)(\s*[.\]])`)
@@ -68,6 +69,11 @@ func rewriteSecrets(content, old, new string) string {
 			continue
 		}
 		if listKey.MatchString(line) {
+			code, comment := splitComment(line)
+			if _, val, _ := strings.Cut(code, "="); !strings.HasPrefix(strings.TrimSpace(val), "[") {
+				lines[i] = rewriteStringList(code, old, new) + comment
+				continue
+			}
 			inList = true
 		}
 		if inList {
@@ -79,6 +85,26 @@ func rewriteSecrets(content, old, new string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// rewriteStringList renames each exact old entry of a string-form list, given
+// the line's code: key = "a, old, b". Anything else on the line is unchanged.
+func rewriteStringList(code, old, new string) string {
+	start := strings.IndexAny(code, `"'`)
+	if start < 0 {
+		return code
+	}
+	end := strings.LastIndexByte(code, code[start])
+	if end <= start {
+		return code
+	}
+	items := strings.Split(code[start+1:end], ",")
+	for i, item := range items {
+		if strings.TrimSpace(item) == old {
+			items[i] = strings.Replace(item, old, new, 1)
+		}
+	}
+	return code[:start+1] + strings.Join(items, ",") + code[end:]
 }
 
 // splitComment splits a TOML line at a '#' outside quotes.
