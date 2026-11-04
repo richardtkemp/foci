@@ -5,7 +5,7 @@
 Per-tool reference for the Claude Code (shell) backend. How `foci_*` shell functions work is in **tools-backend.md**. Every tool accepts `-h`/`--help`; read it before first use this session.
 
 ### `foci_spawn` vs CC's `Agent` tool
-- `foci_spawn "<task>" --name <name>` runs a sub-call. `--name` is required, unique in this session (`all` is reserved). The user sees the spawn by this name; `[SPAWN RESULT]` and `foci_spawn_status` show it, and the other spawn tools take it in place of the id. Older spawns show `(unnamed spawn)`.
+- `foci_spawn "<task>" --name <name>` runs a sub-call. `--name` is required, unique in this session (`all` is reserved; a run of spaces, a tab or a line break inside it is refused). The user sees the spawn by this name; `[SPAWN RESULT]` and `foci_spawn_status` show it, and the other spawn tools take it in place of the id. Older spawns show `(unnamed spawn)`.
 - The default mode is `character`: your full system prompt, tools and permission rules, but not this conversation. So the task text must carry everything it needs (ticket id, file paths, what done means).
 - It returns its result directly. With `--background` it runs in its own background session, returns at once with a spawn id, and you keep taking messages. A background spawn's result arrives ONCE as a `[SPAWN RESULT]` message; nothing else wakes you.
 - `--context clone` forks this session (a copy of your whole conversation, far more expensive). Use it only when the task needs so much of the conversation that you could not write it into a prompt. `--context raw` (Claude Code only) is just your prompt; `--context explore` is read-only research.

@@ -525,7 +525,10 @@ func spawnParams(modes []string, delegated bool) json.RawMessage {
 const reservedSpawnName = "all"
 
 // validSpawnName checks a spawn call's name (#2721) and returns it trimmed:
-// it is required, and may be anything but blank or reservedSpawnName.
+// it is required, and may be anything but blank, reservedSpawnName, or a name
+// the one-line display would alter (#2810). Lookup matches a name exactly, so
+// a name shown as 'ci watcher' but stored as 'ci  watcher' could not be found
+// by what the user and the agent see.
 func validSpawnName(raw string) (string, error) {
 	name := strings.TrimSpace(raw)
 	if name == "" {
@@ -533,6 +536,9 @@ func validSpawnName(raw string) (string, error) {
 	}
 	if name == reservedSpawnName {
 		return "", fmt.Errorf("a spawn cannot be named %q: spawn_stop %s already means every spawn of this session", reservedSpawnName, reservedSpawnName)
+	}
+	if shown := oneLine(name); shown != name {
+		return "", fmt.Errorf("a spawn name cannot hold a run of spaces, a tab or a line break, because it is shown on one line and looked up exactly: use %q", shown)
 	}
 	return name, nil
 }
@@ -1582,7 +1588,8 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 // which spawn_send, spawn_status and spawn_stop accept (#2807). A spawn with
 // no name (a record from before names, #2721) or a name the one-line ID
 // cannot carry as typed (a line break or a run of spaces, which lookup
-// matches exactly) prints its id instead: every printed ID resolves.
+// matches exactly; only a record from before #2810 can hold one) prints its id
+// instead: every printed ID resolves.
 func spawnBackgroundID(running RunningSpawn) string {
 	if running.Name != "" && oneLine(running.Name) == running.Name {
 		return running.Name

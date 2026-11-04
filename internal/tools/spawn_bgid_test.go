@@ -90,3 +90,38 @@ func TestRunInBackgroundGivenID(t *testing.T) {
 		t.Errorf("notification = %q", msg)
 	}
 }
+
+// A name the one-line display would alter is refused at spawn time (#2810):
+// the user and the agent would see one name while spawn_send, spawn_status and
+// spawn_stop match another. Whitespace around a name is trimmed, not refused.
+func TestValidSpawnNameRefusesNameDisplayWouldAlter(t *testing.T) {
+	t.Parallel()
+	for _, raw := range []string{"ci  watcher", "ci   watcher", "ci\nwatcher", "ci\twatcher", "ci \t watcher"} {
+		if got, err := validSpawnName(raw); err == nil {
+			t.Errorf("validSpawnName(%q) = %q, want a refusal", raw, got)
+		} else if !strings.Contains(err.Error(), "ci watcher") {
+			t.Errorf("validSpawnName(%q) error = %q, want it to offer the name 'ci watcher'", raw, err)
+		}
+	}
+	for raw, want := range map[string]string{"ci watcher": "ci watcher", "  ci watcher\n": "ci watcher", "reviewer": "reviewer"} {
+		if got, err := validSpawnName(raw); err != nil || got != want {
+			t.Errorf("validSpawnName(%q) = %q, %v; want %q", raw, got, err, want)
+		}
+	}
+}
+
+// The spawn tool itself refuses such a name and starts nothing.
+func TestSpawnToolRefusesRunOfSpacesInName(t *testing.T) {
+	t.Parallel()
+	agent := newScriptedSpawnAgent(1)
+	h := newFollowupHarness(agent)
+	params, _ := json.Marshal(map[string]string{"name": "ci  watcher", "prompt": "Watch the CI run", "context": "clone"})
+	if res, err := h.spawner.SpawnTool().Execute(h.ctx, params); err == nil {
+		t.Fatalf("spawn with name %q = %q, want a refusal", "ci  watcher", res.Text)
+	}
+	select {
+	case <-agent.started:
+		t.Error("a refused spawn started a turn")
+	default:
+	}
+}

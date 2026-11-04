@@ -277,7 +277,7 @@ func TestSpawnName_InAgentText(t *testing.T) {
 	t.Parallel()
 	agent := newScriptedSpawnAgent(1)
 	h := newFollowupHarness(agent)
-	params, _ := json.Marshal(map[string]string{"name": "ci  watcher", "prompt": "Watch the CI run\nand report", "context": "clone"})
+	params, _ := json.Marshal(map[string]string{"name": "ci watcher", "prompt": "Watch the CI run\nand report", "context": "clone"})
 	res, err := h.spawner.SpawnTool().Execute(h.ctx, params)
 	if err != nil || !strings.Contains(res.Text, "Name: ci watcher\n") {
 		t.Fatalf("start reply = %q, %v; want it to name the spawn", res.Text, err)
@@ -289,13 +289,22 @@ func TestSpawnName_InAgentText(t *testing.T) {
 	if !strings.Contains(list.Text, id+"  ci watcher  running") || !strings.Contains(list.Text, "Watch the CI run and report") {
 		t.Errorf("spawn_status list = %q, want the name and the task", list.Text)
 	}
-	detail, _ := h.spawner.StatusTool().Execute(h.ctx, json.RawMessage(`{"id":"ci  watcher"}`))
+	detail, _ := h.spawner.StatusTool().Execute(h.ctx, json.RawMessage(`{"id":"ci watcher"}`))
 	if !strings.Contains(detail.Text, "Name: ci watcher\n") || !strings.Contains(detail.Text, "Task: Watch the CI run and report") {
 		t.Errorf("spawn_status detail = %q, want Name and Task", detail.Text)
 	}
 	close(agent.gates[0])
 	if msg := <-h.delivered; !strings.Contains(msg, "[SPAWN RESULT] ci watcher — Branch ") || !strings.Contains(msg, "completed:") {
 		t.Errorf("completed result = %q, want it named", msg)
+	}
+}
+
+// A record from before #2810 can hold a run of spaces; it is still shown on one
+// line.
+func TestSpawnLabel_CollapsesWhitespaceOfOldRecord(t *testing.T) {
+	t.Parallel()
+	if got := (RunningSpawn{Name: "ci  watcher\n"}).Label(); got != "ci watcher" {
+		t.Errorf("Label() = %q, want %q", got, "ci watcher")
 	}
 }
 
