@@ -1,0 +1,1 @@
+Foci turns off Codex's built-in subagents, so tools such as `spawn_agent` do not exist here. To hand off work or run it in parallel, use the `foci_spawn` shell tool (`foci_spawn --help` lists its modes).

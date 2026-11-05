@@ -495,3 +495,31 @@ func TestWritePlatform_MathLineSurvivesWorkspaceOverride(t *testing.T) {
 		t.Errorf("telegram session got the math line:\n%s", tg.String())
 	}
 }
+
+// TestWriteBackend_CodexSpawnGuidance guards #2850: foci turns codex's own
+// subagents off (#2839), so a codex agent must be told to delegate with
+// foci_spawn. The line is for codex only: every other backend keeps its own
+// way to delegate.
+func TestWriteBackend_CodexSpawnGuidance(t *testing.T) {
+	t.Parallel()
+	var codex strings.Builder
+	writeBackend(&codex, "codex", nil)
+	if !strings.Contains(codex.String(), "foci_spawn") {
+		t.Errorf("codex Backend section should point at foci_spawn, got:\n%s", codex.String())
+	}
+	for _, backend := range []string{"claude-code", "opencode", "api", ""} {
+		var b strings.Builder
+		writeBackend(&b, backend, nil)
+		if strings.Contains(b.String(), "foci_spawn") {
+			t.Errorf("backend=%q: the foci_spawn line is codex-only, got:\n%s", backend, b.String())
+		}
+	}
+
+	cfg := &config.Config{Logging: config.LoggingConfig{EventFile: "/tmp/foci.log"}}
+	acfg := config.AgentConfig{ID: "x", Workspace: "/tmp/x", Backend: "codex"}
+	rc := config.Resolve(cfg, acfg)
+	out := buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, rc.Permissions, 0, nil, nil, nil, "")
+	if !strings.Contains(out, "foci_spawn") {
+		t.Errorf("a codex agent's environment block lacks the foci_spawn line:\n%s", out)
+	}
+}
