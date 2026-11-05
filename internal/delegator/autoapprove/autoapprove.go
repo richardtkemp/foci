@@ -1550,6 +1550,8 @@ var unsafeFlags = map[string]unsafeCmdFlags{
 	// spellings and subcommands. The entry stays so go remains flag-checked
 	// (the #2213 glob and #2216 brace/substitution/variable rules).
 	"go": {},
+	// uniq has a positional output file, checked as a whole argument vector.
+	"uniq": {},
 	// yq -s / --split-exp / --split-exp-file write one file per result
 	// (yq v4.52.4 help).
 	"yq": {
@@ -1805,6 +1807,9 @@ func containsUnsafeFlagWords(words []shellWord) bool {
 		return true
 	}
 	if cmdBase == "git" && (gitGrepPagerUnsafe(words) || gitRunsNamedProgram(words)) {
+		return true
+	}
+	if cmdBase == "uniq" && uniqCommandUnsafe(words) {
 		return true
 	}
 	if cmdBase == "go" && goRunsProgram(words) {

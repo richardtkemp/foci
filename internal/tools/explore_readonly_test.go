@@ -8,6 +8,7 @@ import (
 
 	"foci/internal/delegator"
 	"foci/internal/delegator/autoapprove"
+	"foci/internal/execguard"
 )
 
 // recordingTodo is a stand-in todo tool that records the actions it ran.
@@ -63,7 +64,7 @@ func TestReadOnlyTodo_RefusesWrites(t *testing.T) {
 }
 
 // TestExploreShellPrompt_ListsTheRules proves the delegated explore prompt's
-// whitelist is generated from autoapprove.CommonReadonlyRules (every Bash
+// whitelist is generated from readOnlyShellRules (every Bash
 // rule appears), names the bridge's functions, says everything else is
 // unavailable, and invites the spawn to name a missing tool.
 func TestExploreShellPrompt_ListsTheRules(t *testing.T) {
@@ -75,7 +76,7 @@ func TestExploreShellPrompt_ListsTheRules(t *testing.T) {
 	reg.Register(&Tool{Name: "send_to_chat", ExecExport: true}) // not explore-allowed
 	p := delegatedExplorePrompt(reg)
 	n := 0
-	for _, r := range autoapprove.CommonReadonlyRules {
+	for _, r := range readOnlyShellRules() {
 		if !strings.HasPrefix(r, "Bash:") {
 			continue
 		}
@@ -121,7 +122,7 @@ func TestReadOnlyBatchRules_DecideCommands(t *testing.T) {
 		cmd  string
 		want bool
 	}{
-		{"jq -r .a /tmp/f.jsonl | sort | uniq", false}, // uniq is not whitelisted
+		{"jq -r .a /tmp/f.jsonl | sort | uniq", true},
 		{"jq -r .a /tmp/f.jsonl | sort", true},
 		{"find /home -newermt 2026-10-21 -name '*.jsonl'", true},
 		{"sqlite3 -readonly /tmp/x.db 'select 1'", true},
@@ -144,6 +145,52 @@ func TestReadOnlyBatchRules_DecideCommands(t *testing.T) {
 		input, _ := json.Marshal(map[string]string{"command": c.cmd})
 		if got, _ := autoapprove.MatchWithEnv(rules, "Bash", input, nil); got != c.want {
 			t.Errorf("%q allowed = %v, want %v", c.cmd, got, c.want)
+		}
+	}
+}
+
+// TestReadOnlyBatchRules_CDAndUniq proves the explore-only additions work in
+// compound reads without broadening ordinary approvals or permitting writes.
+func TestReadOnlyBatchRules_CDAndUniq(t *testing.T) {
+	// This is a rule-policy test, not a check of the host's installed binaries
+	// (e.g. Homebrew rg is substitutable). Keep it non-parallel while changing
+	// the process-wide guard; parallel tests only run after cleanup restores it.
+	enforced := !execguard.Live().Off
+	execguard.SetEnforced(false)
+	t.Cleanup(func() { execguard.SetEnforced(enforced) })
+	explore := autoapprove.Compile(ReadOnlyBatchRules(nil))
+	common := autoapprove.Compile(autoapprove.CommonReadonlyRules)
+	for _, cmd := range []string{
+		"cd /tmp && ls config data 2>/dev/null; ls test; wc -l README.md; cat render.yaml | head -50",
+		"cd /tmp; rg -n needle test; cat README.md | sed -n 1,3p",
+		"cat input | sort | uniq -c | sort -rn",
+	} {
+		input, _ := json.Marshal(map[string]string{"command": cmd})
+		if got, reason := autoapprove.MatchWithEnv(explore, "Bash", input, nil); !got {
+			t.Errorf("explore denied %q: %s", cmd, reason)
+		}
+		if got, _ := autoapprove.MatchWithEnv(common, "Bash", input, nil); got {
+			t.Errorf("ordinary rules newly allowed %q", cmd)
+		}
+	}
+	for _, cmd := range []string{"cd /tmp; rm victim", "uniq a b", "cd /tmp; uniq a b", "sort input | uniq -c > output", "awk '{system($0)}' input"} {
+		input, _ := json.Marshal(map[string]string{"command": cmd})
+		if got, _ := autoapprove.MatchWithEnv(explore, "Bash", input, nil); got {
+			t.Errorf("explore allowed %q", cmd)
+		}
+	}
+	// The matcher approves literal relative targets without tracking cd. This
+	// demonstrates why putting cd into the shared list would broaden a normal
+	// agent's path-scoped write permissions (nothing is actually executed).
+	scoped := autoapprove.Compile(append(append([]string(nil), autoapprove.CommonReadonlyRules...), "Bash:cd", "Bash:rm victim"))
+	input, _ := json.Marshal(map[string]string{"command": "cd /elsewhere; rm victim"})
+	if got, _ := autoapprove.MatchWithEnv(scoped, "Bash", input, nil); !got {
+		t.Error("cwd hazard characterization changed; reassess explore-only cd")
+	}
+	p := ExploreShellPrompt(nil)
+	for _, entry := range []string{"- `cd`\n", "- `uniq`\n", "uniq INPUT OUTPUT"} {
+		if !strings.Contains(p, entry) {
+			t.Errorf("prompt missing %q", entry)
 		}
 	}
 }

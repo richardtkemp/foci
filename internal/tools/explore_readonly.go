@@ -76,16 +76,25 @@ func readOnlyRegistry(reg *Registry) *Registry {
 
 // ReadOnlyBatchRules returns the only auto-approve rules a read-only batch
 // session is decided by: foci's built-in read-only set
-// (autoapprove.CommonReadonlyRules, whatever the agent's own toggles say) and
-// a rule for each foci shell function its exec bridge carries (the
-// read-only registry, RegistryForAccess). Nothing from the agent's own
-// configuration is added. reg may be nil (no bridge).
+// (autoapprove.CommonReadonlyRules, whatever the agent's own toggles say),
+// explore-only cd/uniq rules, and a rule for each foci shell function its
+// exec bridge carries (the read-only registry, RegistryForAccess). Nothing
+// from the agent's own configuration is added. reg may be nil (no bridge).
 func ReadOnlyBatchRules(reg *Registry) []string {
-	rules := append([]string(nil), autoapprove.CommonReadonlyRules...)
+	rules := readOnlyShellRules()
 	if ro := readOnlyFociFuncs(reg); len(ro) > 0 {
 		rules = append(rules, autoapprove.FociShellRulesFor(ro)...)
 	}
 	return rules
+}
+
+// readOnlyShellRules is shared by enforcement and the generated prompt.
+// cd is explore-only: the matcher does not track cwd for path-scoped rules
+// an ordinary agent might combine with it. uniq stays local to this extension
+// too; autoapprove guards its output operand even under an explicit rule.
+func readOnlyShellRules() []string {
+	rules := append([]string(nil), autoapprove.CommonReadonlyRules...)
+	return append(rules, "Bash:cd", "Bash:uniq")
 }
 
 // readOnlyFociFuncs returns the foci shell function names a
@@ -99,12 +108,12 @@ func readOnlyFociFuncs(reg *Registry) []string {
 }
 
 // readOnlyShellCommands returns the command patterns of the read-only rule
-// set (the "Bash:" rules of autoapprove.CommonReadonlyRules), in order, as
+// set (the "Bash:" rules of readOnlyShellRules), in order, as
 // autoapprove.DisplayRule renders them (the read-only git rule names its
 // subcommands).
 func readOnlyShellCommands() []string {
 	var cmds []string
-	for _, r := range autoapprove.CommonReadonlyRules {
+	for _, r := range readOnlyShellRules() {
 		if strings.HasPrefix(r, "Bash:") {
 			cmds = append(cmds, autoapprove.DisplayRule(r))
 		}
@@ -114,7 +123,7 @@ func readOnlyShellCommands() []string {
 
 // ExploreShellPrompt is the part of a delegated explore spawn's system prompt
 // that states its shell whitelist: the read-only commands (from
-// autoapprove.CommonReadonlyRules) and the foci shell functions fociFuncs,
+// readOnlyShellRules) and the foci shell functions fociFuncs,
 // and that everything else is unavailable. It ends with the invitation to
 // name a missing tool.
 func ExploreShellPrompt(fociFuncs []string) string {
@@ -136,7 +145,7 @@ func ExploreShellPrompt(fociFuncs []string) string {
 	}
 	b.WriteString("\nEverything else is unavailable and is denied at once, with no one to ask: any other command, ")
 	b.WriteString("output redirection to a file (`> file`; `2>/dev/null` is fine), and the writing or executing flags of listed commands ")
-	b.WriteString("(`sed -i`, `find -exec`/`-delete`, `sort -o`, sqlite3 dot-commands like `.shell`, git `--output`/`--ext-diff`/`--textconv`). Pipes between listed commands work. ")
+	b.WriteString("(`uniq INPUT OUTPUT`, `sed -i`, `find -exec`/`-delete`, `sort -o`, sqlite3 dot-commands like `.shell`, git `--output`/`--ext-diff`/`--textconv`). Pipes between listed commands work. For uniq, put options before its single input file; optional flag values must be attached, and abbreviated or unknown flags are unavailable. ")
 	b.WriteString("Use `sqlite3 -readonly <db> '<query>'` for SQLite and `jq` for JSON/JSONL. A denial is final: do not retry the same command; find another way with the whitelist.\n\n")
 	b.WriteString("If a tool you needed is missing from this whitelist and you believe you and other explore agents would benefit from it, say so at the end of your answer: name the tool and what you would have used it for.")
 	return b.String()
