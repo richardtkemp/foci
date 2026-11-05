@@ -271,6 +271,10 @@ type Backend struct {
 	abortIdlesSeen    int
 	abortTimer        *time.Timer
 	abortDrainTimeout time.Duration
+	// awaitFreshBusy: the backstop flushed a steer before the abort's burst
+	// finished, and the follow-up has not gone busy yet. Until it does, a
+	// session.idle or MessageAbortedError belongs to the aborted turn.
+	awaitFreshBusy bool
 
 	// steerAbortDeferred: a mid-turn steer is buffered but its abort waits
 	// for the running subagents (#2753). opencode's POST /abort cascades to

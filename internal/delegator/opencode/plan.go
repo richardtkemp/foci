@@ -54,7 +54,7 @@ func (b *Backend) sendPromptWithAgent(ctx context.Context, text, agent string) e
 	if b.server == nil || b.sessionID == "" {
 		return fmt.Errorf("opencode: no session")
 	}
-	body := buildPromptBodyWithAgent(text, nil, false, agent, b.model, b.systemPrompt)
+	body := buildPromptBodyWithAgent(text, nil, false, agent, b.currentModel(), b.systemPrompt)
 	return b.postMessage(ctx, "/prompt_async", body)
 }
 

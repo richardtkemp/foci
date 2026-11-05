@@ -58,6 +58,10 @@ func (b *Backend) Interrupt(ctx context.Context) error {
 	if b.server == nil || b.sessionID == "" {
 		return errors.New("opencode: Interrupt before Start")
 	}
+	// This abort's events are about the current turn, so they must count.
+	b.turnMu.Lock()
+	b.awaitFreshBusy = false
+	b.turnMu.Unlock()
 	url := sessionURL(b.server.baseURL, b.sessionID, "/abort")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {

@@ -26,6 +26,9 @@ import (
 type recordingHandler struct {
 	mu       sync.Mutex
 	requests []recordedRequest
+	// onRequest, when set, runs after a request is recorded and before it is
+	// answered: a test can hold a POST open. A non-zero return is the status.
+	onRequest func(path string) int
 }
 
 type recordedRequest struct {
@@ -39,10 +42,17 @@ func (r *recordingHandler) handler() http.HandlerFunc {
 		body, _ := io.ReadAll(req.Body)
 		r.mu.Lock()
 		r.requests = append(r.requests, recordedRequest{Method: req.Method, Path: req.URL.Path, Body: body})
+		hook := r.onRequest
 		r.mu.Unlock()
 		if req.URL.Path == "/session" && req.Method == http.MethodPost {
 			_, _ = w.Write([]byte(`{"id":"sess-inject"}`))
 			return
+		}
+		if hook != nil {
+			if status := hook(req.URL.Path); status != 0 {
+				w.WriteHeader(status)
+				return
+			}
 		}
 		w.WriteHeader(http.StatusOK)
 	}

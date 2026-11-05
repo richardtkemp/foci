@@ -200,3 +200,130 @@ func (p *fakeChatProvider) sawMarker() bool {
 	defer p.mu.Unlock()
 	return p.marker
 }
+
+// TestLive_SteerBackstopBeatsBurst drives #2845 through a REAL `opencode serve`:
+// the model hangs, a steer aborts it, and the backstop fires as soon as POST
+// /abort returns, so the abort's idle arrives after the follow-up was sent. The
+// follow-up must stay in flight until its own answer, and the aborted turn must
+// complete once.
+//
+//	FOCI_OPENCODE_LIVE=1 FOCI_OPENCODE_BIN=$(command -v opencode) make local-test-one PKG=./internal/delegator/opencode/ RUN=TestLive_SteerBackstop
+func TestLive_SteerBackstopBeatsBurst(t *testing.T) {
+	if os.Getenv("FOCI_OPENCODE_LIVE") == "" {
+		t.Skip("set FOCI_OPENCODE_LIVE=1 to run against a real opencode binary")
+	}
+	bin := os.Getenv("FOCI_OPENCODE_BIN")
+	if bin == "" {
+		bin = "opencode"
+	}
+	bin, err := exec.LookPath(bin)
+	if err != nil {
+		t.Skipf("no opencode binary (set FOCI_OPENCODE_BIN, or put it on the tests' PATH): %v", err)
+	}
+
+	const hangText, freshText = "HANG-2845", "FRESH-2845"
+	hanging := make(chan struct{})
+	freshStarted := make(chan struct{})
+	freshRelease := make(chan struct{})
+	var hangOnce, freshOnce sync.Once
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var req struct {
+			Messages []json.RawMessage `json:"messages"`
+		}
+		_ = json.Unmarshal(raw, &req)
+		last := ""
+		if n := len(req.Messages); n > 0 {
+			last = string(req.Messages[n-1])
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		emit := func(delta map[string]string, finish any) {
+			bs, _ := json.Marshal(map[string]any{"id": "c", "object": "chat.completion.chunk", "created": 1, "model": "fake-model",
+				"choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": finish}}})
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", bs)
+			flusher.Flush()
+		}
+		emit(map[string]string{"role": "assistant", "content": "partial "}, nil)
+		switch {
+		case strings.Contains(last, hangText):
+			hangOnce.Do(func() { close(hanging) })
+			<-r.Context().Done()
+			return
+		case strings.Contains(last, freshText):
+			freshOnce.Do(func() { close(freshStarted) })
+			<-freshRelease
+		}
+		emit(map[string]string{"content": "answer"}, nil)
+		emit(map[string]string{}, "stop")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	t.Cleanup(provider.Close)
+
+	workDir := t.TempDir()
+	cfg := fmt.Sprintf(`{"$schema":"https://opencode.ai/config.json",
+ "model":"fake/fake-model","small_model":"fake/fake-model",
+ "provider":{"fake":{"npm":"@ai-sdk/openai-compatible","name":"Fake",
+  "options":{"baseURL":%q,"apiKey":"x"},"models":{"fake-model":{"name":"Fake"}}}}}`, provider.URL+"/v1")
+	if err := os.WriteFile(filepath.Join(workDir, "opencode.json"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	d, err := newFromConfig(map[string]any{"binary": bin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := d.(*Backend)
+	b.abortDrainTimeout = time.Nanosecond
+	if err := b.Start(ctx, delegator.StartOptions{AgentID: fmt.Sprintf("live-2845-%d", time.Now().UnixNano()), WorkDir: workDir, SystemPrompt: "You are a test fixture."}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	b.AttachSessionEvents(&delegator.SessionEvents{})
+
+	aborted := make(chan *delegator.TurnResult, 2)
+	if err := b.ImmediateInject(ctx, delegator.Inject{Source: delegator.SourceUser, Text: hangText, Turn: &delegator.TurnEvents{
+		OnTurnComplete: func(r *delegator.TurnResult) { aborted <- r },
+	}}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+	select {
+	case <-hanging:
+	case <-ctx.Done():
+		t.Fatal("the model never received the first prompt")
+	}
+
+	if err := b.ImmediateInject(ctx, delegator.Inject{Source: delegator.SourceSteer, Text: freshText}); err != nil {
+		t.Fatalf("steer: %v", err)
+	}
+	select {
+	case <-freshStarted:
+	case <-ctx.Done():
+		t.Fatal("the steer never reached the model: it was lost")
+	}
+	// The abort's events have been delivered by now: the model is already
+	// answering the follow-up.
+	time.Sleep(500 * time.Millisecond)
+	if !b.IsTurnInFlight() {
+		t.Error("the follow-up is running at the model, but the backend reports no turn in flight")
+	}
+	select {
+	case <-aborted:
+	default:
+		t.Error("the aborted turn's OnTurnComplete has not fired")
+	}
+
+	close(freshRelease)
+	deadline := time.Now().Add(30 * time.Second)
+	for b.IsTurnInFlight() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if b.IsTurnInFlight() {
+		t.Error("the follow-up finished at the model, but its turn never ended")
+	}
+	if got := len(aborted); got != 0 {
+		t.Errorf("the aborted turn completed %d extra time(s)", got)
+	}
+}

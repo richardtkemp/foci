@@ -106,6 +106,7 @@ func (b *Backend) cancelTurn() {
 	defer b.turnMu.Unlock()
 	b.turnActive = false
 	b.turnEvents = nil
+	b.awaitFreshBusy = false
 }
 
 // IsTurnInFlight reports whether a turn is registered but hasn't
@@ -339,8 +340,16 @@ func splitSlashCommand(text string) (name, rest string) {
 // treats them as first-class multimodal content — same as if the user
 // had pasted an image into the TUI.
 func (b *Backend) sendPrompt(ctx context.Context, text string, attachments []delegator.Attachment, systemPrompt string) error {
-	body := buildPromptBody(text, attachments, false, b.model, systemPrompt)
+	body := buildPromptBody(text, attachments, false, b.currentModel(), systemPrompt)
 	return b.postMessage(ctx, "/prompt_async", body)
+}
+
+// currentModel reads b.model, which SendControl writes under b.mu from another
+// goroutine while prompts go out.
+func (b *Backend) currentModel() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.model
 }
 
 // sendCommand POSTs /session/:id/command with the slash command + args.
@@ -503,16 +512,23 @@ func (b *Backend) startSteerAbort(ctx context.Context) {
 	b.turnMu.Lock()
 	b.aborting = true
 	b.abortIdlesSeen = 0
-	b.armAbortTimerLocked()
 	b.turnMu.Unlock()
 	log.NewComponentLogger(b.logComponent()).Debugf("inject: steer mid-turn → aborting active turn, drain pending")
-	if err := b.Interrupt(ctx); err != nil {
+	err := b.Interrupt(ctx)
+	b.turnMu.Lock()
+	defer b.turnMu.Unlock()
+	if err != nil {
 		// Abort failed — clear drain state and fall back to flushing at
 		// the next natural OnSessionIdle (legacy behaviour).
-		b.turnMu.Lock()
 		b.disarmAbortLocked()
-		b.turnMu.Unlock()
 		log.NewComponentLogger(b.logComponent()).Warnf("inject: steer abort failed (%v); will flush at next idle", err)
+		return
+	}
+	// Arm only now: opencode discards a prompt_async that reaches it before
+	// /abort, so a backstop counting from before the POST could lose the steer.
+	// The burst may already have finished the drain while the POST was open.
+	if b.aborting {
+		b.armAbortTimerLocked()
 	}
 }
 
@@ -542,8 +558,8 @@ func (b *Backend) startDeferredSteerAbort() {
 }
 
 // armAbortTimerLocked arms the backstop timer that flushes the buffered steer
-// if the abort's idle burst never arrives (or arrives too slowly). Default
-// 500ms; overridable via abortDrainTimeout (tests). Caller must hold turnMu.
+// if the abort's idle burst never arrives (or arrives too slowly). It counts
+// from the return of POST /abort. Default 500ms; overridable via abortDrainTimeout (tests). Caller must hold turnMu.
 func (b *Backend) armAbortTimerLocked() {
 	d := b.abortDrainTimeout
 	if d == 0 {
@@ -568,6 +584,11 @@ func (b *Backend) disarmAbortLocked() {
 // burst idle) or the backstop timer — whichever fires first wins; the other is
 // a no-op via the aborting flag. Safe to call from the dispatcher or timer
 // goroutine.
+//
+// When the burst was cut short the backstop won, so the aborted turn may not
+// have been completed yet, and its remaining events can still arrive after the
+// flush. It is completed here, and awaitFreshBusy keeps those events off the
+// fresh turn (onSessionIdle, onSessionError).
 func (b *Backend) abortDrainComplete() {
 	b.turnMu.Lock()
 	if !b.aborting {
@@ -579,11 +600,20 @@ func (b *Backend) abortDrainComplete() {
 		b.abortTimer = nil
 	}
 	b.aborting = false
+	burstCutShort := b.abortIdlesSeen < 2
 	b.abortIdlesSeen = 0
 	bufLen := len(b.steerBuf)
 	b.turnMu.Unlock()
 	log.NewComponentLogger(b.logComponent()).Infof("steer: abort drain complete (flushing %d buffered message(s))", bufLen)
+	if burstCutShort {
+		b.failInFlightTurn(ErrMessageAborted)
+		b.turnMu.Lock()
+		b.awaitFreshBusy = len(b.steerBuf) > 0
+		b.turnMu.Unlock()
+	}
 	if err := b.flushSteerBuf(context.Background(), func() *delegator.TurnEvents { return nil }); err != nil {
+		// The follow-up never reached opencode, so no event will end its turn.
+		b.cancelTurn()
 		log.NewComponentLogger(b.logComponent()).Warnf("steer: flushSteerBuf after abort drain: %v", err)
 	}
 }

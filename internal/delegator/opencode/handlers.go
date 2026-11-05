@@ -507,6 +507,11 @@ func (b *Backend) onSessionIdle(sessionID string) {
 		return
 	}
 
+	if b.lateAbortEvent() {
+		log.NewComponentLogger(b.logComponent()).Debugf("onSessionIdle: ignored (late abort burst, follow-up not busy yet)")
+		return
+	}
+
 	log.NewComponentLogger(b.logComponent()).Debugf("onSessionIdle: building turn result")
 
 	// Snapshot accumulated turn state.
@@ -614,6 +619,14 @@ func (b *Backend) onSessionIdle(sessionID string) {
 	}
 }
 
+// lateAbortEvent reports whether an idle or abort error now belongs to the
+// aborted turn rather than to the steer's follow-up (see awaitFreshBusy).
+func (b *Backend) lateAbortEvent() bool {
+	b.turnMu.Lock()
+	defer b.turnMu.Unlock()
+	return b.awaitFreshBusy
+}
+
 // tryPreAnswerRedispatch runs the pre-answer nudge gate against the turn's
 // final result. When the gate returns a follow-up it is sent as a fresh
 // prompt and the turn is held open for the revised answer; it returns true so
@@ -655,6 +668,9 @@ func (b *Backend) onSessionStatus(sessionID string, status SessionStatus) {
 	}
 	switch status.Type {
 	case StatusBusy:
+		b.turnMu.Lock()
+		b.awaitFreshBusy = false
+		b.turnMu.Unlock()
 		if b.typingFunc != nil {
 			b.typingFunc(true)
 		}
@@ -742,6 +758,9 @@ func (b *Backend) onSessionError(sessionID string, err *MessageError) {
 	// agent layer shows no in-flight turn (so /stop reports nothing to cancel).
 	// Completing the turn here re-couples the two markers and lets the session
 	// recover (#arnix-perm).
+	if err.Name == ErrMessageAborted && b.lateAbortEvent() {
+		return
+	}
 	b.failInFlightTurn(err.Name)
 }
 
@@ -763,6 +782,7 @@ func (b *Backend) failInFlightTurn(reason string) {
 	b.turnEvents = nil
 	b.turnActive = false
 	b.turnResultCh = nil
+	b.awaitFreshBusy = false
 	b.turnMu.Unlock()
 
 	// Watchdog (error half): an active turn dying with no text/tools outside
