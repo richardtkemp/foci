@@ -881,3 +881,91 @@ func TestDepthFanoutQuestionField(t *testing.T) {
 		t.Errorf("leaf with no question: err = %v", err)
 	}
 }
+
+// #2873: the parent stays usable while its leaves are open, so its chat may
+// have moved on by the time the results arrive. The message names the fan-out
+// it belongs to (when it started, and its leaves), and tells the reader so.
+func TestDepthResultsNameTheirFanout(t *testing.T) {
+	h := newDepthHarness(t, nil)
+	kids := h.fanout(t, depthRoot, "Alpha", "Beta")
+	started := h.node(kids[0]).Created.Local().Format(depthFanoutTimeFormat)
+	for _, k := range kids {
+		if err := h.report(t, k, "done"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ds := h.deliveries()
+	if len(ds) != 1 {
+		t.Fatalf("deliveries = %+v, want exactly one", ds)
+	}
+	head := strings.SplitN(ds[0].msg, "\n", 2)[0]
+	if !strings.HasPrefix(head, "[DEPTH RESULTS] All 2 leaves") || !strings.Contains(head, started) {
+		t.Errorf("first line %q must carry the fan-out's start %q", head, started)
+	}
+	if !strings.Contains(ds[0].msg, "moved on") {
+		t.Errorf("message must warn that the chat may have moved on:\n%s", ds[0].msg)
+	}
+}
+
+// #2873: a fan-out started while an earlier fan-out's results are still queued
+// (the parent was mid-turn when its last leaf reported) must not lose them: the
+// record stays until that turn took them, so a restart can still deliver them,
+// and they are delivered exactly once.
+func TestDepthResultsQueuedSurviveASecondFanout(t *testing.T) {
+	store := newMemSpawnStore()
+	h := newDepthHarness(t, store)
+	kids := h.fanout(t, depthRoot, "Alpha")
+	h.mu.Lock()
+	h.refuse = true // Stands in for "queued behind the running turn": done(true) has not fired.
+	h.mu.Unlock()
+	if err := h.report(t, kids[0], "alpha result"); err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	h.refuse = false
+	h.mu.Unlock()
+	if h.node(depthRoot).Results == "" {
+		t.Fatal("results not on the record while queued")
+	}
+	h.fanout(t, depthRoot, "Gamma")
+	if !strings.Contains(h.node(depthRoot).Results, "alpha result") {
+		t.Fatalf("the second fan-out dropped the first's undelivered results: %q", h.node(depthRoot).Results)
+	}
+
+	h2 := newDepthHarness(t, store)
+	h2.m.Restore()
+	var got int
+	for _, d := range h2.deliveries() {
+		if d.trigger == "depth_results" && strings.Contains(d.msg, "alpha result") {
+			got++
+		}
+	}
+	if got != 1 {
+		t.Errorf("results delivered %d times after the restart, want exactly once: %+v", got, h2.deliveries())
+	}
+	if h2.node(depthRoot).Results != "" {
+		t.Error("delivered results not cleared")
+	}
+}
+
+// #2873: the fan-out's tool result tells a root it can keep talking to the
+// user; a nested parent has no user to talk to in its own chat (frozen, §3.4).
+func TestDepthFanoutResultSaysTheRootStaysUsable(t *testing.T) {
+	h := newDepthHarness(t, nil)
+	raw := json.RawMessage(`{"leaves": [{"title": "A", "question": "q"}]}`)
+	res, err := h.m.fanoutTool().Execute(depthCtx(depthRoot), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Text, "keep talking") {
+		t.Errorf("root's result lacks the rule:\n%s", res.Text)
+	}
+	kid := h.m.nodes[depthRoot].Children[0]
+	res, err = h.m.fanoutTool().Execute(depthCtx(kid), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(res.Text, "keep talking") {
+		t.Errorf("a nested parent's result must not promise a usable chat:\n%s", res.Text)
+	}
+}

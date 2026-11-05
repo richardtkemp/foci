@@ -581,7 +581,7 @@ func (m *DepthManager) fanout(ctx context.Context, caller string, leaves []depth
 		switch n.State {
 		case depthActive:
 		case depthFanned:
-			return "", fmt.Errorf("depth_fanout: you are already waiting on leaves; end your turn and wait for [DEPTH RESULTS]")
+			return "", fmt.Errorf("depth_fanout: you are already waiting on leaves; a second fan-out has to wait for their [DEPTH RESULTS]")
 		default:
 			return "", fmt.Errorf("depth_fanout: this thread is outside the tree (%s); it cannot fan out", n.State)
 		}
@@ -756,7 +756,9 @@ func (m *DepthManager) doFanout(ctx context.Context, caller string, leaves []dep
 	for _, c := range children {
 		parent.Children = append(parent.Children, c.Key)
 	}
-	parent.Results = ""
+	// parent.Results stays: results of an earlier fan-out still queued behind
+	// this turn, or the very [DEPTH RESULTS] turn now fanning out again, are
+	// cleared by their own delivery (#2873).
 	parent.ContextAtFanout = ctxTokens
 	parent.Updated = now
 	recs := snap(append([]*depthNode{parent}, children...)...)
@@ -781,6 +783,9 @@ func (m *DepthManager) doFanout(ctx context.Context, caller string, leaves []dep
 	fmt.Fprintf(&b, "Each question went to the user as its leaf's opening message. You are now waiting on %d leaves; end your turn. You will get one [DEPTH RESULTS] message when all have reported.\n", len(children))
 	for _, c := range children {
 		fmt.Fprintf(&b, "- %s (%s)\n", c.Title, c.LeafID)
+	}
+	if parent.LeafID == "" {
+		b.WriteString("The user can keep talking to you in this chat while the leaves are open: answer as normal. Nothing said here reaches the leaves, and they reach you only through that message, which may arrive after the chat has moved on.\n")
 	}
 	if ctxTokens > 0 {
 		fmt.Fprintf(&b, "Each leaf started from a copy of your context: %d tokens.", ctxTokens)
@@ -906,10 +911,18 @@ func (m *DepthManager) checkFanIn(parentKey string) {
 	m.deliverResults(parentKey, msg)
 }
 
+// depthFanoutTimeFormat is how a [DEPTH RESULTS] message names its fan-out.
+const depthFanoutTimeFormat = "2 Jan 15:04"
+
 // resultsMessage builds the one [DEPTH RESULTS] turn of a fan-out.
 func (m *DepthManager) resultsMessage(kids []depthNode) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "[DEPTH RESULTS] All %d leaves of your fan-out have reported.\n", len(kids))
+	started := ""
+	if len(kids) > 0 {
+		started = " of " + kids[0].Created.Local().Format(depthFanoutTimeFormat)
+	}
+	fmt.Fprintf(&b, "[DEPTH RESULTS] All %d leaves of your fan-out%s have reported.\n", len(kids), started)
+	b.WriteString("The chat may have moved on since you fanned out, so say which fan-out this is when you reply.\n")
 	for _, c := range kids {
 		b.WriteString("\n## ")
 		b.WriteString(c.Title)

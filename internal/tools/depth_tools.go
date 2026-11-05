@@ -44,7 +44,7 @@ func (m *DepthManager) fanoutTool() *Tool {
 		Description: "Send the user several points as separate leaves instead of one message: use it when a reply would carry several independent points (findings, issues, options) that the user may answer or act on one by one. Each leaf's question is exactly the message you would otherwise have sent the user for that point, written to the USER (not to the leaf agent): instead of sending the user A, B and C in one message, fan out into leaves A, B and C. " +
 			"Each question appears as its leaf's first message, from you, and the user replies to it there, one leaf at a time inside this chat. ONE point per leaf, never a list of questions in one leaf. Use it whenever a user's request opens several discussion threads. " +
 			"Each leaf is a fork of your context and runs nothing until the user answers it. " +
-			"You then end your turn and get ONE [DEPTH RESULTS] message when every leaf has reported. Only from an app conversation (or from a leaf). " +
+			"You then end your turn and get ONE [DEPTH RESULTS] message when every leaf has reported. In the meantime the user can keep talking to you in this chat, so answer as normal; nothing said here reaches the leaves. You cannot fan out again until the results arrive. Only from an app conversation (or from a leaf). " +
 			"Each leaf costs a copy of your current context, so prefer fanning out while the context is small.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
