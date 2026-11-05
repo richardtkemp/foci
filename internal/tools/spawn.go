@@ -615,7 +615,7 @@ func (s *Spawner) SpawnTool() *Tool {
 			}
 			// The usage hold (#2491): no new spawn while the account holds.
 			if msg := usageHoldRefusal(host.agentOrNil()); msg != "" {
-				return TextResult("NOT started: " + msg), nil
+				return ToolResult{}, fmt.Errorf("NOT started: %s", msg)
 			}
 			background := p.Context == spawnModeClone || p.Background
 

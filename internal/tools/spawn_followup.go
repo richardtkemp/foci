@@ -79,7 +79,7 @@ func (s *Spawner) send(ctx context.Context, idOrBranch, message string) (ToolRes
 	}
 
 	if msg := usageHoldRefusal(agent); msg != "" {
-		return TextResult(fmt.Sprintf("NOT delivered to spawn %s: %s", snap.ID, msg)), nil
+		return ToolResult{}, fmt.Errorf("NOT delivered to spawn %s: %s", snap.ID, msg)
 	}
 	if snap.Running {
 		if st, ok := agent.(SpawnSteerer); ok && st.SteerTurn(ctx, snap.BranchKey, text) {
@@ -102,7 +102,7 @@ func (s *Spawner) send(ctx context.Context, idOrBranch, message string) (ToolRes
 		now := time.Now()
 		if exp := rep.CacheExpiry(snap.BranchKey, now); !exp.After(now) {
 			spawnLog.Infof("spawn_send to spawn=%s branch=%s refused: prompt cache cold (expiry %s)", snap.ID, snap.BranchKey, exp.Format(time.RFC3339))
-			return TextResult(fmt.Sprintf("NOT delivered: spawn %s has finished and its prompt cache is cold, so it was not woken (resuming it would rebuild its whole context at full price). Start a new spawn to go on with this work.", snap.ID)), nil
+			return ToolResult{}, fmt.Errorf("NOT delivered: spawn %s has finished and its prompt cache is cold, so it was not woken (resuming it would rebuild its whole context at full price). Start a new spawn to go on with this work", snap.ID)
 		}
 	}
 

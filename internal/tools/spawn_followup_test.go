@@ -145,6 +145,18 @@ func (h *followupHarness) send(t *testing.T, id, message string) string {
 	return res.Text
 }
 
+// sendRefused calls spawn_send for a call that must be refused, and returns the
+// refusal: Execute's error, so the shell function exits non-zero (#2849).
+func (h *followupHarness) sendRefused(t *testing.T, id, message string) string {
+	t.Helper()
+	params, _ := json.Marshal(map[string]string{"id": id, "message": message})
+	res, err := h.spawner.SendTool().Execute(h.ctx, params)
+	if err == nil {
+		t.Fatalf("spawn_send = %q, want a refusal as Execute's error", res.Text)
+	}
+	return err.Error()
+}
+
 func (h *followupHarness) status(t *testing.T, id string) string {
 	t.Helper()
 	params, _ := json.Marshal(map[string]string{"id": id})

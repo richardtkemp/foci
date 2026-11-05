@@ -31,7 +31,7 @@ func TestSpawnSend_ColdFinishedSpawnIsNotWoken(t *testing.T) {
 			waitStarted(t, agent.scriptedSpawnAgent, 0)
 			h.result(t)
 
-			got := h.send(t, id, "now fix it")
+			got := h.sendRefused(t, id, "now fix it")
 			if !strings.Contains(got, "NOT delivered") || !strings.Contains(got, "cold") || !strings.Contains(got, "new spawn") {
 				t.Errorf("send to a cold finished spawn = %q, want a not-delivered result naming the cold cache and a new spawn", got)
 			}

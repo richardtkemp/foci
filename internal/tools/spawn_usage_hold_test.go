@@ -246,7 +246,7 @@ func TestSpawnSend_RefusedDuringUsageHold(t *testing.T) {
 	h.result(t)
 
 	agent.hold("the usage hold is on (only keepalives and reminders run) until Tue 3 Nov 04:00.")
-	got := h.send(t, id, "now fix it")
+	got := h.sendRefused(t, id, "now fix it")
 	if !strings.Contains(got, "NOT delivered") || !strings.Contains(got, "usage hold") {
 		t.Errorf("send during a hold = %q, want NOT delivered naming the usage hold", got)
 	}
@@ -274,11 +274,11 @@ func TestSpawn_RefusedDuringUsageHold(t *testing.T) {
 		func() SpawnAgent { return agent }).SpawnTool()
 	params, _ := json.Marshal(map[string]any{"name": "nope", "prompt": "task", "context": "clone"})
 	res, err := tool.Execute(WithSessionKey(context.Background(), "test/imain"), params)
-	if err != nil {
-		t.Fatalf("spawn: %v", err)
+	if err == nil {
+		t.Fatalf("spawn during a hold = %q, want a refusal as Execute's error (#2849)", res.Text)
 	}
-	if !strings.Contains(res.Text, "NOT started") || !strings.Contains(res.Text, "usage hold") || !strings.Contains(res.Text, "04:00") {
-		t.Errorf("spawn during a hold = %q, want NOT started naming the hold and its lift", res.Text)
+	if got := err.Error(); !strings.Contains(got, "NOT started") || !strings.Contains(got, "usage hold") || !strings.Contains(got, "04:00") {
+		t.Errorf("spawn during a hold = %q, want NOT started naming the hold and its lift", got)
 	}
 	if calls, _ := agent.turns(); len(calls) != 0 {
 		t.Errorf("turns = %d, want none", len(calls))
