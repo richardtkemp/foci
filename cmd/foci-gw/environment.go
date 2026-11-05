@@ -372,12 +372,16 @@ func userCommandNote(platform string) string {
 	const tail = " The output then arrives as a message to you: reply to it."
 	switch platform {
 	case "app":
-		return head + "without reaching you as text. The user sees the result as a chip they can open." + tail
+		return head + "without reaching you as text. The user sees the result as a chip they can open." + tail + appRunButtonNote
 	case "telegram", "discord", "slack":
 		return head + "and the user gets its output as a plain-text reply." + tail
 	}
 	return ""
 }
+
+// appRunButtonNote tells the agent about the app's run button on code blocks (#2878).
+const appRunButtonNote = " The app also draws a run button on a code block with no label, or labelled bash, sh, zsh or shell, " +
+	"when the block's first word is an executable on this server. After the user confirms, the whole block runs the same way."
 
 // mermaidNote tells the agent that mermaid diagrams render in the app. Written
 // only for an app session whose server can render (mermaidRenders), the same

@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 	"sync"
 
 	"foci/internal/agent"
@@ -15,6 +17,7 @@ import (
 type userCommandAgent interface {
 	CheckUserCommand(script string) error
 	RedactUserCommand(script string) string
+	UserCommandRunnable(word string) bool
 	RunUserCommand(ctx context.Context, sessionKey, script string, persist func(path string) (string, error)) usercmd.Result
 	EnqueueUserCommandResult(base agent.Envelope, res usercmd.Result) bool
 }
@@ -147,6 +150,55 @@ func (h *Hub) startShellCommand(conn *appConn, b *convBinding, script, typed, in
 		}
 	})
 	return true
+}
+
+// maxShellRunnableBody bounds a POST /app/shell/runnable body. A real one holds a
+// conversation id and one word; PATH_MAX (4096) fits with room to spare.
+const maxShellRunnableBody = 8 << 10
+
+// ServeShellRunnable handles POST /app/shell/runnable (#2878): does a word name an
+// executable for the agent that owns a conversation? The app asks before it draws
+// the run button on a code block, because only the server has the agent's PATH and
+// files. Body: {"conversationId","word"}. Response: {"runnable":bool}. A conversation
+// with no binding, or an agent with no "!" support, answers false. Running stays the
+// ordinary "!cmd" message: this endpoint never starts anything.
+func (h *Hub) ServeShellRunnable(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.authBlob(w, r); !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		ConversationID string `json:"conversationId"`
+		Word           string `json:"word"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxShellRunnableBody)).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(struct {
+		Runnable bool `json:"runnable"`
+	}{h.wordRunnable(req.ConversationID, req.Word)})
+}
+
+// wordRunnable answers for the agent that owns convID. It never creates a binding:
+// a question must not mint a conversation.
+func (h *Hub) wordRunnable(convID, word string) bool {
+	h.mu.RLock()
+	b := h.convs[convID]
+	h.mu.RUnlock()
+	if b == nil {
+		return false
+	}
+	conn := h.PrimaryBot(b.agent())
+	if conn == nil {
+		return false
+	}
+	ag, ok := conn.agentRef.(userCommandAgent)
+	return ok && ag.UserCommandRunnable(word)
 }
 
 // shellNotification is one state of a shell chit. Ambient: neither state is news

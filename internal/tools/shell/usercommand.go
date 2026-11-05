@@ -7,8 +7,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
+	"foci/internal/procx"
 	"foci/internal/secrets"
 	"foci/internal/secrets/bitwarden"
 	"foci/internal/tools"
@@ -34,6 +37,34 @@ type UserRunner struct {
 // Check refuses a script the runner will not run, as the shell tool refuses it.
 func (r *UserRunner) Check(script string) error {
 	return checkSecretTemplates(script)
+}
+
+// Runnable reports whether word, the first word of a code block in chat (#2878),
+// names an executable file a "!" command could start: a regular file this user
+// may execute, found the way the command's shell finds it. A word with a slash is
+// a path (relative to WorkDir, the command's cwd; a leading ~/ is the home dir). A
+// bare word is looked up on the operator PATH, the PATH the command's process gets
+// (runForeground; ExtraEnv never sets PATH). A builtin, a shell function, or a
+// file in WorkDir with no slash in the word is not runnable, by this definition.
+func (r *UserRunner) Runnable(word string) bool {
+	if word == "" || strings.ContainsRune(word, 0) {
+		return false
+	}
+	name := word
+	if rest, ok := strings.CutPrefix(word, "~/"); ok {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return false
+		}
+		name = filepath.Join(home, rest)
+	}
+	if strings.Contains(name, "/") && !filepath.IsAbs(name) {
+		name = filepath.Join(r.WorkDir, name)
+	}
+	// An ErrDot answer (a relative PATH entry) is relative to the gateway's cwd, not
+	// the command's: it counts as not found.
+	_, err := procx.LookPath(procx.Operator, name)
+	return err == nil
 }
 
 // Redact scrubs secret values from text, exactly as shell tool output is.

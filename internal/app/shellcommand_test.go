@@ -485,3 +485,89 @@ func TestShellCommand_App_OldClientReadsPlainNotification(t *testing.T) {
 		t.Errorf("text = %q", text)
 	}
 }
+
+func postShellRunnable(h *Hub, tok, method, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, "/app/shell/runnable", strings.NewReader(body))
+	if tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	w := httptest.NewRecorder()
+	h.ServeShellRunnable(w, req)
+	return w
+}
+
+func runnableBody(convID, word string) string {
+	b, _ := json.Marshal(map[string]string{"conversationId": convID, "word": word})
+	return string(b)
+}
+
+func TestServeShellRunnable(t *testing.T) {
+	s := newShellHarness(t, 1<<20, 5*time.Second)
+	tok := s.h.devices.pair("rb", "").Token
+	s.h.ensureBinding(nil, "ag", "conv-runnable")
+
+	bin := filepath.Join(s.ag.UserShell.WorkDir, "tool-2878")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name, conv, word string
+		want             bool
+	}{
+		{"path in the agent's workspace", "conv-runnable", "./tool-2878", true},
+		{"on PATH", "conv-runnable", "sh", true},
+		{"not found", "conv-runnable", "no-such-command-2878", false},
+		{"unknown conversation", "conv-unknown", "sh", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := postShellRunnable(s.h, tok, http.MethodPost, runnableBody(tc.conv, tc.word))
+			if w.Code != http.StatusOK {
+				t.Fatalf("code = %d (%s), want 200", w.Code, w.Body.String())
+			}
+			var got struct {
+				Runnable *bool `json:"runnable"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.Runnable == nil {
+				t.Fatalf("body %q: %v", w.Body.String(), err)
+			}
+			if *got.Runnable != tc.want {
+				t.Errorf("runnable = %v, want %v", *got.Runnable, tc.want)
+			}
+		})
+	}
+
+	// A question must not mint a conversation, and must start nothing.
+	s.h.mu.RLock()
+	_, minted := s.h.convs["conv-unknown"]
+	s.h.mu.RUnlock()
+	if minted {
+		t.Error("asking about an unknown conversation created a binding")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.envs) != 0 {
+		t.Errorf("the endpoint reached the agent: %d envelopes", len(s.envs))
+	}
+}
+
+func TestServeShellRunnable_Rejects(t *testing.T) {
+	s := newShellHarness(t, 1<<20, 5*time.Second)
+	tok := s.h.devices.pair("rb", "").Token
+	for _, tc := range []struct {
+		name, tok, method, body string
+		want                    int
+	}{
+		{"no token", "", http.MethodPost, runnableBody("c", "sh"), http.StatusUnauthorized},
+		{"bad token", "nope", http.MethodPost, runnableBody("c", "sh"), http.StatusForbidden},
+		{"GET", tok, http.MethodGet, "", http.StatusMethodNotAllowed},
+		{"not JSON", tok, http.MethodPost, "sh", http.StatusBadRequest},
+		{"too large", tok, http.MethodPost, runnableBody("c", strings.Repeat("a", maxShellRunnableBody)), http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if w := postShellRunnable(s.h, tc.tok, tc.method, tc.body); w.Code != tc.want {
+				t.Errorf("code = %d (%s), want %d", w.Code, w.Body.String(), tc.want)
+			}
+		})
+	}
+}

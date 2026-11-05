@@ -494,5 +494,8 @@ func STTHandler() http.HandlerFunc { return withHub((*Hub).ServeSTT) }
 // AvatarHandler returns the GET /app/avatar/<agentId> handler (agent avatar image).
 func AvatarHandler() http.HandlerFunc { return withHub((*Hub).ServeAvatar) }
 
+// ShellRunnableHandler returns the POST /app/shell/runnable handler (#2878).
+func ShellRunnableHandler() http.HandlerFunc { return withHub((*Hub).ServeShellRunnable) }
+
 // MermaidHandler returns the POST /app/render/mermaid handler (diagram → PNG, #1980).
 func MermaidHandler() http.HandlerFunc { return withHub((*Hub).ServeMermaid) }

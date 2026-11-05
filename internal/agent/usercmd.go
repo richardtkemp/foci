@@ -23,6 +23,12 @@ func (a *Agent) CheckUserCommand(script string) error {
 	return a.UserShell.Check(script)
 }
 
+// UserCommandRunnable reports whether word names an executable a "!" command of
+// this agent could start (#2878). An agent with no runner has none.
+func (a *Agent) UserCommandRunnable(word string) bool {
+	return a.UserShell != nil && a.UserShell.Runnable(word)
+}
+
 // RedactUserCommand scrubs secret values from a command's own text before it is
 // shown anywhere.
 func (a *Agent) RedactUserCommand(script string) string {

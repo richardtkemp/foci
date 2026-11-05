@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/procx"
 	"foci/internal/secrets"
 	"foci/internal/usercmd"
 )
@@ -236,4 +237,103 @@ func TestUserRunner_CancelKillsGroupAndKeepsOutput(t *testing.T) {
 		t.Fatal("cancel did not end the command within 5 s")
 	}
 	waitDead(t, pid)
+}
+
+// writeExec creates dir/name with the given mode, running a harmless script.
+func writeExec(t *testing.T, dir, name string, mode os.FileMode) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, []byte("#!/bin/sh\necho ran-"+name+"\n"), mode); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestUserRunnerRunnable(t *testing.T) {
+	binDir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+	writeExec(t, binDir, "on-path-2878", 0o755)
+	writeExec(t, binDir, "plain-on-path-2878", 0o644)
+
+	r := userRunner(t, 5*time.Second, 1<<20)
+	abs := writeExec(t, t.TempDir(), "abs-2878", 0o755)
+	writeExec(t, filepath.Join(r.WorkDir, "scripts"), "rel-2878", 0o755)
+	writeExec(t, r.WorkDir, "in-cwd-2878", 0o755)
+	writeExec(t, home, "in-home-2878", 0o755)
+	subdir := filepath.Join(r.WorkDir, "a-dir")
+	if err := os.Mkdir(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		word string
+		want bool
+	}{
+		{"on-path-2878", true},
+		{"plain-on-path-2878", false}, // on PATH, not executable
+		{"no-such-command-2878", false},
+		{abs, true},
+		{abs + ".missing", false},
+		{"./scripts/rel-2878", true}, // relative to the workspace, not the gateway's cwd
+		{"scripts/rel-2878", true},
+		{"./in-cwd-2878", true},
+		{"in-cwd-2878", false}, // a shell does not look in its cwd for a bare word
+		{"~/in-home-2878", true},
+		{"./a-dir", false}, // a directory
+		{"", false},
+		{"nul\x00byte", false},
+		{"declare", false}, // a shell builtin is no file
+	} {
+		if got := r.Runnable(tc.word); got != tc.want {
+			t.Errorf("Runnable(%q) = %v, want %v", tc.word, got, tc.want)
+		}
+	}
+}
+
+// The check must agree with what actually happens when the word is run: a word it
+// calls runnable starts, and one it refuses gets the shell's "not found" (127) or
+// "cannot execute" (126).
+func TestUserRunnerRunnable_AgreesWithRun(t *testing.T) {
+	binDir := t.TempDir()
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+	writeExec(t, binDir, "on-path-2878", 0o755)
+	r := userRunner(t, 10*time.Second, 1<<20)
+	writeExec(t, filepath.Join(r.WorkDir, "scripts"), "rel-2878", 0o755)
+	writeExec(t, r.WorkDir, "in-cwd-2878", 0o755)
+	writeExec(t, r.WorkDir, "plain-2878", 0o644)
+
+	for _, word := range []string{"on-path-2878", "./scripts/rel-2878", "./in-cwd-2878", "in-cwd-2878", "./plain-2878", "no-such-command-2878"} {
+		res := r.Run(context.Background(), word)
+		ran := res.State == usercmd.StateExited && res.ExitCode == 0 && strings.Contains(res.Output, "ran-")
+		if refused := res.ExitCode == 126 || res.ExitCode == 127; !ran && !refused {
+			t.Errorf("%q: unexpected result %+v", word, res)
+		}
+		if got := r.Runnable(word); got != ran {
+			t.Errorf("Runnable(%q) = %v, but running it gave exit %d: %q", word, got, res.ExitCode, res.Output)
+		}
+	}
+}
+
+// Dick's ruling: the PATH is the one a "!" command gets, the operator PATH, which
+// can differ from the gateway's own. A word found only on the operator PATH is
+// runnable and does run; so a check of the gateway's PATH would fail this.
+func TestUserRunnerRunnable_UsesTheCommandsPath(t *testing.T) {
+	binDir := t.TempDir()
+	writeExec(t, binDir, "operator-only-2878", 0o755)
+	procx.SetOperatorEnv(map[string]string{"PATH": binDir + ":" + os.Getenv("PATH")})
+	t.Cleanup(func() { procx.SetOperatorEnv(nil) })
+
+	r := userRunner(t, 10*time.Second, 1<<20)
+	if !r.Runnable("operator-only-2878") {
+		t.Error("a word on the operator PATH is not runnable")
+	}
+	res := r.Run(context.Background(), "operator-only-2878")
+	if res.ExitCode != 0 || !strings.Contains(res.Output, "ran-operator-only-2878") {
+		t.Errorf("the command itself did not find it: %+v", res)
+	}
 }
