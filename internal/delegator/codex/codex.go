@@ -187,6 +187,13 @@ type Backend struct {
 	// than lost. registerThread and a successful CleanupSession remove the
 	// entry. Guarded by threadMapMu.
 	forkedThreads map[string]struct{}
+	// releasedThreads holds the threads foci has handed back to codex
+	// (thread/unsubscribe, release.go) that codex has not yet unloaded. codex
+	// still sends such a thread's status changes — a turn that was running
+	// at release runs to its end — and its thread/closed; they are expected,
+	// not lost. registerThread (a resume) and thread/closed remove the entry.
+	// Guarded by threadMapMu.
+	releasedThreads map[string]struct{}
 	// unclaimed holds the deferred lost-line WARNs (unclaimed.go), on the
 	// owner only: lines for a thread that matches no session yet, which codex
 	// sends for a fork or resume before foci can register it (#2700).
@@ -356,6 +363,7 @@ func (b *Backend) registerThread(fociSessionID, codexThreadID string) {
 	p.threadSessions[codexThreadID] = fociSessionID
 	p.threadBackends[codexThreadID] = b
 	delete(p.forkedThreads, codexThreadID) // a fork is now its session's
+	delete(p.releasedThreads, codexThreadID)
 	p.threadMapMu.Unlock()
 	// Its early lines (sent before this registration) were not lost.
 	b.claimUnclaimed(codexThreadID)

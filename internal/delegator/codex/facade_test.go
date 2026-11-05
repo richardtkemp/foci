@@ -35,6 +35,11 @@ with open(capture, "w") as f:
       thread={"id":tid,"path":None,"status":{"type":"idle"}}
       send({"id":ident,"result":{"approvalsReviewer":msg.get("params",{}).get("approvalsReviewer","auto_review"),"thread":thread,"model":"test-model"}})
       send({"method":"thread/started","params":{"thread":thread}})
+    elif method == "thread/resume":
+      thread={"id":msg["params"]["threadId"],"path":None,"status":{"type":"idle"}}
+      send({"id":ident,"result":{"approvalsReviewer":msg.get("params",{}).get("approvalsReviewer","auto_review"),"thread":thread,"model":"test-model"}})
+    elif method == "thread/unsubscribe":
+      send({"id":ident,"result":{"status":"unsubscribed"}})
     elif method == "turn/start":
       tid=msg["params"]["threadId"]
       send({"id":ident,"result":{"turn":{"id":"turn-"+tid,"status":"inProgress"}}})

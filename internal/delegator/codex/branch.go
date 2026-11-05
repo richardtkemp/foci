@@ -65,6 +65,11 @@ func (b *Backend) ForkSession(ctx context.Context, req delegator.ForkRequest) (d
 	if req.Opening != nil {
 		res.OpeningWritten = b.writeOpening(tr.Thread.ID, req.Opening)
 	}
+	// thread/fork loads the fork and subscribes this connection to it, but no
+	// session runs it yet: a depth leaf may not be opened for hours, or ever.
+	// Release it now (release.go); the branch session's thread/resume loads it
+	// again from its rollout, which codex writes at fork time.
+	b.unsubscribeThread(tr.Thread.ID)
 	return res, nil
 }
 
@@ -212,10 +217,12 @@ func (b *Backend) CleanupSession(ctx context.Context, req delegator.CleanupReque
 	})
 	if err == nil {
 		b.forgetFork(req.SessionID)
+		b.forgetReleased(req.SessionID)
 		return nil
 	}
 	if strings.Contains(err.Error(), noRolloutFoundMarker) {
 		b.forgetFork(req.SessionID)
+		b.forgetReleased(req.SessionID)
 		// Already absent (never existed, or a prior delete already ran) —
 		// documented as not-an-error, matching the contract above.
 		b.logDebugf("thread/delete for %s: already absent: %v", req.SessionID, err)

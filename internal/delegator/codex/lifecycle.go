@@ -321,9 +321,11 @@ func (b *Backend) Close() error {
 	}
 	sharedPool.Unlock()
 	if !last {
-		if threadID != "" {
-			owner.unregisterThread(threadID)
-		}
+		// The app-server lives on for sibling sessions, so this thread must be
+		// handed back to it explicitly, or codex keeps it loaded — with its
+		// rollout and writer-lock files open — for the app-server's whole life
+		// (release.go).
+		b.releaseThread(threadID)
 		return nil
 	}
 	b = owner
@@ -519,6 +521,14 @@ func (b *Backend) resumeThread(threadID string) error {
 		BaseInstructions:  b.startOpts.SystemPrompt,
 	}
 	result, err := b.sendAndWait("thread/resume", params)
+	// A thread foci released (release.go) unloads 60s later; a resume that
+	// lands in that instant is refused until the unload finishes. Wait it out
+	// rather than fall back to a fresh thread and lose the history.
+	for deadline := time.Now().Add(resumeClosingRetryFor); isThreadClosing(err) && time.Now().Before(deadline); {
+		b.logInfof("thread/resume %s: codex is still unloading it; retrying", threadID)
+		time.Sleep(resumeClosingRetryEvery)
+		result, err = b.sendAndWait("thread/resume", params)
+	}
 	if err != nil {
 		return err
 	}

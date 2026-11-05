@@ -113,6 +113,9 @@ func TestForkSession_Success(t *testing.T) {
 
 	var gotMethod, gotThreadID string
 	b := setupMockBackend(t, func(method string, params json.RawMessage, id int64) (json.RawMessage, error) {
+		if method == "thread/unsubscribe" { // the fork's release (release.go)
+			return json.RawMessage(`{"status":"unsubscribed"}`), nil
+		}
 		gotMethod = method
 		var p struct {
 			ThreadID   string `json:"threadId"`

@@ -78,7 +78,13 @@ func (b *Backend) dispatch(line []byte) {
 			// Nor is a thread foci forked whose session has not resumed it yet
 			// (a depth leaf that has not run, #2720): it is known, not lost. Its
 			// lines are the fork's own lifecycle, which dispatchLost consumes.
-			if env.Method != "thread/started" && !p.isPendingFork(id) {
+			// Nor is a thread foci released (release.go), which is unmapped by
+			// design: codex still sends its status changes until it unloads it,
+			// and then thread/closed.
+			if env.Method == "thread/closed" {
+				defer p.forgetReleased(id)
+			}
+			if env.Method != "thread/started" && env.Method != "thread/closed" && !p.isPendingFork(id) && !p.isReleased(id) {
 				b.noteUnclaimed(id, env.Method, time.Now())
 			}
 			// Whatever the owner shows the user from this line (message text,
@@ -263,6 +269,16 @@ func (b *Backend) handleNotification(line []byte, method string) {
 			return
 		}
 		b.onThreadStarted(&p)
+	case "thread/closed":
+		// Codex unloaded a thread this facade still maps. A thread foci
+		// releases is unmapped in the same step (release.go), long before
+		// codex's 60s unload, so this one was not released by foci; its next
+		// turn/start would fail. Say so.
+		var p struct {
+			ThreadID string `json:"threadId"`
+		}
+		_ = json.Unmarshal(params, &p)
+		b.logWarnf("codex unloaded thread %s while a session still uses it (thread/closed)", p.ThreadID)
 	case "thread/status/changed":
 		var p threadStatusChangedParams
 		if err := json.Unmarshal(params, &p); err != nil {

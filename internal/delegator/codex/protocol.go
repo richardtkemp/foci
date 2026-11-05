@@ -332,6 +332,17 @@ type compactStartParams struct {
 	ThreadID string `json:"threadId"`
 }
 
+// threadUnsubscribeParams / threadUnsubscribeResult are thread/unsubscribe
+// (codex app-server 0.166.0 schema). Status is "unsubscribed", "notSubscribed"
+// or "notLoaded". See release.go for what the call does and does not do.
+type threadUnsubscribeParams struct {
+	ThreadID string `json:"threadId"`
+}
+
+type threadUnsubscribeResult struct {
+	Status string `json:"status"`
+}
+
 // configWarningParams carries a recoverable configuration or initialization
 // problem. Emitted as the configWarning notification.
 type configWarningParams struct {
