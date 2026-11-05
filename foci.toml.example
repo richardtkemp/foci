@@ -158,6 +158,13 @@ model = "anthropic/claude-haiku-4-5-20251001"
 # Per-agent platform configuration ([[agents.platforms]]) is shown below,
 # under "Per-agent platform overrides".
 
+# Extra writable paths for every delegated filesystem sandbox. Absolute paths
+# only; does not change sandbox mode, approvals or network access. Needs restart.
+# Currently used by Codex workspace-write; Claude Code/opencode are not sandboxed
+# by foci. Forced read-only exploration ignores these grants.
+# [sandbox]
+# writable_roots = []
+
 [[agents]]
 id = "myagent"
 # name = "My Agent"                       # human-readable name (default: capitalised id)
@@ -167,6 +174,8 @@ id = "myagent"
 # avatar = ""                             # image served to the app (empty = auto-detect $workspace/avatar.*)
 # default_platform = ""                   # per-agent override of top-level default_platform
 # backend = "api"                         # "api" (default) or a coding agent: "claude-code", "codex", "opencode"
+# [agents.sandbox]
+# writable_roots = []                     # replaces global list; [] clears inherited grants
 # [agents.backend_config]                 # backend-specific settings (typed struct — see docs/CONFIG.md)
 # sandbox = "workspace-write"             # Codex only: read-only, workspace-write, danger-full-access
 # approvals_reviewer = "auto_review"       # Codex only: auto_review (default) or user; requires restart

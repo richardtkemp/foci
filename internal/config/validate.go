@@ -203,6 +203,14 @@ func (cfg *Config) HasAPIAgent() bool {
 // to validate each agent's backend value — see validateAgentBackends and
 // Load's doc comment.
 func (cfg *Config) Validate(knownBackends []string) error {
+	if err := validateWritableRoots("sandbox.writable_roots", cfg.Sandbox.WritableRoots); err != nil {
+		return err
+	}
+	for _, a := range cfg.Agents {
+		if err := validateWritableRoots(fmt.Sprintf("agent %q sandbox.writable_roots", a.ID), a.Sandbox.WritableRoots); err != nil {
+			return err
+		}
+	}
 	// Validate agent IDs don't collide with reserved directory names
 	for _, a := range cfg.Agents {
 		if a.BackendConfig.ApprovalsReviewer != nil {

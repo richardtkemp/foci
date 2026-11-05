@@ -26,10 +26,14 @@ import (
 // the manager's per-session result. Spec.Validate rejects them in StartFields.
 var ManagerStartFields = []string{"SystemPromptFunc", "EffortFunc", "ModelFunc", "ExecRegistry"}
 
-// FociVersionConfigKey is the one backend_config map key the gateway adds
+// FociVersionConfigKey is a backend_config map key the gateway adds
 // itself: the foci build version, injected into every backend's cfg map. It is
 // not a [agents.backend_config] TOML key.
 const FociVersionConfigKey = "foci_version"
+
+// WritableRootsConfigKey carries the resolved [sandbox] / [agents.sandbox]
+// writable_roots into backend constructors; it is not a backend_config TOML key.
+const WritableRootsConfigKey = "writable_roots"
 
 // gatewayConfigKeys are the backend_config keys the gateway (not the backend
 // package) reads for a delegated agent, each with the condition under which

@@ -157,7 +157,7 @@ func (b *Backend) launchAppServer(ctx context.Context, opts delegator.StartOptio
 		compactPrompt = opts.CompactionPromptFunc("")
 	}
 
-	args := appServerArgs(compactPrompt, b.sandboxMode(), b.approvalsReviewer(), b.approvalPolicy())
+	args := b.appServerArgs(compactPrompt)
 	// The session-env hook must be configured at spawn: hook config and its
 	// trust state are session flags on this argv, and there is no way to add
 	// either to a running app-server. See hooks.go.
@@ -463,6 +463,7 @@ func (b *Backend) initialize() error {
 // startThread creates a new thread and stores the thread ID.
 func (b *Backend) startThread() (string, error) {
 	params := threadStartParams{
+		Config:            b.writableRootsConfig(),
 		ApprovalsReviewer: b.approvalsReviewer(),
 		Cwd:               b.workDir,
 		Sandbox:           b.sandboxMode(),
@@ -515,6 +516,7 @@ func (b *Backend) verifyReviewer(method string, result threadResult) error {
 // resumeThread resumes an existing thread.
 func (b *Backend) resumeThread(threadID string) error {
 	params := threadResumeParams{
+		Config:            b.writableRootsConfig(),
 		ApprovalsReviewer: b.approvalsReviewer(),
 		ThreadID:          threadID,
 		Sandbox:           b.sandboxMode(),
@@ -539,6 +541,7 @@ func (b *Backend) resumeThread(threadID string) error {
 	if err := b.verifyReviewer("thread/resume", tr); err != nil {
 		return err
 	}
+	b.noteResumedWritableRoots(threadID, tr.Sandbox)
 	b.mu.Lock()
 	b.threadID = threadID
 	b.sessionFilePath = tr.Thread.Path

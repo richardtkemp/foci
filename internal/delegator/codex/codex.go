@@ -66,7 +66,9 @@ type Backend struct {
 	facadeClosed    bool
 	threadID        string
 	sessionFilePath string
-	threadStatus    threadStatus
+	// staleRootsLogged suppresses repeated resume diagnostics for this facade/thread.
+	staleRootsLogged map[string]bool
+	threadStatus     threadStatus
 	// lastTurnError is the error message of the most recent failed turn
 	// (e.g. "Your workspace is out of credits…"). StatusDetail shows it
 	// beside codex's bare thread status ("systemError" says nothing about

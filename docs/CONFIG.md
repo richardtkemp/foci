@@ -1649,6 +1649,51 @@ workspace = "/home/coder/projects/myapp"
 # CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS = "1"
 ```
 
+#### Extra writable paths — `[sandbox]`
+
+`sandbox.writable_roots` is a list of **absolute paths**, default `[]`, available
+for every agent. `[agents.sandbox] writable_roots` replaces the global list; an
+unset per-agent list inherits, and an explicit `[]` removes inherited grants.
+Paths need not exist when the config is loaded. Relative paths, `~` and empty
+entries are rejected: supply full paths. Changes require a Foci restart.
+
+```toml
+[sandbox]
+writable_roots = ["/home/rich/.config/gcloud", "/home/rich/git/project/.git"]
+
+[[agents]]
+id = "restricted"
+[agents.sandbox]
+writable_roots = []
+```
+
+Codex applies these **additional** grants only in `workspace-write`, at app-server
+launch and on thread creation/fork (including removal of inherited parent
+grants). **Codex 0.166.0 can retain saved roots on resume**, even after restarting
+Foci. Foci logs an INFO when those roots differ from the current setting; start
+a new thread or fork to apply changed grants. A fork of an older session gets
+the current roots. Cold resume can add current grants to saved grants, but does
+not remove saved grants; an already-loaded resume keeps its loaded roots.
+The workspace and Codex's default temporary directories remain writable.
+To grant git metadata access, list the actual `.git` directory, not just its
+parent repository; worktree metadata is under the main repository's git dir.
+Forced read-only exploration gets no writable roots. `read-only` and
+`danger-full-access` keep their existing meanings. Nothing here changes network
+policy, approval/reviewer settings, or Foci's command permission rules.
+
+Foci launches Claude Code and opencode without a filesystem sandbox; neither
+needs or consumes this setting. Their own tool permission checks still apply.
+This does not override any independently configured sandbox in those tools.
+The API backend is likewise unaffected. The setting belongs to `[sandbox]`,
+**not** `[backend_config]`.
+
+Example approval request for all agents (replaces the whole global list):
+
+```sh
+foci config set sandbox.writable_roots '["/home/rich/.config/gcloud", "/home/rich/git/project/.git"]'
+foci config set 'agents[restricted].sandbox.writable_roots' '[]'
+```
+
 Codex launches in **Approve for me** mode by default: the `workspace-write` sandbox with `on-request` approvals routed to Codex automatic review. `backend_config.approvals_reviewer` accepts `auto_review` (the default when unset or empty) or `user` (human review). The same resolved reviewer is explicitly sent on app-server launch, thread creation and resume, so saved thread settings cannot override it. Foci refuses to start/resume if Codex returns a different or missing reviewer. `backend_config.sandbox` can override the sandbox; read-only exploration still forces `read-only`, independently of reviewer selection. These per-agent backend settings require a Foci restart to rebuild the shared backend instances; they do not modify `~/.codex/config.toml`.
 
 For `backend = "codex"`, `model` may be either an exact app-server catalogue

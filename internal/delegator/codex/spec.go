@@ -96,7 +96,7 @@ var spec = delegator.Spec{
 	UsageQuery:       QueryUsage,
 	// api_key is read but no config path supplies it
 	// (docs/BACKENDS.md footnote 48). foci_version is added by the gateway.
-	ConfigKeys: []string{"binary", "model", "sandbox", "approvals_reviewer", "api_key", delegator.FociVersionConfigKey},
+	ConfigKeys: []string{"binary", "model", "sandbox", delegator.WritableRootsConfigKey, "approvals_reviewer", "api_key", delegator.FociVersionConfigKey},
 	StartFields: []string{
 		"WorkDir", "SystemPrompt", "Model", "AgentID", "Label", "ResumeSessionID", "SessionKey",
 		"BatchOnly", "BatchAccess", "Env", "AutoApproveRules", "Effort", "CompactionPromptFunc",

@@ -26,7 +26,7 @@ func (b *Backend) ForkSession(ctx context.Context, req delegator.ForkRequest) (d
 			parentID = mapped
 		}
 	}
-	params := threadForkParams{ThreadID: parentID, Ephemeral: false}
+	params := threadForkParams{ThreadID: parentID, Ephemeral: false, Config: b.writableRootsConfig(), Sandbox: b.sandboxMode()}
 	if req.TruncateAfter > 0 {
 		return delegator.ForkResult{}, fmt.Errorf("codex: truncateAfter is not yet supported")
 	}

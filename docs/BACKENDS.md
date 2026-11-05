@@ -359,6 +359,13 @@ grepped for each ✗. Row IDs are not renumbered, so the gaps are the removed ro
 
 ### 12. Config keys that apply to only some backends
 
+The backend-neutral `[sandbox] writable_roots` (per-agent `[agents.sandbox]`)
+is injected by the gateway, not a `backend_config` key. Codex uses it for
+workspace-write sandbox grants on launch/start/fork; resumed threads retain saved
+grants on Codex 0.166.0 (INFO on mismatch). Forced read-only batches
+ignore it. Foci does not enable a filesystem sandbox for Claude Code or opencode,
+so they do not consume it. See [extra writable paths](CONFIG.md#extra-writable-paths--sandbox).
+
 Generated from each backend's `Spec.ConfigKeys` / `Spec.StartFields` (`internal/delegator/config_schema.go`, #2178). `make lint` checks those declarations against each backend package's source, and the gateway warns at startup (and `foci check config` lists) every `backend_config` key an agent sets that its backend ignores.
 
 <!-- BEGIN GENERATED CONFIG SCHEMA: internal/delegator/all TestBackendsDoc_ConfigSchemaTable. Edit the Specs, not this block. -->

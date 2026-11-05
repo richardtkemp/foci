@@ -31,6 +31,7 @@ type ResolvedAgentConfig struct {
 	// Telegram-only (table settings live in Display, shared across platforms).
 	TelegramLongPollTimeout string
 
+	Sandbox     SandboxConfig
 	Permissions ResolvedPermissions
 
 	// Webhooks is the merged System.Webhooks map (global base + agent overlay).
@@ -141,6 +142,7 @@ func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
 	resolveToolAccess(&tools, acfg.Tools.ToolConfig, cfg.Tools.ToolConfig)
 
 	return &ResolvedAgentConfig{
+		Sandbox:                 Merge(acfg.Sandbox, cfg.Sandbox),
 		Loop:                    resolveLoop(Merge(acfg.Loop, cfg.AgentLoop)),
 		Behavior:                resolveBehavior(Merge(acfg.Behavior, cfg.Behavior)),
 		Voice:                   resolveVoice(Merge(acfg.Voice, cfg.Voice)),

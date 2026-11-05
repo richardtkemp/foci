@@ -286,6 +286,8 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		DepthLeaf: tools.InDepthLeaf,
 		NewBackend: func() (delegator.Delegator, error) {
 			cfgMap := bc.ToMap()
+			// Sandbox grants are backend-neutral and frozen with the backend instance.
+			cfgMap[delegator.WritableRootsConfigKey] = p.resolved.Sandbox.WritableRoots // static-cfg:ignore: sandbox grants are restart-required like backend sandbox/reviewer; pooled app-server launch and thread RPCs must agree
 			cfgMap[delegator.FociVersionConfigKey] = version
 			be, err := delegator.New(backendName, cfgMap)
 			if err != nil {

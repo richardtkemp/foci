@@ -591,6 +591,33 @@ Phase 4 — Post-turn:
 
 Codex sandbox posture comes from `agents.backend_config.sandbox` through `BackendConfig.ToMap` → `sandboxMode()` → both `thread/start` and `thread/resume`. Reviewer posture comes from `agents.backend_config.approvals_reviewer` through `BackendConfig.ToMap` → `approvalsReviewer()` → app-server launch and explicit `approvalsReviewer` on both thread RPCs. Unset/empty defaults to `auto_review`; `user` is an explicit human-review override. Thread responses must confirm the resolved reviewer before the facade is registered/marked ready; omitted or conflicting values fail closed (persisted thread settings override server defaults when RPC overrides are omitted). The code defaults remain `workspace-write` with `approval_policy=on-request`. Reviewer denial remains denial. `/mode` availability and all menu/help/alias choices come from each backend’s `Spec.PermissionModes` plus `CapControlPermissionMode`, exposed through `Agent.BackendPermissionModes`. For Codex the command selects native `user` or `auto_review`; `SendControl` queues `pendingReviewer` and `on-request`, and `applyPendingControls` sends both on the next and subsequent `turn/start` calls. This changes an already-loaded thread without a history reset. These backend settings require rebuilding the long-lived backend instances on a Foci restart and do not alter shared Codex CLI config; an explicit `danger-full-access` override removes the Codex sandbox, not the approval gate. Read-only batches force `read-only` regardless of the agent override, and `approval_policy=never` (#2702).
 
+**Extra sandbox grants:** `config.Resolve` merges `[agents.sandbox]` over
+`[sandbox]` (`SandboxConfig.WritableRoots`; nil inherits, `[]` clears).
+`configureDelegated.NewBackend` injects the frozen list with
+`delegator.WritableRootsConfigKey`. Codex's `writableRoots()` filters grants to
+`workspace-write`, excluding forced read-only batches. `Backend.appServerArgs`
+adds `-c sandbox_workspace_write.writable_roots=<TOML array>`; thread/start,
+thread/fork and thread/resume also send that key through `config`. Start and fork
+honor it (including `[]` to remove parent grants). **Codex 0.166.0 ignores the
+root override on an already-loaded resume**, retaining its loaded roots. A
+cold resume instead **unions saved and requested roots**: it can add grants but
+cannot remove saved ones. Fork grants are saved correctly: a fork created with
+`[]` cold-resumes with `[]`, and a rootless parent's fork created with `[A]`
+cold-resumes with `[A]` (both with an empty resume override). With override `[B]`,
+the latter cold-resumes with `[A,B]`, not `[B]`.
+`resumeThread` inspects the response sandbox and emits one INFO per facade/thread
+when effective and configured workspace-write roots differ (path sets, not ordering).
+Restart rebuilds backend defaults, but does not revoke existing thread grants;
+start a new thread or fork to apply the setting. Forked depth leaves and character
+spawn branches receive current grants even from a stale-root parent. Verified
+with the isolated, opt-in `TestWritableRootsLive` (no model turns). This resume
+limitation was accepted by Cam, not a ruling from Dick.
+No sandboxPolicy reconstruction, network change or approval change.
+Claude Code (`ccstream/lifecycle.go:Start`) and opencode
+(`opencode/lifecycle.go:serverProcess.start`) are direct Operator process launches;
+foci does not enable a filesystem sandbox for them and they do not read the list.
+Restart is required, like sandbox/reviewer settings.
+
 ### Batch runs (`DelegatedManager.RunBatch`, #1962)
 
 A **batch** is a one-shot prompt whose answer goes back to an in-process caller and never to a chat: memory consolidation (`periodic/consolidation.go`), nudge extraction (`nudge.Extractor.ExtractViaBatch`), the delegated `foci_summary` tool (`tools.BatchSummariser`), and the delegated `/prompts diff` summary (`command.buildDiffSummary`). Every caller passes a `delegator.BatchRequest` with a **`Purpose`** (`delegator.BatchPurpose*`: `consolidation`, `nudge_extraction`, `summary`, `prompt_diff`) and the owning session (`OwnerSessionKey`).

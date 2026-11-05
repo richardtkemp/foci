@@ -458,3 +458,22 @@ func TestConfigureDelegated_FoldsGlobalDefaultPermissionIntoBackendConfig(t *tes
 		})
 	}
 }
+
+// TestConfigureDelegated_WritableRoots proves the resolved backend-neutral list
+// reaches the constructor, not merely the configuration resolver.
+func TestConfigureDelegated_WritableRoots(t *testing.T) {
+	rec := registerCfgCatcher("test-sandbox-roots", "")
+	p, shared := wiringFixture(t)
+	p.resolved.Sandbox.WritableRoots = []string{"/extra-root"}
+	ag := &agent.Agent{}
+	if _, ok := configureDelegated(ag, p, shared, "test-sandbox-roots", config.BackendConfig{}); !ok {
+		t.Fatal("configureDelegated failed")
+	}
+	if _, err := ag.DelegatedManager.NewBackend(); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := rec.got["writable_roots"].([]string)
+	if !ok || len(got) != 1 || got[0] != "/extra-root" {
+		t.Fatalf("constructor roots=%v", rec.got["writable_roots"])
+	}
+}

@@ -179,7 +179,7 @@ if [ "$(uname -s)" = Darwin ] && [ -x /bin/dash ]; then
 	SH_SHIM=/private/tmp/fgw-shbin
 	mkdir -p "$SH_SHIM" && ln -sfn /bin/dash "$SH_SHIM/sh" && TEST_PATH="$SH_SHIM:$TEST_PATH"
 fi
-OPTIN_VARS=(FOCI_OPENCODE_LIVE FOCI_OPENCODE_BIN ANTHROPIC_API_KEY)
+OPTIN_VARS=(FOCI_CODEX_LIVE_ROOT FOCI_CODEX_BIN FOCI_OPENCODE_LIVE FOCI_OPENCODE_BIN ANTHROPIC_API_KEY)
 PASSTHRU=()
 PASSTHRU_SHOWN=()
 for v in $(compgen -e); do

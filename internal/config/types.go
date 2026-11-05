@@ -321,6 +321,13 @@ type CCBackendConfig struct {
 	BatchModel string `toml:"batch_model" desc:"Model for foci's own small background jobs (foci_summary, the /prompts diff summary) on Claude Code agents, passed to Claude Code as written. Default haiku; set \"\" for the agent's own model. Per-agent backend_config.batch_model wins"`
 }
 
+// SandboxConfig holds extra filesystem grants for delegated backend sandboxes.
+// Nil inherits the global list; an explicit empty list removes inherited grants.
+// It never changes the sandbox mode, approval rules, or network policy.
+type SandboxConfig struct {
+	WritableRoots []string `toml:"writable_roots" desc:"Extra absolute writable paths for delegated filesystem sandboxes. Per-agent list replaces global; empty list clears it. Codex workspace-write only today; restart required"`
+}
+
 // BackendConfig holds per-agent settings for delegated backends
 // (claude-code, opencode, etc.). All fields are optional — nil means
 // "use the backend's default". Used in [agents.backend_config].
@@ -480,6 +487,7 @@ type AgentConfig struct {
 	// A coding agent name (e.g. "claude-code", "codex", "opencode") delegates
 	// entire turns to an external agent subprocess.
 	Backend       string        `toml:"backend"       desc:"Backend type: empty or api = traditional agent loop; claude-code, opencode, etc. delegates turns to an external agent"`
+	Sandbox       SandboxConfig `toml:"sandbox"`        // overrides global sandbox grants
 	BackendConfig BackendConfig `toml:"backend_config"` // backend-specific settings
 
 	// Per-agent skills and message transforms (empty = use global)
@@ -1468,6 +1476,7 @@ type Config struct {
 	Scheduler          SchedulerConfig           `toml:"scheduler"`
 	Maintenance        MaintenanceConfig         `toml:"maintenance"`
 	Permissions        PermissionsConfig         `toml:"permissions"`
+	Sandbox            SandboxConfig             `toml:"sandbox"`          // shared filesystem sandbox grants
 	CCBackend          CCBackendConfig           `toml:"cc_backend"`       // shared defaults for Claude Code delegator backends
 	OpencodeBackend    OpencodeBackendConfig     `toml:"opencode_backend"` // shared defaults for opencode delegator backend
 	Askgw              AskgwConfig               `toml:"askgw"`            // ask-gateway: local socket for external Apps to ask humans questions

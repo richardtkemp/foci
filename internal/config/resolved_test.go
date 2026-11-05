@@ -167,6 +167,7 @@ func TestResolve_AllFieldsPopulated(t *testing.T) {
 	// is called with non-zero agent and global configs. This catches new
 	// fields being added to the struct without updating Resolve().
 	cfg := &Config{
+		Sandbox:   SandboxConfig{WritableRoots: []string{"/test-root"}},
 		AgentLoop: AgentLoopConfig{MaxToolLoops: Ptr(1), Streaming: Ptr(true)},
 		Behavior:  BehaviorConfig{SteerMode: Ptr(true), GroupThrottle: Ptr("1s"), EnableStopAliases: Ptr(true), StopAliases: []string{"stop"}, MaxConcurrentTurns: Ptr(2)},
 		Voice:     VoiceConfig{TTS: Ptr("test")},

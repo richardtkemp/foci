@@ -21,13 +21,13 @@ var unreachableConfigKeys = map[string][]string{
 }
 
 // TestSpecs_ConfigKeysAreSettable: every backend_config key a backend reads
-// is a [agents.backend_config] TOML key, or the one the gateway adds itself.
+// is a [agents.backend_config] TOML key, or one the gateway injects (build version and resolved sandbox grants).
 func TestSpecs_ConfigKeysAreSettable(t *testing.T) {
 	settable := backendConfigKeys()
 	for _, s := range delegator.Specs() {
 		var unreachable []string
 		for _, k := range s.ConfigKeys {
-			if !slices.Contains(settable, k) && k != delegator.FociVersionConfigKey {
+			if !slices.Contains(settable, k) && k != delegator.FociVersionConfigKey && k != delegator.WritableRootsConfigKey {
 				unreachable = append(unreachable, k)
 			}
 		}
