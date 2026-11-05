@@ -33,14 +33,13 @@ type spawnRecord struct {
 	Parent    string `json:"parent"`
 	BranchKey string `json:"branch_key"`
 	// Name: see RunningSpawn (#2721); "" in a record written before names.
-	Name        string        `json:"name,omitempty"`
-	Description string        `json:"description"`
-	Model       string        `json:"model,omitempty"`
-	Prompt      string        `json:"prompt,omitempty"`
-	Started     time.Time     `json:"started"`
-	Timeout     time.Duration `json:"timeout"`
-	Pending     []string      `json:"pending,omitempty"`
-	Resumes     int           `json:"resumes,omitempty"`
+	Name        string    `json:"name,omitempty"`
+	Description string    `json:"description"`
+	Model       string    `json:"model,omitempty"`
+	Prompt      string    `json:"prompt,omitempty"`
+	Started     time.Time `json:"started"`
+	Pending     []string  `json:"pending,omitempty"`
+	Resumes     int       `json:"resumes,omitempty"`
 	// Running is true while a run is under way: a new process resumes it.
 	Running bool `json:"running"`
 	// Result is a [SPAWN RESULT] the parent has not taken yet: a new process
@@ -154,7 +153,7 @@ func (s *trackedSpawn) record(parent string) *spawnRecord {
 	return &spawnRecord{
 		ID: s.info.ID, Parent: parent, BranchKey: s.info.BranchKey,
 		Name: s.info.Name, Description: s.info.Description, Model: s.info.Model, Prompt: s.prompt,
-		Started: s.info.Started, Timeout: s.timeout, Pending: slices.Clone(s.pending),
+		Started: s.info.Started, Pending: slices.Clone(s.pending),
 		Resumes: s.resumes, Running: s.running, Result: s.result,
 		Character: s.info.Character, SpawnModel: s.info.SpawnModel,
 		Agent: s.info.Agent, SpawnerUnattended: s.info.SpawnerUnattended,
@@ -281,7 +280,7 @@ func (t *SpawnTracker) adopt(rec spawnRecord, running bool, outcome string, canc
 	}
 	s := &trackedSpawn{
 		info:   recInfo(rec),
-		cancel: cancel, running: running, timeout: rec.Timeout,
+		cancel: cancel, running: running,
 		prompt: rec.Prompt, resumes: rec.Resumes, result: rec.Result,
 		kept: keptEntries(rec.Kept),
 	}

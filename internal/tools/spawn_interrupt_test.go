@@ -87,25 +87,33 @@ func TestSpawnStop_InterruptsDelegatedTurn(t *testing.T) {
 	}
 }
 
-// #2821: a background spawn's timeout ends a delegated turn too (the same ctx
-// cancel as spawn_stop), and its result says it failed on the deadline.
-func TestSpawnTimeout_InterruptsDelegatedTurn(t *testing.T) {
+// A legacy timeout must not stop a long-running background spawn. Explicit
+// stop still interrupts exactly its delegated branch and reports it stopped.
+func TestSpawnNoRunTimeout_StillStoppable(t *testing.T) {
 	t.Parallel()
 	agent := newDelegatedLikeSpawnAgent()
 	h := newFollowupHarness(agent)
-	params, _ := json.Marshal(map[string]any{"name": "timeout1", "prompt": "a long clone", "context": "clone", "timeout": 1})
+	params := json.RawMessage(`{"name":"timeout1","prompt":"long clone","context":"clone","timeout":1}`)
 	if _, err := h.spawner.SpawnTool().Execute(h.ctx, params); err != nil {
-		t.Fatalf("spawn: %v", err)
+		t.Fatal(err)
 	}
 	branchKey := agent.waitStarted(t)
-	msg := h.result(t)
-	// The interrupted turn ends without an error of its own; the run still
-	// reports that its time ran out, not a normal completion.
-	if !strings.Contains(msg, "failed") || !strings.Contains(msg, "deadline exceeded") {
-		t.Errorf("result = %q, want failed: deadline exceeded", msg)
+	time.Sleep(1200 * time.Millisecond)
+	if got := agent.interrupts(); len(got) != 0 {
+		t.Fatalf("spawn interrupted by elapsed time: %v", got)
+	}
+	list := h.tracker.List("test/imain")
+	if len(list) != 1 || !list[0].Running {
+		t.Fatalf("spawn did not stay running: %+v", list)
+	}
+	if _, err := h.spawner.StopTool().Execute(h.ctx, json.RawMessage(`{"id":"timeout1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if msg := h.result(t); !strings.Contains(msg, "stopped") {
+		t.Errorf("result = %q, want stopped", msg)
 	}
 	if got := agent.interrupts(); len(got) != 1 || got[0] != branchKey {
-		t.Errorf("interrupted %v, want exactly the spawn's branch %s", got, branchKey)
+		t.Errorf("interrupts = %v, want %s", got, branchKey)
 	}
 }
 

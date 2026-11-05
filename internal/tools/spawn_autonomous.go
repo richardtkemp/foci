@@ -149,11 +149,7 @@ var errSpawnFollowUp = errors.New("the follow-up turn for its waiting messages c
 // own turns. The spawn is still marked running.
 func (s *Spawner) followUp(parent string, running RunningSpawn, texts []string) {
 	tr, id := s.deps.Tracker, running.ID
-	timeout := resolveSpawnTimeout(0, true)
-	if snap, ok := tr.Lookup(parent, id, 0); ok && snap.Timeout > 0 {
-		timeout = snap.Timeout
-	}
-	spawnCtx, cancel := s.runContext(context.Background(), timeout, running, true)
+	spawnCtx, cancel := s.runContext(context.Background(), running, true)
 	tr.setCancel(parent, id, cancel)
 	agent := s.agentOf(running)
 	err := errSpawnFollowUp

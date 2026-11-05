@@ -418,7 +418,7 @@ func TestSpawnTracker_PrunesOldFinished(t *testing.T) {
 	tr := NewSpawnTracker()
 	for i := 0; i < maxFinishedSpawns+5; i++ {
 		id := fmt.Sprintf("spawn-%02d", i)
-		tr.add("p", RunningSpawn{ID: id, BranchKey: "p/b" + id, Started: time.Now()}, func() {}, 0)
+		tr.add("p", RunningSpawn{ID: id, BranchKey: "p/b" + id, Started: time.Now()}, func() {})
 		if _, done, _, _, _ := tr.finishOrNext("p", id, false); !done {
 			t.Fatal("finish with nothing pending must be done")
 		}

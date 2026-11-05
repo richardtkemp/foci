@@ -235,8 +235,8 @@ func (a *Agent) stopBackendTurn(key string) {
 // InterruptTurn interrupts the backend turn on sessionKey, as /stop does: the
 // way to end a delegated turn early, which waits for its backend and not for
 // its ctx. A no-op for an agent without a delegated backend. It implements
-// tools.SpawnTurnInterrupter, which a background spawn's stop and timeout
-// call (#2821).
+// tools.SpawnTurnInterrupter, called when a background spawn is stopped
+// (#2821).
 func (a *Agent) InterruptTurn(sessionKey string) error {
 	if a.DelegatedManager == nil {
 		return nil

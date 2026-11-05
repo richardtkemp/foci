@@ -121,7 +121,7 @@ func newPersistHarness(agent SpawnAgent, deps func(*SpawnDeps)) *persistHarness 
 
 func (h *persistHarness) spawn(t *testing.T, prompt string) string {
 	t.Helper()
-	params, _ := json.Marshal(map[string]any{"name": "persis1", "prompt": prompt, "context": "clone", "timeout": 30})
+	params, _ := json.Marshal(map[string]any{"name": "persis1", "prompt": prompt, "context": "clone"})
 	res, err := h.spawner.SpawnTool().Execute(h.ctx, params)
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
@@ -240,7 +240,7 @@ func runningRecord(id string) spawnRecord {
 	return spawnRecord{
 		ID: id, Parent: "test/imain", BranchKey: "test/imain/b" + id,
 		Description: "count the stars", Prompt: "count the stars",
-		Started: time.Now().Add(-time.Minute), Timeout: 30 * time.Second,
+		Started: time.Now().Add(-time.Minute),
 		Running: true, Pending: []string{spawnMessagePrefix + "also the moons"},
 	}
 }

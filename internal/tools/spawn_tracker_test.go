@@ -215,7 +215,7 @@ func TestSpawnTextSink_AccumulatedFinalTextNotRepeated(t *testing.T) {
 			tr := NewSpawnTracker()
 			buf := turnevent.NewBufferSink()
 			sink := &spawnTextSink{BufferSink: buf, obs: obs, tracker: tr, parent: "p", id: "s"}
-			tr.addDirect("p", RunningSpawn{ID: "s"}, func() {}, time.Minute, "prompt")
+			tr.addDirect("p", RunningSpawn{ID: "s"}, func() {}, "prompt")
 			ctx := context.Background()
 			for _, b := range tc.blocks {
 				sink.Emit(ctx, turnevent.TextBlock{Text: b, Phase: turnevent.PhaseIntermediate})

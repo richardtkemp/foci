@@ -99,8 +99,8 @@ func TestDelegatedSpawnTool_DefaultsToCharacter(t *testing.T) {
 	if len(runner.reqs) != 1 || runner.reqs[0].Purpose != delegator.BatchPurposeSpawnCharacter {
 		t.Fatalf("batches = %+v, want one spawn_character", runner.reqs)
 	}
-	if d := runner.deadlines[0]; d <= 60*time.Second || d > 120*time.Second {
-		t.Errorf("direct character ran with %s left, want the 120s default", d)
+	if len(runner.deadlines) != 0 {
+		t.Errorf("spawn has unexpected deadlines: %v", runner.deadlines)
 	}
 	if l := tr.List("test/c1"); len(l) != 1 || !l[0].Direct || l[0].Running || l[0].BranchKey != "" || l[0].Outcome != "completed" {
 		t.Errorf("tracked = %+v, want one finished direct spawn with no branch", l)
@@ -129,62 +129,9 @@ func TestSpawnContextCharacterDefault(t *testing.T) {
 	}
 }
 
-// TestSpawnTimeoutsByRunForm pins #2643 req 3: 120s default for a spawn that
-// returns directly, 3600s for one in the background, and at most 86400s for
-// any, clamped.
-func TestSpawnTimeoutsByRunForm(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		sec        int
-		background bool
-		want       time.Duration
-	}{
-		{0, false, 120 * time.Second},
-		{0, true, time.Hour},
-		{30, false, 30 * time.Second},
-		{7200, true, 2 * time.Hour},
-		{100000, false, 24 * time.Hour},
-		{100000, true, 24 * time.Hour},
-	}
-	for _, c := range cases {
-		if got := resolveSpawnTimeout(c.sec, c.background); got != c.want {
-			t.Errorf("resolveSpawnTimeout(%d, background=%v) = %s, want %s", c.sec, c.background, got, c.want)
-		}
-	}
-
-	// Through the tool: a clone with no timeout gets an hour; one asking
-	// for more than a day gets a day; a direct one-shot over a day too.
-	h := newFollowupHarness(newScriptedSpawnAgent(0))
-	if _, err := h.spawner.SpawnTool().Execute(h.ctx, json.RawMessage(`{"name":"charac3","prompt":"a","context":"clone"}`)); err != nil {
-		t.Fatal(err)
-	}
-	h.result(t)
-	if _, err := h.spawner.SpawnTool().Execute(h.ctx, json.RawMessage(`{"name":"charac4","prompt":"b","context":"clone","timeout":999999}`)); err != nil {
-		t.Fatal(err)
-	}
-	h.result(t)
-	got := map[string]time.Duration{}
-	for _, sp := range h.tracker.List("test/imain") {
-		got[sp.Description] = sp.Timeout
-	}
-	if got["a"] != time.Hour || got["b"] != 24*time.Hour {
-		t.Errorf("clone timeouts = %v, want a: 1h (default), b: 24h (clamped)", got)
-	}
-
-	runner := &recordingBatchRunner{}
-	s := newDelegatedSpawner(runner, allBatchCaps)
-	if _, err := s.SpawnTool().Execute(WithSessionKey(context.Background(), "test/c1"), json.RawMessage(`{"name":"charac5","prompt":"p","context":"explore","timeout":999999}`)); err != nil {
-		t.Fatal(err)
-	}
-	if d := runner.deadlines[0]; d <= 23*time.Hour || d > 24*time.Hour {
-		t.Errorf("direct spawn asking 999999s ran with %s left, want the 24h maximum", d)
-	}
-}
-
 // TestBackgroundCharacterSpawn pins #2643 req 2: a character spawn with
 // background=true runs on a fresh character branch (CharacterBranch, with the
-// caller's model), marked as a character spawn, with the background default
-// timeout; its result arrives as [SPAWN RESULT]; spawn_status shows it and
+// caller's model), marked as a character spawn, without a run deadline; its result arrives as [SPAWN RESULT]; spawn_status shows it and
 // spawn_send resumes it on the same branch, still as a character spawn.
 func TestBackgroundCharacterSpawn(t *testing.T) {
 	t.Parallel()
@@ -209,8 +156,8 @@ func TestBackgroundCharacterSpawn(t *testing.T) {
 	if len(agent.keys) != 1 || agent.keys[0] != "test/imain/bchar" || !agent.character[0] {
 		t.Fatalf("runs = keys %v character %v, want one character-marked run on the character branch", agent.keys, agent.character)
 	}
-	if d := agent.deadlines[0]; d <= 59*time.Minute || d > time.Hour {
-		t.Errorf("background character ran with %s left, want the 1h default", d)
+	if len(agent.deadlines) != 0 {
+		t.Errorf("spawn has unexpected deadlines: %v", agent.deadlines)
 	}
 	agent.mu.Unlock()
 
@@ -226,8 +173,8 @@ func TestBackgroundCharacterSpawn(t *testing.T) {
 	if len(agent.keys) != 2 || agent.keys[1] != "test/imain/bchar" || !agent.character[1] {
 		t.Fatalf("resumed run = keys %v character %v, want the same branch, still a character spawn", agent.keys, agent.character)
 	}
-	if d := agent.deadlines[1]; d <= 59*time.Minute || d > time.Hour {
-		t.Errorf("resumed spawn ran with %s left, want the 1h background default", d)
+	if len(agent.deadlines) != 0 {
+		t.Errorf("spawn has unexpected deadlines: %v", agent.deadlines)
 	}
 }
 
@@ -397,8 +344,8 @@ func TestSpawnToolTextIsApproved(t *testing.T) {
 				t.Errorf("%s context doc lacks %q:\n%s", c.name, want, ctxDoc)
 			}
 		}
-		if got, want := schema.Properties["timeout"].Description, "Seconds the spawn may run. The default is 120 for a spawn that returns directly, and 3600 (1 hour) for one that runs in the background. The maximum is 86400 (24 hours). When it runs out, the spawn is stopped and reported failed."; got != want {
-			t.Errorf("%s timeout doc = %q, want %q", c.name, got, want)
+		if _, ok := schema.Properties["timeout"]; ok {
+			t.Errorf("%s still advertises a spawn timeout", c.name)
 		}
 		if _, ok := schema.Properties["background"]; !ok {
 			t.Errorf("%s schema has no background parameter", c.name)

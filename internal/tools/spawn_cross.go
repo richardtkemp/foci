@@ -21,7 +21,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 
 	"foci/internal/delegator/accounting"
 	"foci/internal/session"
@@ -138,14 +137,14 @@ func crossAgentChatSession(ctx context.Context, sessionKey string) (string, bool
 
 // runDirectAs runs a direct (non-background) spawn of mode on host: the
 // caller's own agent, or the target of a cross-agent spawn.
-func (s *Spawner) runDirectAs(ctx context.Context, host *Spawner, mode, prompt, model string, timeout time.Duration) (ToolResult, error) {
+func (s *Spawner) runDirectAs(ctx context.Context, host *Spawner, mode, prompt, model string) (ToolResult, error) {
 	owner := SessionKeyFromContext(ctx)
 	if host != s {
 		ctx = crossAgentContext(ctx, host.deps.AgentID, owner)
 		owner = session.CrossAgentSpawnRoot(host.deps.AgentID)
 	}
 	if host.deps.Delegated != nil {
-		return host.runBatchOneShot(ctx, mode, prompt, model, timeout, owner)
+		return host.runBatchOneShot(ctx, mode, prompt, model, owner)
 	}
-	return host.runAPIOneShot(ctx, mode, prompt, model, timeout)
+	return host.runAPIOneShot(ctx, mode, prompt, model)
 }

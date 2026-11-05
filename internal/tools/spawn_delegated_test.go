@@ -144,7 +144,7 @@ func TestDelegatedSpawn_OneShotsRunAsBatches(t *testing.T) {
 	ctx := WithSessionKey(context.Background(), "test/c1")
 	tool := s.SpawnTool()
 
-	res, err := tool.Execute(ctx, json.RawMessage(`{"name":"delega2","prompt":"draft it","context":"raw","model":"zai/glm-4.6","timeout":30}`))
+	res, err := tool.Execute(ctx, json.RawMessage(`{"name":"delega2","prompt":"draft it","context":"raw","model":"zai/glm-4.6"}`))
 	if err != nil {
 		t.Fatalf("raw: %v", err)
 	}
@@ -189,8 +189,8 @@ func TestDelegatedSpawn_OneShotsRunAsBatches(t *testing.T) {
 			t.Errorf("batch %s: owner %q prompt %q, want test/c1 and the caller's prompt", r.Purpose, r.OwnerSessionKey, r.Prompt)
 		}
 	}
-	if d := runner.deadlines[0]; d <= 0 || d > 30*time.Second {
-		t.Errorf("raw batch ran with %s left, want the 30s timeout", d)
+	if len(runner.deadlines) != 0 {
+		t.Errorf("batch unexpectedly has deadlines: %v", runner.deadlines)
 	}
 }
 

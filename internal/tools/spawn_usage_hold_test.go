@@ -124,7 +124,7 @@ func (h *holdSpawnAgent) anyPaused() bool {
 	return false
 }
 
-// startHoldSpawn starts one background clone spawn of a 1 s timeout on ag and
+// startHoldSpawn starts one background clone spawn on ag and
 // returns its tracker and result channel.
 func startHoldSpawn(t *testing.T, ag *holdSpawnAgent) (*SpawnTracker, chan string) {
 	t.Helper()
@@ -134,7 +134,7 @@ func startHoldSpawn(t *testing.T, ag *holdSpawnAgent) (*SpawnTracker, chan strin
 	deps := SpawnDeps{Sessions: &mockSessionBrancher{}, AgentID: "test", FallbackModel: "anthropic/claude-haiku-4-5",
 		FallbackFormat: "anthropic", MaxInherit: 2, Notifier: notifier, Tracker: tracker}
 	tool := NewSpawner(deps, func() SpawnAgent { return ag }).SpawnTool()
-	params, _ := json.Marshal(map[string]any{"name": "held", "prompt": "long task", "context": "clone", "timeout": 1})
+	params, _ := json.Marshal(map[string]any{"name": "held", "prompt": "long task", "context": "clone"})
 	if _, err := tool.Execute(WithSessionKey(context.Background(), "test/imain"), params); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
@@ -148,7 +148,7 @@ func startHoldSpawn(t *testing.T, ag *holdSpawnAgent) (*SpawnTracker, chan strin
 
 // TestSpawn_UsageHoldPausesAndResumes is holdout H9: a background spawn
 // running when the hold starts is stopped and paused; its parent gets no
-// [SPAWN RESULT] and sees it running; a hold longer than its timeout does not
+// [SPAWN RESULT] and sees it running; a hold does not
 // time it out; at lift its branch gets the resume line, and it then reports
 // ONE [SPAWN RESULT].
 func TestSpawn_UsageHoldPausesAndResumes(t *testing.T) {
@@ -160,7 +160,7 @@ func TestSpawn_UsageHoldPausesAndResumes(t *testing.T) {
 	select {
 	case msg := <-results:
 		t.Fatalf("a [SPAWN RESULT] arrived during the hold: %q", msg)
-	case <-time.After(1500 * time.Millisecond): // longer than the 1 s timeout
+	case <-time.After(1500 * time.Millisecond): // the hold must not finish the spawn
 	}
 	if running := tracker.Running("test/imain"); len(running) != 1 {
 		t.Fatalf("running spawns during the hold = %d, want the paused one", len(running))
@@ -215,29 +215,6 @@ func TestSpawn_UsageHoldColdNotResumed(t *testing.T) {
 	}
 	if running := tracker.Running("test/imain"); len(running) != 0 {
 		t.Errorf("still running after its stop: %+v", running)
-	}
-}
-
-// TestSpawnClock_PauseStopsTimeout: the time a spawn clock is paused does not
-// count toward its timeout, and a clock that runs out reads as a deadline.
-func TestSpawnClock_PauseStopsTimeout(t *testing.T) {
-	t.Parallel()
-	ctx, cancel := withSpawnClock(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	c := spawnClockFrom(ctx)
-	c.pause()
-	time.Sleep(200 * time.Millisecond)
-	if ctx.Err() != nil {
-		t.Fatalf("paused clock ran out: %v", ctx.Err())
-	}
-	c.resume()
-	select {
-	case <-ctx.Done():
-	case <-time.After(time.Second):
-		t.Fatal("resumed clock never ran out")
-	}
-	if ctx.Err() != context.DeadlineExceeded {
-		t.Errorf("Err = %v, want context.DeadlineExceeded", ctx.Err())
 	}
 }
 

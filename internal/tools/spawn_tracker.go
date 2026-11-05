@@ -124,10 +124,9 @@ type trackedSpawn struct {
 	// its parent agent (spawn_stop).
 	stoppedBy string
 	running   bool
-	timeout   time.Duration // of its first run: a resumed run gets it again
-	ended     time.Time     // when its last run ended; zero while running
-	outcome   string        // last run's end: "completed", "failed" or "stopped"
-	pending   []string      // parent messages waiting for the spawn's next step
+	ended     time.Time // when its last run ended; zero while running
+	outcome   string    // last run's end: "completed", "failed" or "stopped"
+	pending   []string  // parent messages waiting for the spawn's next step
 	log       []SpawnLogEntry
 	prompt    string // the task it was started with, repeated when a restart resumes it
 	resumes   int    // how many times a foci restart has resumed it
@@ -162,7 +161,6 @@ type SpawnSnapshot struct {
 	Outcome string // "" while running
 	Ended   time.Time
 	Pending int // parent messages not yet delivered
-	Timeout time.Duration
 	Resumes int // times a foci restart has resumed it
 	Log     []SpawnLogEntry
 }
@@ -189,16 +187,16 @@ func NewSpawnTracker() *SpawnTracker {
 
 // Add registers a running spawn of parent; its goroutine removes it when it ends.
 func (t *SpawnTracker) Add(parent string, s RunningSpawn, cancel context.CancelFunc) {
-	t.add(parent, s, cancel, 0)
+	t.add(parent, s, cancel)
 }
 
-func (t *SpawnTracker) add(parent string, s RunningSpawn, cancel context.CancelFunc, timeout time.Duration) {
-	t.addWithPrompt(parent, s, cancel, timeout, "")
+func (t *SpawnTracker) add(parent string, s RunningSpawn, cancel context.CancelFunc) {
+	t.addWithPrompt(parent, s, cancel, "")
 }
 
 // addWithPrompt registers a running spawn with the task it was given, and
 // persists it so a restart can resume it.
-func (t *SpawnTracker) addWithPrompt(parent string, s RunningSpawn, cancel context.CancelFunc, timeout time.Duration, prompt string) {
+func (t *SpawnTracker) addWithPrompt(parent string, s RunningSpawn, cancel context.CancelFunc, prompt string) {
 	if t == nil {
 		return
 	}
@@ -206,7 +204,7 @@ func (t *SpawnTracker) addWithPrompt(parent string, s RunningSpawn, cancel conte
 	if t.spawns[parent] == nil {
 		t.spawns[parent] = map[string]*trackedSpawn{}
 	}
-	t.spawns[parent][s.ID] = &trackedSpawn{info: s, cancel: cancel, running: true, timeout: timeout, prompt: prompt}
+	t.spawns[parent][s.ID] = &trackedSpawn{info: s, cancel: cancel, running: true, prompt: prompt}
 	t.mu.Unlock()
 	t.persist(parent, s.ID)
 }
@@ -373,7 +371,7 @@ func (t *SpawnTracker) spawnInfo(parent, id string) (RunningSpawn, bool) {
 func (s *trackedSpawn) snapshot(n int) SpawnSnapshot {
 	snap := SpawnSnapshot{
 		RunningSpawn: s.info, Running: s.running, Ended: s.ended,
-		Pending: len(s.pending), Timeout: s.timeout, Resumes: s.resumes,
+		Pending: len(s.pending), Resumes: s.resumes,
 	}
 	if !s.running {
 		snap.Outcome = s.outcome
@@ -578,7 +576,7 @@ func (s *trackedSpawn) appendLog(kind, text string) {
 
 // addDirect registers a direct spawn while its tool call waits for it
 // (#2656). Not persisted.
-func (t *SpawnTracker) addDirect(parent string, s RunningSpawn, cancel context.CancelFunc, timeout time.Duration, prompt string) {
+func (t *SpawnTracker) addDirect(parent string, s RunningSpawn, cancel context.CancelFunc, prompt string) {
 	if t == nil {
 		return
 	}
@@ -588,7 +586,7 @@ func (t *SpawnTracker) addDirect(parent string, s RunningSpawn, cancel context.C
 	if t.spawns[parent] == nil {
 		t.spawns[parent] = map[string]*trackedSpawn{}
 	}
-	ts := &trackedSpawn{info: s, cancel: cancel, running: true, timeout: timeout, prompt: prompt}
+	ts := &trackedSpawn{info: s, cancel: cancel, running: true, prompt: prompt}
 	ts.appendLog("prompt", prompt)
 	t.spawns[parent][s.ID] = ts
 }

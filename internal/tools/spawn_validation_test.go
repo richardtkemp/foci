@@ -371,34 +371,19 @@ func TestSpawnModelOpenRouter(t *testing.T) {
 	}
 }
 
-func TestSpawnTimeout(t *testing.T) {
-	// Proves that the timeout parameter is respected: a hanging server causes the spawn to fail
-	// within the specified number of seconds rather than blocking indefinitely.
+// A legacy timeout parameter cannot end an API spawn; the model client's
+// normal per-request protection remains independent of the spawn's lifetime.
+func TestSpawnAPI_NoRunTimeout(t *testing.T) {
 	t.Parallel()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(200 * time.Millisecond) // longer than our timeout
-	}))
-	defer server.Close()
-
-	client := newTestAnthropicClient(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: func() int { return 10 }}
-	tool := NewSpawner(deps, nil).SpawnTool()
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"name":    "valida11",
-		"prompt":  "test",
-		"context": "raw",
-		"timeout": 1, // 1 second timeout
+	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+		time.Sleep(1200 * time.Millisecond)
+		return &provider.MessageResponse{ID: "msg-long", Role: "assistant", Content: provider.TextContent("finished"), StopReason: "end_turn"}
 	})
-
-	start := time.Now()
-	_, err := tool.Execute(context.Background(), params)
-	elapsed := time.Since(start)
-
-	if err == nil {
-		t.Fatal("expected timeout error")
-	}
-	if elapsed > 3*time.Second {
-		t.Errorf("took %v, expected ~1s timeout", elapsed)
+	defer server.Close()
+	client := newTestAnthropicClient(server.URL, "test-token")
+	tool := NewSpawner(SpawnDeps{Client: spawnNoDeadlineClient{Client: client, t: t}, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: func() int { return 10 }}, nil).SpawnTool()
+	res, err := tool.Execute(context.Background(), json.RawMessage(`{"name":"valida11","prompt":"test","context":"raw","timeout":1}`))
+	if err != nil || res.Text != "finished" {
+		t.Fatalf("spawn = %q, %v; want finished", res.Text, err)
 	}
 }

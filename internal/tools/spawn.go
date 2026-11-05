@@ -52,7 +52,7 @@ type SpawnAgent interface {
 }
 
 // SpawnTurnInterrupter is the optional agent side of ending a background
-// spawn's run early (#2821): spawn_stop, /stop and the spawn's timeout only
+// spawn's run early (#2821): spawn_stop and /stop only
 // cancel the run's ctx, and a delegated agent's turn waits for its backend
 // and never for ctx. InterruptTurn interrupts the backend turn on sessionKey,
 // as /stop does. *agent.Agent implements it (a no-op without a delegated
@@ -438,26 +438,6 @@ func defaultMode(modes []string) string {
 	return modes[0]
 }
 
-// Spawn timeouts (Dick 2026-10-29, #2643), in seconds: a spawn that returns
-// its result directly defaults to 2 minutes, one that runs in the background
-// (clone, background character, a resumed spawn) to an hour; none may run
-// longer than 24 hours.
-const (
-	spawnDirectDefaultSec     = 120
-	spawnBackgroundDefaultSec = 3600
-	spawnMaxSec               = 86400
-)
-
-// resolveSpawnTimeout resolves a spawn's timeout parameter: its default by
-// run form, clamped to spawnMaxSec.
-func resolveSpawnTimeout(seconds int, background bool) time.Duration {
-	def := spawnDirectDefaultSec
-	if background {
-		def = spawnBackgroundDefaultSec
-	}
-	return ResolveTimeout(seconds, TimeoutConfig{DefaultSec: def, MaxSec: spawnMaxSec})
-}
-
 // spawnModeDocs describes each mode, for the tool and its context parameter.
 // api is the API agent's wording (foci's own tools and model groups);
 // delegated is a delegated agent's (its backend's own tools and models).
@@ -504,10 +484,6 @@ func spawnParams(modes []string, delegated bool) json.RawMessage {
 			"background": map[string]any{
 				"type":        "boolean",
 				"description": "Character only: run in the background (the result arrives as [SPAWN RESULT]; steer it with spawn_send, check on it with spawn_status) instead of returning the result directly. Default false. A clone always runs in the background.",
-			},
-			"timeout": map[string]any{
-				"type":        "integer",
-				"description": fmt.Sprintf("Seconds the spawn may run. The default is %d for a spawn that returns directly, and %d (1 hour) for one that runs in the background. The maximum is %d (24 hours). When it runs out, the spawn is stopped and reported failed.", spawnDirectDefaultSec, spawnBackgroundDefaultSec, spawnMaxSec),
 			},
 			"agent": map[string]any{
 				"type":        "string",
@@ -602,7 +578,6 @@ func (s *Spawner) SpawnTool() *Tool {
 				Model      string `json:"model"`
 				Context    string `json:"context"`
 				Background bool   `json:"background"`
-				Timeout    int    `json:"timeout"`
 				Agent      string `json:"agent"`
 				UseReserve bool   `json:"use_reserve"`
 			}](params)
@@ -643,7 +618,6 @@ func (s *Spawner) SpawnTool() *Tool {
 				return TextResult("NOT started: " + msg), nil
 			}
 			background := p.Context == spawnModeClone || p.Background
-			timeout := resolveSpawnTimeout(p.Timeout, background)
 
 			// The name is held from here until the spawn is registered under
 			// it, so a concurrent spawn call cannot take it meanwhile.
@@ -664,12 +638,12 @@ func (s *Spawner) SpawnTool() *Tool {
 			var res ToolResult
 			switch {
 			case p.Context == spawnModeClone:
-				res, err = s.startClone(ctx, name, p.Prompt, timeout)
+				res, err = s.startClone(ctx, name, p.Prompt)
 			case background:
-				res, err = s.startBackgroundCharacter(ctx, host, name, p.Prompt, p.Model, timeout)
+				res, err = s.startBackgroundCharacter(ctx, host, name, p.Prompt, p.Model)
 			default:
-				res, err = s.runDirect(ctx, host, p.Context, name, p.Prompt, p.Model, timeout, func(runCtx context.Context) (ToolResult, error) {
-					return s.runDirectAs(runCtx, host, p.Context, p.Prompt, p.Model, timeout)
+				res, err = s.runDirect(ctx, host, p.Context, name, p.Prompt, p.Model, func(runCtx context.Context) (ToolResult, error) {
+					return s.runDirectAs(runCtx, host, p.Context, p.Prompt, p.Model)
 				})
 			}
 			if err == nil && note != "" {
@@ -691,7 +665,7 @@ func (s *Spawner) SpawnTool() *Tool {
 // an API one-shot streams none, so its answer is shown when it ends. Its
 // entry names the model it runs on (directModel, #2685), and the shell call it
 // was started from (CallerShell), whose own entry the app hides meanwhile.
-func (s *Spawner) runDirect(ctx context.Context, host *Spawner, mode, name, prompt, model string, timeout time.Duration, run func(context.Context) (ToolResult, error)) (ToolResult, error) {
+func (s *Spawner) runDirect(ctx context.Context, host *Spawner, mode, name, prompt, model string, run func(context.Context) (ToolResult, error)) (ToolResult, error) {
 	parent := SessionKeyFromContext(ctx)
 	if parent == "" {
 		return run(ctx)
@@ -707,11 +681,11 @@ func (s *Spawner) runDirect(ctx context.Context, host *Spawner, mode, name, prom
 	}
 	info.Model = host.directModel(mode, model, owner)
 	tr, obs := s.deps.Tracker, s.deps.Observer
-	tr.addDirect(parent, info, cancel, timeout, prompt)
+	tr.addDirect(parent, info, cancel, prompt)
 	if obs != nil {
 		obs.SpawnStarted(parent, info, prompt)
 	}
-	spawnLog.Infof("direct spawn=%s mode=%s agent=%q parent=%s prompt=%d chars timeout=%s", info.ID, mode, info.Agent, parent, len(prompt), timeout)
+	spawnLog.Infof("direct spawn=%s mode=%s agent=%q parent=%s prompt=%d chars", info.ID, mode, info.Agent, parent, len(prompt))
 	// Its send_to_spawner finds it through this (#2662).
 	runCtx = withSpawnLink(runCtx, spawnLink{s: s, parent: parent, id: info.ID, info: info})
 	tee := &spawnTextSink{BufferSink: turnevent.NewBufferSink(), obs: obs, tracker: tr, parent: parent, id: info.ID}
@@ -802,7 +776,7 @@ func inSpawnTempDir(run func(dir string) (string, error)) (ToolResult, error) {
 //
 // owner is the session the batch runs for: the caller's, or for a spawn as
 // this agent from another one, this agent's cross-agent root (#2662).
-func (s *Spawner) runBatchOneShot(ctx context.Context, mode, prompt, model string, timeout time.Duration, owner string) (ToolResult, error) {
+func (s *Spawner) runBatchOneShot(ctx context.Context, mode, prompt, model string, owner string) (ToolResult, error) {
 	runner := s.deps.Delegated.Runner()
 	if runner == nil {
 		return ToolResult{}, fmt.Errorf("spawn %s: no batch runner (delegated manager not configured)", mode)
@@ -837,9 +811,7 @@ func (s *Spawner) runBatchOneShot(ctx context.Context, mode, prompt, model strin
 		}()
 	}
 	run := func() (string, error) {
-		callCtx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
-		text, err := runner.RunBatch(callCtx, req)
+		text, err := runner.RunBatch(ctx, req)
 		if err != nil {
 			return "", fmt.Errorf("spawn %s: %w", mode, err)
 		}
@@ -916,7 +888,7 @@ func (s *Spawner) directModel(mode, model, owner string) string {
 	return m
 }
 
-func (s *Spawner) runAPIOneShot(ctx context.Context, mode, prompt, modelGroup string, timeout time.Duration) (ToolResult, error) {
+func (s *Spawner) runAPIOneShot(ctx context.Context, mode, prompt, modelGroup string) (ToolResult, error) {
 	deps := s.deps
 	switch mode {
 	case spawnModeRaw:
@@ -928,7 +900,6 @@ func (s *Spawner) runAPIOneShot(ctx context.Context, mode, prompt, modelGroup st
 				model:          model,
 				format:         format,
 				prompt:         prompt,
-				timeout:        timeout,
 				toolDefs:       toolDefs,
 				tools:          tools,
 				sessions:       deps.Sessions,
@@ -955,7 +926,6 @@ func (s *Spawner) runAPIOneShot(ctx context.Context, mode, prompt, modelGroup st
 			format:         format,
 			system:         system,
 			prompt:         prompt,
-			timeout:        timeout,
 			toolDefs:       toolDefs,
 			tools:          tools,
 			sessions:       deps.Sessions,
@@ -982,7 +952,6 @@ func (s *Spawner) runAPIOneShot(ctx context.Context, mode, prompt, modelGroup st
 			format:         format,
 			system:         system,
 			prompt:         prompt,
-			timeout:        timeout,
 			toolDefs:       toolDefs,
 			tools:          tools,
 			sessions:       deps.Sessions,
@@ -1188,7 +1157,6 @@ type oneShotParams struct {
 	format         string
 	system         []provider.SystemBlock
 	prompt         string
-	timeout        time.Duration
 	toolDefs       []provider.ToolDef
 	tools          map[string]*Tool
 	sessions       SessionBrancher
@@ -1201,8 +1169,8 @@ type oneShotParams struct {
 
 // spawnOneShot makes API calls with optional tool access (raw/character/explore modes).
 func spawnOneShot(ctx context.Context, p oneShotParams) (string, error) {
-	callCtx, cancel := context.WithTimeout(ctx, p.timeout)
-	defer cancel()
+	// Model clients enforce the normal per-request/stream-idle limits.
+	// Do not put a deadline around the whole multi-request spawn loop.
 
 	sessionKey := SessionKeyFromContext(ctx)
 	spawnLog.Infof("session=%s one-shot model=%s system_blocks=%d tools=%d prompt=%d chars", sessionKey, p.model, len(p.system), len(p.toolDefs), len(p.prompt))
@@ -1238,7 +1206,7 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (string, error) {
 		}
 
 		start := time.Now()
-		resp, err := provider.Send(callCtx, p.client, req, nil,
+		resp, err := provider.Send(ctx, p.client, req, nil,
 			p.fallbackFn, p.clientProvider, func(f string, args ...any) {
 				spawnLog.Errorf(f, args...)
 			})
@@ -1294,8 +1262,8 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (string, error) {
 			if block.Type != "tool_use" {
 				continue
 			}
-			if callCtx.Err() != nil {
-				return "", callCtx.Err()
+			if ctx.Err() != nil {
+				return "", ctx.Err()
 			}
 			tool, ok := p.tools[block.Name]
 			if !ok {
@@ -1305,7 +1273,7 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (string, error) {
 				continue
 			}
 			spawnLog.Debugf("session=%s tool_use: %s", sessionKey, block.Name)
-			result, err := tool.Execute(callCtx, block.Input)
+			result, err := tool.Execute(ctx, block.Input)
 			if err != nil {
 				toolResults = append(toolResults, provider.ToolResultBlock(
 					block.ID, fmt.Sprintf("Error: %s", err), true,
@@ -1332,7 +1300,7 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (string, error) {
 // notifier is available, the spawn runs asynchronously in a background
 // goroutine and delivers its result via the notifier. When notifier is nil, it
 // falls back to synchronous execution (for tests).
-func (s *Spawner) startClone(ctx context.Context, name, prompt string, timeout time.Duration) (ToolResult, error) {
+func (s *Spawner) startClone(ctx context.Context, name, prompt string) (ToolResult, error) {
 	deps := s.deps
 	parentSession := SessionKeyFromContext(ctx)
 	// No-recursion guard: reject clone calls from inside a clone. An API
@@ -1369,12 +1337,12 @@ func (s *Spawner) startClone(ctx context.Context, name, prompt string, timeout t
 		return ToolResult{}, fmt.Errorf("spawn inherit: agent not available")
 	}
 
-	spawnLog.Infof("inherit branch=%s parent=%s prompt=%d chars timeout=%s",
-		branchKey, parentSession, len(prompt), timeout)
+	spawnLog.Infof("inherit branch=%s parent=%s prompt=%d chars",
+		branchKey, parentSession, len(prompt))
 
 	// Async path: launch goroutine, return immediately.
 	if deps.Notifier != nil {
-		return s.launchBackground(ctx, agent, parentSession, RunningSpawn{BranchKey: branchKey, Name: name}, prompt, timeout)
+		return s.launchBackground(ctx, agent, parentSession, RunningSpawn{BranchKey: branchKey, Name: name}, prompt)
 	}
 
 	// Synchronous fallback (nil notifier — for tests).
@@ -1383,7 +1351,7 @@ func (s *Spawner) startClone(ctx context.Context, name, prompt string, timeout t
 	}
 	defer s.slots.release()
 
-	spawnCtx, cancel := buildSpawnContext(ctx, timeout, branchKey, false)
+	spawnCtx, cancel := buildSpawnContext(ctx, branchKey, false)
 	defer cancel()
 
 	buf := turnevent.NewBufferSink()
@@ -1400,14 +1368,14 @@ func (s *Spawner) startClone(ctx context.Context, name, prompt string, timeout t
 // launchBackground registers a background spawn on its branch (running holds
 // the branch key and, for a character spawn, Character and SpawnModel) and
 // starts its first run; the tool returns at once with where it runs.
-func (s *Spawner) launchBackground(ctx context.Context, agent SpawnAgent, parent string, running RunningSpawn, prompt string, timeout time.Duration) (ToolResult, error) {
+func (s *Spawner) launchBackground(ctx context.Context, agent SpawnAgent, parent string, running RunningSpawn, prompt string) (ToolResult, error) {
 	deps := s.deps
 	if err := s.slots.acquire(ctx); err != nil {
 		return ToolResult{}, err
 	}
 	// Registered before the goroutine starts, so a /stop that lands at
 	// once still finds it (#2139).
-	spawnCtx, cancel := s.runContext(ctx, timeout, running, true)
+	spawnCtx, cancel := s.runContext(ctx, running, true)
 	running.ID = newSpawnID()
 	running.Description = spawnDescription(prompt)
 	running.Started = time.Now()
@@ -1418,7 +1386,7 @@ func (s *Spawner) launchBackground(ctx context.Context, agent SpawnAgent, parent
 	if h := s.hostOf(running); h != nil && h.deps.ModelFor != nil {
 		running.Model = h.deps.ModelFor(running.BranchKey)
 	}
-	deps.Tracker.addWithPrompt(parent, running, cancel, timeout, prompt)
+	deps.Tracker.addWithPrompt(parent, running, cancel, prompt)
 	deps.Tracker.appendLog(parent, running.ID, "prompt", prompt)
 	if deps.Observer != nil {
 		deps.Observer.SpawnStarted(parent, running, prompt)
@@ -1430,8 +1398,8 @@ func (s *Spawner) launchBackground(ctx context.Context, agent SpawnAgent, parent
 	if running.Agent != "" {
 		kind += " as " + running.Agent
 	}
-	pending := fmt.Sprintf("%s started in background.\nName: %s\nSpawn: %s\nBranch: %s\nTimeout: %s\nPrompt: %s\nResults will be delivered when complete. Send it more with spawn_send; check on it with spawn_status (by its name or id).",
-		kind, running.Label(), running.ID, running.BranchKey, timeout, truncatePromptPreview(prompt))
+	pending := fmt.Sprintf("%s started in background.\nName: %s\nSpawn: %s\nBranch: %s\nPrompt: %s\nResults will be delivered when complete. Send it more with spawn_send; check on it with spawn_status (by its name or id).",
+		kind, running.Label(), running.ID, running.BranchKey, truncatePromptPreview(prompt))
 	return s.runBackground(ctx, agent, parent, running, []string{s.hostOf(running).withSteerNotice(prompt)}, spawnCtx, cancel, pending)
 }
 
@@ -1455,7 +1423,7 @@ func (s *Spawner) withSteerNotice(task string) string {
 // host runs it: s, or for a spawn as another agent (#2662) that agent's
 // Spawner, whose agent runs the turns on a fresh branch of its cross-agent
 // root. The caller (s) tracks it and gets its result.
-func (s *Spawner) startBackgroundCharacter(ctx context.Context, host *Spawner, name, prompt, model string, timeout time.Duration) (ToolResult, error) {
+func (s *Spawner) startBackgroundCharacter(ctx context.Context, host *Spawner, name, prompt, model string) (ToolResult, error) {
 	parent := SessionKeyFromContext(ctx)
 	// The same no-recursion guard as clone: a background spawn may not start
 	// another one (a delegated character branch has no spawn tools at all).
@@ -1486,9 +1454,9 @@ func (s *Spawner) startBackgroundCharacter(ctx context.Context, host *Spawner, n
 	if host.deps.SetNoCompact != nil {
 		host.deps.SetNoCompact(branchKey, true)
 	}
-	spawnLog.Infof("background character branch=%s parent=%s agent=%q model=%q prompt=%d chars timeout=%s",
-		branchKey, parent, running.Agent, model, len(prompt), timeout)
-	return s.launchBackground(ctx, agent, parent, running, prompt, timeout)
+	spawnLog.Infof("background character branch=%s parent=%s agent=%q model=%q prompt=%d chars",
+		branchKey, parent, running.Agent, model, len(prompt))
+	return s.launchBackground(ctx, agent, parent, running, prompt)
 }
 
 // isSpawnBranch reports whether sessionKey is a tracked spawn's own branch.
@@ -1540,7 +1508,7 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 			}
 			texts = next
 		}
-		// A prompt the run left unanswered (a stop or timeout cut the turn
+		// A prompt the run left unanswered (a stop cut the turn
 		// while it waited) can no longer be answered: take it down from the
 		// spawner's chat (#2684).
 		if h := s.hostOf(running); h != nil && h.deps.ClearPrompts != nil {
@@ -1684,23 +1652,23 @@ func resolveSpawnGroup(gr *config.GroupResolver, userGroup, defaultCallSite stri
 
 // runContext is buildSpawnContext for one run of a background spawn, marked
 // as a character spawn's when it is one (WithSpawnCharacter).
-func (s *Spawner) runContext(ctx context.Context, timeout time.Duration, running RunningSpawn, detached bool) (context.Context, context.CancelFunc) {
-	spawnCtx, cancel := buildSpawnContext(ctx, timeout, running.BranchKey, detached)
+func (s *Spawner) runContext(ctx context.Context, running RunningSpawn, detached bool) (context.Context, context.CancelFunc) {
+	spawnCtx, cancel := buildSpawnContext(ctx, running.BranchKey, detached)
 	if running.Character {
 		spawnCtx = WithSpawnCharacter(spawnCtx)
 	}
 	return spawnCtx, cancel
 }
 
-// buildSpawnContext creates a spawn context with timeout and session/inherit markers.
-func buildSpawnContext(ctx context.Context, timeout time.Duration, branchKey string, detached bool) (context.Context, context.CancelFunc) {
+// buildSpawnContext creates a cancellable spawn context with session/inherit markers.
+func buildSpawnContext(ctx context.Context, branchKey string, detached bool) (context.Context, context.CancelFunc) {
 	var baseCtx context.Context
 	if detached {
 		baseCtx = context.Background()
 	} else {
 		baseCtx = ctx
 	}
-	spawnCtx, cancel := withSpawnClock(baseCtx, timeout)
+	spawnCtx, cancel := context.WithCancel(baseCtx)
 	spawnCtx = WithSpawnInherit(spawnCtx)
 	spawnCtx = WithSessionKey(spawnCtx, branchKey)
 	return spawnCtx, cancel

@@ -185,13 +185,13 @@ func (s *Spawner) resumeAfterRestart(host *Spawner, agent SpawnAgent, rec spawnR
 		// Its launch settings were in the last process's memory (#2643).
 		host.deps.PrepareCharacterBranch(rec.BranchKey, rec.SpawnModel)
 	}
-	spawnCtx, cancelRun := s.runContext(base, rec.Timeout, running, false)
+	spawnCtx, cancelRun := s.runContext(base, running, false)
 	cancel := func() { cancelRun(); stop() }
 	tr.setCancel(rec.Parent, rec.ID, cancel)
 
 	tr.appendLog(rec.Parent, rec.ID, "message", "(resumed after a foci restart)")
-	spawnLog.Infof("resume spawn=%s branch=%s parent=%s after restart (resume %d) timeout=%s inputs=%d",
-		rec.ID, rec.BranchKey, rec.Parent, rec.Resumes+1, rec.Timeout, len(texts))
+	spawnLog.Infof("resume spawn=%s branch=%s parent=%s after restart (resume %d) inputs=%d",
+		rec.ID, rec.BranchKey, rec.Parent, rec.Resumes+1, len(texts))
 
 	if s.deps.Observer != nil {
 		shown := running

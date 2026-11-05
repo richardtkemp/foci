@@ -142,7 +142,7 @@ func TestDirectSpawnStopsWithItsCall(t *testing.T) {
 	s := newDelegatedSpawner(runner, allBatchCaps)
 	s.deps.Tracker = NewSpawnTracker()
 	ctx, cancel := context.WithCancel(WithSessionKey(context.Background(), "test/c1"))
-	call := runSpawnAsync(s, ctx, `{"name":"cross3","prompt":"p","timeout":3600}`)
+	call := runSpawnAsync(s, ctx, `{"name":"cross3","prompt":"p"}`)
 	waitBatch(t, runner)
 	cancel() // what the exec bridge does when foci-call dies
 	if r := waitCall(t, call); r.err == nil {

@@ -38,10 +38,6 @@ func (s *Spawner) SendTool() *Tool {
 				"message": {
 					"type": "string",
 					"description": "What to tell the spawn."
-				},
-				"timeout": {
-					"type": "integer",
-					"description": "Seconds a resumed (finished) spawn may run; default: its first run's timeout; at most 86400 (24 hours). Ignored for a running spawn."
 				}
 			},
 			"required": ["id", "message"]
@@ -50,7 +46,6 @@ func (s *Spawner) SendTool() *Tool {
 			p, err := UnmarshalParams[struct {
 				ID      string `json:"id"`
 				Message string `json:"message"`
-				Timeout int    `json:"timeout"`
 			}](params)
 			if err != nil {
 				return ToolResult{}, err
@@ -58,12 +53,12 @@ func (s *Spawner) SendTool() *Tool {
 			if p.ID == "" || strings.TrimSpace(p.Message) == "" {
 				return ToolResult{}, fmt.Errorf("id and message are required")
 			}
-			return s.send(ctx, p.ID, p.Message, p.Timeout)
+			return s.send(ctx, p.ID, p.Message)
 		},
 	}
 }
 
-func (s *Spawner) send(ctx context.Context, idOrBranch, message string, timeoutSec int) (ToolResult, error) {
+func (s *Spawner) send(ctx context.Context, idOrBranch, message string) (ToolResult, error) {
 	tr := s.deps.Tracker
 	// parent is the session the spawn is keyed under: the caller, or the one
 	// that handed the spawn over to it (#2624).
@@ -111,11 +106,7 @@ func (s *Spawner) send(ctx context.Context, idOrBranch, message string, timeoutS
 		}
 	}
 
-	timeout := snap.Timeout
-	if timeoutSec > 0 || timeout <= 0 {
-		timeout = resolveSpawnTimeout(timeoutSec, true) // a resumed spawn runs in the background
-	}
-	return s.resume(ctx, agent, parent, snap.RunningSpawn, text, message, timeout)
+	return s.resume(ctx, agent, parent, snap.RunningSpawn, text, message)
 }
 
 // showFollowup shows the parent's message to a running spawn in the app's
@@ -131,27 +122,27 @@ func (s *Spawner) showFollowup(parent, id, message string) {
 // resume runs a follow-up turn on a finished spawn's branch: the branch still
 // holds the spawn's conversation (a delegated backend resumes its session), so
 // the spawn picks up where it left off.
-func (s *Spawner) resume(ctx context.Context, agent SpawnAgent, parent string, running RunningSpawn, text, message string, timeout time.Duration) (ToolResult, error) {
+func (s *Spawner) resume(ctx context.Context, agent SpawnAgent, parent string, running RunningSpawn, text, message string) (ToolResult, error) {
 	if s.deps.Notifier == nil {
 		return ToolResult{}, fmt.Errorf("spawn_send: no background delivery on this agent")
 	}
 	if err := s.slots.acquire(ctx); err != nil {
 		return ToolResult{}, err
 	}
-	spawnCtx, cancel := s.runContext(ctx, timeout, running, true)
+	spawnCtx, cancel := s.runContext(ctx, running, true)
 	if !s.deps.Tracker.restart(parent, running.ID, cancel) {
 		cancel()
 		s.slots.release()
 		return ToolResult{}, fmt.Errorf("spawn %s started running again meanwhile; send the message again to reach it", running.ID)
 	}
 	s.deps.Tracker.appendLog(parent, running.ID, "message", "(resumed with) "+message)
-	spawnLog.Infof("resume spawn=%s branch=%s parent=%s message=%d chars timeout=%s",
-		running.ID, running.BranchKey, parent, len(message), timeout)
+	spawnLog.Infof("resume spawn=%s branch=%s parent=%s message=%d chars",
+		running.ID, running.BranchKey, parent, len(message))
 	if s.deps.Observer != nil {
 		s.deps.Observer.SpawnStarted(parent, running, message)
 	}
-	pending := fmt.Sprintf("Spawn %s (%s) had finished; it is resumed on branch %s with your message (timeout %s). A new [SPAWN RESULT] comes when it ends.",
-		running.Label(), running.ID, running.BranchKey, timeout)
+	pending := fmt.Sprintf("Spawn %s (%s) had finished; it is resumed on branch %s with your message. A new [SPAWN RESULT] comes when it ends.",
+		running.Label(), running.ID, running.BranchKey)
 	return s.runBackground(ctx, agent, parent, running, []string{text}, spawnCtx, cancel, pending)
 }
 
