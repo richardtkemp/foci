@@ -2,7 +2,7 @@
 
 # Tools for API-loop agents
 
-For agents on foci's **own API loop** (`backend = ""` or `"api"`): foci drives the model directly and you call tools as JSON tool-calls. There are no `foci_*` shell functions (those exist only on the Claude Code backend). Each tool's JSON schema is authoritative for argument names and types.
+For agents on foci's **own API loop** (`backend = ""` or `"api"`): foci drives the model directly and you call tools as JSON tool-calls. There are no `foci_*` shell functions (Claude Code backend only). Each tool's JSON schema is authoritative for arguments.
 
 ## What you get that backend agents don't
 
@@ -11,7 +11,7 @@ foci's **own** general-purpose tools, which a CC agent gets from CC instead:
 - **`read`**, **`write`**, **`edit`** (exact string replacement), **`shell`** — files and shell.
 - **`tmux`** — persistent terminals by name: `start|send|read|list|kill|watch|unwatch`. `watch` sends async inactivity notifications.
 - **`browser`** — headless browser actions (only if the browser feature is enabled in config).
-- **`spawn`** — a sub-call to a model. `name` is required, unique in this session (`all` is reserved; a run of spaces, a tab or a line break inside it is refused); the user sees the spawn by it, and the other spawn tools take it in place of the id. Model group `powerful|fast|cheap`. Timeout: 120 s direct, 3600 s background, 86400 s max. Modes:
+- **`spawn`** — a sub-call to a model. `name` is required, unique in this session (`all` is reserved; a run of spaces, a tab or a line break inside it is refused); the user sees the spawn by it; other spawn tools accept it as the id. Model group `powerful|fast|cheap`. Timeout: 120 s direct, 3600 s background, 86400 s max. Modes:
 - `character` (default): your system prompt and tools, not this conversation, so the prompt must carry the whole task. Direct, or background with `background=true`.
 - `clone`: a background fork of this session; the result arrives later as a message. Use it only when the task needs too much of the conversation to write down.
 - `raw`: just your prompt, the cheapest isolated call. `explore`: direct, read-only, cheap model, restricted tools.
