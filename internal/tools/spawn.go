@@ -284,6 +284,13 @@ type SpawnDeps struct {
 	// a background spawn's run ends on it (#2684): nothing can answer them
 	// any more. Nil = nothing to clear.
 	ClearPrompts func(sessionKey string)
+
+	// CloseBranch closes the backend of a background spawn's branch once a
+	// run of it has ended, so the branch holds no process (and, on codex, no
+	// loaded thread) until a spawn_send resumes it. It keeps the conversation
+	// to resume, and leaves a backend with work still in progress alone. Nil
+	// on an API agent.
+	CloseBranch func(branchKey string)
 }
 
 // turnUnattended calls d.TurnUnattended, false when unset.
@@ -1561,6 +1568,9 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 			obs.SpawnEnded(parent, id)
 		}
 		close(signal)
+		// After the result is on its way: the branch's backend is no longer
+		// needed until a spawn_send resumes it.
+		s.closeBranch(running)
 	}()
 
 	return RunInBackground(ctx, BackgroundParams{
@@ -1582,6 +1592,14 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 		ID:            spawnBackgroundID(running),
 		PendingResult: TextResult(pendingResult),
 	})
+}
+
+// closeBranch closes the backend of a background spawn's branch whose run has
+// ended (SpawnDeps.CloseBranch), on the agent that runs it.
+func (s *Spawner) closeBranch(running RunningSpawn) {
+	if h := s.hostOf(running); h != nil && h.deps.CloseBranch != nil {
+		h.deps.CloseBranch(running.BranchKey)
+	}
 }
 
 // spawnBackgroundID is the Background ID a background spawn prints: its name,

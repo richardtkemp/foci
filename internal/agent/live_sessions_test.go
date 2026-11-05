@@ -603,3 +603,54 @@ func TestIdleReapPeriod(t *testing.T) {
 		t.Errorf("default timeout: period %s, want 10m (unchanged)", got)
 	}
 }
+
+// TestCloseFinishedSession_ClosesIdleKeepsResume proves a finished spawn's
+// branch backend is closed at once (not left 3h for the idle reaper, which
+// kept a codex thread loaded all that time), with its resume ID kept so a
+// spawn_send resumes the same conversation; and that a backend with work in
+// progress is left alone.
+func TestCloseFinishedSession_ClosesIdleKeepsResume(t *testing.T) {
+	idx := newTestSessionIndex(t)
+	r := newCapRig(t, idx, 0, nil)
+	keys := []string{"test-agent/turn", "test-agent/sub", "test-agent/await", "test-agent/perm", "test-agent/compact", "test-agent/done"}
+	for _, k := range keys {
+		mustGet(t, r.m.Get, k)
+	}
+	r.mock(t, "test-agent/turn").inFlight.Store(true)
+	r.mock(t, "test-agent/sub").subagents.Store(true)
+	r.mock(t, "test-agent/await").awaiting.Store(true)
+	r.m.SetPermissionPending("test-agent/perm", true)
+	r.busy.Store("test-agent/compact", true)
+	done := r.mock(t, "test-agent/done")
+	done.mu.Lock()
+	done.sessionID = "thread-done"
+	done.mu.Unlock()
+
+	for _, k := range keys[:5] {
+		if r.m.CloseFinishedSession(k, "test") {
+			t.Errorf("busy backend %s was closed", k)
+		}
+		if r.mock(t, k).wasClosed() {
+			t.Errorf("busy backend %s was closed", k)
+		}
+	}
+	if !r.m.CloseFinishedSession("test-agent/done", "test") {
+		t.Fatal("CloseFinishedSession = false for an idle backend")
+	}
+	if !done.wasClosed() {
+		t.Fatal("the finished backend was not closed")
+	}
+	if _, ok := r.m.getManaged("test-agent/done"); ok {
+		t.Fatal("the finished backend is still mapped")
+	}
+	if v, _ := idx.GetSessionMetadata("test-agent/done", session.MetaKeyCCResumeID); v != "thread-done" {
+		t.Fatalf("resume ID after close = %q, want thread-done (kept)", v)
+	}
+	if r.m.CloseFinishedSession("test-agent/done", "test") {
+		t.Fatal("second CloseFinishedSession reported a close")
+	}
+	mustGet(t, r.m.Get, "test-agent/done")
+	if got := r.mock(t, "test-agent/done").startOpts.ResumeSessionID; got != "thread-done" {
+		t.Fatalf("resumed ResumeSessionID = %q, want thread-done", got)
+	}
+}

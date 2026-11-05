@@ -682,6 +682,14 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 				ag.ClearSessionPrompts(sk)
 			}
 		},
+		CloseBranch: func(bk string) {
+			if d.agLazy == nil {
+				return
+			}
+			if ag := d.agLazy(); ag != nil {
+				ag.CloseFinishedSpawnBranch(bk)
+			}
+		},
 	}
 	if d.path == pathExec {
 		// A delegated agent: one-shots run as batches on its own backend.

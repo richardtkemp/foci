@@ -285,6 +285,15 @@ func (a *Agent) PrepareCharacterSpawnBranch(branchKey, model string) {
 	}
 }
 
+// CloseFinishedSpawnBranch closes the backend of a background spawn's branch
+// whose run has ended (DelegatedManager.CloseFinishedSession). A no-op for an
+// API agent.
+func (a *Agent) CloseFinishedSpawnBranch(branchKey string) {
+	if a.DelegatedManager != nil {
+		a.DelegatedManager.CloseFinishedSession(branchKey, "its spawn run ended")
+	}
+}
+
 // createMemoryBranch creates the branch session used by the BranchFork strategy:
 // a NoResetHook child of parentKey that reads its history, marked no-compact so
 // it can't summarise itself mid-pass. Shared by the compaction-memory and

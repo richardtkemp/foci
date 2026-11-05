@@ -491,6 +491,16 @@ func (m *DelegatedManager) evictable(key string, mb *managedBackend) bool {
 // close that keeps the resume ID. The process closes after m.mu is released
 // (#749). Reports whether it evicted.
 func (m *DelegatedManager) evictExact(c evictCandidate, capLabel string) bool {
+	return m.closeIdleExact(c, func() {
+		m.logger().Infof("evicting idle session %s to make room (%s full; idle %s)", c.key, capLabel, time.Since(c.lastSeen).Round(time.Second))
+	})
+}
+
+// closeIdleExact closes c's backend if it is still mapped, not mid-creation
+// and unused since it was scanned, keeping its resume ID so the next turn
+// resumes the same conversation. logf runs once the backend is unmapped,
+// before it closes.
+func (m *DelegatedManager) closeIdleExact(c evictCandidate, logf func()) bool {
 	m.mu.Lock()
 	mb, ok := m.backends[c.key]
 	if !ok || mb != c.mb || mb.creating.Load() || !mb.lastActive.Equal(c.seenAt) {
@@ -501,9 +511,42 @@ func (m *DelegatedManager) evictExact(c evictCandidate, capLabel string) bool {
 	m.saveResumeID(c.key, mb.be.SessionID())
 	m.mu.Unlock()
 
-	m.logger().Infof("evicting idle session %s to make room (%s full; idle %s)", c.key, capLabel, time.Since(c.lastSeen).Round(time.Second))
+	logf()
 	m.closeRemoved(c.key, mb)
 	return true
+}
+
+// CloseFinishedSession closes sessionKey's backend now that the work it ran
+// for is over (a background spawn's run ended), instead of leaving it to the
+// idle reaper (idle_timeout, 3h by default). It keeps the resume ID, so a
+// later turn (spawn_send to the finished spawn) resumes the same conversation
+// exactly as after an idle close.
+//
+// The backend must be idle by the eviction rule (evictable): no turn, no
+// background work (subagents, background shells, an autonomous run they
+// would trigger), no pending prompt, no compaction. A backend that is not
+// is left for the idle reaper. Reports whether it closed one.
+//
+// Why: a codex app-server serves every session of an agent and keeps each
+// thread it has loaded open (its rollout and writer lock) until the session's
+// facade closes and releases it (codex release.go). A finished spawn's
+// branch that stayed open for 3h held its thread loaded for 3h.
+func (m *DelegatedManager) CloseFinishedSession(sessionKey, reason string) bool {
+	m.mu.Lock()
+	mb, ok := m.backends[sessionKey]
+	if !ok || mb.creating.Load() {
+		m.mu.Unlock()
+		return false
+	}
+	c := evictCandidate{m: m, key: sessionKey, mb: mb, seenAt: mb.lastActive}
+	m.mu.Unlock()
+	if !m.evictable(sessionKey, mb) {
+		m.logger().Infof("finished session %s (%s) is not idle (a turn, background work, a prompt or compaction); left for the idle reaper", sessionKey, reason)
+		return false
+	}
+	return m.closeIdleExact(c, func() {
+		m.logger().Infof("closing finished session %s (%s; session %s)", sessionKey, reason, mb.be.SessionID())
+	})
 }
 
 // closeRemoved tears down a backend that has already been removed from the

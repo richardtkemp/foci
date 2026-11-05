@@ -152,3 +152,37 @@ func TestSpawnRecord_KeepsSpawnerUnattended(t *testing.T) {
 		t.Error("restored spawn lost SpawnerUnattended: after a restart it would prompt")
 	}
 }
+
+// TestBackgroundSpawn_ClosesBranchWhenRunEnds proves a background spawn's
+// branch backend is closed once its run ends (SpawnDeps.CloseBranch), and not
+// while it runs. Without it a finished codex spawn kept its thread loaded in
+// the shared app-server until the 3h idle reaper (2026-11-05).
+func TestBackgroundSpawn_ClosesBranchWhenRunEnds(t *testing.T) {
+	t.Parallel()
+	gate := make(chan struct{})
+	agent := &gatedSpawnAgent{gate: gate}
+	h := newFollowupHarness(agent)
+	cr := &clearRecorder{}
+	h.spawner.deps.CloseBranch = cr.clear
+	h.start(t, "watch the build")
+	running := h.tracker.Running("test/imain")
+	if len(running) != 1 {
+		t.Fatalf("running = %+v, want one spawn", running)
+	}
+	if got := cr.got(); len(got) != 0 {
+		t.Fatalf("branch closed while the spawn runs: %v", got)
+	}
+	close(gate)
+	select {
+	case <-h.delivered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no spawn result")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for len(cr.got()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := cr.got(); len(got) != 1 || got[0] != running[0].BranchKey {
+		t.Errorf("CloseBranch calls = %v, want one for %s", got, running[0].BranchKey)
+	}
+}

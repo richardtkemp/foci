@@ -36,6 +36,16 @@ import (
 //   - A fork is written to disk at once, so a released fork resumes with
 //     its history (depth leaves, character spawn branches).
 //
+// With approvals_reviewer=auto_review codex also opens a guardian_review
+// sibling thread each time it loads a thread (its own writer lock, and a
+// rollout once it has reviewed something). It is not in thread/loaded/list
+// and closes with its parent, review or not (live 0.166.0, lsof), so foci
+// never releases it itself.
+//
+// Releasing happens in Close, so it is only as prompt as the backend close:
+// a finished background spawn's branch is closed when its run ends
+// (DelegatedManager.CloseFinishedSession), not 3h later by the idle reaper.
+//
 // thread/archive is NOT used: it moves the rollout out of sessions/, which
 // is not "done for now" but "gone from the list".
 
