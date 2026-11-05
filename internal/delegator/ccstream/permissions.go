@@ -206,6 +206,10 @@ func (b *Backend) respondAllowDeny(requestID string, allow bool, message string)
 	if !ok {
 		return fmt.Errorf("ccstream: no pending permission with request ID %q", requestID)
 	}
+	// The claim above ended the prompt whether or not the response is written:
+	// nothing can answer it now, so it must not keep WaitForPermission parked
+	// (#2847).
+	defer b.outstanding.Resolve(requestID)
 
 	var err error
 	if allow {
@@ -233,8 +237,6 @@ func (b *Backend) respondAllowDeny(requestID string, allow bool, message string)
 	if !allow {
 		b.endFociDeniedCall(pp.toolUseID, pp.toolName, pp.agentID, message)
 	}
-
-	b.outstanding.Resolve(requestID)
 	return nil
 }
 
@@ -274,6 +276,10 @@ func (b *Backend) CancelPlanWithFeedback(requestID, feedback string) error {
 		DecisionClassification: "user_reject",
 	}
 	if err := b.writer.SendControlResponse(requestID, resp); err != nil {
+		// The claim ended the prompt: take its buttons down and clear it, so
+		// WaitForPermission does not park behind it (#2847). The caller runs the
+		// text as ordinary input.
+		b.outstanding.Cancel(requestID, "plan response could not be sent")
 		return err
 	}
 	b.endFociDeniedCall(pp.toolUseID, pp.toolName, pp.agentID, feedback)
@@ -290,6 +296,8 @@ func (b *Backend) respondWithRule(requestID string, prefix string) error {
 	if !ok {
 		return fmt.Errorf("ccstream: no pending permission with request ID %q", requestID)
 	}
+	// The claim ended the prompt, written or not (#2847; see respondAllowDeny).
+	defer b.outstanding.Resolve(requestID)
 
 	resp := &PermissionAllow{
 		Behavior:     "allow",
@@ -300,12 +308,7 @@ func (b *Backend) respondWithRule(requestID string, prefix string) error {
 		ToolUseID:              pp.toolUseID,
 		DecisionClassification: "user_permanent",
 	}
-	if err := b.writer.SendControlResponse(requestID, resp); err != nil {
-		return err
-	}
-
-	b.outstanding.Resolve(requestID)
-	return nil
+	return b.writer.SendControlResponse(requestID, resp)
 }
 
 // handleControlCancel is called when CC cancels a permission request

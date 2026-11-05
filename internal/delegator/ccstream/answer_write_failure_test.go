@@ -80,3 +80,63 @@ func TestRespondToElicitation_WriteFailureClearsOutstanding(t *testing.T) {
 		t.Errorf("outstanding has elic-w=%v, cleared=%d: the prompt must leave the registry and fire the all-clear", b.outstanding.Has("elic-w"), cleared)
 	}
 }
+
+// TestPermissionResponses_WriteFailureClearsOutstanding is the permission-side
+// twin (#2847): every path that claims a pending permission ends the prompt,
+// so a failed write must not leave WaitForPermission parked behind it.
+func TestPermissionResponses_WriteFailureClearsOutstanding(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		respond func(*Backend, string) error
+	}{
+		{"allow", func(b *Backend, id string) error {
+			return b.RespondToPermission(id, delegator.PermissionDecision{Allow: true})
+		}},
+		{"deny", func(b *Backend, id string) error {
+			return b.RespondToPermission(id, delegator.PermissionDecision{Message: "no"})
+		}},
+		{"allow with rule", func(b *Backend, id string) error {
+			return b.RespondToPermission(id, delegator.PermissionDecision{Allow: true, RulePrefix: "git status"})
+		}},
+		{"cancel question", (*Backend).CancelQuestion},
+		{"plan feedback", func(b *Backend, id string) error {
+			return b.CancelPlanWithFeedback(id, "revise it")
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := failingBackend()
+			cleared := 0
+			b.SetOnPromptsCleared(func() { cleared++ })
+			b.storePendingPerm(&pendingPermission{requestID: "req-p", toolUseID: "tu-p", toolName: "Bash"})
+			b.outstanding.Register("req-p", delegator.OutstandingPermission)
+
+			if err := tc.respond(b, "req-p"); err == nil {
+				t.Fatal("returned nil on a failed write")
+			}
+			if b.outstanding.Has("req-p") || cleared != 1 {
+				t.Errorf("outstanding has req-p=%v, cleared=%d: the prompt must leave the registry and fire the all-clear", b.outstanding.Has("req-p"), cleared)
+			}
+		})
+	}
+}
+
+// TestCancelPlanWithFeedback_WriteFailureEditsButtons pins that the failed plan
+// path still takes the stale Allow/Deny buttons down: nothing can answer them.
+func TestCancelPlanWithFeedback_WriteFailureEditsButtons(t *testing.T) {
+	t.Parallel()
+	b := failingBackend()
+	b.storePendingPerm(&pendingPermission{requestID: "req-plan", toolUseID: "tu", toolName: "ExitPlanMode"})
+	b.outstanding.Register("req-plan", delegator.OutstandingPermission)
+	notified := 0
+	b.outstanding.AddCancelListener("req-plan", func(string) { notified++ })
+
+	if err := b.CancelPlanWithFeedback("req-plan", "revise it"); err == nil {
+		t.Fatal("returned nil on a failed write")
+	}
+	if notified != 1 {
+		t.Errorf("cancel listener fired %d times, want 1", notified)
+	}
+}

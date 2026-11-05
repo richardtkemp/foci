@@ -494,12 +494,13 @@ func (a *Agent) refuseHeld(inb *sessionInbox) {
 	inb.held = nil
 }
 
-// refuseDroppedInject releases an injection's waiter when the worker must
-// drop the envelope without running it — the inbox ctx ended while the
-// injection was held in a gate. Refused exists for exactly this (#2059): an
-// EnqueueInjectWait caller is released with ErrShuttingDown instead of
-// waiting out its own ctx. User envelopes dropped at shutdown have no waiter
-// and no equivalent hook; they are just dropped. No-op when Refused is unset.
+// refuseDroppedInject releases an injection's waiter when the inbox must drop
+// the envelope without running it: the inbox ctx ended while the injection was
+// held in a gate, or a full queue refused its release (#2847). Refused exists
+// for exactly this (#2059): an EnqueueInjectWait caller is released with an
+// error instead of waiting out its own ctx. User envelopes dropped at shutdown
+// have no waiter and no equivalent hook; they are just dropped. No-op when
+// Refused is unset.
 func (a *Agent) refuseDroppedInject(env Envelope) {
 	if env.Inject != nil && env.Inject.Refused != nil {
 		env.Inject.Refused()

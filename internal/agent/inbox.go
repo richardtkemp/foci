@@ -192,8 +192,10 @@ type InjectMeta struct {
 	// held behind it (#1712). Set by the ask tool's delivery path only.
 	AskReqID string
 	// Refused, if set, is called instead of Run when the inbox declines to run
-	// the injection because the agent is shutting down (#2059), so a caller
+	// an injection it already accepted: the agent is shutting down (#2059), or a
+	// full queue refused its release from an ask or login hold (#2847). A caller
 	// waiting on Run's effect is released rather than left waiting forever.
+	// Enqueue itself does not call it: a false return is the caller's to handle.
 	Refused func()
 	// UserInput marks the injection as the user's own action — a foci_ask
 	// answer (#2233). Envelope.Text carries the message so the steer path can
@@ -1116,7 +1118,8 @@ func (a *Agent) steerInject(be delegator.Delegator, env Envelope) (inj delegator
 // Returns ctx.Err() if ctx ends first; the injection still runs when the
 // worker reaches it (Run closures are not cancellable once queued). Returns
 // ErrShuttingDown if the worker declined to run it because the agent is
-// draining (#2059).
+// draining (#2059), and an error if the inbox refused it, at enqueue or at
+// release from a hold (#2847).
 func (a *Agent) EnqueueInjectWait(ctx context.Context, sessionKey, trigger string, run func()) error {
 	done := make(chan struct{})
 	refused := make(chan struct{})
@@ -1127,13 +1130,19 @@ func (a *Agent) EnqueueInjectWait(ctx context.Context, sessionKey, trigger strin
 			run()
 		}, Refused: func() { close(refused) }},
 	})
+	rejected := fmt.Errorf("inbox rejected injection for session %s (trigger=%s)", sessionKey, trigger)
 	if !accepted {
-		return fmt.Errorf("inbox rejected injection for session %s (trigger=%s)", sessionKey, trigger)
+		return rejected
 	}
 	select {
 	case <-done:
 		return nil
 	case <-refused:
+		// Only a full queue refuses while the inbox is still running (#2847).
+		// ErrShuttingDown tells a caller that the next process re-fires this.
+		if !a.ShuttingDown() && a.inboxCtx != nil && a.inboxCtx.Err() == nil {
+			return rejected
+		}
 		return ErrShuttingDown
 	case <-ctx.Done():
 		return ctx.Err()
@@ -2027,8 +2036,18 @@ func (a *Agent) releaseExpiredAskHolds(sk string) {
 	}
 	inb.deferredInjects = kept
 	inb.injMu.Unlock()
+	a.requeueDeferred(release)
+}
+
+// requeueDeferred re-enqueues injections just taken off the deferred list. This
+// call is their only owner, so a refused one fires its Refused exactly once
+// (#2847): enqueueInjection has logged the drop, and the producer accepted at
+// enqueue is still holding state on the assumption that it runs.
+func (a *Agent) requeueDeferred(release []Envelope) {
 	for _, env := range release {
-		a.Enqueue(env)
+		if !a.Enqueue(env) {
+			a.refuseDroppedInject(env)
+		}
 	}
 }
 
@@ -2060,9 +2079,7 @@ func (a *Agent) DrainDeferredInjects(sk, reqID string) {
 	}
 	inb.deferredInjects = kept
 	inb.injMu.Unlock()
-	for _, env := range release {
-		a.Enqueue(env)
-	}
+	a.requeueDeferred(release)
 }
 
 // SetTurnObserver installs a callback fired before each driver.WrapTurn

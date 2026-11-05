@@ -216,28 +216,54 @@ func TestRouting_NoDefaultAgentDMStartsNoTurn(t *testing.T) {
 
 // TestRouting_RefusedEnqueueIsLoggedNotSilent proves a message the agent's
 // inbox refuses (the queue-full shape) is dropped VISIBLY: a WARN naming the
-// agent, the user and the session reaches the log, and nothing is posted to
-// Slack (the sender sees nothing; A2 owns any retry or notice).
-func TestRouting_RefusedEnqueueIsLoggedNotSilent(t *testing.T) {
-	h := newHarness(t, "helen", nil)
-	h.allow("helen", true, "U1")
-	core := h.mgr.core("helen")
-	core.enq.(*fakeAgent).refuseEnqueue = true
-
-	logs := captureLogLines(t, log.WARN)
-	h.deliver(dmEvent("U1", "D100", "hello?", "1"))
-
-	dropped := 0
-	for _, line := range logs() {
-		if strings.Contains(line, "refused the enqueue") && strings.Contains(line, "helen") && strings.Contains(line, "U1") {
-			dropped++
-		}
+// agent, the user and the session reaches the log, and the sender is told in the
+// same conversation (#2847), as app, Telegram and Discord do (#2762).
+func TestRouting_RefusedEnqueueTellsTheSender(t *testing.T) {
+	cases := []struct {
+		name       string
+		ev         slackEvent
+		channel    string
+		wantThread string
+		channels   map[string]string
+	}{
+		{name: "DM", ev: dmEvent("U1", "D100", "hello?", "1"), channel: "D100"},
+		{
+			name:       "channel thread",
+			ev:         mentionEvent("U1", "C100", "<@UBOTID> hello?", "2", "1"),
+			channel:    "C100",
+			wantThread: "1",
+			channels:   map[string]string{"C100": "helen"},
+		},
 	}
-	if dropped != 1 {
-		t.Errorf("refused enqueue logged %d matching WARNs, want 1:\n%s", dropped, strings.Join(logs(), "\n"))
-	}
-	if calls := h.fake.totalCalls(); calls != 0 {
-		t.Errorf("refused enqueue made %d Web API calls, want 0", calls)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, "helen", tc.channels)
+			h.allow("helen", true, "U1")
+			h.mgr.core("helen").enq.(*fakeAgent).refuseEnqueue = true
+
+			logs := captureLogLines(t, log.WARN)
+			h.deliver(tc.ev)
+
+			dropped := 0
+			for _, line := range logs() {
+				if strings.Contains(line, "refused the enqueue") && strings.Contains(line, "helen") && strings.Contains(line, "U1") {
+					dropped++
+				}
+			}
+			if dropped != 1 {
+				t.Errorf("refused enqueue logged %d matching WARNs, want 1:\n%s", dropped, strings.Join(logs(), "\n"))
+			}
+			posts := h.fake.postsTo(tc.channel)
+			if len(posts) != 1 {
+				t.Fatalf("refused enqueue posted %d messages to %s, want 1", len(posts), tc.channel)
+			}
+			if got := posts[0].Body["text"]; got != agent.InboxRefusedNotice {
+				t.Errorf("notice text = %q, want %q", got, agent.InboxRefusedNotice)
+			}
+			if got, _ := posts[0].Body["thread_ts"].(string); got != tc.wantThread {
+				t.Errorf("notice thread_ts = %q, want %q", got, tc.wantThread)
+			}
+		})
 	}
 }
 

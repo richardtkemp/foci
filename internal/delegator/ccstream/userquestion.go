@@ -208,6 +208,8 @@ func (b *Backend) CancelQuestion(requestID string) error {
 	if !ok {
 		return fmt.Errorf("ccstream: no pending question with request ID %q", requestID)
 	}
+	// The claim ended the prompt, written or not (#2847; see respondAllowDeny).
+	defer b.outstanding.Resolve(requestID)
 
 	b.logger().Debugf("cancelling question req_id=%s (had %d/%d answers)",
 		requestID, len(pp.answers), len(pp.questions))
@@ -219,12 +221,7 @@ func (b *Backend) CancelQuestion(requestID string) error {
 		ToolUseID:              pp.toolUseID,
 		DecisionClassification: "user_reject",
 	}
-	if err := b.writer.SendControlResponse(requestID, resp); err != nil {
-		return err
-	}
-
-	b.outstanding.Resolve(requestID)
-	return nil
+	return b.writer.SendControlResponse(requestID, resp)
 }
 
 // HasPendingQuestion returns the request ID of a pending AskUserQuestion,

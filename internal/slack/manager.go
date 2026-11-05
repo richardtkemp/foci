@@ -248,10 +248,12 @@ func (m *Manager) handleMessage(msg inboundMessage) {
 	}
 	if !core.enq.Enqueue(env) {
 		// A refused enqueue (the agent's inbox queue is full) drops the
-		// message: the sender sees nothing, so the drop must be visible
-		// here (#2459 req 1's "never silently" delivery hygiene; A2 owns
-		// the retry).
+		// message, so the log and the sender both hear of it (#2847, as
+		// Telegram, Discord and the app do since #2762).
 		m.slackLog().Warnf("agent %s: dropped message from %s for session %s (agent inbox refused the enqueue)", agentID, msg.User, sessionKey)
+		if err := (&Conn{core: core}).boundTo(sessionKey).SendText(agent.InboxRefusedNotice); err != nil {
+			m.slackLog().Warnf("agent %s: refusal notice for session %s: %v", agentID, sessionKey, err)
+		}
 	}
 }
 
