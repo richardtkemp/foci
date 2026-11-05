@@ -141,6 +141,15 @@ Subcommands:
 		mainLog.Infof("install root %s is separate from HOME: Claude Code runs with CLAUDE_CONFIG_DIR=%s", root, dir)
 	}
 
+	// Before anything spawns: children (the codex app-server above all, which
+	// holds two files per loaded thread for days) get foci's raised open-file
+	// limit instead of the launchd/systemd default of 256 (see procx).
+	if n, err := procx.PassOpenFileLimitToChildren(); err != nil {
+		mainLog.Warnf("open-file limit: %v (children keep the default soft limit)", err)
+	} else {
+		mainLog.Infof("open-file soft limit %d, inherited by spawned processes", n)
+	}
+
 	modelinfo.UnpricedModelHook = func(model string) {
 		modelinfoLog.Warnf("no pricing for model %q — its calls are unpriced (cost unknown, not zero); add it to the registry or a family match in internal/modelinfo", model)
 	}
