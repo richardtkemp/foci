@@ -63,7 +63,7 @@ const (
 // DepthAckText is the turn the feed's Ack (the client's "Complete" button) runs on a
 // leaf. Complete means the user agrees: what the leaf recommended is their decision,
 // and the leaf carries it out itself rather than only telling its parent.
-const DepthAckText = "The user pressed Complete on this leaf: 👍 they agree. If this leaf recommended or proposed something, that is now their decision: do it now, in this same turn, then report with foci_depth_report what you did. If the work is too large for one turn, or needs a tool this leaf does not have, report the decision so that the parent acts on it. If you proposed nothing, report what you have. Do not ask anything further."
+const DepthAckText = "The user pressed Complete on this leaf: 👍 they agree. If this leaf recommended or proposed something, that is now their decision: do it now, in this same turn, then report with foci_depth_report what you did. If the work is more than a quick step, start a background spawn to do it and report at once, naming the spawn: its result passes to your parent. If only the parent can do it, report the decision so that the parent acts on it. If you proposed nothing, report what you have. Do not ask anything further."
 
 // DepthSurface is the app side of depth mode (app.DepthSurface).
 type DepthSurface interface {
