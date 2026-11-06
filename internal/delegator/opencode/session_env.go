@@ -59,9 +59,6 @@ func RemoveSessionEnvFile(sessionID string) {
 // runtime dependency on opencode's input API or environment. Uses Bun.file
 // for fast cached reads on every bash spawn.
 func EnsureSessionEnvPlugin(workDir string) {
-	if workDir == "" {
-		return
-	}
 	ensureWorkspacePlugin(workDir, sessionEnvPluginFn, sessionEnvPluginSource(sessionenv.Dir()))
 }
 
@@ -71,7 +68,8 @@ func EnsureSessionEnvPlugin(workDir string) {
 // skips the write when content already matches (avoids touching mtime on every
 // session start, which could trigger file-watchers). Best-effort — errors are
 // logged, never fatal. Must run BEFORE the server is acquired: opencode loads
-// plugins at subprocess startup.
+// plugins at subprocess startup. An empty workDir writes nothing: the join below
+// would otherwise be relative and drop .opencode/ into foci's own CWD.
 func ensureWorkspacePlugin(workDir, filename, content string) {
 	if workDir == "" {
 		return

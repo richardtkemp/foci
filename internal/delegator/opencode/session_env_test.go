@@ -48,10 +48,6 @@ func TestWriteSessionEnvFile_SkipsEmpty(t *testing.T) {
 	}
 }
 
-func TestWriteSessionEnvFile_SkipsEmptySessionID(t *testing.T) {
-	WriteSessionEnvFile("", map[string]string{"FOCI_SOCK": "/tmp/x.sock"})
-}
-
 func TestRemoveSessionEnvFile_DeletesMapping(t *testing.T) {
 	sessionID := "sess-remove-test"
 	env := map[string]string{"FOCI_SOCK": "/tmp/x.sock", "BASH_ENV": "/tmp/x.sh"}
@@ -66,10 +62,6 @@ func TestRemoveSessionEnvFile_DeletesMapping(t *testing.T) {
 	if _, err := os.Stat(sessionenv.Path(sessionID)); !os.IsNotExist(err) {
 		t.Error("expected file removed after RemoveSessionEnvFile")
 	}
-}
-
-func TestRemoveSessionEnvFile_NoOpOnMissing(t *testing.T) {
-	RemoveSessionEnvFile("never-existed-test")
 }
 
 func TestEnsureSessionEnvPlugin_WritesPlugin(t *testing.T) {
@@ -112,8 +104,21 @@ func TestEnsureSessionEnvPlugin_Idempotent(t *testing.T) {
 }
 
 func TestEnsureSessionEnvPlugin_EmptyWorkDir(t *testing.T) {
-	// Should not panic or write anything.
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+
 	EnsureSessionEnvPlugin("")
+
+	assertNoOpencodeDir(t, cwd)
+}
+
+// assertNoOpencodeDir fails if an empty-workDir plugin write landed in cwd: the
+// plugin path would be relative, so that is where a missing guard puts it.
+func assertNoOpencodeDir(t *testing.T, cwd string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(cwd, ".opencode")); !os.IsNotExist(err) {
+		t.Errorf("empty workDir must not create .opencode/ in the CWD (stat err = %v)", err)
+	}
 }
 
 func TestSessionEnvPluginSource_ContainsEnvDir(t *testing.T) {

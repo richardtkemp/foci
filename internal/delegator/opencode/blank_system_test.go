@@ -72,8 +72,12 @@ func TestEnsureBlankSystemPlugin_WritesPlugin(t *testing.T) {
 }
 
 func TestEnsureBlankSystemPlugin_EmptyWorkDir(t *testing.T) {
-	// Must not panic or write anywhere for an empty workDir.
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+
 	EnsureBlankSystemPlugin("")
+
+	assertNoOpencodeDir(t, cwd)
 }
 
 func TestWriteSessionCompactFile_CreatesFile(t *testing.T) {

@@ -52,8 +52,14 @@ func TestSafeGo_RecoversPanic(t *testing.T) {
 }
 
 // TestWithHub_RecoversHandlerPanic verifies the HTTP chokepoint recovers a
-// panic in any app handler, so one bad request can't crash the gateway.
+// panic in any app handler, so one bad request can't crash the gateway. The
+// recovery writes nothing, so the client gets net/http's implicit 200 with an
+// empty body; the log assert proves that 200 came from a recovered panic and
+// not from a path that never reached the handler.
 func TestWithHub_RecoversHandlerPanic(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 	setActiveHub(newTestHub())
 	t.Cleanup(func() { setActiveHub(nil) })
 
@@ -64,6 +70,16 @@ func TestWithHub_RecoversHandlerPanic(t *testing.T) {
 	rw := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/app/test", nil)
 	h(rw, req) // must return without panicking
+
+	if rw.Code != http.StatusOK {
+		t.Errorf("status = %d, want the implicit %d (recovery writes nothing)", rw.Code, http.StatusOK)
+	}
+	if rw.Body.Len() != 0 {
+		t.Errorf("body = %q, want empty", rw.Body.String())
+	}
+	if got := buf.String(); !strings.Contains(got, "recovered panic in http GET /app/test") {
+		t.Errorf("log = %q, want the recovered handler panic", got)
+	}
 }
 
 // TestProviderDegraded_IsInert verifies an app provider whose Init failed
