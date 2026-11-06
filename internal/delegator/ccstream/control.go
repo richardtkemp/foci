@@ -70,6 +70,21 @@ func (b *Backend) StopCommands(ctx context.Context) (int, error) {
 	return b.stopTasks("commands", append(keys, b.mainShellCallIDs()...))
 }
 
+// StopTask stops one running subagent or command by its running-list id, with
+// the same stop_task as StopSubagents and StopCommands (#2901). It reports false
+// when the id has no recorded task_id: the task has ended, or task_started has
+// not arrived yet.
+func (b *Backend) StopTask(_ context.Context, id string) (bool, error) {
+	n, err := b.stopTasks("task", []string{id})
+	return n > 0, err
+}
+
+// StopForegroundCommands stops only the main agent's running foreground shell
+// commands, leaving its background commands, subagents and turn (#2901).
+func (b *Backend) StopForegroundCommands(_ context.Context) (int, error) {
+	return b.stopTasks("foreground commands", b.mainShellCallIDs())
+}
+
 // stopTasks sends one stop_task per key that has a recorded task_id, and
 // returns how many it sent.
 func (b *Backend) stopTasks(what string, keys []string) (int, error) {

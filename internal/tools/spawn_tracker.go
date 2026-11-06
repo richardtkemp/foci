@@ -654,6 +654,23 @@ func (t *SpawnTracker) stopOne(parent, idOrBranch string) (known, stopped bool) 
 	return true, true
 }
 
+// StopOne cancels parentSession's one running spawn with this id, for the
+// user's per-item stop (#2901), and reports whether it was running.
+func (t *SpawnTracker) StopOne(parentSession, id string) bool {
+	if t == nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.spawns[parentSession][id]
+	if s == nil || !s.running || s.stopped {
+		return false
+	}
+	s.stopped, s.stoppedBy = true, "the user"
+	s.cancel()
+	return true
+}
+
 // Stop cancels every running spawn of parentSession and returns how many it
 // stopped. Each spawn's own goroutine then ends it, reporting it stopped.
 func (t *SpawnTracker) Stop(parentSession string) int {

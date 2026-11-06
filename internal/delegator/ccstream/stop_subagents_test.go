@@ -114,3 +114,67 @@ func TestSubagentRunning_CarriesKindModelAndRealModel(t *testing.T) {
 		t.Errorf("model = %q after the transcript named it, want claude-haiku-4-5", last[0].Model)
 	}
 }
+
+// TestStopTask_StopsOnlyThatTask pins #2901: StopTask stops one running-list
+// entry and StopForegroundCommands only the main thread's foreground calls,
+// where the kind-wide stops above take everything of a kind.
+func TestStopTask_StopsOnlyThatTask(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	b := newTestBackend(&buf)
+	tool := func(id, name, input string) *AssistantMessage {
+		return &AssistantMessage{Message: BetaMessage{
+			Content: []ContentBlock{{Type: "tool_use", ID: id, Name: name, Input: json.RawMessage(input)}},
+		}}
+	}
+	started := func(taskID, toolUseID, taskType string) {
+		raw, _ := json.Marshal(map[string]any{
+			"type": "system", "subtype": "task_started", "task_id": taskID, "tool_use_id": toolUseID, "task_type": taskType,
+		})
+		b.OnSystem("task_started", raw)
+	}
+	b.OnAssistant(tool("toolu_a1", "Agent", `{"description":"one","prompt":"go"}`))
+	b.OnAssistant(tool("toolu_a2", "Agent", `{"description":"two","prompt":"go"}`))
+	b.OnAssistant(tool("toolu_bg1", "Bash", `{"command":"sleep 60","run_in_background":true}`))
+	b.OnAssistant(tool("toolu_bg2", "Bash", `{"command":"sleep 61","run_in_background":true}`))
+	b.OnAssistant(tool("toolu_fg", "Bash", `{"command":"make test"}`))
+	started("task_a1", "toolu_a1", "local_agent")
+	started("task_a2", "toolu_a2", "local_agent")
+	started("task_bg1", "toolu_bg1", taskTypeBash)
+	started("task_bg2", "toolu_bg2", taskTypeBash)
+	started("task_fg", "toolu_fg", taskTypeBash)
+
+	sent := func() []string {
+		var ids []string
+		for _, line := range strings.Split(buf.String(), "\n") {
+			if _, rest, ok := strings.Cut(line, `"subtype":"stop_task","task_id":"`); ok {
+				id, _, _ := strings.Cut(rest, `"`)
+				ids = append(ids, id)
+			}
+		}
+		buf.Reset()
+		return ids
+	}
+	for _, c := range []struct{ id, want string }{{"toolu_a2", "task_a2"}, {"toolu_bg1", "task_bg1"}} {
+		ok, err := b.StopTask(t.Context(), c.id)
+		if err != nil || !ok {
+			t.Fatalf("StopTask(%s) = %v, %v", c.id, ok, err)
+		}
+		if got := sent(); len(got) != 1 || got[0] != c.want {
+			t.Errorf("StopTask(%s) sent %v, want only %s", c.id, got, c.want)
+		}
+	}
+	if ok, err := b.StopTask(t.Context(), "toolu_gone"); err != nil || ok {
+		t.Errorf("StopTask of an unknown id = %v, %v; want false, nil", ok, err)
+	}
+	if got := sent(); len(got) != 0 {
+		t.Errorf("StopTask of an unknown id sent %v", got)
+	}
+	n, err := b.StopForegroundCommands(t.Context())
+	if err != nil || n != 1 {
+		t.Fatalf("StopForegroundCommands = %d, %v; want 1", n, err)
+	}
+	if got := sent(); len(got) != 1 || got[0] != "task_fg" {
+		t.Errorf("StopForegroundCommands sent %v, want only task_fg", got)
+	}
+}

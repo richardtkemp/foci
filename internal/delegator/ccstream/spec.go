@@ -69,6 +69,7 @@ var spec = delegator.Spec{
 		delegator.CapTurnAdoption:   delegator.Yes(),
 		delegator.CapStopSubagents:  delegator.Yes(),
 		delegator.CapStopCommands:   delegator.Yes(),
+		delegator.CapStopTask:       delegator.Yes(),
 		delegator.CapSubagentStatus: delegator.Yes(),
 
 		delegator.CapPermissionResponse: delegator.Yes(),

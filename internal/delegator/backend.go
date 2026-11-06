@@ -322,6 +322,19 @@ type CommandStopper interface {
 	StopCommands(ctx context.Context) (int, error)
 }
 
+// TaskStopper is optionally implemented by backends that can stop a single
+// running task rather than a whole kind (#2901).
+type TaskStopper interface {
+	// StopTask stops the running subagent or command with this id (an id from
+	// RunningSubagents). It reports false when no stop could be sent: the
+	// task has ended, or the backend has not registered it yet.
+	StopTask(ctx context.Context, id string) (bool, error)
+	// StopForegroundCommands stops the agent's own foreground shell commands
+	// and leaves its background commands, subagents and turn. Returns how
+	// many it stopped.
+	StopForegroundCommands(ctx context.Context) (int, error)
+}
+
 // SubagentReporter is optionally implemented by backends that report their
 // subagents' status line and the set currently running.
 type SubagentReporter interface {

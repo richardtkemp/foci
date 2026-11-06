@@ -153,6 +153,7 @@ Every delegated backend declares every capability in its `delegator.Spec` (`inte
 | `turn_adoption` | starts runs on its own and lets foci adopt them (TurnAdopter) | ✓ | n/a | n/a |
 | `stop_subagents` | stops its running subagents (SubagentStopper) | ✓ | n/a | ✗ |
 | `stop_commands` | stops its background shell commands (CommandStopper) | ✓ | ✗ | ✗ |
+| `stop_task` | stops one running subagent or command, or only the foreground commands (TaskStopper) | ✓ | ✗ | ✗ |
 | `subagent_status` | reports subagent status and the running background work (SubagentReporter) | ✓ | n/a | ✓ |
 | `permission_response` | delivers the user's answer to a permission prompt (PermissionResponder) | ✓ | ✓ | ✓ |
 | `permission_rules` | turns PermissionDecision.RulePrefix into a persistent "allow always" rule | ✓ | ✗ | ✗ |
@@ -193,6 +194,7 @@ Why not:
 - `turn_adoption`: codex (n/a): no autonomous runs to adopt; opencode (n/a): no autonomous runs to adopt.
 - `stop_subagents`: codex (n/a): foci turns codex's own subagents off (agents.enabled=false); opencode: no API to stop a running subagent.
 - `stop_commands`: codex: no API to stop a background command; opencode: no API to stop a background command.
+- `stop_task`: codex: no API to stop one running task; opencode: no API to stop one running task.
 - `subagent_status`: codex (n/a): foci turns codex's own subagents off (agents.enabled=false).
 - `permission_rules`: codex: approvals are accept or decline only; opencode: "always" is sent as opencode's own remember flag, not a foci rule.
 - `questions`: codex: the app-server has no question tool.
@@ -287,7 +289,7 @@ grepped for each ✗. Row IDs are not renumbered, so the gaps are the removed ro
 | S5 | Follow-up to running subagent | `OnSubagentPrompt` | ✓ | ✗ | n/a [26] |
 | S6 | Status / running list | `SetOnSubagentStatus`, `SetOnSubagentRunning` (status line, pending-work gate) | ✓ | ✓ | n/a [26] |
 | S7 | Background commands | Track `run_in_background` shells as pending work | ✓ | ✗ | ✗ |
-| S8 | Stop subagents / commands | `/stop subagents`, `/stop commands` | ✓ | ✗ | ✗ [26] |
+| S8 | Stop subagents / commands | `/stop subagents`, `/stop commands`, `/stop foreground`, `/stop item <id>` | ✓ | ✗ | ✗ [26] |
 | S9 | Nested subagents | Grandchild attribution to the depth-1 chit | ✓ | ✗ [27] | n/a [26] |
 | S10 | Workflow agents | Tail `local_workflow` runs | ✓ | n/a [28] | n/a [28] |
 | S11 | Subagent model | Record the model each subagent actually ran | ✓ | ✗ | n/a [26] |
@@ -671,7 +673,7 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - S5: `cc/handlers.go:OnAssistant` SendMessage → `OnSubagentPrompt` | ✗ grep `OnSubagentPrompt` | ✗ same
 - S6: `cc/callbacks.go:SetOnSubagentStatus`, `SetOnSubagentRunning` | `oc/opencode.go` same | ✗ grep `SetOnSubagentStatus|SetOnSubagentRunning|delegator.SubagentTracker`
 - S7: `cc/handlers.go:OnAssistant` (`ExtractBashBackground`, `SubagentKindCommand`) | ✗ grep `background|SubagentKind` | ✗ same
-- S8: `cc/control.go:StopSubagents`, `StopCommands` | ✗ grep `StopSubagents|StopCommands` | ✗ same
+- S8: `cc/control.go:StopSubagents`, `StopCommands`, `StopTask`, `StopForegroundCommands` | ✗ grep `StopSubagents|StopCommands|StopTask|StopForegroundCommands` | ✗ same
 - S9: `cc/nested_subagents.go` | ✗ grep `nested` | ✗ same
 - S10: `cc/workflow_tail.go` | n/a | n/a
 - S11: `cc/ccstream.go` (`b.agents.SetModel`) | ✗ grep `SetModel(` on tracker | ✗ same

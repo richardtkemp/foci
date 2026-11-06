@@ -62,6 +62,7 @@ const (
 	CapTurnAdoption
 	CapStopSubagents
 	CapStopCommands
+	CapStopTask
 	CapSubagentStatus
 
 	// Prompts the user answers.
@@ -152,6 +153,7 @@ var capabilityTable = [numCapabilities]CapabilityInfo{
 	CapTurnAdoption:   {Name: "turn_adoption", Kind: KindInterface, Iface: ifaceOf[TurnAdopter](), Doc: "starts runs on its own and lets foci adopt them (TurnAdopter)"},
 	CapStopSubagents:  {Name: "stop_subagents", Kind: KindInterface, Iface: ifaceOf[SubagentStopper](), Doc: "stops its running subagents (SubagentStopper)"},
 	CapStopCommands:   {Name: "stop_commands", Kind: KindInterface, Iface: ifaceOf[CommandStopper](), Doc: "stops its background shell commands (CommandStopper)"},
+	CapStopTask:       {Name: "stop_task", Kind: KindInterface, Iface: ifaceOf[TaskStopper](), Doc: "stops one running subagent or command, or only the foreground commands (TaskStopper)"},
 	CapSubagentStatus: {Name: "subagent_status", Kind: KindInterface, Iface: ifaceOf[SubagentReporter](), Doc: "reports subagent status and the running background work (SubagentReporter)"},
 
 	CapPermissionResponse: {Name: "permission_response", Kind: KindInterface, Iface: ifaceOf[PermissionResponder](), Doc: "delivers the user's answer to a permission prompt (PermissionResponder)"},

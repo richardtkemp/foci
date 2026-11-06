@@ -59,6 +59,7 @@ var spec = delegator.Spec{
 		delegator.CapTurnAdoption:   delegator.NotApplicable("no autonomous runs to adopt"),
 		delegator.CapStopSubagents:  delegator.NotApplicable("foci turns codex's own subagents off (agents.enabled=false)"),
 		delegator.CapStopCommands:   delegator.No("no API to stop a background command"),
+		delegator.CapStopTask:       delegator.No("no API to stop one running task"),
 		delegator.CapSubagentStatus: delegator.NotApplicable("foci turns codex's own subagents off (agents.enabled=false)"),
 
 		delegator.CapPermissionResponse: delegator.Yes(),

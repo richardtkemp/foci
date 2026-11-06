@@ -34,15 +34,24 @@ func StopCommand() *Command {
 			{Name: "subagents", Description: "Stop only the running subagents; the turn goes on"},
 			{Name: "commands", Description: "Stop only the agent's shell commands; the turn goes on"},
 			{Name: "all", Description: "Stop the subagents, the commands and the turn"},
+			{Name: "foreground", Description: "Stop only the agent's foreground shell commands; the turn goes on"},
+			{Name: "item", Description: "Stop one running subagent or command by its id; everything else goes on"},
 		},
 		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+			// An item id is case-sensitive, so it is read before the mode is lowered.
+			if fields := strings.Fields(req.Args); len(fields) == 2 && strings.EqualFold(fields[0], "item") {
+				return stopItem(ctx, cc, fields[1])
+			}
 			switch mode := strings.ToLower(strings.TrimSpace(req.Args)); mode {
 			case "":
 				return stopTurn(ctx, cc, true)
-			case "subagents", "commands":
+			case "subagents", "commands", "foreground":
 				k := subagentTasks
-				if mode == "commands" {
+				switch mode {
+				case "commands":
 					k = commandTasks
+				case "foreground":
+					k = foregroundTasks
 				}
 				n, err := stopTasks(ctx, cc, k)
 				if err != nil {
@@ -70,7 +79,7 @@ func StopCommand() *Command {
 				}
 				return Response{Text: strings.Join(append(parts, turn.Text), " ")}, nil
 			default:
-				return Response{}, fmt.Errorf("unknown /stop argument %q: use subagents, commands or all", mode)
+				return Response{}, fmt.Errorf("unknown /stop argument %q: use subagents, commands, foreground, all or item <id>", mode)
 			}
 		},
 	}
@@ -134,7 +143,36 @@ type taskKind struct {
 var (
 	subagentTasks = taskKind{"subagent", "subagents", agent.ErrStopSubagentsUnsupported, (*agent.DelegatedManager).StopSubagents, true}
 	commandTasks  = taskKind{"command", "commands", agent.ErrStopCommandsUnsupported, (*agent.DelegatedManager).StopCommands, false}
+	// foregroundTasks is what a stop on the app's "Running now" entry sends: the
+	// agent's foreground command, not its background ones (#2901).
+	foregroundTasks = taskKind{"foreground command", "foreground commands", agent.ErrStopTaskUnsupported, (*agent.DelegatedManager).StopForegroundCommands, false}
 )
+
+// stopItem stops the one running spawn, subagent or command with this id (an
+// entry of the app's running list), leaving everything else (#2901). An id
+// that is no longer running gets a plain reply, since the user can stop an entry
+// just as it ends.
+func stopItem(ctx context.Context, cc CommandContext, id string) (Response, error) {
+	const stopping, gone = "Stopping it.", "That is no longer running."
+	sk := tools.SessionKeyFromContext(ctx)
+	if sk != "" && tools.Spawns.StopOne(sk, id) {
+		return Response{Text: stopping}, nil
+	}
+	if cc.Agent == nil || cc.Agent.DelegatedManager == nil {
+		return Response{Text: gone}, nil
+	}
+	if sk == "" {
+		return Response{}, fmt.Errorf("no active session")
+	}
+	stopped, err := cc.Agent.DelegatedManager.StopTask(ctx, sk, id)
+	if err != nil {
+		return Response{}, fmt.Errorf("stop item: %w", err)
+	}
+	if !stopped {
+		return Response{Text: gone}, nil
+	}
+	return Response{Text: stopping}, nil
+}
 
 // stopTasks stops the session's running tasks of one kind without touching
 // its turn, returning how many stop requests were sent. A delegated backend

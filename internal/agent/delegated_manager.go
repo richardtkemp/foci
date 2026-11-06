@@ -957,6 +957,38 @@ func (m *DelegatedManager) StopCommands(ctx context.Context, sessionKey string) 
 	return stopper.StopCommands(ctx)
 }
 
+// ErrStopTaskUnsupported is returned by StopTask and StopForegroundCommands
+// when the session's backend cannot stop a single task on its own.
+var ErrStopTaskUnsupported = errors.New("this backend cannot stop a single task on its own")
+
+// StopTask stops one running subagent or command of the session by its
+// running-list id (#2901). It reports false when no stop could be sent.
+func (m *DelegatedManager) StopTask(ctx context.Context, sessionKey, id string) (bool, error) {
+	mb, ok := m.getManaged(sessionKey)
+	if !ok {
+		return false, fmt.Errorf("no delegated backend for session %s", sessionKey)
+	}
+	stopper, ok := delegator.As[delegator.TaskStopper](mb.be)
+	if !ok {
+		return false, ErrStopTaskUnsupported
+	}
+	return stopper.StopTask(ctx, id)
+}
+
+// StopForegroundCommands stops the agent's own foreground shell commands only
+// (#2901), returning how many stop requests were sent.
+func (m *DelegatedManager) StopForegroundCommands(ctx context.Context, sessionKey string) (int, error) {
+	mb, ok := m.getManaged(sessionKey)
+	if !ok {
+		return 0, fmt.Errorf("no delegated backend for session %s", sessionKey)
+	}
+	stopper, ok := delegator.As[delegator.TaskStopper](mb.be)
+	if !ok {
+		return 0, ErrStopTaskUnsupported
+	}
+	return stopper.StopForegroundCommands(ctx)
+}
+
 // RegisterPromptCancelListener appends a listener fired when the prompt with
 // requestID is cancelled by a non-user path (e.g. CC's control_cancel_request
 // after a follow-up message aborted the in-flight tool). The listener does

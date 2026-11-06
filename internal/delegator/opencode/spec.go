@@ -51,6 +51,7 @@ var spec = delegator.Spec{
 		delegator.CapTurnAdoption:   delegator.NotApplicable("no autonomous runs to adopt"),
 		delegator.CapStopSubagents:  delegator.No("no API to stop a running subagent"),
 		delegator.CapStopCommands:   delegator.No("no API to stop a background command"),
+		delegator.CapStopTask:       delegator.No("no API to stop one running task"),
 		delegator.CapSubagentStatus: delegator.Yes(),
 
 		delegator.CapPermissionResponse: delegator.Yes(),

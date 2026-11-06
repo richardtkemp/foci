@@ -61,3 +61,43 @@ func TestStopSubagents_StopsBackgroundSpawns(t *testing.T) {
 		t.Fatal("spawn was not stopped")
 	}
 }
+
+// TestStopItem_StopsOnlyThatSpawn pins #2901: /stop item names one entry of the
+// app's running list, keeps its id's case, and leaves the other spawn running.
+func TestStopItem_StopsOnlyThatSpawn(t *testing.T) {
+	const sk = "agent:stopitemtest:main"
+	cancelled := map[string]bool{}
+	for _, id := range []string{"Spawn-A", "Spawn-B"} {
+		tools.Spawns.Add(sk, tools.RunningSpawn{ID: id}, func() { cancelled[id] = true })
+	}
+	t.Cleanup(func() { tools.Spawns.Stop(sk) })
+	ctx := tools.WithSessionKey(context.Background(), sk)
+
+	resp, err := StopCommand().Execute(ctx, Request{Args: "item Spawn-A"}, CommandContext{})
+	if err != nil {
+		t.Fatalf("/stop item: %v", err)
+	}
+	if resp.Text != "Stopping it." {
+		t.Errorf("reply = %q", resp.Text)
+	}
+	if !cancelled["Spawn-A"] || cancelled["Spawn-B"] {
+		t.Errorf("cancelled = %v, want only Spawn-A", cancelled)
+	}
+
+	resp, err = StopCommand().Execute(ctx, Request{Args: "item Spawn-A"}, CommandContext{})
+	if err != nil {
+		t.Fatalf("/stop item again: %v", err)
+	}
+	if resp.Text != "That is no longer running." {
+		t.Errorf("second stop reply = %q", resp.Text)
+	}
+}
+
+// TestStopItem_WithoutAnIdIsRejected: "item" alone must not fall through to a
+// wider stop.
+func TestStopItem_WithoutAnIdIsRejected(t *testing.T) {
+	ctx := tools.WithSessionKey(context.Background(), "agent:stopitemtest2:main")
+	if _, err := StopCommand().Execute(ctx, Request{Args: "item"}, CommandContext{}); err == nil {
+		t.Fatal("/stop item with no id must be an error")
+	}
+}
