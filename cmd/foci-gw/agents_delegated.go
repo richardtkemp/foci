@@ -435,7 +435,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	}
 	// The account-wide usage hold (#2491): this agent follows its backend's
 	// account from now on.
-	wireUsageHeldRestore(ag, p.ctx, connMgr, agentID)
+	wireUsageHeldRestore(ag, p.ctx, connMgr, agentID, p.agentResolverFn, app.DeliverAgentMessage)
 	ag.StartUsageHold()
 
 	return finalizeParams{

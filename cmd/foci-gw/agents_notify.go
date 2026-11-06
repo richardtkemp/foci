@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -173,7 +174,9 @@ func newAsyncNotifier(
 
 		if replyToSession != "" {
 			// CAPTURE-AND-RELAY: run on the target, hand its output to the caller.
-			relayResponseToCaller(getAgent, ctx, connMgr, deliverChit, agentID, targetAg, target, replyToSession, message, trigger, origin)
+			w := newCallerWatch(ctx, connMgr, trigger, getAgent(), agentID, replyToSession, targetAg, target, true, origin != nil && origin.CallerTold)
+			go w.run()
+			relayResponseToCaller(getAgent, ctx, connMgr, deliverChit, agentID, targetAg, target, replyToSession, message, trigger, origin, w)
 			return
 		}
 		// DELIVER-TO-CHAT: the result belongs to the target's own chat.
@@ -195,6 +198,22 @@ func newAsyncNotifier(
 		deliverToSessionChatThen(targetAg, ctx, trigger, connMgr, targetAgentID, target, message, nil, "",
 			func(err error) { finish(!errors.Is(err, agent.ErrShuttingDown)) },
 			onInjectRefused(func() { finish(false) }))
+	}).WithTargetCheck(func(targetSession string) (string, error) {
+		// send_to_session's state check at send time (#2892). Same ownership
+		// rule as resolve, without its drop log: the tool reports this.
+		targetAg := getAgent()
+		if sk, err := session.ParseSessionKey(targetSession); err == nil && sk.AgentID != agentID {
+			inst := agentResolverFn(sk.AgentID)
+			if inst == nil {
+				return "", fmt.Errorf("no agent %q", sk.AgentID)
+			}
+			targetAg = inst.ag
+		}
+		if targetAg == nil {
+			return "", nil
+		}
+		reason, _ := targetAg.Unavailable()
+		return reason, nil
 	})
 }
 
@@ -222,7 +241,10 @@ func relayResponseToCaller(
 	targetAg *agent.Agent,
 	targetSession, callerSession, message, trigger string,
 	origin *tools.AgentOrigin,
+	w *callerWatch,
+	opts ...injectOption,
 ) {
+	opts = append(append([]injectOption{withDurable(relayDurable(trigger, message, callerSession, origin))}, w.options()...), opts...)
 	enqueueInject(targetAg, targetSession, trigger, "", func() {
 		// The chit precedes the turn it prompted: a busy target shows it after
 		// the in-flight turn's output, directly before the reply it triggers.
@@ -232,14 +254,16 @@ func relayResponseToCaller(
 		notifyCtx := turnevent.WithSink(agent.WithTrigger(ctx, trigger), buf)
 		if err := targetAg.HandleMessage(notifyCtx, targetSession, []string{message}, nil); err != nil {
 			logInjectionError(trigger, err, "error processing on target %s", targetSession)
+			w.turnEnded(err, false)
 			return
 		}
 		resp := buf.FinalText()
+		w.turnEnded(nil, resp != "")
 		if resp == "" {
 			return
 		}
 		relayCapturedResponse(getAgent, ctx, connMgr, deliverChit, callerAgentID, callerSession, targetSession, resp, trigger)
-	})
+	}, opts...)
 }
 
 // relayCapturedResponse relays a captured target reply (resp) to the caller's
@@ -288,8 +312,41 @@ func newSessionNotifyFn(
 	deliverChit chitDeliverer,
 ) tools.SessionNotifyFn {
 	return tools.SessionNotifyFn(func(targetSessionKey, message string, origin *tools.AgentOrigin) {
+		if origin != nil && origin.NotifyCaller && deliverWatched(agentResolverFn, ctx, connMgr, trigger, targetSessionKey, message, origin, deliverChit) {
+			return
+		}
 		deliverToResolvedSession(agentResolverFn, ctx, connMgr, trigger, targetSessionKey, "", message, agentChitFor(origin, deliverChit))
 	})
+}
+
+// deliverWatched is deliverToResolvedSession for a caller that takes notices
+// (#2892): reply_to=session, where the reply is not coming back to the caller,
+// which only hears when the target cannot process the message. It reports false
+// when either agent cannot be resolved, leaving the plain path to log the drop.
+// The completion hook would drop the message's durable form (sessionChatDurable),
+// so it is set again here: a hold still keeps this message across a restart.
+func deliverWatched(
+	agentResolverFn func(agentID string) *agentInstance,
+	ctx context.Context,
+	connMgr platform.ConnectionManager,
+	trigger, target, message string,
+	origin *tools.AgentOrigin,
+	deliverChit chitDeliverer,
+) bool {
+	targetSK, err := session.ParseSessionKey(target)
+	if err != nil {
+		return false
+	}
+	targetInst, callerInst := agentResolverFn(targetSK.AgentID), agentResolverFn(origin.AgentID)
+	if targetInst == nil || callerInst == nil {
+		return false
+	}
+	w := newCallerWatch(ctx, connMgr, trigger, callerInst.ag, origin.AgentID, origin.SessionKey, targetInst.ag, target, false, origin.CallerTold)
+	go w.run()
+	opts := append(w.options(), withDurable(sessionChatDurable(trigger, message, "", nil)))
+	deliverToSessionChatThen(targetInst.ag, ctx, trigger, connMgr, targetSK.AgentID, target, message, agentChitFor(origin, deliverChit), "",
+		func(err error) { w.turnEnded(err, true) }, opts...)
+	return true
 }
 
 // newAskDeliverFn is newSessionNotifyFn for the ask tool's SYSTEM deliveries:

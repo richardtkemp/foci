@@ -21,6 +21,7 @@ Per-tool reference for the Claude Code (shell) backend. How `foci_*` shell funct
 ### `foci_send_to_session` — message another session
 - Positional `session_key`: full session key (`scout/c5970082313`, `scout/iresearch`), agent-qualified session name or chat alias (`scout/research`), or bare agent name (`scout` → its default session).
 - `--message` (or stdin). `--reply-to caller|session` (default **caller** — the reply comes back to *you*, not the target's user chat; use `session` to surface it to their chat).
+- If the target cannot process the message (usage hold, login wait, failed turn, or no activity for 30 minutes), the tool result or a later `[SESSION UNAVAILABLE]` message says so. A held message is still delivered.
 
 ### `foci_close_session` — close this chat
 - Closes the app chat you are running in, exactly as if the user closed it: the tab leaves every device, the history stays, and the user's next message in it reopens it.

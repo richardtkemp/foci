@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"fmt"
 	"sync"
 
 	"foci/internal/clock"
@@ -25,6 +26,43 @@ type AsyncNotifier struct {
 	// thenFn delivers like fn and then reports whether the target's turn
 	// took the message (InjectToAgentThen). nil = fn, reported as taken.
 	thenFn DeliverThenFunc
+
+	// checkFn reports a send_to_session target's state at send time
+	// (CheckTarget). nil = every target reads as available.
+	checkFn TargetCheckFunc
+}
+
+// TargetCheckFunc reports whether a target session can take a message now.
+// err means the target does not exist, so nothing can be delivered. A non-empty
+// reason means it exists but cannot run a turn now, and the message waits.
+type TargetCheckFunc func(targetSession string) (reason string, err error)
+
+// WithTargetCheck sets the check CheckTarget uses, and returns n. Set it before
+// the notifier is shared; it is not synchronised.
+func (n *AsyncNotifier) WithTargetCheck(fn TargetCheckFunc) *AsyncNotifier {
+	n.checkFn = fn
+	return n
+}
+
+// CheckTarget reports targetSession's state (TargetCheckFunc). Safe on a nil
+// receiver and with no check set: the target reads as available.
+func (n *AsyncNotifier) CheckTarget(targetSession string) (reason string, err error) {
+	if n == nil || n.checkFn == nil {
+		return "", nil
+	}
+	return n.checkFn(targetSession)
+}
+
+// UnavailableHeldNote is what a caller is told when target cannot run a turn
+// now and its message waits (#2892, Dick 2026-11-06: tell the caller at once,
+// still deliver the message, and say so). replyToCaller says where the reply
+// goes once the target is back. The tool result and the later notice share it.
+func UnavailableHeldNote(target, reason string, replyToCaller bool) string {
+	where := "its own chat"
+	if replyToCaller {
+		where = "you"
+	}
+	return fmt.Sprintf("Session %s cannot reply now: %s. Your message is kept and will be delivered when it is back. The reply then goes to %s.", target, reason, where)
 }
 
 // DeliverThenFunc delivers message to targetSession as an injected turn, like

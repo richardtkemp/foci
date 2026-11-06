@@ -31,7 +31,7 @@ Same behaviour as the backend's `foci_*` functions. Below are only the behaviour
 
 - **`ask`** — async: posts and returns at once; answers arrive as a new message, so **end your turn**. No question cap. Request IDs must be **colon-free**. `quiz` questions hide the answer until revealed — see the `quiz` skill. A grader executable gets `{request_id, questions, answers}` on stdin; its output replaces the raw answers.
 - **`send_to_chat`** — always your **own** chat (destination comes from your session); use `send_to_session` for another. Your reply text is already delivered, so use it for attachments, not to repeat a reply.
-- **`send_to_session`** — `session_key` takes a full key (`scout/c5970082313`), `agent/name` or alias, or a bare agent name (its default session). `reply-to`: `caller` (default, reply comes back to you) or `session` (reply goes to the target's chat).
+- **`send_to_session`** — `session_key` takes a full key (`scout/c5970082313`), `agent/name` or alias, or a bare agent name (its default session). `reply-to`: `caller` (default, reply comes back to you) or `session` (reply goes to the target's chat). If the target cannot process the message (usage hold, login wait, failed turn, or no activity for 30 minutes), the tool result or a later `[SESSION UNAVAILABLE]` message says so. A held message is still delivered.
 - **`todo`** — `tag` **replaces** the whole tag set (and tags parsed from the text); it never appends.
 - **`remind`** — passive by default (injected as context when due); `wake` actively wakes the session.
 - **`memory_search`** — stemmed full-text; memory files rank above chat. `session#rowID` pulls the surrounding messages.

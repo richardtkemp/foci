@@ -27,6 +27,14 @@ type AgentOrigin struct {
 	// otherwise; app.DeliverAgentMessage then asks ChildName whether the
 	// sender is a named child of the receiving session.
 	ChildName string
+	// NotifyCaller is set by send_to_session when the calling session can take
+	// a later notice: it is told when the target cannot process the message
+	// (#2892). Off for a oneshot caller, whose only channel is the tool result,
+	// and for every other sender.
+	NotifyCaller bool
+	// CallerTold is set when the tool result already told the caller that the
+	// target is unavailable, so the same condition is not told twice.
+	CallerTold bool
 }
 
 // NewAgentOrigin builds an AgentOrigin, deriving the agent id from sessionKey.

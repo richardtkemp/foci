@@ -33,4 +33,4 @@ The exception is **`relayResponseToCaller()`** (only `send_to_session` with `rep
 
 ## `send_to_session` (the tool)
 
-`foci_send_to_session` injects a user-role message into a target session. Target forms: full key (`scout/c5970082313`), bare agent (`scout` → default session), agent-qualified name (`scout/research`), or chat alias. The reply goes back to the caller by default; `reply_to: "session"` sends it to the target's own chat.
+`foci_send_to_session` injects a user-role message into a target session. Target forms: full key (`scout/c5970082313`), bare agent (`scout` → default session), agent-qualified name (`scout/research`), or chat alias. The reply goes back to the caller by default; `reply_to: "session"` sends it to the target's own chat. When the target cannot process the message (a usage hold, a login wait, a failed turn, a queue with no activity for 30 minutes; not a slow turn), the caller hears it: in the tool result if known at send, else in a `[SESSION UNAVAILABLE]` turn. A held message is still delivered (#2892, `cmd/foci-gw/agents_unavailable.go`).

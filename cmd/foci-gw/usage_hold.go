@@ -61,7 +61,7 @@ func applyUsageHoldThreshold(cfg *config.Config) {
 // object did not survive). Both run as a user message through
 // usageHoldDriver; a held injection goes back through the path that first
 // built it, under its stored id.
-func wireUsageHeldRestore(ag *agent.Agent, ctx context.Context, connMgr platform.ConnectionManager, agentID string) {
+func wireUsageHeldRestore(ag *agent.Agent, ctx context.Context, connMgr platform.ConnectionManager, agentID string, resolver func(string) *agentInstance, deliverChit chitDeliverer) {
 	inst := &agentInstance{id: agentID, ag: ag}
 	ag.UsageHeldDriver = func(sk string) agent.Driver {
 		return &usageHoldDriver{agentID: agentID, sessionKey: sk, connMgr: connMgr}
@@ -70,6 +70,8 @@ func wireUsageHeldRestore(ag *agent.Agent, ctx context.Context, connMgr platform
 		switch d.Kind {
 		case durableSessionChat:
 			deliverToSessionChatThen(ag, ctx, d.Trigger, connMgr, agentID, sk, d.Text, nil, "", nil, withUsageHeldID(id))
+		case durableSessionRelay:
+			restoreHeldRelay(ag, ctx, connMgr, agentID, resolver, deliverChit, sk, d, id)
 		case durableHTTPAsync:
 			sendCtx := withUsageHeldIDContext(agent.WithTrigger(ctx, d.Trigger), id)
 			if !deliverBufferedQueued(inst, connMgr, sendCtx, sk, d.Text, d.Args["log_tag"], d.Args["silent"] == "true", route.Policy(d.Args["policy"])) {

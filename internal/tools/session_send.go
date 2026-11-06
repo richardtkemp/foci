@@ -81,7 +81,7 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 		// or: echo "..." | foci_send_to_session <session_key>
 		Positional:  []string{"session_key"},
 		StdinParam:  "message",
-		Description: "Send a message to another session. The message is injected as a user-role message and the target session's agent will see and respond to it. Use this to communicate with branch sessions or the main session. By default the target's reply routes back to you (the caller); set reply_to to \"session\" to have the reply go to the target session's own chat instead.",
+		Description: "Send a message to another session. The message is injected as a user-role message and the target session's agent will see and respond to it. Use this to communicate with branch sessions or the main session. By default the target's reply routes back to you (the caller); set reply_to to \"session\" to have the reply go to the target session's own chat instead. If the target cannot process the message, the result or a later [SESSION UNAVAILABLE] message tells you.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -203,6 +203,15 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 			oneshotCaller := p.ReplyTo == "caller" && originSession != "" &&
 				(spawnCaller || callerSessionTypeFn != nil && callerSessionTypeFn(originSession).IsOneshot())
 
+			// The target's state at send time (#2892): a target that does not
+			// exist is refused here rather than reported as sent, and a target
+			// that cannot run a turn now is named in the tool result. That
+			// result is the one channel every caller has, a oneshot included.
+			unavailable, err := notifier.CheckTarget(targetKey)
+			if err != nil {
+				return ToolResult{}, fmt.Errorf("could not send to %q: %w", p.SessionKey, err)
+			}
+
 			// Tag the message with its origin, timestamp, and delivery context.
 			// The note tells the receiving agent where its reply will go so it
 			// can decide whether to use send_to_chat. A oneshotCaller
@@ -226,6 +235,11 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 			// nothing, and carried on the delivery so the chit appears when
 			// the target's turn starts, not when the tool is called.
 			origin := NewAgentOrigin(originSession, p.Message)
+			// A later notice needs a caller that can take a turn: not a oneshot,
+			// whichever way the reply goes.
+			origin.NotifyCaller = originSession != "" && !spawnCaller &&
+				(callerSessionTypeFn == nil || !callerSessionTypeFn(originSession).IsOneshot())
+			origin.CallerTold = unavailable != ""
 
 			send_to_sessionLog.Infof("from=%s to=%s reply_to=%s oneshot_caller=%v len=%d", originSession, targetKey, p.ReplyTo, oneshotCaller, len(p.Message))
 			// The target's injected turn will record this turn as its parent
@@ -265,7 +279,11 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 				}
 			}
 
-			return TextResult(fmt.Sprintf("Message sent to session %s (resolved via %s, reply_to=%s).", targetKey, resolvedVia, p.ReplyTo)), nil
+			result := fmt.Sprintf("Message sent to session %s (resolved via %s, reply_to=%s).", targetKey, resolvedVia, p.ReplyTo)
+			if unavailable != "" {
+				result += "\n⚠️ " + UnavailableHeldNote(targetKey, unavailable, p.ReplyTo == "caller" && !oneshotCaller)
+			}
+			return TextResult(result), nil
 		},
 	}
 }
