@@ -7,6 +7,7 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/config"
+	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
@@ -204,5 +205,60 @@ func TestCompactRefusal_NamesWorkAndForce(t *testing.T) {
 	}
 	if !hasForce {
 		t.Error("/compact has no force subcommand")
+	}
+}
+
+// compactFakeConnMgr answers ForSessionOrPrimary with one connection.
+type compactFakeConnMgr struct {
+	platform.NoopConnectionManager
+	conn platform.Connection
+}
+
+func (m *compactFakeConnMgr) ForSessionOrPrimary(string, string) platform.Connection { return m.conn }
+
+// compactFakeConn is a connection that only knows its platform name.
+type compactFakeConn struct {
+	platform.Connection
+	name string
+}
+
+func (c compactFakeConn) PlatformName() string { return c.name }
+
+// TestCompactNoticeConfirmsInApp: the /compact reply goes only when the app chat
+// has the completion notice instead (#2891). Every other case keeps the reply.
+func TestCompactNoticeConfirmsInApp(t *testing.T) {
+	off := false
+	on := func(notifyOff bool) *config.LiveValue[*config.ResolvedAgentConfig] {
+		app := config.PlatformConfig{ID: "app"}
+		if notifyOff {
+			app.Notify.CompactionNotify = &off
+		}
+		cfg := &config.Config{Platforms: []config.PlatformConfig{app}}
+		return config.NewLiveValue(config.Resolve(cfg, config.AgentConfig{ID: "a"}))
+	}
+	appConn := &compactFakeConnMgr{conn: compactFakeConn{name: "app"}}
+	tgConn := &compactFakeConnMgr{conn: compactFakeConn{name: "telegram"}}
+
+	cases := []struct {
+		name   string
+		source string
+		cc     CommandContext
+		want   bool
+	}{
+		{"app with notice", "app", CommandContext{ConnMgr: appConn, ResolvedLive: on(false)}, true},
+		{"app, compaction_notify off", "app", CommandContext{ConnMgr: appConn, ResolvedLive: on(true)}, false},
+		{"app, session owned by another platform", "app", CommandContext{ConnMgr: tgConn, ResolvedLive: on(false)}, false},
+		{"app, no connection", "app", CommandContext{ConnMgr: &compactFakeConnMgr{}, ResolvedLive: on(false)}, false},
+		{"app, no connection manager", "app", CommandContext{ResolvedLive: on(false)}, false},
+		{"app, no live config", "app", CommandContext{ConnMgr: appConn}, false},
+		{"telegram", SourceTelegram, CommandContext{ConnMgr: tgConn, ResolvedLive: on(false)}, false},
+		{"unidentified caller", "", CommandContext{ConnMgr: appConn, ResolvedLive: on(false)}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := compactNoticeConfirmsInApp(Request{Source: tc.source}, tc.cc, "sk"); got != tc.want {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

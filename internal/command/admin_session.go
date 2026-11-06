@@ -276,9 +276,27 @@ func compactRefusal(running string) string {
 		"or use /compact force to compact now (if the restart happens it kills that work)."
 }
 
+// compactNoticeConfirmsInApp reports whether a /compact the app sent has
+// already been confirmed in that chat by the completion notice (the ⏳ row
+// edited to ✅, with its summary chit), so a reply would only repeat it (#2891).
+// It asks the same questions as the CompactionNotifyFunc hook in
+// wireAgentPlatformCallbacks. Any "no" keeps the reply, which is then the only
+// sign that the command worked: compaction_notify off, or a session that
+// another platform owns. Other platforms and the CLI always get the reply.
+func compactNoticeConfirmsInApp(req Request, cc CommandContext, sessionKey string) bool {
+	if req.Source != "app" || cc.ConnMgr == nil || cc.ResolvedLive == nil {
+		return false
+	}
+	c := cc.ConnMgr.ForSessionOrPrimary(sessionKey, cc.AgentConfig.ID)
+	if c == nil || c.PlatformName() != "app" {
+		return false
+	}
+	return cc.ResolvedLive.Load().PlatformNotify("app").CompactionNotify
+}
+
 // CompactCommand creates a /compact command that triggers manual session compaction.
 func CompactCommand() *Command {
-	compactExec := func(ctx context.Context, _ Request, cc CommandContext, dryRun, force bool) (Response, error) {
+	compactExec := func(ctx context.Context, req Request, cc CommandContext, dryRun, force bool) (Response, error) {
 		sk := tools.SessionKeyFromContext(ctx)
 		var result agent.CompactResult
 		var err error
@@ -299,6 +317,9 @@ func CompactCommand() *Command {
 		}
 		if err != nil {
 			return Response{}, err
+		}
+		if compactNoticeConfirmsInApp(req, cc, sk) {
+			return Response{}, nil
 		}
 		// Delegated agents: CC owns the session file, so there's no
 		// foci-side message count to report.

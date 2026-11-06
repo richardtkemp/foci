@@ -91,7 +91,7 @@ func (a *Agent) doCompact(ctx context.Context, sessionKey string, system []provi
 			}
 		}
 		for _, fn := range a.CompactionNotifyFunc {
-			fn(sessionKey, "✅ Dry-run complete — summary sent.", summary)
+			fn(sessionKey, fmt.Sprintf("✅ Dry-run complete — %d messages would be summarised. Summary sent.", oldCount), summary)
 		}
 	} else {
 		for _, fn := range a.CompactionNotifyFunc {
