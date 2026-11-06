@@ -262,3 +262,123 @@ func TestDeletedForkIsNoLongerClaimed(t *testing.T) {
 		t.Errorf("want one lost WARN for a line after the fork was deleted, got %q", got)
 	}
 }
+
+// threadDeletedLine is codex's notification for a deleted thread, as sent by
+// the live app-server (0.145.0, #2867).
+func threadDeletedLine(thread string) []byte {
+	return []byte(`{"method":"thread/deleted","params":{"threadId":"` + thread + `"},"emittedAtMs":1793923572017}`)
+}
+
+// TestOwnThreadDeletedIsNotLost is #2867's regression. foci's transcript sweep
+// deletes threads that have no session, and codex confirms each with
+// thread/deleted. That confirmation is not a lost message: no WARN, and nothing
+// reaches the owner. Live, the response comes first and the reader handles the
+// notification right behind it, racing the caller's return from sendAndWait, so
+// the "before the response" order must hold as well.
+func TestOwnThreadDeletedIsNotLost(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		beforeResponse bool
+	}{
+		{"after the response", false},
+		{"before the response", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const swept = "swept-thread"
+			var b *Backend
+			b = setupMockBackend(t, func(method string, _ json.RawMessage, _ int64) (json.RawMessage, error) {
+				if method == "thread/delete" && tc.beforeResponse {
+					b.dispatch(threadDeletedLine(swept))
+				}
+				return nil, nil
+			})
+			stopUnclaimedTimer(t, b)
+			warns := captureWarns(t)
+			var shown []string
+			b.sessionEvents.Store(&delegator.SessionEvents{OnText: func(s string) { shown = append(shown, s) }})
+
+			if err := b.CleanupSession(context.Background(), delegator.CleanupRequest{SessionID: swept}); err != nil {
+				t.Fatalf("CleanupSession: %v", err)
+			}
+			if !tc.beforeResponse {
+				b.dispatch(threadDeletedLine(swept))
+			}
+			b.flushUnclaimed(time.Now().Add(10*unclaimedGrace), false)
+
+			if got := lostWarns(warns()); len(got) != 0 {
+				t.Errorf("foci's own delete was reported lost: %q", got)
+			}
+			if len(shown) != 0 {
+				t.Errorf("foci's own delete reached the owner's chat: %q", shown)
+			}
+		})
+	}
+}
+
+// TestSweepThreadDeletedOnOwnerIsNotLost is the path the sweep takes: the
+// sweeping Backend has no connection of its own, so CleanupSession uses the
+// agent's pooled app-server, and the reader that sees thread/deleted is that
+// owner's.
+func TestSweepThreadDeletedOnOwnerIsNotLost(t *testing.T) {
+	const agent, swept = "agent-2867", "swept-thread"
+	owner := setupMockBackend(t, nil)
+	owner.startOpts.AgentID = agent
+	stopUnclaimedTimer(t, owner)
+	warns := captureWarns(t)
+	sharedPool.Lock()
+	sharedPool.servers[agent] = owner
+	sharedPool.Unlock()
+	t.Cleanup(func() {
+		sharedPool.Lock()
+		delete(sharedPool.servers, agent)
+		sharedPool.Unlock()
+	})
+
+	sweeper := &Backend{lg: log.NewComponentLogger("test")}
+	if err := sweeper.CleanupSession(context.Background(), delegator.CleanupRequest{AgentID: agent, SessionID: swept}); err != nil {
+		t.Fatalf("CleanupSession: %v", err)
+	}
+	owner.dispatch(threadDeletedLine(swept))
+	owner.flushUnclaimed(time.Now().Add(10*unclaimedGrace), false)
+	if got := lostWarns(warns()); len(got) != 0 {
+		t.Errorf("the sweep's delete was reported lost: %q", got)
+	}
+}
+
+// TestForeignThreadDeletedIsStillReported: a thread/deleted that no delete of
+// foci's explains keeps the lost-message report. That covers a thread foci never
+// asked to delete, a second thread/deleted for one it did, and a thread codex
+// said was already gone (live, that reply sends no thread/deleted, so a later
+// one is somebody else's).
+func TestForeignThreadDeletedIsStillReported(t *testing.T) {
+	const asked, absent, foreign = "asked-thread", "absent-thread", "foreign-thread"
+	b := setupMockBackend(t, func(method string, params json.RawMessage, _ int64) (json.RawMessage, error) {
+		if method == "thread/delete" && strings.Contains(string(params), absent) {
+			return nil, rpcErrorReply{code: -32600, message: "no rollout found for thread id " + absent}
+		}
+		return nil, nil
+	})
+	stopUnclaimedTimer(t, b)
+	warns := captureWarns(t)
+	for _, id := range []string{asked, absent} {
+		if err := b.CleanupSession(context.Background(), delegator.CleanupRequest{SessionID: id}); err != nil {
+			t.Fatalf("CleanupSession(%s): %v", id, err)
+		}
+	}
+
+	b.dispatch(threadDeletedLine(foreign))
+	b.dispatch(threadDeletedLine(absent))
+	b.dispatch(threadDeletedLine(asked)) // foci's own: consumed
+	b.dispatch(threadDeletedLine(asked)) // nothing explains this one
+	b.flushUnclaimed(time.Now().Add(10*unclaimedGrace), false)
+
+	got := lostWarns(warns())
+	if len(got) != 3 {
+		t.Fatalf("want one lost WARN each for %s, %s and the repeat of %s, got %q", foreign, absent, asked, got)
+	}
+	for _, id := range []string{foreign, absent, asked} {
+		if !strings.Contains(strings.Join(got, "\n"), "thread/deleted for thread "+id) {
+			t.Errorf("no lost WARN for %s in %q", id, got)
+		}
+	}
+}

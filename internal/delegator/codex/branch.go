@@ -210,6 +210,7 @@ func (b *Backend) CleanupSession(ctx context.Context, req delegator.CleanupReque
 		return fmt.Errorf("codex: backend not started (cleanup requires an active app-server connection)")
 	}
 
+	b.requestDelete(req.SessionID)
 	_, err := b.sendAndWait("thread/delete", struct {
 		ThreadID string `json:"threadId"`
 	}{
@@ -223,6 +224,7 @@ func (b *Backend) CleanupSession(ctx context.Context, req delegator.CleanupReque
 	if strings.Contains(err.Error(), noRolloutFoundMarker) {
 		b.forgetFork(req.SessionID)
 		b.forgetReleased(req.SessionID)
+		b.takeDeleteRequest(req.SessionID) // nothing was deleted, so no thread/deleted follows
 		// Already absent (never existed, or a prior delete already ran) —
 		// documented as not-an-error, matching the contract above.
 		b.logDebugf("thread/delete for %s: already absent: %v", req.SessionID, err)

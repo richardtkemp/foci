@@ -196,6 +196,15 @@ type Backend struct {
 	// not lost. registerThread (a resume) and thread/closed remove the entry.
 	// Guarded by threadMapMu.
 	releasedThreads map[string]struct{}
+	// deleteRequested holds the threads foci has asked codex to delete
+	// (CleanupSession) whose thread/deleted has not arrived (#2867). That
+	// notification confirms foci's own request, so it is not a lost message. It
+	// is recorded before the request goes out because the reader can see the
+	// notification before the caller sees the response. The notification and a
+	// reply that the thread was already gone remove the entry; a failed request
+	// keeps it, because one that timed out can still complete. Guarded by
+	// threadMapMu.
+	deleteRequested map[string]struct{}
 	// unclaimed holds the deferred lost-line WARNs (unclaimed.go), on the
 	// owner only: lines for a thread that matches no session yet, which codex
 	// sends for a fork or resume before foci can register it (#2700).
@@ -399,6 +408,28 @@ func (b *Backend) forgetFork(id string) {
 	p.threadMapMu.Lock()
 	delete(p.forkedThreads, id)
 	p.threadMapMu.Unlock()
+}
+
+// requestDelete records that foci is asking codex to delete thread id.
+func (b *Backend) requestDelete(id string) {
+	p := b.process()
+	p.threadMapMu.Lock()
+	if p.deleteRequested == nil {
+		p.deleteRequested = make(map[string]struct{})
+	}
+	p.deleteRequested[id] = struct{}{}
+	p.threadMapMu.Unlock()
+}
+
+// takeDeleteRequest reports whether foci has asked codex to delete thread id,
+// and forgets the request: one request explains one thread/deleted.
+func (b *Backend) takeDeleteRequest(id string) bool {
+	p := b.process()
+	p.threadMapMu.Lock()
+	defer p.threadMapMu.Unlock()
+	_, ok := p.deleteRequested[id]
+	delete(p.deleteRequested, id)
+	return ok
 }
 
 // isPendingFork reports whether thread id was forked for foci and no session

@@ -54,6 +54,13 @@ func (b *Backend) dispatch(line []byte) {
 		if id == "" {
 			id = x.Thread.ID
 		}
+		// codex confirming a delete foci asked for: nobody needs it, and for a
+		// thread with no session it must not read as a lost message (#2867). The
+		// transcript sweep deletes exactly such threads.
+		if env.Method == "thread/deleted" && p.takeDeleteRequest(id) {
+			b.logDebugf("thread/deleted for %s: foci's own delete", id)
+			return
+		}
 		target := p.facadeForThread(id)
 		if target != nil && target != p {
 			target.dispatchLocal(line)
