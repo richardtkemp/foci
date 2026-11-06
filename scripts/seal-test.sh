@@ -519,7 +519,8 @@ run_integration() {
   check_count
   local count="${COUNT:-1}"
   env_header "sealed integration suite${RUNFILTER:+ -run $RUNFILTER} -count=$count"
-  local extra=(-count="$count" -timeout "$((600 * count))s")
+  # TEST_TIMEOUT (make's TIMEOUT=) overrides the budget: the -race run needs more (#2909).
+  local extra=(-count="$count" -timeout "${TEST_TIMEOUT:-$((600 * count))s}")
   local filter=()
   [ -n "$RUNFILTER" ] && filter=(-run "$RUNFILTER")
   go_test_logged "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -tags=integration "${EXEC[@]}" "${extra[@]}" "${filter[@]}" \

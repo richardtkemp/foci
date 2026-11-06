@@ -35,6 +35,8 @@ run is never recorded as a CI verdict. The bare equivalent, for a human at a ter
 go test -tags=integration -count=1 -timeout 60s -run TestL2_CrossAgent ./test/integration/...
 ```
 
+`GOFLAGS='-race -count=1' make integration` runs the suite with the race detector on in the test binary and in every binary the harness builds, the gateway included. The harness fails a test whose gateway reported a race, and prints the report to the log. `TestL2_RaceCanary` exists only in that build: it passes only if a race committed by the gateway reaches the harness (#2909). `TIMEOUT=` raises the 600 s budget, which a -race run needs. `shared/scripts/foci-race-nightly.py` runs this every night.
+
 `-tags=integration` is required — without it, the test files are excluded from the build and `go test ./...` reports "no test files".
 
 ## Architecture

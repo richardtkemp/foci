@@ -136,6 +136,10 @@ type HarnessOptions struct {
 	Agents []AgentSpec
 	// LogTail, if true, tees foci-gw stderr to t.Log for debugging.
 	LogTail bool
+	// RaceCanary, in a -race build, makes foci-gw commit one data race at
+	// startup (cmd/foci-gw/race_canary.go). The test expects the report, so the
+	// harness does not fail on it. TestL2_RaceCanary is the only user (#2909).
+	RaceCanary bool
 	// ReadyTimeout caps how long to wait for the gateway to log the
 	// terminal startup line. Zero = 20s.
 	ReadyTimeout time.Duration
@@ -621,6 +625,9 @@ func (h *Harness) spawnGateway() error {
 		// CloseAgentBackend dial it.
 		"FOCI_TESTHARNESS_CONTROL_SOCK="+h.controlSock,
 	)
+	if h.opts.RaceCanary {
+		cmd.Env = append(cmd.Env, "FOCI_TESTHARNESS_RACE_CANARY=1")
+	}
 	if h.opts.BackendReadyTimeout > 0 {
 		cmd.Env = append(cmd.Env, "FOCI_BACKEND_READY_TIMEOUT="+h.opts.BackendReadyTimeout.String())
 	}
@@ -672,6 +679,7 @@ func (h *Harness) spawnGateway() error {
 	// (long-dead) and current cmd get a graceful-stop attempt — the
 	// dead-cmd attempt is a fast no-op.
 	logTail := h.opts.LogTail
+	raceCanary := h.opts.RaceCanary
 	h.t.Cleanup(func() {
 		if cmd.Process != nil {
 			_ = cmd.Process.Signal(syscall.SIGTERM)
@@ -681,6 +689,9 @@ func (h *Harness) spawnGateway() error {
 		case <-time.After(3 * time.Second):
 			cancel()
 			<-stoppedCh
+		}
+		if !raceCanary {
+			failOnGatewayRaces(h.t, stderrBuf.String())
 		}
 		if logTail || h.t.Failed() {
 			h.t.Logf("foci-gw stderr:\n%s", stderrBuf.String())

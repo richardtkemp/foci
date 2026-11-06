@@ -95,14 +95,17 @@ export GOFLAGS := $(strip $(GOFLAGS) -ldflags=-w)
 endif
 
 # GOFLAGS=-race on a test target runs the race detector (#2881). On Linux the
-# detector needs cgo, so the two local test bodies switch it on for that run
-# (macOS needs no cgo for it). Only these two: a foci-gw built with cgo fails
-# closed at startup (above), so build and integration keep CGO_ENABLED=0, and
-# -race there stops with go's own "-race requires cgo". A dispatched run gets
-# GOFLAGS through REMOTE_FWD_VARS (mk/remote.mk).
+# detector needs cgo, so the local test bodies and integration switch it on for
+# that run (macOS needs no cgo for it). Only these three: a foci-gw built with
+# cgo fails closed at startup when it holds a security group (above), so build
+# and every other target keep CGO_ENABLED=0, and -race there stops with go's own
+# "-race requires cgo". The L2 harness's gateway builds with this same
+# environment (#2909); it holds no security group, and its config has
+# skip_security_checks. A dispatched run gets GOFLAGS through REMOTE_FWD_VARS
+# (mk/remote.mk).
 ifneq (,$(filter -race,$(GOFLAGS)))
 ifneq ($(UNAME_S),Darwin)
-local-test-one local-test: export CGO_ENABLED = 1
+local-test-one local-test integration: export CGO_ENABLED = 1
 endif
 endif
 
@@ -505,7 +508,7 @@ integration: llbox
 	@# any runaway foci-gw/cc-stub first avoids racing a still-open binary FD
 	@# against the removal (harmless on Linux either way, but tidier).
 	@[ -e $(HEAVY_LOCK_PATH) ] || : > $(HEAVY_LOCK_PATH)
-	@( $(call heavy_enter,) $(call heavy_reap,) $(call heavy_held,)bash scripts/seal-test.sh integration $(TESTDIR) $(LOGFILE) $(IPARALLEL) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) "" '$(value RUN)' "" "$(COUNT)" 9<&- ; STATUS=$$? ; \
+	@( $(call heavy_enter,) $(call heavy_reap,) $(call heavy_held,)TEST_TIMEOUT='$(TIMEOUT)' bash scripts/seal-test.sh integration $(TESTDIR) $(LOGFILE) $(IPARALLEL) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) "" '$(value RUN)' "" "$(COUNT)" 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -ne 0 ]; then echo ">>> non-zero exit ($$STATUS) — sweeping any orphaned foci-gw/cc-stub subprocesses from this run ..." >&2; pkill -f "$(TESTDIR)/foci-l2-bin[0-9]" 2>/dev/null || true; fi ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; bash scripts/test-fail-summary.sh $(LOGFILE); fi ; \

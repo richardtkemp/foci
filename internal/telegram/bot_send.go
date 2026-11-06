@@ -157,7 +157,7 @@ func (b *Bot) SetTyping(typing bool) {
 		return
 	}
 
-	_, _ = b.client.SendChatAction(b.chatID, "typing", nil)
+	_, _ = b.client.SendChatAction(b.ChatID(), "typing", nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	b.typingCancel = cancel
 	go func() {
@@ -166,7 +166,7 @@ func (b *Bot) SetTyping(typing bool) {
 		for {
 			select {
 			case <-ticker.C:
-				_, _ = b.client.SendChatAction(b.chatID, "typing", nil)
+				_, _ = b.client.SendChatAction(b.ChatID(), "typing", nil)
 			case <-ctx.Done():
 				return
 			}
@@ -183,7 +183,7 @@ func (b *Bot) refreshTyping() {
 	active := b.typingCancel != nil
 	b.typingMu.Unlock()
 	if active {
-		_, _ = b.client.SendChatAction(b.chatID, "typing", nil)
+		_, _ = b.client.SendChatAction(b.ChatID(), "typing", nil)
 	}
 }
 
