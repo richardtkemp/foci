@@ -158,8 +158,10 @@ REMOTE_WHY := $(if $(FGW_HEAVY_LOCK),FGW_HEAVY_LOCK=external callers run locally
 # a git checkout at REMOTE_DIR is left alone. ~/ is relative to the remote home.
 REMOTE_RUN_DIR ?= $(REMOTE_DIR)-wt/$(notdir $(CURDIR))
 
-# Variables a dispatched target forwards to the Mac's make, when set.
-REMOTE_FWD_VARS := PKG RUN V COUNT TIMEOUT
+# Variables a dispatched target forwards to the Mac's make, when set. ssh carries
+# no environment, so a GOFLAGS left out here makes GOFLAGS=-race pass on the Mac
+# without the race detector (#2881).
+REMOTE_FWD_VARS := PKG RUN V COUNT TIMEOUT GOFLAGS
 
 # Entry guard of every remote-* target: expands only when that recipe runs.
 REMOTE_GUARD = $(if $(strip $(REMOTE_AVAIL)),@:,$(error $(if $(strip $(REMOTE_HOSTS)),every remote build host is UNREACHABLE (tried: $(strip $(REMOTE_HOSTS))),remote build host is NOT CONFIGURED (no REMOTE_HOSTS in .remote.mk)). $@ has no local fallback: run $(patsubst remote-%,%,$@) (dispatches) or local-$(patsubst remote-%,%,$@). Probe: $(foreach h,$(REMOTE_HOSTS),ssh -o ConnectTimeout=$(REMOTE_SSH_TIMEOUT) -o BatchMode=yes $(call remote_dest,$(h)) true;)))

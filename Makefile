@@ -94,6 +94,18 @@ ifeq (,$(filter -ldflags=-w,$(GOFLAGS)))
 export GOFLAGS := $(strip $(GOFLAGS) -ldflags=-w)
 endif
 
+# GOFLAGS=-race on a test target runs the race detector (#2881). On Linux the
+# detector needs cgo, so the two local test bodies switch it on for that run
+# (macOS needs no cgo for it). Only these two: a foci-gw built with cgo fails
+# closed at startup (above), so build and integration keep CGO_ENABLED=0, and
+# -race there stops with go's own "-race requires cgo". A dispatched run gets
+# GOFLAGS through REMOTE_FWD_VARS (mk/remote.mk).
+ifneq (,$(filter -race,$(GOFLAGS)))
+ifneq ($(UNAME_S),Darwin)
+local-test-one local-test: export CGO_ENABLED = 1
+endif
+endif
+
 # CI test-history hook: CI_HOOK is the path to the shared results CSV.
 # Row shape (6 cols): time,repo,commit,target,pass|fail,failing-test-names
 # Column 6 (foci_todo #1754) is '|'-joined failing test names, empty on pass, so
@@ -364,10 +376,12 @@ fgw_logfile = $(shell mkdir -p $(FGW_ROOT) && $(MKTEMP) $(FGW_ROOT)/$(1)-XXXXXXX
 # type-checks _test.go): a gate run on the Mac cannot RUN the _linux.go code
 # and tests, but must not let them stop compiling. A no-op on Linux, where the
 # suite itself covers them.
+# It drops -race (#2881): this cross-compile has no cgo, which Linux's -race needs,
+# and a type check does not use the detector.
 test-linux-compile:
 ifeq ($(UNAME_S),Darwin)
 	@echo ">>> test-linux-compile: GOOS=linux go vet ./... (the Linux-only files this Mac cannot run)" >&2
-	GOOS=linux GOARCH=amd64 go vet ./...
+	GOOS=linux GOARCH=amd64 GOFLAGS='$(filter-out -race,$(GOFLAGS))' go vet ./...
 endif
 
 # COUNT=N always runs the tests (no cached result), so it is never left to a lazy lock.

@@ -20,7 +20,7 @@
 # the host; the Mac-side make gets the host's lock file (shared on a locked host,
 # per worktree plus FGW_RUN_TAG on an unlocked one); and two simultaneous
 # `make vet` from two checkouts serialise on a locked host and overlap on an
-# unlocked one.
+# unlocked one; GOFLAGS=-race reaches the build host and gets its cgo locally (#2881).
 #
 # Most of the time is the fake hosts' sleeps, so the scenarios run AT ONCE, each
 # in its own group dir (its own two checkouts, .remote.mk and fake-host logs);
@@ -60,8 +60,8 @@ case $host in *verydown*)
 esac
 case $host in *down*) sleep 1; echo "ssh: connect to host $host port 22: Operation timed out" >&2; exit 255 ;; esac
 case $host in *slow*) sleep 2 ;; esac
-# A real ssh carries no make state to the remote.
-unset MAKEFLAGS MAKELEVEL MFLAGS MAKEOVERRIDES REMOTE_PICK
+# A real ssh carries no make state, and none of make's exports, to the remote.
+unset MAKEFLAGS MAKELEVEL MFLAGS MAKEOVERRIDES REMOTE_PICK GOFLAGS CGO_ENABLED
 cd "$FAKE_REMOTE_HOME" || exit 255
 exec bash -c "$*"
 EOF
@@ -69,7 +69,8 @@ cat > "$TMP/bin/go" <<'EOF'
 #!/usr/bin/env bash
 case $1 in
   env) echo "$FAKE_GO_DIR" ;;
-  vet) echo "$FAKE_GO_ID start $(date +%s%N)" >> "$FAKE_GO_LOG"; sleep 2; echo "$FAKE_GO_ID end $(date +%s%N)" >> "$FAKE_GO_LOG" ;;
+  build) echo "build CGO_ENABLED=$CGO_ENABLED GOFLAGS=$GOFLAGS" >> "$FAKE_GO_ENV_LOG"; exit 3 ;;
+  vet) echo "vet GOFLAGS=$GOFLAGS" >> "$FAKE_GO_ENV_LOG"; echo "$FAKE_GO_ID start $(date +%s%N)" >> "$FAKE_GO_LOG"; sleep 2; echo "$FAKE_GO_ID end $(date +%s%N)" >> "$FAKE_GO_LOG" ;;
   *) echo "fake go: $*" >&2; exit 1 ;;
 esac
 EOF
@@ -101,7 +102,7 @@ new_group() {
   done
   REPO=$G/repoA
   mkdir -p "$G/remote"
-  export FAKE_SSH_LOG=$G/ssh.log FAKE_REMOTE_HOME=$G/remote FAKE_GO_DIR=$G/go FAKE_GO_LOG=$G/vet.log
+  export FAKE_SSH_LOG=$G/ssh.log FAKE_REMOTE_HOME=$G/remote FAKE_GO_DIR=$G/go FAKE_GO_LOG=$G/vet.log FAKE_GO_ENV_LOG=$G/goenv.log
   : > "$FAKE_SSH_LOG"
 }
 remote_mk() { # remote_mk <REMOTE_HOSTS>: the same .remote.mk in both checkouts
@@ -118,12 +119,13 @@ deadslow.REMOTE_HOST := tester@host-verydown
 EOF
   done
 }
-# mk [-C dir] <make args...>: make from a clean make environment.
+# mk [-C dir] <make args...>: make from a clean make environment. The caller's
+# GOFLAGS is scrubbed (GOFLAGS=-race make test runs this script); MK_GOFLAGS sets it.
 mk() {
   local dir=$REPO
   if [ "$1" = -C ]; then dir=$2; shift 2; fi
-  env -u MAKEFLAGS -u MAKELEVEL -u MFLAGS -u REMOTE_PICK -u FGW_HEAVY_LOCK -u FGW_TESTDIR -u FGW_SRCLINK -u HEAVY_LOCK_PATH -u FGW_RUN_TAG \
-    make --no-print-directory -C "$dir" "$@" 2>&1
+  env -u MAKEFLAGS -u MAKELEVEL -u MFLAGS -u REMOTE_PICK -u FGW_HEAVY_LOCK -u FGW_TESTDIR -u FGW_SRCLINK -u HEAVY_LOCK_PATH -u FGW_RUN_TAG -u GOFLAGS -u CGO_ENABLED \
+    ${MK_GOFLAGS:+GOFLAGS="$MK_GOFLAGS"} make --no-print-directory -C "$dir" "$@" 2>&1
 }
 DISPATCH='test-one PKG=./internal/zz/'
 
@@ -291,9 +293,48 @@ g_rest() {
   expect "the single-host format runs local" "running LOCALLY" "$out"
 }
 
+# --- GOFLAGS=-race runs the detector or fails, never a silent plain run (#2881) ---
+g_race() {
+  new_group race; remote_mk "locked"
+  # End to end through the fake ssh: what the Mac-side `go` actually received.
+  MK_GOFLAGS=-race mk vet > "$G/vet.out"
+  got=$(cat "$FAKE_GO_ENV_LOG" 2>/dev/null)
+  expect "GOFLAGS=-race in the env reaches the build host's go" "vet GOFLAGS=-race -ldflags=-w" "$got"
+  : > "$FAKE_GO_ENV_LOG"
+  mk vet GOFLAGS=-race > "$G/vet2.out"
+  got=$(cat "$FAKE_GO_ENV_LOG" 2>/dev/null)
+  expect "GOFLAGS=-race on the command line reaches the build host's go" "vet GOFLAGS=-race" "$got"
+  : > "$FAKE_GO_ENV_LOG"
+  mk vet > "$G/vet3.out"
+  got=$(cat "$FAKE_GO_ENV_LOG" 2>/dev/null)
+  expect "no GOFLAGS: the build host's go gets only the default" "vet GOFLAGS=-ldflags=-w" "$got"
+
+  # The local body: the detector needs cgo on Linux, the Makefile's default is off.
+  # llbox is local-test-one's first prerequisite, and the fake go stops the run there.
+  mkdir -p "$REPO/scripts/llbox"
+  want=1; [ "$(uname -s)" = Darwin ] && want=0
+  for t in local-test-one local-test; do
+    : > "$FAKE_GO_ENV_LOG"
+    MK_GOFLAGS=-race mk "$t" PKG=./internal/zz/ > "$G/$t.out"
+    expect "$t with -race has the cgo it needs (CGO_ENABLED=$want)" "build CGO_ENABLED=$want GOFLAGS=-race" "$(cat "$FAKE_GO_ENV_LOG")"
+    : > "$FAKE_GO_ENV_LOG"
+    mk "$t" PKG=./internal/zz/ > "$G/$t.out"
+    expect "$t without -race stays CGO_ENABLED=0" "build CGO_ENABLED=0 " "$(cat "$FAKE_GO_ENV_LOG")"
+  done
+  # A gateway built with cgo fails closed at startup (Makefile), so build keeps it off.
+  mkdir -p "$REPO/scripts/llbox"
+  : > "$FAKE_GO_ENV_LOG"
+  MK_GOFLAGS=-race mk llbox > "$G/llbox.out"
+  expect "outside the test targets -race does not switch cgo on" "build CGO_ENABLED=0 " "$(cat "$FAKE_GO_ENV_LOG")"
+
+  # The Mac's Linux compile check cross-compiles without cgo, where -race cannot build.
+  out=$(mk -n test-linux-compile UNAME_S=Darwin GOFLAGS='-race -ldflags=-w')
+  expect "test-linux-compile drops -race" "GOFLAGS='-ldflags=-w' go vet" "$out"
+}
+
 # Run the groups, all at once. Each group prints into its own file and exits with its RC; a
 # group that printed no assertion at all (it did not run) fails too.
-SCENARIOS=(g_dead_first g_dead_later g_order g_none g_overrides g_told g_both_locked g_both_free g_rest)
+SCENARIOS=(g_dead_first g_dead_later g_order g_none g_overrides g_told g_both_locked g_both_free g_race g_rest)
 run_group() { ( RC=0; "$1"; exit "$RC" ) > "$TMP/$1.out" 2>&1; echo $? > "$TMP/$1.rc"; }
 for g in "${SCENARIOS[@]}"; do
   run_group "$g" &
