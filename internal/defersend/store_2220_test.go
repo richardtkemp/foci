@@ -71,6 +71,7 @@ func TestStore_EnqueueDedupe_AnyIdentityFieldDiffers(t *testing.T) {
 		"no_compact":         func(r *Record) { r.NoCompact = true },
 		"no_reset_hook":      func(r *Record) { r.NoResetHook = true },
 		"silent":             func(r *Record) { r.Silent = true },
+		"persistent":         func(r *Record) { r.Persistent = true },
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := newTestStore(t)

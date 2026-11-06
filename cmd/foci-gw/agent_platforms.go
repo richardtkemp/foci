@@ -241,6 +241,7 @@ type sessionBranchAdapter struct {
 func (a *sessionBranchAdapter) ForkSession(ctx context.Context, parentKey string, opts tools.BranchOptions) (string, bool, error) {
 	return a.ag().ForkSession(ctx, parentKey, session.BranchOptions{
 		NoResetHook:         opts.NoResetHook,
+		Persistent:          opts.Persistent,
 		BranchType:          opts.BranchType,
 		OrientationTemplate: opts.OrientationTemplate,
 		Opening:             opts.Opening,

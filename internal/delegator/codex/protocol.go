@@ -76,10 +76,12 @@ type threadStartParams struct {
 }
 
 type threadForkParams struct {
-	Config    map[string]any `json:"config"`
-	Sandbox   string         `json:"sandbox,omitempty"`
-	ThreadID  string         `json:"threadId"`
-	Ephemeral bool           `json:"ephemeral,omitempty"`
+	ExcludeTurns      bool           `json:"excludeTurns,omitempty"`
+	ApprovalsReviewer string         `json:"approvalsReviewer,omitempty"`
+	Config            map[string]any `json:"config"`
+	Sandbox           string         `json:"sandbox,omitempty"`
+	ThreadID          string         `json:"threadId"`
+	Ephemeral         bool           `json:"ephemeral,omitempty"`
 }
 
 // threadInjectItemsParams appends raw Responses API items to a thread's

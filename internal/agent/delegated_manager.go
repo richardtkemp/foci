@@ -184,6 +184,9 @@ type DelegatedManager struct {
 	// session key (see RunBatch). Guarded by mu.
 	batchSpecs map[string]batchSpec
 
+	ephemeralMu  sync.Mutex
+	ephemeralIDs map[string]string
+
 	// SpawnerPermissionMode returns the permission mode a session was
 	// switched to (Agent.SessionPermissionMode; "" = the agent's default), so
 	// a spawn starts in its spawner's mode (inheritSpawnerMode, #2684). Nil =
@@ -604,6 +607,10 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string, u
 	opts.Label = strings.ReplaceAll(sessionKey, "/", "-")
 	opts.ResumeSessionID = resumeID
 	opts.SessionKey = sessionKey
+	opts.Ephemeral = m.isEphemeralSession(sessionKey)
+	if opts.Ephemeral && !m.hasEphemeralSession(sessionKey) {
+		return nil, fmt.Errorf("%w: %s", ErrEphemeralSessionLost, sessionKey)
+	}
 	opts.DepthLeaf = m.DepthLeaf != nil && m.DepthLeaf(sessionKey)
 
 	// A batch session (RunBatch) launches with the caller's system prompt
@@ -756,7 +763,7 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string, u
 
 	if err := be.Start(ctx, opts); err != nil {
 		// If resume failed (e.g. stale UUID), retry without resume.
-		if resumeID != "" {
+		if resumeID != "" && !opts.Ephemeral {
 			m.logger().Warnf("start with --resume %s failed for %s: %v — retrying without resume", resumeID, sessionKey, err)
 			_ = be.Close()
 			newBe, err := m.NewBackend()
@@ -820,7 +827,7 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string, u
 
 		// If the process is already dead, a stale --resume UUID may have
 		// caused CC to exit silently. Clear the resume ID and retry fresh.
-		if !mb.be.IsRunning() && resumeID != "" {
+		if !mb.be.IsRunning() && resumeID != "" && !opts.Ephemeral {
 			m.logger().Warnf("backend for %s died during init with --resume %s — retrying without resume", sessionKey, resumeID)
 			_ = mb.be.Close()
 			m.clearResumeID(sessionKey)
@@ -1215,6 +1222,15 @@ func (m *DelegatedManager) WaitForTurn(ctx context.Context, sessionKey string) e
 // Close itself has bounded timeouts (see ccstream Close), so even in the
 // pathological case this method returns within ~10s.
 func (m *DelegatedManager) ResetSession(sessionKey string) {
+	// A worker may still be a live fork with no child facade yet.
+	if _, managed := m.getManaged(sessionKey); !managed {
+		if id, ok := m.ephemeralID(sessionKey); ok {
+			if id != "" {
+				_ = m.CleanupBackendSession(context.Background(), id)
+			}
+			m.clearResumeID(sessionKey)
+		}
+	}
 	if mb, ok := m.getManaged(sessionKey); ok {
 		mb.dropUndelivered.Store(true)
 	}
@@ -1235,6 +1251,9 @@ func (m *DelegatedManager) ResetSession(sessionKey string) {
 // real-CC behaviour this relies on — --resume honours a freshly-sent initialize
 // systemPrompt — is verified (clutch docs/resume_prompt_probe.py).
 func (m *DelegatedManager) BounceSession(sessionKey string) {
+	if m.isEphemeralSession(sessionKey) {
+		return
+	} // a live-only thread cannot be reloaded
 	if m.closeManaged(sessionKey, false) {
 		m.logger().Infof("bounced session %s (closed, resume ID kept — prompt reloads on respawn)", sessionKey)
 	}
@@ -1434,6 +1453,14 @@ func (m *DelegatedManager) Close() {
 		m.reaperStop()
 		m.reaperStop = nil
 	}
+	var pendingEphemeral []string
+	m.ephemeralMu.Lock()
+	for key, id := range m.ephemeralIDs {
+		if _, live := m.backends[key]; !live && id != "" {
+			pendingEphemeral = append(pendingEphemeral, id)
+		}
+	}
+	m.ephemeralMu.Unlock()
 	dead := make([]*managedBackend, 0, len(m.backends))
 	deadKeys := make([]string, 0, len(m.backends))
 	for key, mb := range m.backends {
@@ -1456,6 +1483,9 @@ func (m *DelegatedManager) Close() {
 			mb.bridge.Close()
 		}
 		mb.place.release()
+	}
+	for _, id := range pendingEphemeral {
+		_ = m.CleanupBackendSession(context.Background(), id)
 	}
 }
 
@@ -1624,6 +1654,9 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 // Every delegated backend goes through here, not just claude-code. The key is
 // session.MetaKeyCCResumeID in the session package's registry.
 func (m *DelegatedManager) saveResumeID(sessionKey, sessionID string) {
+	if m.saveEphemeralID(sessionKey, sessionID) {
+		return
+	}
 	if sessionID == "" || m.SessionIndex == nil {
 		return
 	}
@@ -1635,6 +1668,9 @@ func (m *DelegatedManager) saveResumeID(sessionKey, sessionID string) {
 
 // clearResumeID removes a saved CC session UUID from state.db.
 func (m *DelegatedManager) clearResumeID(sessionKey string) {
+	m.ephemeralMu.Lock()
+	delete(m.ephemeralIDs, sessionKey)
+	m.ephemeralMu.Unlock()
 	if m.SessionIndex == nil {
 		return
 	}
@@ -1648,9 +1684,16 @@ func (m *DelegatedManager) clearResumeID(sessionKey string) {
 // session's backend: the branch drives the existing CC session — which holds
 // the conversation context in-process (or on disk via the resume ID) — while
 // the old key is left clean for a fresh backend on next contact.
-func (m *DelegatedManager) RemapSession(oldKey, newKey string) {
+func (m *DelegatedManager) RemapSession(oldKey, newKey string) bool {
 	if oldKey == newKey || newKey == "" {
-		return
+		return true
+	}
+	if m.isEphemeralSession(oldKey) {
+		id, _ := m.ephemeralID(oldKey)
+		if err := m.markEphemeralSession(newKey, id); err != nil {
+			m.logger().Errorf("cannot remap ephemeral session %s: %v", oldKey, err)
+			return false
+		}
 	}
 	m.mu.Lock()
 	var remapped *managedBackend
@@ -1685,6 +1728,7 @@ func (m *DelegatedManager) RemapSession(oldKey, newKey string) {
 		m.clearResumeID(oldKey)
 	}
 	m.moveUndelivered(oldKey, newKey)
+	return true
 }
 
 // BackendCanBranch reports whether this agent's backend can fork its
@@ -1751,24 +1795,12 @@ func (m *DelegatedManager) CleanupBackendSession(ctx context.Context, sessionID 
 	return br.CleanupSession(ctx, delegator.CleanupRequest{SessionID: sessionID, WorkDir: m.StartOpts.WorkDir, AgentID: m.StartOpts.AgentID})
 }
 
-// ForkParentSession forks parentKey's backend conversation and returns the new
-// backend session id (a clone ready to resume). The parent is left untouched.
-//
-// It resolves the parent's live backend session id (or persisted cc_resume_id),
-// then asks a freshly-constructed (unstarted) backend to fork that session on
-// disk. Returns ("", nil) when the fork can't happen (backend not
-// branch-capable, or the parent has no known backend session yet — the caller
-// should fall back), and ("", err) on a genuine fork failure. It deliberately
-// does NOT create a branch session key or persist anything: the caller mints
-// the branch key only on success, so a failed fork leaves no orphan.
-func (m *DelegatedManager) ForkParentSession(ctx context.Context, parentKey string) (string, error) {
-	id, _, err := m.ForkParentSessionWith(ctx, parentKey, nil)
-	return id, err
-}
-
-// ForkParentSessionWith is ForkParentSession ending the fork on opening (#2617)
-// when the backend can write it; openingWritten reports whether it did.
-func (m *DelegatedManager) ForkParentSessionWith(ctx context.Context, parentKey string, opening *delegator.ForkOpening) (id string, openingWritten bool, err error) {
+// forkParentSession clones the parent's backend conversation with the requested
+// lifetime and optional opening. It returns no ID when no parent exists, and
+// an error when an existing parent cannot be forked. Running-server requirements
+// are declared by the backend Spec; the caller creates the Foci branch key only
+// after this succeeds.
+func (m *DelegatedManager) forkParentSession(ctx context.Context, parentKey string, opening *delegator.ForkOpening, ephemeral bool) (id string, openingWritten bool, err error) {
 	parentID := m.parentSessionID(parentKey)
 	if parentID == "" {
 		return "", false, nil // no known backend session to fork
@@ -1796,6 +1828,7 @@ func (m *DelegatedManager) ForkParentSessionWith(ctx context.Context, parentKey 
 		}
 	}
 	res, err := br.ForkSession(ctx, delegator.ForkRequest{
+		Ephemeral:       ephemeral,
 		ParentSessionID: parentID,
 		FociSessionKey:  parentKey,
 		WorkDir:         m.StartOpts.WorkDir,
@@ -1828,6 +1861,12 @@ func (m *DelegatedManager) parentSessionID(sessionKey string) string {
 
 // loadResumeID reads a saved CC session UUID from state.db.
 func (m *DelegatedManager) loadResumeID(sessionKey string) string {
+	if id, ok := m.ephemeralID(sessionKey); ok {
+		return id
+	}
+	if m.isEphemeralSession(sessionKey) {
+		return ""
+	}
 	if m.SessionIndex == nil {
 		return ""
 	}
@@ -1923,6 +1962,11 @@ func (m *DelegatedManager) RunBatch(ctx context.Context, req delegator.BatchRequ
 		req.OnSession(batchKey)
 	}
 
+	if !isSpawnPurpose(req.Purpose) {
+		if err := m.markEphemeralSession(batchKey, ""); err != nil {
+			return "", err
+		}
+	}
 	m.setBatchSpec(batchKey, batchSpec{systemPrompt: req.SystemPrompt, agentPrompt: req.AgentPrompt, model: req.Model, access: req.Access, workDir: req.WorkDir,
 		spawn: isSpawnPurpose(req.Purpose)})
 	defer func() {
@@ -2228,6 +2272,9 @@ func (m *DelegatedManager) closeIdle(timeout time.Duration) {
 	}
 	var dead []corpse
 	for key, mb := range m.backends {
+		if m.isEphemeralSession(key) {
+			continue
+		} // live-only contexts cannot be idle-resumed
 		// Use backend stream activity if available (tracks actual CC events),
 		// falling back to lastActive (when foci last sent a message).
 		lastSeen := mb.lastActive

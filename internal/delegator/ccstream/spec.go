@@ -84,10 +84,11 @@ var spec = delegator.Spec{
 		delegator.CapContextWindow:    delegator.Yes(),
 		delegator.CapLiveModel:        delegator.Yes(),
 
-		delegator.CapBranch:        delegator.Yes(),
-		delegator.CapScopedCleanup: delegator.No("fork and cleanup are local transcript file operations, no server needed"),
-		delegator.CapIsolatedBatch: delegator.Yes(),
-		delegator.CapReadOnlyBatch: delegator.Yes(),
+		delegator.CapEphemeralSessions: delegator.No("backend keeps its own transcripts"),
+		delegator.CapBranch:            delegator.Yes(),
+		delegator.CapScopedCleanup:     delegator.No("fork and cleanup are local transcript file operations, no server needed"),
+		delegator.CapIsolatedBatch:     delegator.Yes(),
+		delegator.CapReadOnlyBatch:     delegator.Yes(),
 
 		delegator.CapHostHooks:                delegator.Yes(),
 		delegator.CapUnstartedReadinessProbe:  delegator.Yes(),

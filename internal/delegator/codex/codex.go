@@ -189,6 +189,8 @@ type Backend struct {
 	// than lost. registerThread and a successful CleanupSession remove the
 	// entry. Guarded by threadMapMu.
 	forkedThreads map[string]struct{}
+	// Pending live forks retain the server until a child facade adopts them.
+	ephemeralForks map[string]ephemeralFork
 	// releasedThreads holds the threads foci has handed back to codex
 	// (thread/unsubscribe, release.go) that codex has not yet unloaded. codex
 	// still sends such a thread's status changes — a turn that was running

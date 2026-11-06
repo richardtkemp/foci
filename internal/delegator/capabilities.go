@@ -81,6 +81,7 @@ const (
 
 	// Sessions.
 	CapBranch
+	CapEphemeralSessions
 	CapScopedCleanup
 	CapIsolatedBatch
 	CapReadOnlyBatch
@@ -166,10 +167,11 @@ var capabilityTable = [numCapabilities]CapabilityInfo{
 	CapContextWindow:    {Name: "context_window", Kind: KindInterface, Iface: ifaceOf[ContextWindowQuerier](), Doc: "reports the model's context window and usage (ContextWindowQuerier)"},
 	CapLiveModel:        {Name: "live_model", Kind: KindInterface, Iface: ifaceOf[LiveModelReporter](), Doc: "reports the model its live process last named, without a turn result (LiveModelReporter)"},
 
-	CapBranch:        {Name: "branch", Kind: KindInterface, Iface: ifaceOf[BackendBrancher](), Doc: "forks and deletes its own sessions (BackendBrancher)"},
-	CapScopedCleanup: {Name: "scoped_cleanup", Kind: KindInterface, Iface: ifaceOf[RunningBackendCleaner](), Requires: []Capability{CapBranch}, Doc: "needs a live server to delete sessions and opens it once per sweep (RunningBackendCleaner)"},
-	CapIsolatedBatch: {Name: "isolated_batch", Kind: KindBehaviour, Doc: "runs a batch session with BatchAccessIsolated: file tools confined to its working directory, no command execution, no MCP, no exec-bridge tools (spawn raw mode)"},
-	CapReadOnlyBatch: {Name: "read_only_batch", Kind: KindBehaviour, Doc: "runs a batch session with BatchAccessReadOnly: no file writes and no mutating commands (spawn explore mode)"},
+	CapEphemeralSessions: {Name: "ephemeral_sessions", Kind: KindBehaviour, Doc: "supports non-resumable in-memory threads and live fork adoption"},
+	CapBranch:            {Name: "branch", Kind: KindInterface, Iface: ifaceOf[BackendBrancher](), Doc: "forks and deletes its own sessions (BackendBrancher)"},
+	CapScopedCleanup:     {Name: "scoped_cleanup", Kind: KindInterface, Iface: ifaceOf[RunningBackendCleaner](), Requires: []Capability{CapBranch}, Doc: "needs a live server to delete sessions and opens it once per sweep (RunningBackendCleaner)"},
+	CapIsolatedBatch:     {Name: "isolated_batch", Kind: KindBehaviour, Doc: "runs a batch session with BatchAccessIsolated: file tools confined to its working directory, no command execution, no MCP, no exec-bridge tools (spawn raw mode)"},
+	CapReadOnlyBatch:     {Name: "read_only_batch", Kind: KindBehaviour, Doc: "runs a batch session with BatchAccessReadOnly: no file writes and no mutating commands (spawn explore mode)"},
 
 	CapHostHooks:                {Name: "host_hooks", Kind: KindInterface, Iface: ifaceOf[HostHooksAcceptor](), Doc: "takes the gateway's HostHooks: auth-failure and rate-limit reports, pretool and stop rules (HostHooksAcceptor)"},
 	CapUnstartedReadinessProbe:  {Name: "unstarted_readiness_probe", Kind: KindBehaviour, Doc: "CheckReady works on a constructed but unstarted backend (the startup probe)"},

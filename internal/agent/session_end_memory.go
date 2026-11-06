@@ -70,7 +70,9 @@ func (a *Agent) PrepareSessionEndMemory(sessionKey, orientTemplate string, skipM
 	// reflection reaches the CC session that holds the context. (No-op for API
 	// agents, which have no live backend.)
 	if a.DelegatedManager != nil {
-		a.DelegatedManager.RemapSession(sessionKey, branchKey)
+		if !a.DelegatedManager.RemapSession(sessionKey, branchKey) {
+			return "", false
+		}
 	}
 
 	return branchKey, true

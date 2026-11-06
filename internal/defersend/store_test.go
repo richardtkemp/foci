@@ -64,7 +64,7 @@ func TestStore_KindAndBranchOptionsRoundtrip(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	if _, _, err := s.Enqueue(Record{
 		Kind: KindBranch, AgentID: "helen", SessionKey: "helen/i0", Text: "morning check",
-		Model: "fast", NoCompact: true, NoResetHook: true, Silent: true,
+		Model: "fast", NoCompact: true, NoResetHook: true, Silent: true, Persistent: true,
 		WaitCold: "55m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
 	}); err != nil {
 		t.Fatal(err)
@@ -78,7 +78,7 @@ func TestStore_KindAndBranchOptionsRoundtrip(t *testing.T) {
 		t.Fatalf("len=%d, want 1", len(all))
 	}
 	r := all[0]
-	if r.Kind != KindBranch || !r.NoCompact || !r.NoResetHook || !r.Silent {
+	if r.Kind != KindBranch || !r.NoCompact || !r.NoResetHook || !r.Silent || !r.Persistent {
 		t.Errorf("kind/branch options roundtrip mismatch: %+v", r)
 	}
 	if r.Model != "fast" || r.Text != "morning check" || r.SessionKey != "helen/i0" {

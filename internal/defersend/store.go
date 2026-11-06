@@ -56,6 +56,7 @@ type Record struct {
 	WaitUserInactive string
 	NoCompact        bool
 	NoResetHook      bool
+	Persistent       bool
 	Silent           bool
 	CreatedAt        time.Time
 	DeadlineAt       time.Time
@@ -107,6 +108,7 @@ func NewStore(path string) (*Store, error) {
 			no_compact         INTEGER NOT NULL DEFAULT 0,
 			no_reset_hook      INTEGER NOT NULL DEFAULT 0,
 			silent             INTEGER NOT NULL DEFAULT 0,
+			persistent INTEGER NOT NULL DEFAULT 0,
 			attempts           INTEGER NOT NULL DEFAULT 0
 		)`,
 	)
@@ -125,6 +127,7 @@ func NewStore(path string) (*Store, error) {
 		{"no_reset_hook", `ALTER TABLE deferred_sends ADD COLUMN no_reset_hook INTEGER NOT NULL DEFAULT 0`},
 		{"silent", `ALTER TABLE deferred_sends ADD COLUMN silent INTEGER NOT NULL DEFAULT 0`},
 		{"steer", `ALTER TABLE deferred_sends ADD COLUMN steer TEXT NOT NULL DEFAULT ''`},
+		{"persistent", `ALTER TABLE deferred_sends ADD COLUMN persistent INTEGER NOT NULL DEFAULT 0`},
 		{"attempts", `ALTER TABLE deferred_sends ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0`},
 	} {
 		if _, err := db.Exec(col.ddl); err != nil && !strings.Contains(err.Error(), "duplicate column") {
@@ -144,11 +147,11 @@ func insert(tx *sql.Tx, r Record) (int64, error) {
 		`INSERT INTO deferred_sends
 		   (agent_id, session_key, text, policy, model, steer,
 		    wait_warm, wait_cold, wait_user_active, wait_user_inactive,
-		    kind, no_compact, no_reset_hook, silent, created_at, deadline_at, attempts)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		    kind, no_compact, no_reset_hook, silent, persistent, created_at, deadline_at, attempts)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.AgentID, r.SessionKey, r.Text, r.Policy, r.Model, r.Steer,
 		r.WaitWarm, r.WaitCold, r.WaitUserActive, r.WaitUserInactive,
-		string(r.Kind), r.NoCompact, r.NoResetHook, r.Silent,
+		string(r.Kind), r.NoCompact, r.NoResetHook, r.Silent, r.Persistent,
 		timeutil.Format(r.CreatedAt), timeutil.Format(r.DeadlineAt), r.Attempts,
 	)
 	if err != nil {
@@ -180,12 +183,12 @@ func (s *Store) Enqueue(r Record) (int64, []int64, error) {
 		  WHERE (CASE kind WHEN '' THEN ? ELSE kind END) = ?
 		    AND agent_id = ? AND session_key = ? AND text = ? AND model = ? AND policy = ?
 		    AND wait_warm = ? AND wait_cold = ? AND wait_user_active = ? AND wait_user_inactive = ?
-		    AND no_compact = ? AND no_reset_hook = ? AND silent = ?
+		    AND no_compact = ? AND no_reset_hook = ? AND silent = ? AND persistent = ?
 		  ORDER BY id`,
 		string(KindSend), string(r.EffectiveKind()),
 		r.AgentID, r.SessionKey, r.Text, r.Model, r.Policy,
 		r.WaitWarm, r.WaitCold, r.WaitUserActive, r.WaitUserInactive,
-		r.NoCompact, r.NoResetHook, r.Silent)
+		r.NoCompact, r.NoResetHook, r.Silent, r.Persistent)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -242,7 +245,7 @@ func (s *Store) All() ([]Record, error) {
 	rows, err := s.db.Query(
 		`SELECT id, agent_id, session_key, text, policy, model, steer,
 		        wait_warm, wait_cold, wait_user_active, wait_user_inactive,
-		        kind, no_compact, no_reset_hook, silent, created_at, deadline_at, attempts
+		        kind, no_compact, no_reset_hook, silent, persistent, created_at, deadline_at, attempts
 		   FROM deferred_sends ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -256,7 +259,7 @@ func (s *Store) All() ([]Record, error) {
 		var created, deadline string
 		if err := rows.Scan(&r.ID, &r.AgentID, &r.SessionKey, &r.Text, &r.Policy, &r.Model, &r.Steer,
 			&r.WaitWarm, &r.WaitCold, &r.WaitUserActive, &r.WaitUserInactive,
-			&kind, &r.NoCompact, &r.NoResetHook, &r.Silent, &created, &deadline, &r.Attempts); err != nil {
+			&kind, &r.NoCompact, &r.NoResetHook, &r.Silent, &r.Persistent, &created, &deadline, &r.Attempts); err != nil {
 			return nil, err
 		}
 		r.Kind = Kind(kind) // read verbatim; normalise via EffectiveKind

@@ -186,7 +186,7 @@ func TestSpawnInheritSetsNoCompact(t *testing.T) {
 	}
 	ctx := WithSessionKey(context.Background(), "test/c123")
 
-	result, err := NewSpawner(deps, func() SpawnAgent { return agent }).startClone(ctx, "clone", "test prompt")
+	result, err := NewSpawner(deps, func() SpawnAgent { return agent }).startClone(ctx, "clone", "test prompt", false)
 	if err != nil {
 		t.Fatalf("startClone: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestSpawnInherit_BackendCannotFork(t *testing.T) {
 	deps := SpawnDeps{Sessions: brancher, MaxInherit: 2}
 	ctx := WithSessionKey(context.Background(), "test/c123")
 
-	_, err := NewSpawner(deps, func() SpawnAgent { return agent }).startClone(ctx, "clone", "test prompt")
+	_, err := NewSpawner(deps, func() SpawnAgent { return agent }).startClone(ctx, "clone", "test prompt", false)
 	if err == nil {
 		t.Fatal("want an error when the backend cannot fork, got nil")
 	}

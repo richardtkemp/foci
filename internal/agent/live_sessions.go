@@ -438,7 +438,7 @@ func (m *DelegatedManager) idleCandidates() []evictCandidate {
 	m.mu.Lock()
 	snaps := make([]snap, 0, len(m.backends))
 	for key, mb := range m.backends {
-		if mb.creating.Load() {
+		if mb.creating.Load() || m.isEphemeralSession(key) {
 			continue
 		}
 		snaps = append(snaps, snap{key: key, mb: mb, lastSeen: mb.lastActive, seenAt: mb.lastActive})

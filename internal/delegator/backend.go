@@ -546,10 +546,9 @@ func HumanReadableBackendName(backendType string) string {
 //
 // Backends that don't implement this interface are treated as unable to
 // branch; the branch machinery falls back to the existing behaviour. The
-// method is a pure fork operation and MUST NOT require a started/running
-// backend — callers may invoke it on a freshly-constructed (unstarted)
-// backend instance, since the fork is performed against on-disk session
-// state, not a live process.
+// method forks stored history unless Spec.ForkNeedsRunning declares that it
+// needs a live backend connection. Ephemeral forks remain live and are adopted
+// by a child facade rather than cold-resumed from storage.
 type BackendBrancher interface {
 	ForkSession(ctx context.Context, req ForkRequest) (ForkResult, error)
 	// CleanupSession deletes the backend session identified by req.SessionID
@@ -602,6 +601,8 @@ type CleanupRequest struct {
 
 // ForkRequest identifies the backend conversation to fork.
 type ForkRequest struct {
+	// Ephemeral keeps a disposable fork live without saving backend history.
+	Ephemeral bool
 	// ParentSessionID is the backend session id to fork (for CC, its UUID).
 	ParentSessionID string
 	// FociSessionKey identifies the owning foci session for explicit thread
@@ -642,7 +643,7 @@ type ForkOpening struct {
 	AgentText string
 }
 
-// ForkResult carries the new backend session id, ready to be resumed.
+// ForkResult carries the new backend session id, ready for resume or live adoption.
 type ForkResult struct {
 	// SessionID is the new backend session id (for CC, a fresh UUID whose
 	// on-disk session is a copy of the parent's, ready for --resume).
@@ -779,6 +780,8 @@ func SkipPermissions(cfg map[string]any) bool {
 // backend (#2178). A new field is ignored by every backend until one declares
 // it, and docs/BACKENDS.md shows which do.
 type StartOptions struct {
+	// Ephemeral disables backend transcript persistence. A fork ID is adopted live, never cold-resumed.
+	Ephemeral       bool
 	WorkDir         string // agent workspace directory (becomes cwd)
 	SystemPrompt    string // concatenated character/system files (static fallback; see SystemPromptFunc)
 	Model           string // initial model (e.g. "opus", "sonnet")

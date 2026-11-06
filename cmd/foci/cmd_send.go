@@ -370,6 +370,7 @@ Flags:
   --human                   Declare a human sent this: counts as user attention on the
                             new branch session once it runs (env: FOCI_HUMAN)
   --no-compact              Skip compaction if context limit reached (env: FOCI_NO_COMPACT)
+  --persistent              Save this branch for later resume (default: disposable)
   --no-reset-hook           Skip pre-reset memory hook (env: FOCI_NO_RESET_HOOK)
   --oneshot                 Shorthand for --no-compact --no-reset-hook --silent
                             (env: FOCI_ONESHOT sets only --no-compact --no-reset-hook)
@@ -394,6 +395,7 @@ type branchFlags struct {
 	sessionFlag // -s/--session parent selector + FOCI_SESSION (#2284)
 	noCompact   bool
 	noResetHook bool
+	persistent  bool
 	silent      bool
 	model       string
 	messageText string
@@ -427,6 +429,9 @@ func (flags *branchFlags) consumeOwnFlag(args []string, i int) (next int, consum
 	switch args[i] {
 	case "--no-compact":
 		flags.noCompact = true
+		return i, true
+	case "--persistent":
+		flags.persistent = true
 		return i, true
 	case "--no-reset-hook":
 		flags.noResetHook = true
@@ -543,6 +548,9 @@ func cmdBranch(base string, args []string) error {
 	}
 	if flags.noResetHook {
 		body["no_reset_hook"] = true
+	}
+	if flags.persistent {
+		body["persistent"] = true
 	}
 	flags.gateFlags.addToBody(body)
 	flags.waitFlags.addToBody(body)

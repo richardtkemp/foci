@@ -102,7 +102,13 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		return nil
 	}
 	if opts.ResumeSessionID != "" {
-		if err := b.resumeThread(opts.ResumeSessionID); err != nil {
+		var err error
+		if opts.Ephemeral {
+			err = b.adoptEphemeralFork(opts.ResumeSessionID)
+		} else {
+			err = b.resumeThread(opts.ResumeSessionID)
+		}
+		if err != nil {
 			_ = b.Close()
 			return fmt.Errorf("codex: resume thread %s: %w", opts.ResumeSessionID, err)
 		}
@@ -305,7 +311,7 @@ func (b *Backend) Close() error {
 	// zero". refs never goes below zero, so the old form made every repeated
 	// Close report last=true and evict a live server from the pool.
 	var last bool
-	if sharedPool.refs[key] > 0 {
+	if sharedPool.servers[key] == owner && sharedPool.refs[key] > 0 {
 		sharedPool.refs[key]--
 		last = sharedPool.refs[key] == 0
 	}
@@ -468,7 +474,7 @@ func (b *Backend) startThread() (string, error) {
 		Cwd:               b.workDir,
 		Sandbox:           b.sandboxMode(),
 		BaseInstructions:  b.startOpts.SystemPrompt,
-		Ephemeral:         false,
+		Ephemeral:         b.startOpts.Ephemeral,
 	}
 	if m := b.modelFromOpts(); m != "" {
 		params.Model = m

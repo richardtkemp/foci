@@ -32,6 +32,7 @@ type SystemBlocksProvider interface {
 // BranchOptions configures optional behavior for a new branch session (tools-side mirror).
 // BranchOptions configures a new branch session.
 type BranchOptions struct {
+	Persistent          bool
 	NoResetHook         bool
 	BranchType          string
 	OrientationTemplate string
@@ -481,6 +482,7 @@ func spawnParams(modes []string, delegated bool) json.RawMessage {
 				"enum":        modes,
 				"description": "Mode:\n" + strings.Join(docs, "\n"),
 			},
+			"persistent": map[string]any{"type": "boolean", "description": "Clone only: save backend conversation for restart/resume instead of a disposable in-memory fork. Other spawn modes are persistent already."},
 			"background": map[string]any{
 				"type":        "boolean",
 				"description": "Character only: run in the background (the result arrives as [SPAWN RESULT]; steer it with spawn_send, check on it with spawn_status) instead of returning the result directly. Default false. A clone always runs in the background.",
@@ -578,6 +580,7 @@ func (s *Spawner) SpawnTool() *Tool {
 				Model      string `json:"model"`
 				Context    string `json:"context"`
 				Background bool   `json:"background"`
+				Persistent bool   `json:"persistent"`
 				Agent      string `json:"agent"`
 				UseReserve bool   `json:"use_reserve"`
 			}](params)
@@ -638,7 +641,7 @@ func (s *Spawner) SpawnTool() *Tool {
 			var res ToolResult
 			switch {
 			case p.Context == spawnModeClone:
-				res, err = s.startClone(ctx, name, p.Prompt)
+				res, err = s.startClone(ctx, name, p.Prompt, p.Persistent)
 			case background:
 				res, err = s.startBackgroundCharacter(ctx, host, name, p.Prompt, p.Model)
 			default:
@@ -1300,7 +1303,7 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (string, error) {
 // notifier is available, the spawn runs asynchronously in a background
 // goroutine and delivers its result via the notifier. When notifier is nil, it
 // falls back to synchronous execution (for tests).
-func (s *Spawner) startClone(ctx context.Context, name, prompt string) (ToolResult, error) {
+func (s *Spawner) startClone(ctx context.Context, name, prompt string, persistent bool) (ToolResult, error) {
 	deps := s.deps
 	parentSession := SessionKeyFromContext(ctx)
 	// No-recursion guard: reject clone calls from inside a clone. An API
@@ -1317,6 +1320,7 @@ func (s *Spawner) startClone(ctx context.Context, name, prompt string) (ToolResu
 	branchKey, ok, err := deps.Sessions.ForkSession(ctx, parentSession, BranchOptions{
 		NoResetHook:         true,
 		BranchType:          "spawn",
+		Persistent:          persistent,
 		OrientationTemplate: deps.OrientationTemplate,
 	})
 	if err != nil {

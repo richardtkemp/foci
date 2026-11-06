@@ -690,6 +690,7 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 			Human          bool   `json:"human"` // #1130: caller declares a human sent this
 			NoCompact      bool   `json:"no_compact"`
 			NoResetHook    bool   `json:"no_reset_hook"`
+			Persistent     bool   `json:"persistent"`
 			IfUserActive   string `json:"if_user_active"`
 			IfUserInactive string `json:"if_user_inactive"`
 			IfActive       string `json:"if_active"`
@@ -781,7 +782,7 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 		// now too.
 		if deferUnmetWait(w, d, gateIn, wc, defersend.Record{
 			Kind: defersend.KindBranch, AgentID: inst.id, SessionKey: parentKey, Text: req.Text,
-			Model: req.Model, NoCompact: req.NoCompact, NoResetHook: req.NoResetHook, Silent: req.Silent,
+			Model: req.Model, NoCompact: req.NoCompact, NoResetHook: req.NoResetHook, Persistent: req.Persistent, Silent: req.Silent,
 		}, branchRcpt) {
 			return
 		}
@@ -794,7 +795,7 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 		// error or full inbox stamps nothing.
 		result, err := runBranchTurn(d, inst, parentKey, parentIsDefault, branchRcpt, branchTurnOptions{
 			Text: req.Text, Model: req.Model,
-			NoCompact: req.NoCompact, NoResetHook: req.NoResetHook, Silent: req.Silent,
+			NoCompact: req.NoCompact, NoResetHook: req.NoResetHook, Persistent: req.Persistent, Silent: req.Silent,
 		}, !req.Async, req.Human)
 		if err == nil {
 			if req.Human {

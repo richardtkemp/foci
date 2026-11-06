@@ -42,6 +42,8 @@ const (
 
 // BranchOptions configures a new branch session.
 type BranchOptions struct {
+	// Persistent opts a disposable worker into durable backend history.
+	Persistent          bool
 	NoResetHook         bool   // skip pre-reset memory hook when this branch is reclaimed
 	BranchType          string // e.g. "cron", "compaction-memory" — resolves {branch_type}
 	OrientationTemplate string // template with {branch_key}, {parent_key}, {branch_type}, {report_rule} placeholders
@@ -52,6 +54,20 @@ type BranchOptions struct {
 	// parent that reads none of its conversation (#2643, background
 	// character spawns).
 	Fresh bool
+}
+
+// BackendEphemeral separates disposable workers from conversations and fresh spawns.
+// Unknown purposes stay durable; persistence is independent of reset-hook policy.
+func (o BranchOptions) BackendEphemeral() bool {
+	if o.Persistent || o.Fresh {
+		return false
+	}
+	switch o.BranchType {
+	case "reflection", "keepalive", "background", "consolidation", "spawn", "branch", "compaction-memory", "nudge-extraction":
+		return true
+	default:
+		return false
+	}
 }
 
 // resolveOrientation substitutes template placeholders in the orientation text.

@@ -41,6 +41,8 @@ const (
 	// MetaKeyCCResumeID holds delegated-backend resume ids, written by
 	// DelegatedManager.saveResumeID (agent/delegated_manager.go).
 	MetaKeyCCResumeID = "cc_resume_id"
+	// MetaKeyBackendEphemeral records that no durable backend resume is possible.
+	MetaKeyBackendEphemeral = "backend_ephemeral"
 	// MetaKeyCCUndelivered holds a session's not-yet-consumed inputs as a
 	// JSON array of delegator.PendingInput in write order, written ahead of
 	// every tracked backend write and trimmed as the backend confirms each
@@ -106,6 +108,7 @@ var SessionMetadataKeys = []SessionMetadataKey{
 	{Key: MetaKeyEffort, Unset: "null", Shown: true},
 	{Key: MetaKeyPermissionMode, Unset: "null", Shown: true},
 	{Key: MetaKeyCCResumeID, Unset: "null", Shown: true},
+	{Key: MetaKeyBackendEphemeral, Unset: "false", Shown: true},
 	{Key: MetaKeyLastActivity, Unset: "null", Shown: true},
 	{Key: MetaKeyNoCompact, Unset: "false", Shown: true},
 	{Key: MetaKeyDisplayShowThinking, Unset: "false", Shown: true},

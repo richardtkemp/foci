@@ -539,7 +539,7 @@ func (s *deferSweeper) deliverSend(inst *agentInstance, r defersend.Record) erro
 func (s *deferSweeper) deliverBranch(inst *agentInstance, r defersend.Record) error {
 	parentIsDefault := r.SessionKey == defaultSessionKey(s.deps, inst.id)
 	_, err := runBranchTurn(s.deps, inst, r.SessionKey, parentIsDefault, route.Receipt{SessionKey: r.SessionKey}, branchTurnOptions{
-		Text: r.Text, Model: r.Model, NoCompact: r.NoCompact, NoResetHook: r.NoResetHook, Silent: r.Silent,
+		Text: r.Text, Model: r.Model, NoCompact: r.NoCompact, NoResetHook: r.NoResetHook, Persistent: r.Persistent, Silent: r.Silent,
 	}, false, false)
 	return err
 }

@@ -66,10 +66,11 @@ var spec = delegator.Spec{
 		delegator.CapContextWindow:    delegator.Yes(),
 		delegator.CapLiveModel:        delegator.No("its model is reported only at session idle"),
 
-		delegator.CapBranch:        delegator.Yes(),
-		delegator.CapScopedCleanup: delegator.Yes(),
-		delegator.CapIsolatedBatch: delegator.No("one opencode server per agent runs in the agent workspace: a session cannot be confined to another directory"),
-		delegator.CapReadOnlyBatch: delegator.Yes(),
+		delegator.CapEphemeralSessions: delegator.No("backend keeps its own transcripts"),
+		delegator.CapBranch:            delegator.Yes(),
+		delegator.CapScopedCleanup:     delegator.Yes(),
+		delegator.CapIsolatedBatch:     delegator.No("one opencode server per agent runs in the agent workspace: a session cannot be confined to another directory"),
+		delegator.CapReadOnlyBatch:     delegator.Yes(),
 
 		delegator.CapHostHooks:                delegator.Yes(),
 		delegator.CapUnstartedReadinessProbe:  delegator.No("CheckReady needs the server that only Start creates"),

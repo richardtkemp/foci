@@ -24,6 +24,7 @@ type branchTurnOptions struct {
 	Model       string
 	NoCompact   bool
 	NoResetHook bool
+	Persistent  bool
 	Silent      bool
 }
 
@@ -134,11 +135,12 @@ type branchSession struct {
 // NoResetHook and the orientation template are branch-CREATION options, so
 // they are resolved here (once — handleBranch used to resolve the template
 // twice).
-func createBranchSession(d httpHandlerDeps, inst *agentInstance, parentKey string, noResetHook bool) (branchSession, error) {
+func createBranchSession(d httpHandlerDeps, inst *agentInstance, parentKey string, noResetHook, persistent bool) (branchSession, error) {
 	orientPath := config.DerefStr(config.First(inst.agentCfg.Sessions.BranchOrientationHeadlessPrompt, d.cfg.Sessions.BranchOrientationHeadlessPrompt))
 	orientTemplate := prompts.ResolveOrientationTemplate(orientPath, false, inst.promptSearchDirs...)
 	branchOpts := session.BranchOptions{
 		NoResetHook:         noResetHook,
+		Persistent:          persistent,
 		BranchType:          "branch",
 		OrientationTemplate: orientTemplate,
 	}
@@ -202,7 +204,7 @@ func runBranchTurn(d httpHandlerDeps, inst *agentInstance, parentKey string, par
 	if backendCannotBranch(inst) && !parentIsDefault {
 		return branchTurnResult{}, refuseBranchOnNamedParent(inst, parentKey, false)
 	}
-	bs, err := createBranchSession(d, inst, parentKey, o.NoResetHook)
+	bs, err := createBranchSession(d, inst, parentKey, o.NoResetHook, o.Persistent)
 	if err != nil {
 		return branchTurnResult{}, err
 	}

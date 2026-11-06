@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 
 	"foci/internal/session"
 )
@@ -151,7 +152,7 @@ func (a *Agent) ForkBackendBranch(ctx context.Context, parentKey string, opts se
 	}
 	// Fork the backend conversation FIRST — only mint the branch key if it
 	// succeeds, so a failed/impossible fork leaves no orphan branch session.
-	forkedID, written, err := a.DelegatedManager.ForkParentSessionWith(ctx, parentKey, forkOpening(opts.Opening))
+	forkedID, written, err := a.DelegatedManager.forkParentSession(ctx, parentKey, forkOpening(opts.Opening), opts.BackendEphemeral())
 	if err != nil {
 		a.taggedLog(opts.BranchType).Warnf("backend fork of %s failed: %v", parentKey, err)
 		return "", false
@@ -162,10 +163,18 @@ func (a *Agent) ForkBackendBranch(ctx context.Context, parentKey string, opts se
 	branchKey, err := a.Sessions.CreateBranchWithOptions(parentKey, withOpeningFallback(opts, written))
 	if err != nil {
 		a.taggedLog(opts.BranchType).Errorf("fork branch key create for %s: %v", parentKey, err)
+		_ = a.DelegatedManager.CleanupBackendSession(ctx, forkedID)
 		return "", false
 	}
 	// Point the branch key at the forked backend session so the next turn on it
 	// resumes the clone (full parent context) via the normal getOrCreate path.
+	if opts.BackendEphemeral() {
+		if err := a.DelegatedManager.markEphemeralSession(branchKey, forkedID); err != nil {
+			a.taggedLog(opts.BranchType).Errorf("mark ephemeral fork %s: %v", branchKey, err)
+			_ = a.DelegatedManager.CleanupBackendSession(ctx, forkedID)
+			return "", false
+		}
+	}
 	a.DelegatedManager.saveResumeID(branchKey, forkedID)
 	a.DelegatedManager.InheritParentPrompt(parentKey, branchKey)
 	a.NoteBranchInheritsRoot(branchKey, parentKey) // its first evidenced call warms the root (#2509)
@@ -198,6 +207,9 @@ func (a *Agent) ForkSession(ctx context.Context, parentKey string, opts session.
 			return "", false, nil
 		}
 		bk, forked := a.ForkBackendBranch(ctx, parentKey, opts)
+		if !forked && a.DelegatedManager.parentSessionID(parentKey) != "" {
+			return "", false, fmt.Errorf("backend could not fork the existing conversation %s; refusing an empty-context branch", parentKey)
+		}
 		return bk, forked, nil
 	}
 	opening := apiOpening(session.UnsavedTurn(ctx), opts.Opening)
@@ -251,6 +263,11 @@ func (a *Agent) ForkOrFreshBranch(ctx context.Context, parentKey string, opts se
 	bk, err = a.Sessions.CreateBranchWithOptions(parentKey, opts)
 	if err != nil {
 		return "", false, err
+	}
+	if opts.BackendEphemeral() {
+		if err := a.DelegatedManager.markEphemeralSession(bk, ""); err != nil {
+			return "", false, err
+		}
 	}
 	// A fresh branch inherits nothing, so it reads none of the root's cached
 	// prefix and does not warm the root (#2509).
@@ -322,7 +339,7 @@ func (a *Agent) createMemoryBranch(parentKey, branchType, orientTemplate string)
 // interrupted spawn's branch only when this holds.
 func (a *Agent) HasResumableSession(sessionKey string) bool {
 	if a.DelegatedManager != nil {
-		return a.DelegatedManager.loadResumeID(sessionKey) != ""
+		return !a.DelegatedManager.isEphemeralSession(sessionKey) && a.DelegatedManager.loadResumeID(sessionKey) != ""
 	}
 	return true
 }

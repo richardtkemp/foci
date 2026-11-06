@@ -26,7 +26,7 @@ func (b *Backend) ForkSession(ctx context.Context, req delegator.ForkRequest) (d
 			parentID = mapped
 		}
 	}
-	params := threadForkParams{ThreadID: parentID, Ephemeral: false, Config: b.writableRootsConfig(), Sandbox: b.sandboxMode()}
+	params := threadForkParams{ThreadID: parentID, Ephemeral: req.Ephemeral, ExcludeTurns: req.Ephemeral, ApprovalsReviewer: b.approvalsReviewer(), Config: b.writableRootsConfig(), Sandbox: b.sandboxMode()}
 	if req.TruncateAfter > 0 {
 		return delegator.ForkResult{}, fmt.Errorf("codex: truncateAfter is not yet supported")
 	}
@@ -67,9 +67,14 @@ func (b *Backend) ForkSession(ctx context.Context, req delegator.ForkRequest) (d
 	}
 	// thread/fork loads the fork and subscribes this connection to it, but no
 	// session runs it yet: a depth leaf may not be opened for hours, or ever.
-	// Release it now (release.go); the branch session's thread/resume loads it
-	// again from its rollout, which codex writes at fork time.
-	b.unsubscribeThread(tr.Thread.ID)
+	// Release persistent forks now (release.go): a later resume reads their
+	// saved rollout. Ephemeral forks must keep this live subscription and a
+	// server hold until the child facade adopts them, without a cold resume.
+	if req.Ephemeral {
+		b.retainEphemeralFork(tr)
+	} else {
+		b.unsubscribeThread(tr.Thread.ID)
+	}
 	return res, nil
 }
 
@@ -191,6 +196,9 @@ func pooledOwner(agentID string) *Backend {
 // CleanupSession deletes a Codex thread by ID. Implements
 // delegator.BackendBrancher.
 func (b *Backend) CleanupSession(ctx context.Context, req delegator.CleanupRequest) error {
+	if owner := pooledOwner(req.AgentID); owner != nil && owner.discardEphemeralFork(req.SessionID) {
+		return nil
+	}
 	p := b.process()
 	p.mu.Lock()
 	wr := p.writer

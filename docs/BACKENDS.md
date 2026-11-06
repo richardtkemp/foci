@@ -166,6 +166,7 @@ Every delegated backend declares every capability in its `delegator.Spec` (`inte
 | `context_window` | reports the model's context window and usage (ContextWindowQuerier) | ✓ | ✓ | ✓ |
 | `live_model` | reports the model its live process last named, without a turn result (LiveModelReporter) | ✓ | ✗ | ✗ |
 | `branch` | forks and deletes its own sessions (BackendBrancher) | ✓ | ✓ | ✓ |
+| `ephemeral_sessions` | supports non-resumable in-memory threads and live fork adoption | ✗ | ✓ | ✗ |
 | `scoped_cleanup` | needs a live server to delete sessions and opens it once per sweep (RunningBackendCleaner) | ✗ | ✓ | ✓ |
 | `isolated_batch` | runs a batch session with BatchAccessIsolated: file tools confined to its working directory, no command execution, no MCP, no exec-bridge tools (spawn raw mode) | ✓ | ✗ | ✗ |
 | `read_only_batch` | runs a batch session with BatchAccessReadOnly: no file writes and no mutating commands (spawn explore mode) | ✓ | ✓ | ✓ |
@@ -202,6 +203,7 @@ Why not:
 - `delivery_tracking`: codex: inputs are fire-and-forget: no proof of consumption; opencode: inputs are fire-and-forget: no proof of consumption.
 - `thread_naming`: claude-code: CC does not name its sessions; agents get the set_session_alias tool instead; opencode: foci does not take opencode's session titles.
 - `live_model`: codex: its model reaches foci only through thread start and turn results; opencode: its model is reported only at session idle.
+- `ephemeral_sessions`: claude-code: backend keeps its own transcripts; opencode: backend keeps its own transcripts.
 - `scoped_cleanup`: claude-code: fork and cleanup are local transcript file operations, no server needed.
 - `isolated_batch`: codex: its sandbox confines writes, never reads: a session can read the whole disk; opencode: one opencode server per agent runs in the agent workspace: a session cannot be confined to another directory.
 - `unstarted_readiness_probe`: opencode: CheckReady needs the server that only Start creates.
@@ -396,6 +398,7 @@ Generated from each backend's `Spec.ConfigKeys` / `Spec.StartFields` (`internal/
 
 | `StartOptions` field | claude-code | codex | opencode |
 |---|---|---|---|
+| `Ephemeral` | ✗ | ✓ | ✗ |
 | `WorkDir` | ✓ | ✓ | ✓ |
 | `SystemPrompt` | ✓ | ✓ | ✓ |
 | `Model` | ✓ | ✓ | ✓ |

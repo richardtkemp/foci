@@ -10,8 +10,7 @@ import "testing"
 
 // TestSessionMetadataKeysDisplayOrder pins the /sessions info display contract
 // at the registry: the Shown entries, in slice order, must equal the exact
-// legacy knownSessionMetadataKeys list (same keys, same order, same unset
-// renderings, same branch-only flag) so the command's output is unchanged.
+// display contract (keys, order, unset renderings and branch-only flags).
 func TestSessionMetadataKeysDisplayOrder(t *testing.T) {
 	legacy := []struct {
 		key        string
@@ -24,6 +23,7 @@ func TestSessionMetadataKeysDisplayOrder(t *testing.T) {
 		{"effort", "null", false},
 		{"permission_mode", "null", false},
 		{"cc_resume_id", "null", false},
+		{"backend_ephemeral", "false", false},
 		{"last_activity", "null", false},
 		{"no_compact", "false", false},
 		{"display_show_thinking", "false", false},

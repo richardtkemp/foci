@@ -57,6 +57,7 @@ var proofs = map[string]map[delegator.Capability]string{
 		delegator.CapReadOnlyBatch:            "TestStart_AccessLaunchArgs",
 	},
 	"codex": {
+		delegator.CapEphemeralSessions:        "TestEphemeralForkAdoptsLiveThread",
 		delegator.CapStreaming:                "TestDispatch_StreamingDeltas",
 		delegator.CapControlModel:             "TestSendControl_SetModel",
 		delegator.CapControlEffort:            "TestSendControl_Effort",
