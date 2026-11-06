@@ -117,6 +117,12 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	b.touchActivity()
 	isTopLevel := msg.ParentToolUseID == nil
 
+	// Refused credentials: start the re-login (#2863). The gate single-flights
+	// this with the OnResult and stderr sites.
+	if detail, ok := assistantAuthFailure(msg); ok {
+		b.fireAuthFailure(detail)
+	}
+
 	// Before any filtering: every guard below this point drops messages for
 	// reasons that have nothing to do with what was billed.
 	b.checkCacheWriteSplit(msg)
@@ -416,11 +422,17 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		text = msg.Result
 	}
 
-	// Detect a 401 auth failure surfaced as an error result and trigger
-	// automated re-login (#843). Firing here and on the subprocess exit path is
-	// safe — the re-login gate single-flights.
-	if msg.IsError && isAuthFailure(text) {
-		b.fireAuthFailure(text)
+	// Detect an auth failure surfaced as an error result and trigger automated
+	// re-login (#843). Firing here and on the subprocess exit path is safe — the
+	// re-login gate single-flights. The match reads the result, which holds the
+	// error, not the turn text: earlier text may only quote a login message
+	// (#2863). The turn text is the fallback for a result with no text.
+	authText := msg.Result
+	if authText == "" {
+		authText = text
+	}
+	if msg.IsError && isAuthFailure(authText) {
+		b.fireAuthFailure(authText)
 	}
 
 	// Determine model from lastModel — the id the process last named: the

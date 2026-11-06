@@ -447,7 +447,7 @@ type AssistantMessage struct {
 	Type            string      `json:"type"` // always "assistant"
 	Message         BetaMessage `json:"message"`
 	ParentToolUseID *string     `json:"parent_tool_use_id,omitempty"`
-	Error           *string     `json:"error,omitempty"` // "rate_limit", "authentication_failed", etc.
+	Error           *string     `json:"error,omitempty"` // "rate_limit", assistantErrAuthFailed, etc.
 	UUID            string      `json:"uuid,omitempty"`
 	SessionID       string      `json:"session_id,omitempty"`
 }
