@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -413,4 +414,38 @@ func TestFatalf(t *testing.T) {
 	if !strings.Contains(stderr.String(), "fatal error: boom") {
 		t.Errorf("stderr missing fatal message: %s", stderr.String())
 	}
+}
+
+// A warning fired while SetWarnHook swaps the hook must call the hook it saw.
+// event used to check warnHook under warnMu and then read it again after
+// unlocking, so a SetWarnHook(nil) between the two called a nil func and
+// panicked (#2883). The window is narrow: the failure needs GOFLAGS=-race, which
+// reports the race and also widens the window enough to hit the panic.
+func TestWarnHookSwappedWhileFiring(t *testing.T) {
+	resetGlobal()
+	t.Cleanup(resetGlobal)
+	captureOutput(t)
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					Warnf("test", "swap")
+				}
+			}
+		}()
+	}
+	for range 20000 {
+		SetWarnHook(func(Level, string, string) {})
+		SetWarnHook(nil)
+	}
+	close(stop)
+	wg.Wait()
 }

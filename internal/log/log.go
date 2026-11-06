@@ -629,14 +629,16 @@ func (l *Logger) event(level Level, component string, format string, args ...int
 	// Fire warn hook for WARN and ERROR levels, buffering if hook not yet set.
 	if level == WARN || level == ERROR {
 		warnMu.Lock()
-		if warnHook != nil {
-			warnMu.Unlock()
-			warnHook(level, component, msg)
-		} else {
-			if !warnDropping {
-				warnBuffer = append(warnBuffer, warnHookEntry{level, component, msg})
-			}
-			warnMu.Unlock()
+		// Read once under the lock: a SetWarnHook(nil) after the unlock must
+		// not turn this into a call of a nil func. The call stays outside the
+		// lock, because a hook may log.
+		hook := warnHook
+		if hook == nil && !warnDropping {
+			warnBuffer = append(warnBuffer, warnHookEntry{level, component, msg})
+		}
+		warnMu.Unlock()
+		if hook != nil {
+			hook(level, component, msg)
 		}
 	}
 }

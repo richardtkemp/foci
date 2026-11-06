@@ -50,6 +50,7 @@ func mockModelServer(handler func(req *provider.MessageRequest) *provider.Messag
 // with a non-nil err — which silently hid spawn's "backend cannot fork this
 // session" path from coverage while making the double look complete.
 type mockSessionBrancher struct {
+	mu        sync.Mutex // ForkSession runs concurrently when spawns are started in parallel
 	parentKey string
 	branchKey string
 	opts      BranchOptions
@@ -60,6 +61,8 @@ type mockSessionBrancher struct {
 }
 
 func (m *mockSessionBrancher) ForkSession(_ context.Context, parentKey string, opts BranchOptions) (string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.parentKey = parentKey
 	m.opts = opts
 	// Generate a deterministic branch key from parentKey for test stability.

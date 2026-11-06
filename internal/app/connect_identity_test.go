@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -38,7 +39,7 @@ func dialAndCaptureConnectLog(t *testing.T, deviceID string) (out string, token 
 func dialAndCaptureConnectLogWithHeaders(t *testing.T, deviceID string, extra map[string]string) (out string, token string) {
 	t.Helper()
 
-	var buf bytes.Buffer
+	var buf lockedBuffer
 	flog.SetOutput(&buf)
 	flog.SetLevel(flog.DEBUG)
 	t.Cleanup(func() { flog.SetOutput(os.Stderr); flog.SetLevel(flog.INFO) })
@@ -84,6 +85,25 @@ func dialAndCaptureConnectLogWithHeaders(t *testing.T, deviceID string, extra ma
 		time.Sleep(5 * time.Millisecond)
 	}
 	return buf.String(), d.Token
+}
+
+// lockedBuffer captures the process-wide log. Server and client goroutines can
+// write to it while the test reads it (#2883).
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // The case that matters: a device-token socket is identified up front, so the
@@ -157,7 +177,7 @@ func TestConnectLog_PrefersCFConnectingIP(t *testing.T) {
 // different owners, different fixes — and the stall is exactly where that
 // question gets asked.
 func TestStallWarn_NamesDeviceAndIP(t *testing.T) {
-	var buf bytes.Buffer
+	var buf lockedBuffer
 	flog.SetOutput(&buf)
 	flog.SetLevel(flog.DEBUG)
 	t.Cleanup(func() { flog.SetOutput(os.Stderr); flog.SetLevel(flog.INFO) })
@@ -205,7 +225,7 @@ func TestStallWarn_NamesDeviceAndIP(t *testing.T) {
 // wire already carries it. fap.ClientInfo has App/OS/Version and the Android
 // client already populates all three; the hello line simply dropped them.
 func TestHelloLog_NamesClientBuild(t *testing.T) {
-	var buf bytes.Buffer
+	var buf lockedBuffer
 	flog.SetOutput(&buf)
 	flog.SetLevel(flog.DEBUG)
 	t.Cleanup(func() { flog.SetOutput(os.Stderr); flog.SetLevel(flog.INFO) })

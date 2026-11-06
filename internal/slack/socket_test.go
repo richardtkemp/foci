@@ -42,12 +42,10 @@ func runSocket(t *testing.T, f *fakeSlack, handle func(env envelope)) func() {
 func TestSocket_AcksEveryEnvelopeType(t *testing.T) {
 	f := newFakeSlack(t)
 
-	var handled []string
-	handledMu := make(chan struct{}, 16)
-	stop := runSocket(t, f, func(env envelope) {
-		handled = append(handled, env.Type)
-		handledMu <- struct{}{}
-	})
+	// The handler runs on the socket goroutine. The channel hands each type to
+	// the test, so nothing is shared.
+	handled := make(chan string, 16)
+	stop := runSocket(t, f, func(env envelope) { handled <- env.Type })
 	defer stop()
 
 	envelopes := []envelope{
@@ -74,8 +72,15 @@ func TestSocket_AcksEveryEnvelopeType(t *testing.T) {
 			t.Errorf("envelope %s (%s) never acked", env.EnvelopeID, env.Type)
 		}
 	}
-	if len(handled) != len(envelopes) {
-		t.Errorf("handled envelope types = %v, want every acked envelope forwarded", handled)
+	// An ack can reach the fake before the handler runs: wait for each one.
+	var got []string
+	for range envelopes {
+		select {
+		case typ := <-handled:
+			got = append(got, typ)
+		case <-time.After(10 * time.Second):
+			t.Fatalf("handled envelope types = %v, want every acked envelope forwarded", got)
+		}
 	}
 }
 

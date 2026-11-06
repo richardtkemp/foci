@@ -210,6 +210,12 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	b.writer = NewWriter(stdinPipe)
 	b.cancel = cmdCancel
 	b.done = make(chan struct{})
+	// Before the reader goroutine starts: if the process dies at once the
+	// reader reaches finalizeExit, which reads exitCh, and must see THIS
+	// process's channel. A nil or stale one skips the wait for the reap and
+	// loses the exit detail (#2883).
+	b.waitCh = make(chan error, 1)
+	b.exitCh = make(chan struct{})
 
 	// Reader goroutine — dispatches CC stdout messages to handler methods.
 	readerCtx, readerCancel := context.WithCancel(context.Background())
@@ -241,8 +247,6 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// and miss the death; cmd.Wait() cannot. After logging, we invoke
 	// finalizeExit to guarantee in-flight turn cleanup and `running=false`
 	// run exactly once, even if the reader path also reaches OnReaderStopped.
-	b.waitCh = make(chan error, 1)
-	b.exitCh = make(chan struct{})
 	readerDone := b.done
 	go func() {
 		err := cmd.Wait()
