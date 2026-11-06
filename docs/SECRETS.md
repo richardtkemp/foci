@@ -223,7 +223,7 @@ With this config:
 - **Userinfo defense** — URLs like `https://api.example.com@evil.com/steal` are detected. The tool uses `url.Parse().Hostname()` which returns `evil.com`, not `api.example.com`.
 - **Redirect blocking** — when secrets are present, cross-domain redirects are blocked. A server at `api.example.com` cannot redirect to `evil.com` to capture credentials.
 - **Body restriction** — secrets resolve only in headers by default. Body/body_file/form_fields require the key to be listed in `allowed_in_body`. Bitwarden secrets are never permitted in bodies.
-- **Response redaction** — secret values in the inline response body and the header block are replaced with `[REDACTED]`, so a credential the server echoes back does not appear in the result. Files are not redacted: `save_to`, auto-saved binary responses and spilled bodies hold the raw response (see [Where output is redacted](#where-output-is-redacted)).
+- **Response redaction** — secret values in the inline response body and the header block are replaced with `[REDACTED]`, so a credential the server echoes back does not appear in the result. This covers a body of any size: the file a large body spills to is scrubbed too. `save_to` and auto-saved binary responses hold the raw response (see [Where output is redacted](#where-output-is-redacted)).
 - **Case-insensitive host matching** — per RFC 4343, host comparison is case-insensitive.
 
 ### Why not exec?
@@ -297,7 +297,7 @@ Redaction runs on specific paths, not on all output.
 |---|---|
 | API-backend agents | Each tool result and tool error, before it goes to the model (`agent.Redact`, in `internal/agent/turn_api_tools.go`). |
 | `shell` tool | The inline output. The tool scrubs it itself. |
-| `http_request`, on any backend | The inline body and the header block. |
+| `http_request`, on any backend | The inline body, the header block and the spill file. A body over the inline limit spills. Over the exec bridge, `foci-call` streams this file to stdout. A secret that the `http_max_spill_bytes` or `max_response_bytes` cap cuts in two leaves its first part in the result, inline or in the file: the scrub matches whole values only. |
 | `!command` typed in chat | The command text, the output, and the file that holds the full output. |
 | App tool-call display | Arguments and results in the `tool.call` frames, on any backend. This also removes generic credential shapes. It changes what the user sees, not what the model sees. |
 | Exported traces | Each exported field, with the current secret values and generic credential shapes. |
@@ -309,9 +309,8 @@ Each of these scrubs secret values. Only the last two also match generic shapes 
 | Path | What the agent gets |
 |---|---|
 | A delegated backend's own tools (Claude Code `Bash` and `Read`, for example) | The raw output. No foci code in `internal/delegator` rewrites it, and no foci `PostToolUse` hook changes it. |
-| `foci_*` shell functions on a delegated backend | The tool's raw result. The exec bridge has no redaction step, so only `http_request` scrubs anything, and only its own inline output. Tool errors pass through the bridge unscrubbed. |
+| `foci_*` shell functions on a delegated backend | The tool's raw result. The exec bridge has no redaction step, so only `http_request` scrubs anything, and only its own output. Tool errors pass through the bridge unscrubbed. |
 | `http_request` `save_to` and auto-saved binary responses | The raw body, in the file. |
-| `http_request` spill file | The raw body, in the file. A body over the inline limit spills. Over the exec bridge, `foci-call` streams this file to stdout, so a large `foci_http_request` body reaches a delegated agent raw. |
 | `shell` spill file | The raw output, in the file. |
 | Tool-result guard file (`tool-result-*`) | The result as the tool returned it. The guard writes the file before `agent.Redact` runs. |
 | Exec bridge oversize file | The tool's raw text. The bridge writes this file when a result is too large for the socket. |

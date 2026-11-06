@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +15,7 @@ import (
 	"foci/internal/secrets"
 	"foci/internal/secrets/bitwarden"
 	"foci/internal/tools"
+	"foci/internal/tools/spill"
 	"foci/internal/usercmd"
 )
 
@@ -204,7 +204,7 @@ func (r *UserRunner) Run(ctx context.Context, script string) usercmd.Result {
 	if out.combined.Spilled() {
 		res.File = out.combined.FilePath()
 		res.Size = out.combined.Total()
-		if err := scrubFile(res.File, r.Redact); err != nil {
+		if err := spill.ScrubFile(res.File, r.Redact); err != nil {
 			// A saved file that could not be scrubbed must not be handed on.
 			execLog.Errorf("scrub saved output %s: %v", res.File, err)
 			out.combined.Cleanup()
@@ -216,59 +216,4 @@ func (r *UserRunner) Run(ctx context.Context, script string) usercmd.Result {
 	}
 	res.Output = r.Redact(out.combined.String())
 	return res
-}
-
-const (
-	scrubChunkBytes = 1 << 20
-	// scrubOverlapBytes must be at least the longest secret value: it is the tail
-	// of each chunk held back so a value split across two reads is still found.
-	// The longest values in use are PEM private keys of a few KB.
-	scrubOverlapBytes = 64 << 10
-)
-
-// scrubFile rewrites a saved output file with redact applied, in bounded memory
-// (a command's output has no total cap). Spilled shell output otherwise reaches
-// disk unscrubbed, and this file is handed to the agent and the app.
-func scrubFile(path string, redact func(string) string) error {
-	in, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = in.Close() }()
-	// Beside the original (a spill file's name is already unique), so the rename
-	// below stays on one filesystem.
-	tmp, err := os.OpenFile(path+".scrub", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }() // a no-op after the rename
-	if err := scrubStream(in, tmp, redact); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
-}
-
-func scrubStream(in io.Reader, out io.Writer, redact func(string) string) error {
-	buf := make([]byte, scrubChunkBytes)
-	carry := ""
-	for {
-		n, readErr := io.ReadFull(in, buf)
-		if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
-			return readErr
-		}
-		text := redact(carry + string(buf[:n]))
-		if readErr != nil { // the last chunk
-			_, err := io.WriteString(out, text)
-			return err
-		}
-		keep := min(scrubOverlapBytes, len(text))
-		if _, err := io.WriteString(out, text[:len(text)-keep]); err != nil {
-			return err
-		}
-		carry = text[len(text)-keep:]
-	}
 }

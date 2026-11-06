@@ -1,8 +1,12 @@
 package tools
 
 import (
+	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -212,5 +216,130 @@ func TestHTTPRequestInlinePreviewCapAppliesUnderMaxResponseBytes(t *testing.T) {
 	}
 	if len(data) != maxBytes {
 		t.Errorf("spill file = %d bytes, want the %d-byte max_response_bytes cap", len(data), maxBytes)
+	}
+}
+
+// spillEchoBody is a body over the 1MB inline preview that holds value in two
+// places: across the preview edge, and well past it in the spilled part.
+func spillEchoBody(value string) string {
+	const preview = 1 << 20
+	return strings.Repeat("a", preview-5) + value + strings.Repeat("b", 200*1024) + value + strings.Repeat("c", 1024)
+}
+
+func spillScrubTool(t *testing.T, value string) *Tool {
+	t.Helper()
+	store := writeTestSecrets(t, fmt.Sprintf("[custom]\napi_key = %q\nallowed_hosts = [\"127.0.0.1\"]\n", value))
+	return NewHTTPRequestTool(store, nil, t.TempDir(), func() int { return 0 }, func() int64 { return 50 << 20 }, func() int64 { return 4 << 20 }, func() int64 { return 0 }, nil, 0640)
+}
+
+// assertSpillScrubbed proves file holds the body with each secret value
+// replaced, and nothing else changed.
+func assertSpillScrubbed(t *testing.T, file, wantBody string) {
+	t.Helper()
+	if file == "" {
+		t.Fatal("expected the body to spill to a file")
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("read spill file: %v", err)
+	}
+	if string(data) != wantBody {
+		t.Errorf("spill file = %d bytes with %d markers, want the %d-byte body with %d markers", len(data), strings.Count(string(data), "[REDACTED]"), len(wantBody), strings.Count(wantBody, "[REDACTED]"))
+	}
+}
+
+// #2885: http_request's echo protection must not depend on body size. The spill
+// file is what foci-call streams to a delegated agent's stdout, and what an API
+// agent is told to read, so it gets the scrub the inline text gets. The value
+// across the preview edge also proves the inline head holds no prefix of it.
+func TestHTTPRequestSpillFileScrubbed(t *testing.T) {
+	t.Parallel()
+	const secret = "sk-spill-secret-value"
+	body := spillEchoBody(secret)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	tool := spillScrubTool(t, secret)
+	params, _ := json.Marshal(map[string]any{"url": srv.URL})
+	want := spillEchoBody("[REDACTED]")
+
+	t.Run("text", func(t *testing.T) {
+		result, err := tool.Execute(context.Background(), params)
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		assertSpillScrubbed(t, result.ResultFile, want)
+		if strings.Contains(result.Text, secret[:5]) {
+			t.Error("the inline head holds a prefix of the secret")
+		}
+	})
+	t.Run("json", func(t *testing.T) {
+		result, err := tool.Execute(WithOutputHints(context.Background(), OutputHints{Format: OutputFormatJSON}), params)
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		var out struct {
+			Body     string `json:"body"`
+			BodyFile string `json:"body_file"`
+		}
+		if err := json.Unmarshal([]byte(result.Text), &out); err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		assertSpillScrubbed(t, out.BodyFile, want)
+		if strings.Contains(out.Body, secret[:5]) {
+			t.Error("the inline body holds a prefix of the secret")
+		}
+	})
+	t.Run("bridge", func(t *testing.T) {
+		r := NewRegistry()
+		r.Register(tool)
+		bridge, err := NewExecBridge(r, context.Background())
+		if err != nil {
+			t.Fatalf("NewExecBridge: %v", err)
+		}
+		defer bridge.Close()
+		conn, err := net.Dial("unix", bridge.SockPath())
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		defer func() { _ = conn.Close() }()
+		fmt.Fprintf(conn, `{"tool":"http_request","params":{"url":%q}}`+"\n", srv.URL)
+		raw, err := bufio.NewReader(conn).ReadBytes('\n')
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		var resp bridgeResponse
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if resp.Error != "" {
+			t.Fatalf("bridge error: %s", resp.Error)
+		}
+		assertSpillScrubbed(t, resp.ResultFile, want)
+	})
+}
+
+// The spill scrub uses the same set as the inline scrub: an encoded basic_auth
+// credential is unknown to the stores and must not survive in the file (#2141).
+func TestHTTPRequestSpillFileScrubsBasicAuthToken(t *testing.T) {
+	t.Parallel()
+	const secret = "sk-spill-secret-value"
+	token := base64.StdEncoding.EncodeToString([]byte(secret + ":"))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte(spillEchoBody(strings.TrimPrefix(r.Header.Get("Authorization"), "Basic "))))
+	}))
+	defer srv.Close()
+	params, _ := json.Marshal(map[string]any{"url": srv.URL, "basic_auth": "{{secret:custom.api_key}}:"})
+
+	result, err := spillScrubTool(t, secret).Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	assertSpillScrubbed(t, result.ResultFile, spillEchoBody("[REDACTED]"))
+	if strings.Contains(result.Text, token[:5]) {
+		t.Error("the inline head holds a prefix of the encoded credential")
 	}
 }

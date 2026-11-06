@@ -146,23 +146,6 @@ func TestUserRunner_ScrubsSavedFile(t *testing.T) {
 	}
 }
 
-// A value split across two read chunks is still scrubbed, and nothing else moves.
-func TestScrubStream_SecretAcrossChunkBoundary(t *testing.T) {
-	t.Parallel()
-	const secret = "SECRET-VALUE"
-	redact := func(s string) string { return strings.ReplaceAll(s, secret, "[R]") }
-	for _, at := range []int{scrubChunkBytes - 5, scrubChunkBytes, scrubChunkBytes - scrubOverlapBytes - 3, 2*scrubChunkBytes - 1} {
-		in := strings.Repeat("a", at) + secret + strings.Repeat("b", 100)
-		var out bytes.Buffer
-		if err := scrubStream(strings.NewReader(in), &out, redact); err != nil {
-			t.Fatal(err)
-		}
-		if want := strings.Repeat("a", at) + "[R]" + strings.Repeat("b", 100); out.String() != want {
-			t.Errorf("secret at %d: got %d bytes, secret left=%v", at, out.Len(), strings.Contains(out.String(), secret))
-		}
-	}
-}
-
 func pidAlive(pid int) bool { return syscall.Kill(pid, 0) == nil }
 
 func readPid(t *testing.T, path string) int {

@@ -531,8 +531,18 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 		http_requestLog.Warnf("session=%s response exceeded spill ceiling %d bytes (got %d) — body truncated on disk", sessionKey, ceiling, sw.Total())
 	}
 
-	// Redact the inline preview (best-effort; the on-disk full body is raw, same
-	// as the shell tool — Redact is defence-in-depth, not a boundary).
+	// Scrub the spill file before anything reads it: foci-call streams it to a
+	// delegated agent's stdout and an API agent is told to read it, so the echo
+	// protection must not depend on body size (#2885). The preview below is read
+	// back from this file, so it cannot end in the start of a secret either. If
+	// the scrub fails the file is still raw, so it must not be handed on.
+	// Redaction is defence-in-depth, not a boundary.
+	if sw.Spilled() {
+		if err := spill.ScrubFile(sw.FilePath(), redactSecrets); err != nil {
+			sw.Cleanup()
+			return ToolResult{}, fmt.Errorf("scrub spilled response: %w", err)
+		}
+	}
 	bodyStr := redactSecrets(sw.String())
 
 	if asJSON {
@@ -551,7 +561,7 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 
 	result := TextResult(headerPrefix() + bodyStr)
 	if sw.Spilled() {
-		result.ResultFile = sw.FilePath() // raw body on disk; full content for the agent / pipe
+		result.ResultFile = sw.FilePath() // scrubbed body on disk; full content for the agent / pipe
 		result.ResultSize = sw.Total()
 	}
 	return result, nil
