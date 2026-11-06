@@ -33,9 +33,10 @@
 #   test            dispatched, so make land's gate (LAND_TEST_TARGET=test) runs on
 #                   the Mac. Production is Linux: on the Mac local-test first runs
 #                   test-linux-compile (GOOS=linux go vet, test files included), and
-#                   the CI runner keeps testing main on Linux. The CI_HOOK row is not
-#                   written by a Mac run (.ci.mk is not synced), so that runner still
-#                   sees main as untested and covers it.
+#                   the CI runner (foci-test-runner.sh) keeps testing main on Linux: it
+#                   calls local-test, not test. It must: the CI_HOOK row is not written
+#                   by a Mac run (.ci.mk is not synced), so a dispatched run would leave
+#                   the commit untested in its history and it would rerun forever (#2907).
 #   lint            dispatched: the analysers run with GOOS=linux (LINT_ENV), so
 #                   they check the production build, with this host's Go
 #                   (LINT_GOTOOLCHAIN). Needs golangci-lint and deadcode in the
