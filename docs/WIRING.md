@@ -2718,8 +2718,11 @@ telegram/discord, so a panic must not crash the gateway (in Go an unrecovered
 panic in ANY goroutine kills the process). `recoverApp(where)` is a deferred
 recover-and-log helper; `safeGo(where, fn)` wraps it around a goroutine. All
 four app goroutines launch via `safeGo` (blob reaper, ws-writepump, fcm-push,
-dispatch-command); `withHub` (endpoint.go) `defer recoverApp`s so all HTTP
-routes + the synchronous `readPump`/dispatch are covered. **First-run safety:**
+dispatch-command); `withHub` (endpoint.go) `defer abortHandlerOnPanic`s so all
+HTTP routes + the synchronous `readPump`/dispatch are covered. It logs like
+`recoverApp`, then panics `http.ErrAbortHandler`, so net/http closes the connection
+and the client sees a failure, not an implicit 200 or a clean truncated body
+(#2895); a hijacked connection is left alone. **First-run safety:**
 `Init` recovers any panic in `newHub` and returns nil, leaving the provider
 inert (nil hub → `Enabled()` false → endpoints 503, `disabledConnMgr` as a
 no-op `ConnectionManager`) — so a bug in this new subsystem degrades the app

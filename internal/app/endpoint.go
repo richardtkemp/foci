@@ -444,7 +444,7 @@ func CreateDefaultConversation(agentID string) (string, error) {
 // so no shared middleware is needed.
 func withHub(fn func(*Hub, http.ResponseWriter, *http.Request)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		defer recoverApp("http " + r.Method + " " + r.URL.Path)
+		defer abortHandlerOnPanic("http " + r.Method + " " + r.URL.Path)
 		activeMu.RLock()
 		h := activeHub
 		activeMu.RUnlock()
