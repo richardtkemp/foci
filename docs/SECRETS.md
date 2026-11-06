@@ -2,7 +2,7 @@
 
 ## Overview
 
-Foci stores credentials in `secrets.toml` (alongside `foci.toml`). Secrets are never injected into the agent's message context. They are resolved at tool execution time via `{{secret:NAME}}` templates in `http_request` headers/body, and redacted from all tool output.
+Foci stores credentials in `secrets.toml` (alongside `foci.toml`). Secrets are never injected into the agent's message context. They are resolved at tool execution time via `{{secret:NAME}}` templates in `http_request` headers/body. Output redaction is best-effort and does not cover every path: on a delegated backend such as Claude Code, the output of the backend's own tools reaches the model unscrubbed. See [Where output is redacted](#where-output-is-redacted).
 
 ## Managing Secrets
 
@@ -223,7 +223,7 @@ With this config:
 - **Userinfo defense** — URLs like `https://api.example.com@evil.com/steal` are detected. The tool uses `url.Parse().Hostname()` which returns `evil.com`, not `api.example.com`.
 - **Redirect blocking** — when secrets are present, cross-domain redirects are blocked. A server at `api.example.com` cannot redirect to `evil.com` to capture credentials.
 - **Body restriction** — secrets resolve only in headers by default. Body/body_file/form_fields require the key to be listed in `allowed_in_body`. Bitwarden secrets are never permitted in bodies.
-- **Response redaction** — secret values in the response body are replaced with `[REDACTED]`, preventing the agent from seeing raw credentials echoed back.
+- **Response redaction** — secret values in the inline response body and the header block are replaced with `[REDACTED]`, so a credential the server echoes back does not appear in the result. Files are not redacted: `save_to`, auto-saved binary responses and spilled bodies hold the raw response (see [Where output is redacted](#where-output-is-redacted)).
 - **Case-insensitive host matching** — per RFC 4343, host comparison is case-insensitive.
 
 ### Why not exec?
@@ -277,7 +277,7 @@ Some tools run **inside** foci-gw (the main agent's `read`/`write`/`edit`, and t
 
 Several additional layers provide redundancy:
 
-- **`Redact()`** — all tool output is scanned for secret values. Any occurrence is replaced with `[REDACTED]`. This catches accidental leaks even if a secret appears in unexpected output. Values shorter than 4 characters are not redacted to avoid false positives. Like `IsBlockedCommand`, this is **advisory/best-effort defence-in-depth, not a boundary**: it matches verbatim byte sequences, so an adversary who can encode, chunk, or otherwise transform a secret before it reaches output can evade it. The real boundaries are the OS group-drop (subprocesses) and `IsBlockedPath` (in-process file tools), which prevent the secret from being read in the first place.
+- **`Redact()`** — tool output on the paths listed in [Where output is redacted](#where-output-is-redacted) is scanned for secret values. Any occurrence is replaced with `[REDACTED]`. This catches accidental leaks even if a secret appears in unexpected output. Values shorter than 4 characters are not redacted to avoid false positives. Like `IsBlockedCommand`, this is **advisory/best-effort defence-in-depth, not a boundary**: it matches verbatim byte sequences, so an adversary who can encode, chunk, or otherwise transform a secret before it reaches output can evade it. The real boundaries are the OS group-drop (subprocesses) and `IsBlockedPath` (in-process file tools), which prevent the secret from being read in the first place.
 
 - **`IsBlockedPath()`** — canonical-path check (absolute, symlink-resolved; component-aligned matching, not substring) used by the in-process file tools to refuse blocked paths such as `secrets.toml` and `/proc/self/environ`. This is an enforcement boundary for those tools (see *In-process file tools* above), not merely advisory.
 
@@ -286,6 +286,37 @@ Several additional layers provide redundancy:
 - **No context injection** — secrets are stored in Go structs, never in the agent's message history. The agent sees `{{secret:NAME}}` templates, not values.
 
 - **MCP server env scrubbing** — MCP servers are third-party subprocesses, so unlike the agent's own shell (which is deliberately given `FOCI_SOCK` etc. so the `foci_*` tools work) they are **not** handed the gateway's full environment. `makeTransport` (`internal/mcp/mcp.go`) sets `cmd.Env` to a minimal allowlist (`PATH`, `HOME`, `LANG`/`LC_*`, …) plus the explicit `env` from `mcp.toml`, so a server can't read `FOCI_GW_SOCK` / `FOCI_SOCK` (the control + exec-bridge sockets) or operator vars from inherited env. Anything a server needs must be declared in its `mcp.toml` `env`.
+
+### Where output is redacted
+
+Redaction runs on specific paths, not on all output.
+
+**Redacted:**
+
+| Path | What is scrubbed |
+|---|---|
+| API-backend agents | Each tool result and tool error, before it goes to the model (`agent.Redact`, in `internal/agent/turn_api_tools.go`). |
+| `shell` tool | The inline output. The tool scrubs it itself. |
+| `http_request`, on any backend | The inline body and the header block. |
+| `!command` typed in chat | The command text, the output, and the file that holds the full output. |
+| App tool-call display | Arguments and results in the `tool.call` frames, on any backend. This also removes generic credential shapes. It changes what the user sees, not what the model sees. |
+| Exported traces | Each exported field, with the current secret values and generic credential shapes. |
+
+Each of these scrubs secret values. Only the last two also match generic shapes such as a `ghp_` token.
+
+**Not redacted:**
+
+| Path | What the agent gets |
+|---|---|
+| A delegated backend's own tools (Claude Code `Bash` and `Read`, for example) | The raw output. No foci code in `internal/delegator` rewrites it, and no foci `PostToolUse` hook changes it. |
+| `foci_*` shell functions on a delegated backend | The tool's raw result. The exec bridge has no redaction step, so only `http_request` scrubs anything, and only its own inline output. Tool errors pass through the bridge unscrubbed. |
+| `http_request` `save_to` and auto-saved binary responses | The raw body, in the file. |
+| `http_request` spill file | The raw body, in the file. A body over the inline limit spills. Over the exec bridge, `foci-call` streams this file to stdout, so a large `foci_http_request` body reaches a delegated agent raw. |
+| `shell` spill file | The raw output, in the file. |
+| Tool-result guard file (`tool-result-*`) | The result as the tool returned it. The guard writes the file before `agent.Redact` runs. |
+| Exec bridge oversize file | The tool's raw text. The bridge writes this file when a result is too large for the socket. |
+
+An agent can read each of these files. Do not rely on redaction to keep a value from an agent on these paths. The boundaries are the OS group-drop and `IsBlockedPath`, which stop the agent reading `secrets.toml`, and domain locking, which limits where a secret can go.
 
 ### Why encoding attacks don't work
 
@@ -304,7 +335,7 @@ user (no `foci` account), a LaunchAgent cannot grant a supplementary group to
 one process, and only root may call `setgroups()` to strip one from a child. So
 agents run as the same user as foci and **can read `secrets.toml`**. The
 in-process file tools still refuse the path ([In-process file tools](#in-process-file-tools)),
-and tool output is still redacted, but neither stops a Bash `cat`. Treat
+and tool output is still redacted on the [paths that redact](#where-output-is-redacted), but neither stops a Bash `cat`. Treat
 secrets on a Mac install as readable by the agents.
 
 The startup check adapts: it warns unless the file is owned by the user foci

@@ -920,7 +920,7 @@ The **intelligence/turn path** above owns the endpoint gate. **Auxiliary direct-
 - After a tool executes, `guardToolResult()` checks if result exceeds `MaxResultChars`
 - If exceeded, writes full result to temp file and returns a guard message (no partial content)
 - Prevents large tool outputs from permanently bloating session history
-- `agent.Redact` is applied to all tool results and error messages (secret redaction)
+- `agent.Redact` is applied to all tool results and error messages on this API path (`turn_api_tools.go`). Delegated backends have no such pass; see SECRETS.md "Where output is redacted"
 - Tool errors are logged as WARN in the event log
 
 ### ccstream Backend (`internal/delegator/ccstream/`)
@@ -1702,7 +1702,7 @@ Hot reload (#1269): the file is re-read on the next use whenever it changed. `St
 Data flow:
 - **Template resolution:** `{{secret:custom.github_token}}` in `http_request` headers/body → replaced with actual value before sending. Regular secret templates are blocked in shell (returns error). Bitwarden `{{secret:bw.*}}` templates are allowed in shell (approval-gated via aisudo).
 - **Domain locking:** `allowed_hosts` per section restricts which hosts a secret can be sent to via `http_request`. `secrets.FindSecretRefs()` extracts template refs; `store.CheckHostAllowed()` validates the target URL (userinfo-safe via `url.Parse().Hostname()`)
-- **Output redaction:** Secret values in command/response output → `[REDACTED]` (skips values < 4 chars)
+- **Output redaction:** Secret values in API-path tool results and in `shell`/`http_request` inline output → `[REDACTED]` (skips values < 4 chars). Not on a delegated backend's own tools, and not in saved or spilled files; see SECRETS.md "Where output is redacted"
 - **Path blocking:** Two layers. `Store.IsBlockedCommand` is an advisory substring scan on shell command lines. `Store.IsBlockedPath` is a canonical-path (absolute, symlink-resolved, component-aligned) enforcement check that every in-process file tool calls via `fileScope.resolveFileArg` (`internal/tools/files.go`) — `read`/`write`/`edit`, `summary`, and `http_request`'s `body_file`/`files[]`/`save_to` — so tools running at gateway privilege still cannot touch `secrets.toml` or `/proc/self/environ`.
 - **Subprocess group boundary:** `procx.Setup` (`internal/procx`) drops the `foci-secrets` group from spawned children and, after the startup probe, clears the ambient capability set on every OS thread (`syscall.AllThreadsSyscall`; needs the `CGO_ENABLED=0` build, else it fails closed) so children can't inherit `CAP_SETGID` and re-add the group. The foci user is granted the group per-process (systemd `SupplementaryGroups` / `setpriv --groups` / `runuser --supp-group`), never as an `/etc/group` member. See [SECRETS.md](SECRETS.md).
 - **Outbound SSRF:** `web_fetch` and `http_request` share one SSRF-safe `*http.Client` (`internal/tools/safehttp.go`): its dialer validates each resolved IP at connect time (blocking loopback/private/link-local/metadata/unspecified, defeating DNS rebinding) and re-checks every redirect hop.

@@ -15,7 +15,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), [Nanobot](https://github
 | | **Foci** | **OpenClaw** | **Nanobot** | **Hermes** |
 |---|---|---|---|---|
 | Secrets never visible to agent | ✅ | ❌ | ❌ | ✅ strips secret env from child procs |
-| Secret redaction | ✅ always | ✅ logging only | ❌ | ✅ tool output |
+| Secret redaction | ✅ API-backend tool output, `http_request` inline output ([not all paths](SECRETS.md#where-output-is-redacted)) | ✅ logging only | ❌ | ✅ tool output |
 | Domain-locked HTTP | ✅ per-secret allowed hosts | ❌ | ❌ | ❌ blocklist/SSRF only |
 | OS-level file permissions | ✅ Unix group enforcement | ✅ 600/700 modes | ❌ | ✅ 0600 creds |
 | Native sandbox / container isolation | ✅ can run in Docker | ✅ Docker per-session/agent | ✅ can run in Docker | ✅ Docker + Modal/Daytona |

@@ -53,7 +53,7 @@ Secure HTTP requests with secret template support. Secrets in headers/body are v
 Features:
 - **`basic_auth`** — HTTP Basic credentials as `user:password` (`--basic-auth` in the shell function). `{{secret:NAME}}` templates resolve first, then the pair is base64-encoded into `Authorization: Basic …`, e.g. `'{{secret:companies_house.api_key}}:'` for a key-as-username API. Same allowed_hosts/https checks as a header secret; mutually exclusive with an `Authorization` header. When it held a secret, the encoded token is redacted from the response too.
 - **Cross-domain redirect blocking** when secrets are present
-- **Response redaction** — secret values in response bodies replaced with `[REDACTED]`
+- **Response redaction** — secret values in the inline body and header block replaced with `[REDACTED]`; saved and spilled files stay raw
 - **`save_to`** — save response body to a specific file path (the result is `Saved N bytes to <path>`, not the body)
 - **`include_headers`** — prefix the result with the `HTTP <status>` line and every response header (default off: body only, so output pipes cleanly)
 - **`save_from_json_path`** — extract a value from JSON response by dot path; decodes `data:` URIs to binary. Designed for image generation APIs.

@@ -39,7 +39,7 @@ OpenClaw is the established, full-featured choice in this space — broad provid
 | Config | YAML + env + scattered files | **One TOML file** |
 | Cache strategy | Not cache-aware | **Day-zero architectural** |
 
-Fewer moving parts means fewer surprises. Secret management follows the same principle: OS-level isolation, domain-locked credentials, redaction at every layer — protection that doesn't depend on trusting the model.
+Fewer moving parts means fewer surprises. Secret management follows the same principle: OS-level isolation, domain-locked credentials, best-effort output redaction — protection that doesn't depend on trusting the model.
 
 ## Design
 
