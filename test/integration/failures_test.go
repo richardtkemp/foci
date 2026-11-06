@@ -1155,15 +1155,45 @@ func TestL2_Failures_UnknownToolInBashCommandFailsCleanly(t *testing.T) {
 	}
 }
 
-// TestL2_Failures_SendToSessionUnknownTargetLogged proves a
-// send_to_session targeting an unknown agent is dropped with a clear
-// log. cc-stub scripts `foci_send_to_session ghost/c1234 --message hi`;
-// "ghost/c1234" is a well-formed session key, so it dispatches to the
-// async notifier, whose agent-resolution guard finds no agent "ghost"
-// and drops the message ("unknown target agent"). The test asserts the
-// stderr surfaces that drop AND that no user_message entry lands in any
-// workspaces/* dir.
-func TestL2_Failures_SendToSessionUnknownTargetLogged(t *testing.T) {
+// waitBashToolUse waits for cc-stub to record the Bash tool use whose command
+// contains marker. Its output is what the caller's tool result carries.
+func waitBashToolUse(t *testing.T, h *testharness.Harness, marker string) recorderEntry {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+			if e.Kind == "bash_tool_use" && strings.Contains(e.BashCommand, marker) {
+				return e
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("the Bash tool use with %q never ran; stderr:\n%s", marker, stderrTail(h.Stderr()))
+	return recorderEntry{}
+}
+
+// assertSendRefused asserts the caller's tool result for a send_to_session to
+// a missing agent: a failed call that says it could not send (#2892).
+func assertSendRefused(t *testing.T, result recorderEntry, agentID string) {
+	t.Helper()
+	if !result.IsError {
+		t.Errorf("the send to missing agent %q did not fail the tool call; output:\n%s", agentID, result.BashOutput)
+	}
+	if !strings.Contains(result.BashOutput, "could not send") || !strings.Contains(result.BashOutput, fmt.Sprintf("no agent %q", agentID)) {
+		t.Errorf("tool result = %q, want it to say it could not send, naming agent %q", result.BashOutput, agentID)
+	}
+	if strings.Contains(result.BashOutput, "Message sent") {
+		t.Errorf("tool result = %q, reports a send that did not happen", result.BashOutput)
+	}
+}
+
+// TestL2_Failures_SendToSessionUnknownTargetRefused proves a send_to_session
+// targeting an unknown agent is refused (#2892). cc-stub scripts
+// `foci_send_to_session ghost/c1234 --message hi`; "ghost/c1234" is a
+// well-formed session key, so only the tool's check at send time finds that no
+// agent "ghost" exists. The test asserts the caller's tool result says so AND
+// that no user_message entry lands in any workspaces/* dir.
+func TestL2_Failures_SendToSessionUnknownTargetRefused(t *testing.T) {
 	testharness.ParallelWait(t)
 	const testMarker = "MARKER_GHOST_SHOULD_NEVER_LAND"
 
@@ -1196,8 +1226,10 @@ func TestL2_Failures_SendToSessionUnknownTargetLogged(t *testing.T) {
 		},
 	})
 
-	// Wait long enough for cc-stub to attempt the dispatch and for the
-	// resolver to fail.
+	result := waitBashToolUse(t, h, testMarker)
+	assertSendRefused(t, result, "ghost")
+
+	// Give any wrongly dispatched injection time to reach a backend.
 	time.Sleep(2 * time.Second)
 
 	// Assert: NO user_message recorder entry contains the marker. The
@@ -1206,15 +1238,6 @@ func TestL2_Failures_SendToSessionUnknownTargetLogged(t *testing.T) {
 		if e.Kind == "user_message" && strings.Contains(e.TextPrefix, testMarker) {
 			t.Errorf("marker landed in workdir %q despite the target agent being unknown", e.Workdir)
 		}
-	}
-
-	// Assert: foci-gw stderr surfaces the drop — the async notifier logs
-	// `unknown target agent "ghost" for session ghost/c1234` (see
-	// cmd/foci-gw/agents_notify.go).
-	stderr := h.Stderr()
-	if !strings.Contains(stderr, "unknown target agent") &&
-		!strings.Contains(stderr, "ghost/c1234") {
-		t.Errorf("expected resolver error mentioning the ghost key in stderr; got tail:\n%s", stderrTail(stderr))
 	}
 }
 
@@ -1399,22 +1422,16 @@ func TestL2_Failures_BashToolUseExceedsCCStubTimeout(t *testing.T) {
 // Notifier / cross-agent dispatch failures
 // ---------------------------------------------------------------------------
 
-// TestL2_Failures_CrossAgentDispatchToStoppedAgentDrops proves the
-// invariant guard in newAsyncNotifier's per-dispatch goroutine: when
-// the resolver returns nil for a cross-agent target, the notifier
-// logs "unknown target agent ... message dropped" and exits without
-// panicking. The calling agent's tool_result is unaffected — the tool
-// returns "Message sent to session ..." regardless of downstream
-// delivery success, because dispatch is fire-and-forget. The real
-// guarantee being tested is that an unreachable target doesn't take
-// down the gateway or poison the caller's turn.
+// TestL2_Failures_CrossAgentDispatchToStoppedAgentRefused proves what a caller
+// gets when the target agent of send_to_session is not running (#2892): the
+// tool's check at send time finds no agent, and the caller's tool result says
+// it could not send. Nothing is dispatched. The gateway and the caller stay
+// alive: an unreachable target neither takes down the gateway nor poisons the
+// caller's turn.
 //
-// (Original docstring claimed the calling agent's turn completed "with
-// the error injected as a tool_result"; that's not what the current
-// send_to_session implementation does. The rewrite asserts what the
-// code actually guarantees: silent drop, logged warning, gateway and
-// caller alive.)
-func TestL2_Failures_CrossAgentDispatchToStoppedAgentDrops(t *testing.T) {
+// (This test used to pin a silent drop: the tool reported "Message sent" and
+// only a log line recorded the loss.)
+func TestL2_Failures_CrossAgentDispatchToStoppedAgentRefused(t *testing.T) {
 	testharness.ParallelWait(t)
 	const (
 		alphaUserID = 8500
@@ -1453,9 +1470,9 @@ func TestL2_Failures_CrossAgentDispatchToStoppedAgentDrops(t *testing.T) {
 	}
 
 	// Script alpha to fire send_to_session via the exec bridge,
-	// targeting beta's session by its full key. reply_to=session
-	// means the async notifier path runs — that's where the "unknown
-	// target agent" guard lives.
+	// targeting beta's session by its full key. The check at send time
+	// applies to either reply_to; reply_to=session is the path that used to
+	// report success after dropping.
 	const marker = "STOPPED-AGENT-MARKER-9381"
 	targetKey := fmt.Sprintf("beta/c%d", betaUserID)
 	bashCmd := fmt.Sprintf(`foci_send_to_session %s --reply-to session --message %q`, targetKey, marker)
@@ -1479,25 +1496,13 @@ func TestL2_Failures_CrossAgentDispatchToStoppedAgentDrops(t *testing.T) {
 		},
 	})
 
-	// Wait for alpha's turn to settle (Bash tool_use runs, send_to_session
-	// dispatches, notifier goroutine logs the drop). Then give the async
-	// goroutine 1s to write the log line.
-	if !waitForUserMessage(t, h, "workspaces/alpha", "alpha, send beta a hello", 20*time.Second) {
-		t.Fatalf("alpha turn never recorded; stderr:\n%s", stderrTail(h.Stderr()))
-	}
+	assertSendRefused(t, waitBashToolUse(t, h, marker), "beta")
+
+	// Give any wrongly dispatched injection time to reach beta's backend.
 	time.Sleep(1500 * time.Millisecond)
 
-	stderr := h.Stderr()
-	// Two log paths surface this:
-	//   session_notify (reply_to=session): "unknown agent %q for session %s"
-	//   async_notify   (reply_to=caller):  "unknown target agent %q for session %s, message dropped"
-	// We script reply_to=session here, so assert the session_notify shape.
-	if !strings.Contains(stderr, `unknown agent "beta"`) {
-		t.Errorf("expected `unknown agent \"beta\"` in stderr after StopAgent beta + cross-agent dispatch.\nstderr tail:\n%s", stderrTail(stderr))
-	}
-
-	// Marker must NOT have landed in beta's workdir — the drop path
-	// returned BEFORE HandleMessage fired on beta's Agent.
+	// Marker must NOT have landed in beta's workdir: the tool refused before
+	// dispatching anything.
 	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
 		if e.Kind == "user_message" && strings.Contains(e.Workdir, "workspaces/beta") && strings.Contains(e.TextPrefix, marker) {
 			t.Errorf("marker landed in beta's workdir despite StopAgent — the resolver guard failed open\nentry:\n%s", e.TextPrefix)
@@ -1515,7 +1520,7 @@ func TestL2_Failures_CrossAgentDispatchToStoppedAgentDrops(t *testing.T) {
 		},
 	})
 	if !waitForUserMessage(t, h, "workspaces/alpha", "alpha still alive?", 15*time.Second) {
-		t.Fatalf("alpha unresponsive after cross-agent drop — gateway may have wedged\nstderr tail:\n%s", stderrTail(h.Stderr()))
+		t.Fatalf("alpha unresponsive after the refused cross-agent send — gateway may have wedged\nstderr tail:\n%s", stderrTail(h.Stderr()))
 	}
 }
 
