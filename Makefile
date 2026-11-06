@@ -174,7 +174,7 @@ heavy_enter = $(if $(call heavy_lazy,$(1)),echo ">>> heavy lock: left to the cal
 heavy_reap = $(if $(call heavy_lazy,$(1)),,$(REAP_GRADLE))
 heavy_held = $(if $(FGW_HEAVY_LOCK),$(if $(1),,HEAVY_LOCK_HELD=$(HEAVY_LOCK_PATH) ))
 
-.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals find-metadata-key-registry-drift llbox local-test test-linux-compile local-test-one integration coverage coverage-report coverage-html coverage-check local-vet local-lint lint-unlocked lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check bench-test-build land clean setup-hooks
+.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals find-metadata-key-registry-drift llbox local-test test-linux-compile local-test-one integration coverage coverage-report coverage-html coverage-check local-vet local-lint lint-unlocked lint-fix lint-dupl lint-static-config verify-persistence check bench-test-build land clean setup-hooks
 
 all: $(SIMPLE_BINS) nosgid find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals find-metadata-key-registry-drift llbox
 
@@ -713,15 +713,12 @@ lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-cap
 	# app editor (their last production caller) now goes plan -> whole-file
 	# check -> WriteConfigFile through the Plan* cores, so the wrappers'
 	# remaining callers are the config package's round-trip tests, which pin
-	# the public writer contract. MapObjectEntries likewise: the editor reads
-	# entries with the tree-based MapObjectFileEntries, and #1476 requires
-	# TestMapObjectEntries to keep passing unedited against the production
-	# flat-split helper.
+	# the public writer contract.
 	# app's InitReplayStore is the same shape (#1281): it creates the replay
 	# store's real schema for the agent-rename fixture (internal/agentrename
 	# tests), which must use the production DDL rather than a copy of it.
 	@raw=$$($(LINT_ENV) $(GOBIN)/deadcode ./...) || { echo "deadcode failed or was killed (exit $$?) — reachability gate did NOT run"; exit 1; }; \
-	output=$$(printf '%s' "$$raw" | grep -v -e '/testharness/' -e '/testtemp/' -e '/clock/fake.go:' -e '/testmarker/' -e '/mermaidtest/' -e '/execguardtest/' -e 'config/settablearray.go:.*SetTableArray' -e 'config/configedit.go:.*UnsetInFile' -e 'config/configedit.go:.*MapObjectEntries' -e 'app/framestore.go:.*InitReplayStore' || true); \
+	output=$$(printf '%s' "$$raw" | grep -v -e '/testharness/' -e '/testtemp/' -e '/clock/fake.go:' -e '/testmarker/' -e '/mermaidtest/' -e '/execguardtest/' -e 'config/settablearray.go:.*SetTableArray' -e 'config/configedit.go:.*UnsetInFile' -e 'app/framestore.go:.*InitReplayStore' || true); \
 	if [ -n "$$output" ]; then echo "$$output"; exit 1; fi
 	@echo "=== find-disconnected-tests (Test* functions that don't touch prod) ==="
 	@$(LINT_ENV) ./bin/find-disconnected-tests ./...

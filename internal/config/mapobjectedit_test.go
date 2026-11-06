@@ -519,17 +519,17 @@ func TestMapObjectSpacedHeaders(t *testing.T) {
 // reports from: dotted quoted entry names stay one key, sub-tables such as
 // provider never leak in as sub-fields, only registered sub-fields are
 // reported, an entry with none set still appears, and an absent section
-// yields an empty map.
+// yields an empty map. Each section reads only its own entries.
 func TestMapObjectFileEntries(t *testing.T) {
 	spec := mapObjectSpecFor(t, "models")
-	path := writeMapObjectFixture(t, "[models.powerful]\nmodel = \"anthropic/claude-sonnet-4-20250514\"\ncontext = \"200000\"\n\n[models.powerful.provider]\norder = [\"deepinfra\"]\nallow_fallbacks = false\n\n[models.\"glm-4.6\"]\nmodel = \"zai/glm-4.6\"\nextra_unknown = \"skipped\"\n")
+	path := writeMapObjectFixture(t, "[models.powerful]\nmodel = \"anthropic/claude-sonnet-4-20250514\"\ncontext = \"200000\"\n\n[models.powerful.provider]\norder = [\"deepinfra\"]\nallow_fallbacks = false\n\n[models.\"glm-4.6\"]\nmodel = \"zai/glm-4.6\"\nextra_unknown = \"skipped\"\n\n[models.cheap]\nmodel = \"openrouter/qwen\"\n\n[endpoints.openrouter]\nformat = \"openai\"\n\n[logging]\nlevel = \"INFO\"\n")
 
 	got, err := MapObjectFileEntries(path, spec)
 	if err != nil {
 		t.Fatalf("MapObjectFileEntries: %v", err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("entries = %v, want powerful and glm-4.6", got)
+	if len(got) != 3 {
+		t.Fatalf("entries = %v, want powerful, glm-4.6 and cheap", got)
 	}
 	powerful := got["powerful"]
 	if powerful["model"] != "anthropic/claude-sonnet-4-20250514" || powerful["context"] != "200000" {
@@ -550,8 +550,19 @@ func TestMapObjectFileEntries(t *testing.T) {
 	if _, leaked := glm["extra_unknown"]; leaked {
 		t.Error("unregistered sub-field reported")
 	}
+	if got["cheap"]["model"] != "openrouter/qwen" {
+		t.Errorf("cheap = %v", got["cheap"])
+	}
 
-	empty, err := MapObjectFileEntries(path, MapObjectFieldSpec{Section: "endpoints", Fields: spec.Fields})
+	endpoints, err := MapObjectFileEntries(path, mapObjectSpecFor(t, "endpoints"))
+	if err != nil {
+		t.Fatalf("endpoints: %v", err)
+	}
+	if len(endpoints) != 1 || endpoints["openrouter"]["format"] != "openai" {
+		t.Errorf("endpoints = %v, want only openrouter with format=openai", endpoints)
+	}
+
+	empty, err := MapObjectFileEntries(path, MapObjectFieldSpec{Section: "nonexistent", Fields: spec.Fields})
 	if err != nil {
 		t.Fatalf("absent section: %v", err)
 	}

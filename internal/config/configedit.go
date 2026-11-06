@@ -166,37 +166,6 @@ func ExplicitFileValues(path string) (global map[string]string, agents map[strin
 	return global, agents, nil
 }
 
-// MapObjectEntries extracts named entries from the flattened file values for
-// a map[string]Struct section (e.g. [models.powerful]). Returns entryName →
-// subKey → value. Each entry is a direct child of the section prefix; deeper
-// nesting (e.g. models.powerful.model) becomes a sub-key.
-//
-// Not the editor's reader any more (#1476): flat splitting is ambiguous for
-// dotted quoted entry names ([models."glm-4.6"]) and lets sub-tables leak in
-// as sub-fields (provider.order), so buildConfigSchema reads entries with the
-// tree-based MapObjectFileEntries. Kept, unchanged, as public API that
-// TestMapObjectEntries pins; the deadcode gate carries it (Makefile).
-func MapObjectEntries(section string, flat map[string]string) map[string]map[string]string {
-	prefix := section + "."
-	out := map[string]map[string]string{}
-	for k, v := range flat {
-		rest, ok := strings.CutPrefix(k, prefix)
-		if !ok {
-			continue
-		}
-		parts := strings.SplitN(rest, ".", 2)
-		if len(parts) != 2 {
-			continue // section-level scalar, not an entry sub-key
-		}
-		entry, subKey := parts[0], parts[1]
-		if out[entry] == nil {
-			out[entry] = map[string]string{}
-		}
-		out[entry][subKey] = v
-	}
-	return out
-}
-
 // MapObjectFileEntries reads a map[string]Struct section's named entries
 // directly from the decoded TOML tree of the file at path: entryName →
 // subKey → display-form value. Reading the TREE (not the flattened keys) is

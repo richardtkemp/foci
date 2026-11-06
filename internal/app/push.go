@@ -309,7 +309,7 @@ func newFCMPusherFromFields(ctx context.Context, fields fcmCredentialFields, tok
 //     configured in foci.toml.
 //  3. the legacy app.fcm_credentials secret holding a file path (pre-#967
 //     compat, superseded by (1) but kept so an already-configured deployment
-//     that only set this keeps working).
+//     that only set this keeps working). Sunset 2027-02-01: removal is #2894.
 //
 // Returns nil (push disabled, gracefully) if none resolve.
 func newFCMPusherForApp(ctx context.Context, appCfg *config.AppSpecific, secrets config.SecretGetter, tokens *pushTokens, window time.Duration) *fcmPusher {
