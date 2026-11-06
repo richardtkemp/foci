@@ -65,4 +65,20 @@ check "no args exits 0" "0" "$(run >/dev/null 2>&1; echo $?)"
 printf 'FAIL\tfoci/internal/config\t0.10s\nFAIL\n' > "$TMP/summary.log"
 check "suite-level FAIL lines are not mistaken for test names" "" "$(run go "$TMP/summary.log")"
 
+cat > "$TMP/rerun.log" <<'LOG'
+--- FAIL: TestRealFailure (0.00s)
+    real_test.go:1: the real one
+FAIL	foci/cmd/foci-gw	1.0s
+FAIL
+
+=== diagnostic re-run: retrying sealed failures UNSEALED to isolate a sandbox artifact from a real bug ===
+--- sealed re-run: foci/cmd/foci-gw ---
+--- FAIL: TestOnlyInRerun (0.00s)
+    testing.go:1426: TempDir: stat /dev/shm/x: no such file or directory
+FAIL	foci/cmd/foci-gw	1.0s
+=== script test: scripts/tests/zz.sh ===
+FAIL script test: scripts/tests/zz.sh
+LOG
+check "#2910: a failure only in seal-test.sh's re-run is not recorded" "TestRealFailure" "$(run go "$TMP/rerun.log")"
+
 exit $RC

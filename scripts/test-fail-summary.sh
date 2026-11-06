@@ -30,7 +30,7 @@ case "${1:-}" in -h|--help) sed -n '2,25p' "$0" | sed 's/^#//; s/^ //'; exit 0;;
 LOG=${1:-}
 [ -n "$LOG" ] && [ -r "$LOG" ] || exit 0
 
-awk -v max="${MAX_REASON_LINES:-40}" -v width="${MAX_REASON_WIDTH:-300}" '
+bash "$(dirname "$0")/log-first-pass.sh" "$LOG" | awk -v max="${MAX_REASON_LINES:-40}" -v width="${MAX_REASON_WIDTH:-300}" '
   # -v header: subsequent log lines belong to this test.
   match($0, /^=== (RUN|CONT|NAME) +/) {
     cur = substr($0, RLENGTH + 1); sub(/[[:space:]].*$/, "", cur); next
@@ -42,9 +42,7 @@ awk -v max="${MAX_REASON_LINES:-40}" -v width="${MAX_REASON_WIDTH:-300}" '
     if ($0 ~ /^[[:space:]]*--- FAIL: /) { out[++n] = $0; fname[n] = cur }
     next
   }
-  # A message line. Deduped per test, ignoring indentation: seal-test.sh
-  # re-runs a sealed failure unsealed into the SAME log (once in -v shape,
-  # once in default shape), so every message would otherwise print twice.
+  # A message line. Deduped per test, ignoring indentation.
   /^[[:space:]]+[^[:space:]]+\.go:[0-9]+: / {
     key = $0; sub(/^[[:space:]]+/, "", key)
     if (cur != "" && !seen[cur, key]++) reason[cur, ++nr[cur]] = $0
@@ -66,5 +64,5 @@ awk -v max="${MAX_REASON_LINES:-40}" -v width="${MAX_REASON_WIDTH:-300}" '
     }
     if (dropped) printf "    ... %d more message line(s) - see the full log\n", dropped
   }
-' "$LOG"
+'
 exit 0

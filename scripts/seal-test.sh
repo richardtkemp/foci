@@ -363,6 +363,9 @@ diagnostic_rerun() {
             echo ">>>   (no '--- FAIL:' or 'panic:' lines for $pkg in $LOGFILE)"
           fi
         } | tee -a "$LOGFILE" >&2
+      elif [ ! -d "$TESTDIR" ]; then
+        # Every t.TempDir() then fails in 0.00 s, which says nothing about the sandbox (#2910).
+        echo ">>> DIAGNOSTIC: $TESTDIR was removed during the sealed re-run of $pkg, so its failures say nothing: another process deleted the test dir (a make test or test-one that does not hold this run's heavy lock)." | tee -a "$LOGFILE" >&2
       else
         echo ">>> DIAGNOSTIC: $pkg fails SEALED again but passes UNSEALED — it is writing outside the sandbox. Add the path to the whitelist in scripts/seal-test.sh, or stop writing there." | tee -a "$LOGFILE" >&2
       fi

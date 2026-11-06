@@ -78,6 +78,9 @@ type cannedClient struct {
 	calls    int
 	entered  chan string
 	proceed  chan struct{}
+	// released, when closed, ends every wait on entered and proceed: a test may
+	// finish with a turn still parked here (see chitFixture.quiesce).
+	released chan struct{}
 }
 
 func (c *cannedClient) setReply(reply string) {
@@ -100,10 +103,16 @@ func (c *cannedClient) SendMessage(_ context.Context, req *provider.MessageReque
 	c.calls++
 	c.mu.Unlock()
 	if c.entered != nil {
-		c.entered <- text
+		select {
+		case c.entered <- text:
+		case <-c.released:
+		}
 	}
 	if c.proceed != nil {
-		<-c.proceed
+		select {
+		case <-c.proceed:
+		case <-c.released:
+		}
 	}
 	return &provider.MessageResponse{
 		ID:         "msg_canned",
@@ -220,8 +229,8 @@ func newChitFixtureMode(t *testing.T, withSessionConn bool) *chitFixture {
 
 	f := &chitFixture{
 		rec:        newChitRecorder(),
-		targetCl:   &cannedClient{reply: "the answer"},
-		callerCl:   &cannedClient{reply: "relayed to the human"},
+		targetCl:   &cannedClient{reply: "the answer", released: make(chan struct{})},
+		callerCl:   &cannedClient{reply: "relayed to the human", released: make(chan struct{})},
 		targetConn: newRecordingConn("scout/c42"),
 		callerConn: newRecordingConn("clutch/c1"),
 		ctx:        context.Background(),
@@ -249,7 +258,62 @@ func newChitFixtureMode(t *testing.T, withSessionConn bool) *chitFixture {
 		return nil
 	}
 	f.cm = cm
+	t.Cleanup(func() { f.quiesce(t) })
 	return f
+}
+
+// quiesce ends the fixture's turns before its temp dirs go. A test returns once
+// it has seen what it asserts on (a notice reaching the backend), and the turn
+// goes on to save its session file under t.TempDir(): a save during the
+// RemoveAll fails the test with "directory not empty" (#2910).
+//
+// BeginShutdown stops any further injection, so a notice from a caller watch
+// cannot start a new turn. The inbox is FIFO per session, so a probe coming back
+// (refused, the worker having reached it) means the turn before it has ended.
+func (f *chitFixture) quiesce(t *testing.T) {
+	t.Helper()
+	close(f.targetCl.released)
+	close(f.callerCl.released)
+	f.target.BeginShutdown()
+	f.caller.BeginShutdown()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for _, s := range []struct {
+		ag *agent.Agent
+		sk string
+	}{{f.target, "scout/c42"}, {f.caller, "clutch/c1"}} {
+		// A test may have filled the inbox on purpose: the probe is rejected until
+		// the worker, released above, has drained some of it.
+		err := s.ag.EnqueueInjectWait(ctx, s.sk, "probe", func() {})
+		for err != nil && !errors.Is(err, agent.ErrShuttingDown) && ctx.Err() == nil {
+			time.Sleep(5 * time.Millisecond)
+			err = s.ag.EnqueueInjectWait(ctx, s.sk, "probe", func() {})
+		}
+		if !errors.Is(err, agent.ErrShuttingDown) {
+			t.Errorf("quiesce: probe on %s: %v, want %v", s.sk, err, agent.ErrShuttingDown)
+		}
+		if !s.ag.WaitTurnIdle(ctx, s.sk) {
+			t.Errorf("quiesce: a turn on %s is still running", s.sk)
+		}
+	}
+}
+
+// TestChitFixture_CleanupEndsAParkedTurn: a test that returns with a turn parked
+// in the backend, as a test that stops at waitCallerNotice can, leaves no turn
+// running once its cleanups are done. Without quiesce the turn is still in flight
+// here, and the real one would save into a removed temp dir.
+func TestChitFixture_CleanupEndsAParkedTurn(t *testing.T) {
+	var f *chitFixture
+	t.Run("parked", func(t *testing.T) {
+		f = newChitFixture(t)
+		f.callerCl.entered = make(chan string, 1)
+		f.callerCl.proceed = make(chan struct{})
+		deliverToSessionChat(f.caller, f.ctx, "async_notify", f.cm, "clutch", "clutch/c1", "hello", nil, "")
+		waitTurnStart(t, f.callerCl)
+	})
+	if f.caller.IsTurnInFlight("clutch/c1") {
+		t.Error("the parked turn outlived the fixture")
+	}
 }
 
 // probeInbox enqueues a no-op injection behind everything already queued on

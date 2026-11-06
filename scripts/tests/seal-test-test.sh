@@ -44,6 +44,7 @@ EOF
 # `go test` fails:
 #   pass    never           flake   only on its first call
 #   sandbox whenever sealed real    always
+#   vanish  on calls 1 and 3 (the sealed re-run), which first removes the test dir
 # Each `go test` call appends its arguments and environment to $GOROOT/seen.
 cat > "$TMP/goroot/bin/go" <<'EOF'
 #!/usr/bin/env bash
@@ -73,6 +74,7 @@ fail=0
 case "$(cat "$root/mode")" in
 flake) [ "$n" -eq 1 ] && fail=1 ;;
 sandbox) [ -n "${SEALED:-}" ] && fail=1 ;;
+vanish) [ "$n" -eq 1 ] && fail=1; [ "$n" -eq 3 ] && { rm -rf "$TMPDIR"; fail=1; } ;;
 real) fail=1 ;;
 esac
 # A failure prints what go test -v prints: a failing test with its message, a
@@ -143,6 +145,12 @@ expect "flake: the log has the sealed re-run" "--- sealed re-run: ./internal/zz2
 out=$(run sandbox)
 expect "sandbox: blamed on the sandbox" "writing outside the sandbox" "$out"
 reject "sandbox: not called a flake" "FLAKE" "$out"
+
+# #2910: the test dir gone during the sealed re-run is not a sandbox write.
+out=$(run vanish)
+expect "vanish: says the dir was removed" "was removed during the sealed re-run" "$out"
+reject "vanish: not blamed on the sandbox" "writing outside the sandbox" "$out"
+mkdir -p "$TMP/testdir/home"
 
 out=$(run real)
 expect "real: a real failure" "fails both sealed and unsealed" "$out"

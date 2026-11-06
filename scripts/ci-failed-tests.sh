@@ -33,7 +33,8 @@ case "$KIND" in
     # `go test` prints "--- FAIL: TestName (0.00s)" and, for subtests, an
     # indented "    --- FAIL: TestName/sub (0.00s)". Take both: a subtest name
     # is the useful identifier when only one case of a table test breaks.
-    names=$(grep -oE '^[[:space:]]*--- FAIL: [^[:space:]]+' "$LOG" 2>/dev/null \
+    # Only the run's own failures: not those of seal-test.sh's re-runs.
+    names=$(bash "$(dirname "$0")/log-first-pass.sh" "$LOG" | grep -oE '^[[:space:]]*--- FAIL: [^[:space:]]+' \
             | sed -E 's/^[[:space:]]*--- FAIL: //' | awk '!seen[$0]++')
     ;;
   *)

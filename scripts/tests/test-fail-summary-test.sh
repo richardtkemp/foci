@@ -76,11 +76,11 @@ expect "failing subtest's message shown (-v, attributed via === CONT)" "subcase 
 check "passing test's t.Logf excluded" "0" "$(count "passing test chatter" "$out")"
 check "passing sibling subtest's t.Logf excluded" "0" "$(count "sub ok log" "$out")"
 check "continuation lines excluded" "0" "$(count "second line of message" "$out")"
-check "message printed once despite the unsealed re-run" "1" "$(count "got 1, want 2" "$out")"
+check "message printed once: the re-run's copy is left out" "1" "$(count "got 1, want 2" "$out")"
 check "message sits directly under its FAIL line" "    zz_test.go:8: context line from failing test" \
   "$(printf '%s\n' "$out" | grep -A1 -F -- '--- FAIL: TestZZFail' | sed -n 2p)"
-check "every FAIL line from the old grep is kept" \
-  "$(grep -E '^(--- FAIL:|FAIL)|panic:' "$TMP/v.log")" \
+check "every FAIL line of the first pass is kept, none of the re-run's" \
+  "$(bash "$HERE/log-first-pass.sh" "$TMP/v.log" | grep -E '^(--- FAIL:|FAIL)|panic:')" \
   "$(printf '%s\n' "$out" | grep -E '^(--- FAIL:|FAIL)|panic:')"
 expect "indented subtest FAIL line shown" "    --- FAIL: TestZZSub/bad" "$out"
 
@@ -97,5 +97,25 @@ check "long message line truncated" "104" "${#wide}"
 
 check "missing file yields nothing" "" "$(bash "$SUMMARY" "$TMP/nope.log")"
 check "missing file exits 0" "0" "$(bash "$SUMMARY" "$TMP/nope.log" >/dev/null; echo $?)"
+
+cat > "$TMP/rerun.log" <<'LOG'
+--- FAIL: TestRealFailure (0.00s)
+    real_test.go:1: the real one
+FAIL	foci/cmd/foci-gw	1.0s
+FAIL
+
+=== diagnostic re-run: retrying sealed failures UNSEALED to isolate a sandbox artifact from a real bug ===
+--- sealed re-run: foci/cmd/foci-gw ---
+--- FAIL: TestOnlyInRerun (0.00s)
+    testing.go:1426: TempDir: stat /dev/shm/x: no such file or directory
+FAIL	foci/cmd/foci-gw	1.0s
+=== script test: scripts/tests/zz.sh ===
+FAIL script test: scripts/tests/zz.sh
+LOG
+# #2910: a failure only in seal-test.sh's re-run is not a failure of the run.
+out=$(bash "$SUMMARY" "$TMP/rerun.log")
+expect "re-run: the run's failure is listed" "--- FAIL: TestRealFailure" "$out"
+check "re-run: a re-run's failure is not listed" "0" "$(count "TestOnlyInRerun" "$out")"
+expect "re-run: a script suite after it is still listed" "FAIL script test: scripts/tests/zz.sh" "$out"
 
 exit $RC

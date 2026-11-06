@@ -59,32 +59,31 @@ func TestDescendantsAndCmdline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	// sh -> sleep: the sleep is a grandchild of this test.
-	marker := filepath.Join(t.TempDir(), "started")
-	cmd := exec.CommandContext(ctx, "sh", "-c", "touch "+marker+"; sleep 30 & wait") //nolint:forbidigo // test helper child
+	cmd := exec.CommandContext(ctx, "sh", "-c", "sleep 30 & wait") //nolint:forbidigo // test helper child
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
 
-	var desc []int
-	for i := 0; i < 100; i++ {
-		if _, err := os.Stat(marker); err == nil {
-			if desc = Descendants([]int{cmd.Process.Pid}); len(desc) > 0 {
-				break
+	// A forked child is listed before it has exec'd: until then its cmdline is
+	// the shell's, and for a moment inside exec it is empty. So poll until a
+	// descendant shows the sleep's argv; only the deadline is a failure.
+	var last [][]string
+	for ctx.Err() == nil {
+		last = nil
+		for _, pid := range Descendants([]int{cmd.Process.Pid}) {
+			args, err := Cmdline(pid)
+			if err != nil {
+				continue // it may have exited between the two reads
 			}
+			if len(args) == 2 && filepath.Base(args[0]) == "sleep" && args[1] == "30" {
+				return
+			}
+			last = append(last, args)
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
-	if len(desc) == 0 {
-		t.Fatal("Descendants found no child of sh (want the sleep)")
-	}
-	args, err := Cmdline(desc[0])
-	if err != nil {
-		t.Fatalf("Cmdline(%d): %v", desc[0], err)
-	}
-	if len(args) != 2 || filepath.Base(args[0]) != "sleep" || args[1] != "30" {
-		t.Errorf("Cmdline(sleep) = %q, want [sleep 30]", args)
-	}
+	t.Fatalf("no descendant of sh with cmdline [sleep 30]; last seen %q", last)
 }
 
 func TestUptime(t *testing.T) {
