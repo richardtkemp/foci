@@ -36,6 +36,8 @@ type authStatus struct {
 	LoggedIn   bool   `json:"loggedIn"`
 	AuthMethod string `json:"authMethod"`
 	Email      string `json:"email"`
+	// LoginExpiresAt is when a claude.ai sign-in ends (CC 2.1.318+).
+	LoginExpiresAt credentialExpiry `json:"loginExpiresAt"`
 }
 
 // CheckReady verifies Claude Code is authenticated and triggers re-login if it
@@ -54,6 +56,7 @@ func (b *Backend) CheckReady(ctx context.Context) (bool, error) {
 	}
 	if st.LoggedIn {
 		b.logger().Infof("readiness check: authenticated (method=%s)", st.AuthMethod)
+		b.reportLoginExpiry(st.LoginExpiresAt)
 		return true, nil
 	}
 

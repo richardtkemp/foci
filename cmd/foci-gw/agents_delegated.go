@@ -258,6 +258,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		hostHooks.OnAuthFailure = func(detail string) {
 			triggerRelogin("401 auth failure: "+firstLine(detail), "")
 		}
+		hostHooks.OnLoginExpiry = loginExpiryHook(loginExpiryWarner(p.cfg), connMgr, p.cfg.MasterAgent, agentID)
 	}
 
 	// The manager's two prompt surfaces (#2275): approvals land in the

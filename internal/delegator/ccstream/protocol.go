@@ -480,6 +480,9 @@ type ResultMessage struct {
 	PermissionDenials []json.RawMessage     `json:"permission_denials,omitempty"`
 	UUID              string                `json:"uuid,omitempty"`
 	SessionID         string                `json:"session_id,omitempty"`
+	// CredentialExpiresAt is when a claude.ai sign-in ends (CC 2.1.318+; absent
+	// before that, and for other kinds of credential).
+	CredentialExpiresAt credentialExpiry `json:"credential_expires_at"`
 }
 
 // InitMessage is the first message CC emits after startup (system/init).

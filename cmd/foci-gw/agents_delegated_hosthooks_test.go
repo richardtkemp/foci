@@ -84,6 +84,9 @@ func TestConfigureDelegated_HostHooksFollowSpec(t *testing.T) {
 			if (ag.ReloginTrigger != nil) != tc.rules {
 				t.Errorf("ReloginTrigger set = %v, want %v", ag.ReloginTrigger != nil, tc.rules)
 			}
+			if (got.OnLoginExpiry != nil) != tc.rules {
+				t.Errorf("OnLoginExpiry set = %v, want %v", got.OnLoginExpiry != nil, tc.rules)
+			}
 		})
 	}
 }

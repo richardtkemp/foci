@@ -1,6 +1,8 @@
 package delegator
 
 import (
+	"time"
+
 	"foci/internal/delegator/pretool"
 	"foci/internal/delegator/stoprule"
 	"foci/internal/ratelimit"
@@ -19,6 +21,12 @@ type HostHooks struct {
 	// gateway runs the Claude Code re-login on a backend declaring CapRelogin,
 	// and logs elsewhere.
 	OnAuthFailure func(detail string)
+
+	// OnLoginExpiry reports when the sign-in ends, each time the backend learns
+	// the date (#2864). Set only for a backend declaring CapRelogin, and it may
+	// be called from a path that reads the backend's output, so it must not
+	// block. Claude Code reports it from the startup probe and every result.
+	OnLoginExpiry func(expiresAt time.Time)
 
 	// OnRateLimitNotice delivers a human-facing utilisation notice (Claude
 	// Code's rate_limit_event past the "allowed" threshold; codex's

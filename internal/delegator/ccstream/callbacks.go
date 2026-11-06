@@ -67,6 +67,8 @@ func (b *Backend) RunningSubagents() []delegator.RunningSubagent { return b.agen
 // callbacks, installed before Start.
 //   - OnAuthFailure fires when CC reports an authentication failure (a 401),
 //     to trigger the automated re-login (#843).
+//   - OnLoginExpiry gets the date a claude.ai sign-in ends, from each result
+//     and the startup probe, for an advance warning (#2864).
 //   - OnRateLimitNotice gets a formatted rate_limit_event notice when CC
 //     reports the API is past the "allowed" threshold, with this Backend's
 //     foci session key so it reaches the session that triggered it (#1857).
@@ -83,6 +85,7 @@ func (b *Backend) RunningSubagents() []delegator.RunningSubagent { return b.agen
 //     the live config makes an edit reach the next session (#2033).
 func (b *Backend) SetHostHooks(h delegator.HostHooks) {
 	b.onAuthFailure = h.OnAuthFailure
+	b.onLoginExpiry = h.OnLoginExpiry
 	b.onRateLimited = h.OnRateLimitNotice
 	b.onModelFallback = h.OnModelFallbackNotice
 	b.onSessionLimit = h.EngageRateLimit

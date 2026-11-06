@@ -1,6 +1,10 @@
 package ccstream
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+	"time"
+)
 
 // isAuthFailure reports whether s looks like a Claude Code authentication
 // failure: a 401 from the Anthropic API surfaced through the subprocess, e.g.
@@ -81,5 +85,33 @@ func assistantAuthFailure(msg *AssistantMessage) (string, bool) {
 func (b *Backend) fireAuthFailure(detail string) {
 	if b.onAuthFailure != nil {
 		b.onAuthFailure(detail)
+	}
+}
+
+// credentialExpiry is a sign-in end date from Claude Code (#2864). It decodes
+// without error whatever the field holds: a missing or unreadable date only
+// means no warning, and must not lose the frame or fail readiness.
+type credentialExpiry struct {
+	at time.Time // zero when there is no readable date
+}
+
+// UnmarshalJSON implements json.Unmarshaler. It never returns an error.
+func (c *credentialExpiry) UnmarshalJSON(data []byte) error {
+	c.at = time.Time{}
+	var s string
+	if json.Unmarshal(data, &s) != nil {
+		return nil
+	}
+	if at, err := time.Parse(time.RFC3339, s); err == nil {
+		c.at = at
+	}
+	return nil
+}
+
+// reportLoginExpiry passes a sign-in end date to the gateway. A date of zero
+// reports nothing.
+func (b *Backend) reportLoginExpiry(c credentialExpiry) {
+	if b.onLoginExpiry != nil && !c.at.IsZero() {
+		b.onLoginExpiry(c.at)
 	}
 }

@@ -434,6 +434,7 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	if msg.IsError && isAuthFailure(authText) {
 		b.fireAuthFailure(authText)
 	}
+	b.reportLoginExpiry(msg.CredentialExpiresAt)
 
 	// Determine model from lastModel — the id the process last named: the
 	// system/init message, a top-level assistant message (subagent models are
