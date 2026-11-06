@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"foci/internal/delegator"
 	"foci/internal/session"
 )
 
@@ -194,8 +195,14 @@ func (a *Agent) ForkBackendBranch(ctx context.Context, parentKey string, opts se
 //   - API agent: an API-style session branch reading the parent's on-disk history.
 //
 // ok=false with err==nil means no fork was produced — a delegated backend that
-// can't fork, or one whose backend session hasn't started yet — and the caller
-// applies its own fallback (send-to-parent, an in-place turn, or an error).
+// can't fork, one whose backend session hasn't started yet, or a failed fork on
+// a backend that keeps its own transcripts — and the caller applies its own
+// fallback (send-to-parent, an in-place turn, or an error).
+//
+// A failed fork of an existing conversation on a backend with native ephemeral
+// threads (delegator.CapEphemeralSessions, Codex) is an error instead: the
+// source may be a live-only thread that nothing can recover, so a fallback
+// would silently discard its context (#2897).
 //
 // The clone runs WITHOUT quiescing the parent: the transcript copy is race-safe
 // by construction (ccstream.forkTranscript), so ForkSession is safe to call
@@ -207,7 +214,7 @@ func (a *Agent) ForkSession(ctx context.Context, parentKey string, opts session.
 			return "", false, nil
 		}
 		bk, forked := a.ForkBackendBranch(ctx, parentKey, opts)
-		if !forked && a.DelegatedManager.parentSessionID(parentKey) != "" {
+		if !forked && a.DelegatedManager.Spec.Supports(delegator.CapEphemeralSessions) && a.DelegatedManager.parentSessionID(parentKey) != "" {
 			return "", false, fmt.Errorf("backend could not fork the existing conversation %s; refusing an empty-context branch", parentKey)
 		}
 		return bk, forked, nil

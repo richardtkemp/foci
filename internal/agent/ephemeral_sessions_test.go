@@ -128,15 +128,55 @@ func (*rejectingForkBackend) ForkSession(context.Context, delegator.ForkRequest)
 	return delegator.ForkResult{}, errors.New("no rollout found for live-only source")
 }
 
-// TestFailedExistingForkNeverBecomesFresh prevents unsupported nesting silently discarding context.
-func TestFailedExistingForkNeverBecomesFresh(t *testing.T) {
-	m, _ := newTestManager(t, newTestSessionIndex(t))
-	m.Spec = branchSpec
-	m.NewBackend = func() (delegator.Delegator, error) { return &rejectingForkBackend{}, nil }
-	m.saveResumeID("test/c1/b1", "known-live-only")
-	a := &Agent{DelegatedManager: m}
-	key, inherited, err := a.ForkOrFreshBranch(context.Background(), "test/c1/b1", session.BranchOptions{BranchType: "depth"})
-	if err == nil || key != "" || inherited {
-		t.Fatalf("key=%q inherited=%v err=%v", key, inherited, err)
+// TestFailedExistingForkFallbackByBackend pins who may lose a parent's context
+// when a fork of an existing conversation fails, against the real backend Specs
+// (#2897). Codex (native ephemeral threads) refuses: its live-only source cannot
+// be recovered, and a fresh branch would silently discard context. The backends
+// that keep their own transcripts report "no fork", and the caller applies its
+// fallback, as they did before the refusal existed.
+func TestFailedExistingForkFallbackByBackend(t *testing.T) {
+	for _, tc := range []struct {
+		backend string
+		refuses bool
+	}{
+		{"codex", true},
+		{"claude-code", false},
+		{"opencode", false},
+	} {
+		t.Run(tc.backend, func(t *testing.T) {
+			spec, ok := delegator.SpecFor(tc.backend)
+			if !ok {
+				t.Fatalf("no registered Spec for %q", tc.backend)
+			}
+			spec.ForkNeedsRunning = false // the failing fork under test needs no started server
+			m, _ := newTestManager(t, newTestSessionIndex(t))
+			m.Spec = spec
+			m.NewBackend = func() (delegator.Delegator, error) { return &rejectingForkBackend{}, nil }
+			const parent = "test/c1/b1"
+			m.saveResumeID(parent, "known-parent")
+			a := &Agent{DelegatedManager: m, Sessions: session.NewStore(t.TempDir())}
+
+			bk, forked, err := a.ForkSession(context.Background(), parent, session.BranchOptions{BranchType: "depth"})
+			if bk != "" || forked {
+				t.Fatalf("ForkSession: key=%q forked=%v, want no fork", bk, forked)
+			}
+			if (err != nil) != tc.refuses {
+				t.Fatalf("ForkSession: err=%v, refuses=%v", err, tc.refuses)
+			}
+
+			bk, inherited, err := a.ForkOrFreshBranch(context.Background(), parent, session.BranchOptions{BranchType: "depth"})
+			if inherited {
+				t.Fatalf("ForkOrFreshBranch: inherited=true from a failed fork (key=%q)", bk)
+			}
+			if tc.refuses {
+				if err == nil || bk != "" {
+					t.Fatalf("ForkOrFreshBranch: key=%q err=%v, want a refusal", bk, err)
+				}
+				return
+			}
+			if err != nil || bk == "" {
+				t.Fatalf("ForkOrFreshBranch: key=%q err=%v, want a fresh branch", bk, err)
+			}
+		})
 	}
 }
