@@ -49,7 +49,10 @@ func twoChatRunner(t *testing.T, agent BackgroundAgent, timeout string) (*Runner
 // hangs; c2, due on the same tick, is still warmed, and a second tick does not
 // start another keepalive on c1 while its first one runs.
 func TestKeepalive_StuckSessionDoesNotBlockAnother(t *testing.T) {
+	// Each wait below syncs on an event, so this is only a hang-guard.
+	const hangGuard = 10 * time.Second
 	release := make(chan struct{})
+	c1Started := make(chan struct{}, 4)
 	c2Warmed := make(chan struct{}, 4)
 	var mu sync.Mutex
 	calls := map[string]int{}
@@ -59,6 +62,7 @@ func TestKeepalive_StuckSessionDoesNotBlockAnother(t *testing.T) {
 			calls[parentKey]++
 			mu.Unlock()
 			if parentKey == "test/c1" {
+				c1Started <- struct{}{}
 				select {
 				case <-release:
 				case <-ctx.Done():
@@ -74,8 +78,24 @@ func TestKeepalive_StuckSessionDoesNotBlockAnother(t *testing.T) {
 	r.maybeKeepalive(context.Background())
 	select {
 	case <-c2Warmed:
-	case <-time.After(3 * time.Second):
+	case <-time.After(hangGuard):
 		t.Fatal("c2 was not warmed while c1's keepalive hung (#2487)")
+	}
+	// The dispatcher starts c2 before c1's callback has to run, so c2 being
+	// warmed does not prove c1 has reached the backend.
+	select {
+	case <-c1Started:
+	case <-time.After(hangGuard):
+		t.Fatal("c1's keepalive never reached the backend")
+	}
+	// c2's callback has signalled but may not have returned. Until its run
+	// state is released, the second tick skips c2 as already running.
+	deadline := time.Now().Add(hangGuard)
+	for r.keepaliveRunningFor("test/c2") {
+		if time.Now().After(deadline) {
+			t.Fatal("c2's run state was not released after its keepalive returned")
+		}
+		time.Sleep(2 * time.Millisecond)
 	}
 
 	// Age both warm attempts past the interval (#2509), so the second tick is
@@ -85,7 +105,7 @@ func TestKeepalive_StuckSessionDoesNotBlockAnother(t *testing.T) {
 	r.maybeKeepalive(context.Background())
 	select {
 	case <-c2Warmed:
-	case <-time.After(3 * time.Second):
+	case <-time.After(hangGuard):
 		t.Fatal("second tick did not warm c2")
 	}
 	mu.Lock()
