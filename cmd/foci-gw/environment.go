@@ -381,7 +381,8 @@ func userCommandNote(platform string) string {
 
 // appRunButtonNote tells the agent about the app's run button on code blocks (#2878).
 const appRunButtonNote = " The app also draws a run button on a code block with no label, or labelled bash, sh, zsh or shell, " +
-	"when the block's first word is an executable on this server. After the user confirms, the whole block runs the same way."
+	"when the block's first command can start on this server: an executable, a shell builtin or keyword, or a foci_* tool, " +
+	"after any leading comments and VAR=value assignments. After the user confirms, the whole block runs the same way."
 
 // mermaidNote tells the agent that mermaid diagrams render in the app. Written
 // only for an app session whose server can render (mermaidRenders), the same

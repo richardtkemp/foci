@@ -23,8 +23,8 @@ func (a *Agent) CheckUserCommand(script string) error {
 	return a.UserShell.Check(script)
 }
 
-// UserCommandRunnable reports whether word names an executable a "!" command of
-// this agent could start (#2878). An agent with no runner has none.
+// UserCommandRunnable reports whether word can start a "!" command of this agent
+// (#2878, #2882). An agent with no runner has none.
 func (a *Agent) UserCommandRunnable(word string) bool {
 	return a.UserShell != nil && a.UserShell.Runnable(word)
 }

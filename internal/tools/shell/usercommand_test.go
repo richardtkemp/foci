@@ -3,8 +3,10 @@ package shell
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -14,6 +16,7 @@ import (
 
 	"foci/internal/procx"
 	"foci/internal/secrets"
+	"foci/internal/tools"
 	"foci/internal/usercmd"
 )
 
@@ -287,7 +290,6 @@ func TestUserRunnerRunnable(t *testing.T) {
 		{"./a-dir", false}, // a directory
 		{"", false},
 		{"nul\x00byte", false},
-		{"declare", false}, // a shell builtin is no file
 	} {
 		if got := r.Runnable(tc.word); got != tc.want {
 			t.Errorf("Runnable(%q) = %v, want %v", tc.word, got, tc.want)
@@ -335,5 +337,155 @@ func TestUserRunnerRunnable_UsesTheCommandsPath(t *testing.T) {
 	res := r.Run(context.Background(), "operator-only-2878")
 	if res.ExitCode != 0 || !strings.Contains(res.Output, "ran-operator-only-2878") {
 		t.Errorf("the command itself did not find it: %+v", res)
+	}
+}
+
+// #2882: a word the shell itself runs counts, and the answer must match what running
+// a block that starts with it does. Each script is a real use of its first word.
+func TestUserRunnerRunnable_ShellWordsAgreeWithRun(t *testing.T) {
+	r := userRunner(t, 10*time.Second, 1<<20)
+	for word, script := range map[string]string{
+		"cd":     "cd / && pwd",
+		"export": "export A=1; echo $A",
+		"echo":   "echo hi",
+		":":      ": && echo hi",
+		".":      ". /dev/null && echo hi",
+		"source": "source /dev/null && echo hi",
+		"[":      "[ 1 = 1 ] && echo hi",
+		"if":     "if true; then echo hi; fi",
+		"for":    "for i in hi; do echo $i; done",
+		"while":  "while false; do :; done; echo hi",
+		"case":   "case x in x) echo hi;; esac",
+		"{":      "{ echo hi; }",
+		"(":      "( echo hi )",
+		"!":      "! false && echo hi",
+		"[[":     "[[ 1 == 1 ]] && echo hi",
+		"time":   "time echo hi",
+	} {
+		if !r.Runnable(word) {
+			t.Errorf("Runnable(%q) = false, want true", word)
+		}
+		res := r.Run(context.Background(), script)
+		if res.State != usercmd.StateExited || res.ExitCode != 0 {
+			t.Errorf("%q does not run: %+v", script, res)
+		}
+	}
+
+	// A script starting with one of these fails whatever follows.
+	for word, script := range map[string]string{
+		"then":     "then echo hi",
+		"fi":       "fi",
+		"done":     "done",
+		"}":        "}",
+		"esac":     "esac",
+		"local":    "local x=1 || exit 9",
+		"return":   "return 0 || exit 9",
+		"break":    "break 2>&1 | grep -q meaningful && exit 9",
+		"continue": "continue 2>&1 | grep -q meaningful && exit 9",
+		"logout":   "logout || exit 9",
+		"fg":       "fg 1 || exit 9",
+		"bg":       "bg 1 || exit 9",
+		"suspend":  "suspend || exit 9",
+		"compopt":  "compopt -o nospace || exit 9",
+	} {
+		if r.Runnable(word) {
+			t.Errorf("Runnable(%q) = true, want false", word)
+		}
+		res := r.Run(context.Background(), script)
+		if res.State == usercmd.StateExited && res.ExitCode == 0 {
+			t.Errorf("%q ran, so a button would have been right: %+v", script, res)
+		}
+	}
+
+	for _, word := range []string{"FOO=1", "#", "$CMD", "no-such-command-2882", "if;"} {
+		if r.Runnable(word) {
+			t.Errorf("Runnable(%q) = true, want false", word)
+		}
+	}
+}
+
+// #2882: a block can start with a comment or an assignment. The "!" trigger keeps
+// each as a script, and the shell runs the command after it.
+func TestUserRunner_LeadingCommentAndAssignmentRun(t *testing.T) {
+	r := userRunner(t, 10*time.Second, 1<<20)
+	for _, tc := range []struct{ typed, want string }{
+		{"!# a note\necho hi", "hi\n"},
+		{"!#!/bin/bash\necho hi", "hi\n"},
+		{"!FOO=hi env", "FOO=hi"},
+		{"!FOO='a b' BAR=$(echo c) env", "FOO=a b"},
+		{"!FOO=hi\necho $FOO", "hi\n"},
+		{"!! false", ""},
+	} {
+		script, ok := usercmd.Parse(tc.typed)
+		if !ok {
+			t.Errorf("%q is not a command", tc.typed)
+			continue
+		}
+		res := r.Run(context.Background(), script)
+		if res.State != usercmd.StateExited || res.ExitCode != 0 || !strings.Contains(res.Output, tc.want) {
+			t.Errorf("%q: %+v", tc.typed, res)
+		}
+	}
+}
+
+// foci-call is the binary the generated foci_* functions call; a "!" command finds it
+// on the operator PATH.
+func buildFociCall(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	out, err := exec.Command("go", "build", "-buildvcs=false", "-o", filepath.Join(dir, "foci-call"), "foci/cmd/foci-call").CombinedOutput()
+	if err != nil {
+		t.Fatalf("build foci-call: %v\n%s", err, out)
+	}
+	return dir
+}
+
+// #2882: the foci_* functions must exist in the shell a "!" command gets, and reach
+// the tool. This drives the real path: UserRunner, generated function, foci-call,
+// bridge, tool. The answer of Runnable matches: an available tool's function counts,
+// a tool with a closed live gate or no export does not, nor does any name with no
+// registry.
+func TestUserRunner_FociFunctionsRunAndCount(t *testing.T) {
+	t.Setenv("PATH", buildFociCall(t)+":"+os.Getenv("PATH"))
+	registry := tools.NewRegistry()
+	echoTool := func(name string) *tools.Tool {
+		return &tools.Tool{
+			Name:        name,
+			Description: "Test tool.",
+			Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
+			ExecExport:  true,
+			Execute: func(ctx context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+				return tools.ToolResult{Text: "reached " + name + " in " + tools.SessionKeyFromContext(ctx)}, nil
+			},
+		}
+	}
+	registry.Register(echoTool("probe2882"))
+	closed := echoTool("closed2882")
+	closed.Available = func() bool { return false }
+	registry.Register(closed)
+	hidden := echoTool("hidden2882")
+	hidden.ExecExport = false
+	registry.Register(hidden)
+
+	r := userRunner(t, 15*time.Second, 1<<20)
+	r.Registry = registry
+	ctx := tools.WithSessionKey(context.Background(), "agent/c1")
+	res := r.Run(ctx, "# a note\nFOO=1 foci_probe2882")
+	if res.State != usercmd.StateExited || res.ExitCode != 0 || !strings.Contains(res.Output, "reached probe2882 in agent/c1") {
+		t.Fatalf("foci_probe2882 did not reach its tool: %+v", res)
+	}
+	for word, want := range map[string]bool{
+		"foci_probe2882":  true,
+		"foci_closed2882": false,
+		"foci_hidden2882": false,
+		"foci_nope2882":   false,
+	} {
+		if got := r.Runnable(word); got != want {
+			t.Errorf("Runnable(%q) = %v, want %v", word, got, want)
+		}
+	}
+	r.Registry = nil
+	if r.Runnable("foci_probe2882") {
+		t.Error("with no registry there is no function")
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"foci/internal/procx"
@@ -39,16 +40,24 @@ func (r *UserRunner) Check(script string) error {
 	return checkSecretTemplates(script)
 }
 
-// Runnable reports whether word, the first word of a code block in chat (#2878),
-// names an executable file a "!" command could start: a regular file this user
-// may execute, found the way the command's shell finds it. A word with a slash is
-// a path (relative to WorkDir, the command's cwd; a leading ~/ is the home dir). A
-// bare word is looked up on the operator PATH, the PATH the command's process gets
-// (runForeground; ExtraEnv never sets PATH). A builtin, a shell function, or a
-// file in WorkDir with no slash in the word is not runnable, by this definition.
+// Runnable reports whether word, the first command word of a code block in chat
+// (#2878, #2882), can start a "!" command. Three kinds of word can:
+//   - an executable file, found the way the command's shell finds it: a regular
+//     file this user may execute. A word with a slash is a path (relative to
+//     WorkDir, the command's cwd; a leading ~/ is the home dir). A bare word is
+//     looked up on the operator PATH, the PATH the command's process gets
+//     (runForeground; ExtraEnv never sets PATH). A file in WorkDir with no slash in
+//     the word is not found, as in the shell.
+//   - a foci_* shell function runForeground defines (one per available exported tool).
+//   - a word the shell itself runs (shellStartsCommand).
 func (r *UserRunner) Runnable(word string) bool {
-	if word == "" || strings.ContainsRune(word, 0) {
+	// A file of the same name does not help: the shell's own word comes first (macOS
+	// has /usr/bin/fg).
+	if word == "" || strings.ContainsRune(word, 0) || notCommandStart[word] {
 		return false
+	}
+	if r.hasFociFunction(word) || shellStartsCommand(word) {
+		return true
 	}
 	name := word
 	if rest, ok := strings.CutPrefix(word, "~/"); ok {
@@ -65,6 +74,69 @@ func (r *UserRunner) Runnable(word string) bool {
 	// the command's: it counts as not found.
 	_, err := procx.LookPath(procx.Operator, name)
 	return err == nil
+}
+
+// hasFociFunction reports whether word is a foci_* function a command can call. A
+// tool whose live gate is closed still has a function, but only to refuse: not
+// listed by ExportedTools, so it does not count.
+func (r *UserRunner) hasFociFunction(word string) bool {
+	if r.Registry == nil || !strings.HasPrefix(word, "foci_") {
+		return false
+	}
+	for _, t := range r.Registry.ExportedTools() {
+		if t.Name == word {
+			return true
+		}
+	}
+	return false
+}
+
+// notCommandStart holds the shell's own words that cannot start a script run by
+// "bash -c". The reserved words only continue a compound command (a script starting
+// with one is a syntax error). The builtins always fail outside a function, a loop
+// or an interactive shell, whatever their arguments (measured on bash 5).
+var notCommandStart = map[string]bool{
+	"then": true, "else": true, "elif": true, "fi": true, "esac": true,
+	"do": true, "done": true, "in": true, "}": true, "]]": true,
+	"bg": true, "fg": true, "break": true, "continue": true, "compopt": true,
+	"local": true, "logout": true, "return": true, "suspend": true,
+}
+
+// shellWords caches the shell's builtins and reserved words. A failure to ask is
+// not cached: it would remove the button until the next restart.
+var shellWords struct {
+	sync.Mutex
+	words map[string]bool
+}
+
+// shellStartsCommand reports whether the exec shell itself runs word as the start
+// of a script: a builtin or reserved word (the shell is asked once, because the
+// lists differ by version: macOS has bash 3.2) or "(", a subshell. Only bash can
+// answer. Under the sh fallback it is always false.
+func shellStartsCommand(word string) bool {
+	if !hasBash() {
+		return false
+	}
+	if word == "(" {
+		return true
+	}
+	shellWords.Lock()
+	defer shellWords.Unlock()
+	if shellWords.words == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		// Operator: the shell a "!" command runs under.
+		out, err := procx.Spawn(ctx, procx.Operator, execShell(), "-c", "compgen -b -k").Output()
+		if err != nil {
+			execLog.Warnf("list shell builtins: %v", err)
+			return false
+		}
+		shellWords.words = make(map[string]bool)
+		for _, w := range strings.Fields(string(out)) {
+			shellWords.words[w] = true
+		}
+	}
+	return shellWords.words[word]
 }
 
 // Redact scrubs secret values from text, exactly as shell tool output is.
