@@ -1683,10 +1683,11 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 	}
 }
 
-// wantsPromptSuggestions says whether a session's backend should predict the
+// wantsPromptSuggestions says whether a session's backend may ever predict the
 // user's next prompt (#2916): a root chat session that is not a batch. A branch,
 // a batch or an independent session has no chat to show the prediction in, and
-// each prediction is a model call. An unparseable key gets none.
+// each prediction is a model call. An unparseable key gets none. Whichever chat
+// it is, Agent.wantsPromptSuggestion decides each turn (#2922).
 func wantsPromptSuggestions(sessionKey string, isBatch bool) bool {
 	if isBatch {
 		return false

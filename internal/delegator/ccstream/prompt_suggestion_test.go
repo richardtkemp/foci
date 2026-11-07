@@ -1,7 +1,10 @@
 package ccstream
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +30,7 @@ func TestReaderDispatchPromptSuggestion(t *testing.T) {
 func TestOnPromptSuggestion_ReachesSessionBetweenTurns(t *testing.T) {
 	t.Parallel()
 	b := &Backend{}
+	b.suggestionsOn.Store(true)
 	var got []string
 	b.AttachSessionEvents(&delegator.SessionEvents{OnPromptSuggestion: func(s string) { got = append(got, s) }})
 
@@ -42,6 +46,7 @@ func TestOnPromptSuggestion_ReachesSessionBetweenTurns(t *testing.T) {
 func TestOnPromptSuggestion_DroppedWhileTurnInFlight(t *testing.T) {
 	t.Parallel()
 	b := &Backend{}
+	b.suggestionsOn.Store(true)
 	var got []string
 	b.AttachSessionEvents(&delegator.SessionEvents{OnPromptSuggestion: func(s string) { got = append(got, s) }})
 	b.turnMu.Lock()
@@ -58,6 +63,7 @@ func TestOnPromptSuggestion_DroppedWhileTurnInFlight(t *testing.T) {
 func TestOnPromptSuggestion_EmptyAndUnwiredAreSilent(t *testing.T) {
 	t.Parallel()
 	b := &Backend{}
+	b.suggestionsOn.Store(true)
 	b.OnPromptSuggestion(&PromptSuggestionMessage{Suggestion: "x"}) // no events attached: no panic
 
 	var got []string
@@ -106,5 +112,271 @@ func TestStart_PromptSuggestionsFlagFollowsOption(t *testing.T) {
 	}
 	if got := startArgs(t, delegator.StartOptions{}); strings.Contains(got, "--prompt-suggestions") {
 		t.Errorf("without the option, argv = %q, want no flag", got)
+	}
+}
+
+// A suggestion that reaches foci while the switch is off belongs to a turn that
+// was not the user's: it must not replace the chip, even when CC ignored the
+// switch.
+func TestOnPromptSuggestion_DroppedWhileSwitchOff(t *testing.T) {
+	t.Parallel()
+	b := &Backend{}
+	var got []string
+	b.AttachSessionEvents(&delegator.SessionEvents{OnPromptSuggestion: func(s string) { got = append(got, s) }})
+
+	b.OnPromptSuggestion(&PromptSuggestionMessage{Suggestion: "run the tests"})
+
+	if len(got) != 0 {
+		t.Fatalf("got %q with the switch off, want nothing", got)
+	}
+}
+
+// A new process starts with the switch off, so a cold session's first turn, of
+// whatever kind, costs nothing until a user's turn asks.
+func TestStart_SwitchStartsOff(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	out := filepath.Join(dir, "stdin.txt")
+	script := filepath.Join(dir, "fake-claude")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec cat > "+out+"\n"), 0o755); err != nil {
+		t.Fatalf("write recorder: %v", err)
+	}
+	start := func(flag bool) string {
+		_ = os.Remove(out)
+		d, err := newFromConfig(map[string]any{"binary": script})
+		if err != nil {
+			t.Fatalf("newFromConfig: %v", err)
+		}
+		be := d.(*Backend)
+		if err := be.Start(context.Background(), delegator.StartOptions{WorkDir: dir, AgentID: "switchtest", PromptSuggestions: flag}); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		t.Cleanup(func() { _ = be.Close() })
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			data, _ := os.ReadFile(out)
+			lines := strings.Count(string(data), "\n")
+			if lines >= 2 || (!flag && lines >= 1) {
+				time.Sleep(50 * time.Millisecond)
+				data, _ = os.ReadFile(out)
+				return string(data)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		data, _ := os.ReadFile(out)
+		t.Fatalf("flag=%v: stdin = %q, want the initialize line and, with the flag, the switch", flag, data)
+		return ""
+	}
+	got := start(true)
+	lines := strings.Split(strings.TrimSpace(got), "\n")
+	if len(lines) < 2 || summariseStdin(t, lines[1]) != "env="+promptSuggestionOff {
+		t.Fatalf("with the flag, stdin = %q, want initialize then the switch off", got)
+	}
+	if got := start(false); strings.Contains(got, promptSuggestionEnv) {
+		t.Fatalf("without the flag, stdin = %q, want no switch", got)
+	}
+}
+
+// switchBackend is a Backend with a live writer whose stdin lines are readable,
+// launched with --prompt-suggestions when flag is set.
+func switchBackend(t *testing.T, flag bool) (*Backend, *stdinLines) {
+	t.Helper()
+	pr, pw := io.Pipe()
+	t.Cleanup(func() { _ = pw.Close() })
+	b := &Backend{
+		writer:            NewWriter(pw),
+		pendingPerms:      make(map[string]*pendingPermission),
+		outstanding:       delegator.NewOutstandingRegistry(),
+		promptSuggestions: flag,
+	}
+	b.running = true
+	lines := &stdinLines{ch: make(chan string, 16)}
+	go func() {
+		sc := bufio.NewScanner(pr)
+		sc.Buffer(make([]byte, 1<<20), 1<<20)
+		for sc.Scan() {
+			lines.ch <- sc.Text()
+		}
+		close(lines.ch)
+	}()
+	return b, lines
+}
+
+type stdinLines struct{ ch chan string }
+
+// next returns the next stdin line's summary: "user", or the suggestion env
+// value a control request set.
+func (l *stdinLines) next(t *testing.T) string {
+	t.Helper()
+	select {
+	case line, ok := <-l.ch:
+		if !ok {
+			t.Fatal("stdin closed")
+		}
+		return summariseStdin(t, line)
+	case <-time.After(5 * time.Second):
+		t.Fatal("no stdin line")
+	}
+	return ""
+}
+
+func (l *stdinLines) none(t *testing.T) {
+	t.Helper()
+	select {
+	case line := <-l.ch:
+		t.Fatalf("unexpected stdin line: %s", summariseStdin(t, line))
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func summariseStdin(t *testing.T, line string) string {
+	t.Helper()
+	var env struct {
+		Type    string `json:"type"`
+		Request struct {
+			Subtype  string `json:"subtype"`
+			Settings struct {
+				Env map[string]string `json:"env"`
+			} `json:"settings"`
+		} `json:"request"`
+	}
+	if err := json.Unmarshal([]byte(line), &env); err != nil {
+		t.Fatalf("stdin line %q: %v", line, err)
+	}
+	if env.Type == "control_request" && env.Request.Subtype == "apply_flag_settings" {
+		v, ok := env.Request.Settings.Env[promptSuggestionEnv]
+		if !ok {
+			t.Fatalf("control without the suggestion env: %s", line)
+		}
+		return "env=" + v
+	}
+	return env.Type
+}
+
+// The switch goes ahead of the user message, so CC reads it before the turn
+// ends, and is written only when it changes.
+func TestBeginTurn_SwitchFollowsInject(t *testing.T) {
+	t.Parallel()
+	b, lines := switchBackend(t, true)
+	ctx := context.Background()
+	turn := func(want bool) error {
+		return b.ImmediateInject(ctx, delegator.Inject{Source: delegator.SourceUser, Text: "x", Turn: &delegator.TurnEvents{}, PromptSuggestion: want})
+	}
+	end := func() { b.turnMu.Lock(); b.turnActive = false; b.turnMu.Unlock() }
+
+	if err := turn(true); err != nil {
+		t.Fatal(err)
+	}
+	if got := lines.next(t); got != "env="+promptSuggestionOn {
+		t.Fatalf("first line = %q, want the switch on ahead of the message", got)
+	}
+	if got := lines.next(t); got != "user" {
+		t.Fatalf("second line = %q, want the user message", got)
+	}
+	end()
+
+	if err := turn(true); err != nil { // no change: no control
+		t.Fatal(err)
+	}
+	if got := lines.next(t); got != "user" {
+		t.Fatalf("line = %q, want only the user message when nothing changed", got)
+	}
+	end()
+
+	if err := turn(false); err != nil {
+		t.Fatal(err)
+	}
+	if got := lines.next(t); got != "env="+promptSuggestionOff {
+		t.Fatalf("line = %q, want the switch off", got)
+	}
+	if got := lines.next(t); got != "user" {
+		t.Fatalf("line = %q, want the user message", got)
+	}
+}
+
+// A system turn refused because a turn runs must leave that turn's switch alone.
+func TestBeginTurn_RefusedSystemTurnKeepsSwitch(t *testing.T) {
+	t.Parallel()
+	b, lines := switchBackend(t, true)
+	b.suggestionsOn.Store(true)
+	b.turnMu.Lock()
+	b.turnActive = true
+	b.turnMu.Unlock()
+
+	err := b.ImmediateInject(context.Background(), delegator.Inject{Source: delegator.SourceSystem, Text: "cron", Turn: &delegator.TurnEvents{}})
+	if err == nil {
+		t.Fatal("system inject during a turn: want a refusal")
+	}
+	lines.none(t)
+	if !b.suggestionsOn.Load() {
+		t.Fatal("a refused system turn turned the switch off")
+	}
+}
+
+// User input folding into a running run turns the switch on (the run may be an
+// adopted autonomous one, which runs with it off); input that is not the user's
+// on a surface leaves it alone.
+func TestFold_SwitchOnlyRises(t *testing.T) {
+	t.Parallel()
+	b, lines := switchBackend(t, true)
+	ctx := context.Background()
+	b.turnMu.Lock()
+	b.turnActive = true
+	b.turnMu.Unlock()
+
+	if err := b.ImmediateInject(ctx, delegator.Inject{Source: delegator.SourceSteer, Text: "spawn steer"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := lines.next(t); got != "user" {
+		t.Fatalf("line = %q, want the fold alone", got)
+	}
+	if err := b.ImmediateInject(ctx, delegator.Inject{Source: delegator.SourceUser, Text: "hello", PromptSuggestion: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := lines.next(t); got != "env="+promptSuggestionOn {
+		t.Fatalf("line = %q, want the switch on", got)
+	}
+	if got := lines.next(t); got != "user" {
+		t.Fatalf("line = %q, want the fold", got)
+	}
+	if err := b.ImmediateInject(ctx, delegator.Inject{Source: delegator.SourceSteer, Text: "spawn steer"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := lines.next(t); got != "user" {
+		t.Fatalf("line = %q, want the fold alone: a fold never lowers the switch", got)
+	}
+}
+
+// A session launched without the flag has no switch to work: foci writes nothing
+// CC would not otherwise see.
+func TestSwitch_NoFlagWritesNothing(t *testing.T) {
+	t.Parallel()
+	b, lines := switchBackend(t, false)
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{Source: delegator.SourceUser, Text: "x", Turn: &delegator.TurnEvents{}, PromptSuggestion: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := lines.next(t); got != "user" {
+		t.Fatalf("line = %q, want only the user message without the flag", got)
+	}
+}
+
+// A run CC began by itself is not the user's: the switch goes off at its running
+// edge, ahead of the run's end.
+func TestAutonomousRun_TurnsSwitchOff(t *testing.T) {
+	t.Parallel()
+	b, lines := switchBackend(t, true)
+	b.suggestionsOn.Store(true)
+	opened := make(chan struct{}, 1)
+	b.SetOnAutonomousOpen(func([]string) { opened <- struct{}{} })
+
+	b.OnSystem("session_state_changed", []byte(`{"type":"system","subtype":"session_state_changed","state":"running","session_id":"s"}`))
+
+	if got := lines.next(t); got != "env="+promptSuggestionOff {
+		t.Fatalf("line = %q, want the switch off", got)
+	}
+	select {
+	case <-opened:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the run was not adopted")
 	}
 }

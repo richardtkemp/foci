@@ -299,6 +299,17 @@ func DeliverPromptSuggestion(sessionKey, text string) {
 	}
 }
 
+// CanShowPromptSuggestion reports whether DeliverPromptSuggestion would reach a
+// conversation for sessionKey (#2922). It asks the same question delivery asks,
+// not who first claimed the chat (SessionIndex.PlatformForChat): a Telegram chat's
+// session adopted by an app conversation stays claimed by Telegram but has a chip.
+func CanShowPromptSuggestion(sessionKey string) bool {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	return h != nil && h.bindingForSession(sessionKey) != nil
+}
+
 // deliverBoundPrompt sends one durable ExternalPrompt frame to the
 // conversation bound to sessionKey — the shared bound-only chit rule behind
 // DeliverExternalPrompt and DeliverAgentMessage. No-op when the app provider

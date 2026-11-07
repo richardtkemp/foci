@@ -1065,7 +1065,8 @@ func (a *Agent) steerToBackend(be delegator.Delegator, env Envelope) bool {
 // a fresh turn's (prepareAttachments): converted documents lead the text, then
 // the saved-to-disk notes, then the sender's text.
 func (a *Agent) steerInject(be delegator.Delegator, env Envelope) (inj delegator.Inject, ok bool) {
-	inj = delegator.Inject{Source: delegator.SourceSteer, Text: env.Text}
+	inj = delegator.Inject{Source: delegator.SourceSteer, Text: env.Text,
+		PromptSuggestion: a.wantsPromptSuggestion(true, env.SessionKey)}
 	if env.Ref.MessageID != "" {
 		inj.Refs = []delegator.InputRef{env.Ref}
 	}
@@ -2126,6 +2127,32 @@ func (a *Agent) SetOnPromptSuggestion(fn func(sessionKey, text string)) {
 	a.onPromptSuggestion = fn
 }
 
+// SetPromptSuggestionSurface wires the check that a session can show a predicted
+// prompt (#2922). Set once at gateway setup, before any backend starts.
+func (a *Agent) SetPromptSuggestionSurface(fn func(sessionKey string) bool) {
+	a.promptSuggestionSurface = fn
+}
+
+// wantsPromptSuggestion says whether the turn or fold carrying this input should
+// be followed by a predicted next prompt (#2922): the user started it (the #2320
+// definition the typing gate uses) and the session has somewhere to show it. The
+// surface is read per turn, so a session that moves to the app needs no relaunch.
+func (a *Agent) wantsPromptSuggestion(userInput bool, sessionKey string) bool {
+	return userInput && a.promptSuggestionSurface != nil && a.promptSuggestionSurface(sessionKey)
+}
+
+// noteTurnReply records whether a session's finished turn gave a reply. CC starts
+// its prediction as the turn's result arrives, before foci can read the reply, so
+// a silent turn still pays for one; this keeps it off the chip. The reader handles
+// the turn's end before the prediction's line, so the note is always in time.
+func (a *Agent) noteTurnReply(sessionKey, finalText string) {
+	if platform.IsSilent(finalText) {
+		a.silentTurnEnded.Store(sessionKey, struct{}{})
+	} else {
+		a.silentTurnEnded.Delete(sessionKey)
+	}
+}
+
 // SetOnCacheExpiry wires the callback fired whenever a session's cache warmth
 // changes (see the onCacheExpiry field). Wired once at gateway setup to
 // app.SetCacheExpiry so the client's warmth indicator tracks the DB value.
@@ -2275,6 +2302,10 @@ func (a *Agent) AttachDelivery(be delegator.Delegator, sk string) {
 				// Not through the router: this arrives between turns, when no
 				// turn's sink is there to take it.
 				if a.onPromptSuggestion == nil {
+					return
+				}
+				if _, silent := a.silentTurnEnded.Load(sk); silent {
+					a.logger().Debugf("session=%s prompt suggestion dropped: its turn gave no reply", sk)
 					return
 				}
 				if a.Redact != nil {

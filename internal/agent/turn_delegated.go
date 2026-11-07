@@ -380,9 +380,10 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		// a system turn (waitOutSystemTurn above).
 		a.DelegatedManager.SetTypingAllowed(ts.SessionKey, true)
 		err := be.ImmediateInject(ts.Ctx, delegator.Inject{
-			Source: delegator.SourceUser,
-			Text:   ts.Prompt,
-			Refs:   InputRefsFromContext(ts.Ctx),
+			Source:           delegator.SourceUser,
+			Text:             ts.Prompt,
+			Refs:             InputRefsFromContext(ts.Ctx),
+			PromptSuggestion: a.wantsPromptSuggestion(true, ts.SessionKey),
 		})
 		if err != nil && errors.Is(err, delegator.ErrBackendClosed) && !be.IsRunning() {
 			// The process died between the in-flight check and the write, and
@@ -572,6 +573,8 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 			Attachments: atts,
 			Turn:        turnEvents,
 			Refs:        InputRefsFromContext(ts.Ctx),
+
+			PromptSuggestion: a.wantsPromptSuggestion(typingAllowed, ts.SessionKey),
 		}
 		if src == delegator.SourceSystem && !isKeepaliveTrigger(ts.Trigger) &&
 			(a.pendingHoldExpiredRun(ts.SessionKey) || time.Since(pendingWaitStart) >= a.pendingHoldLimit()) {
@@ -843,6 +846,7 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 			if preAnswerFirstText != "" && strings.TrimSpace(ts.FinalText) == NoResponseSentinel {
 				ts.FinalText = preAnswerFirstText
 			}
+			a.noteTurnReply(ts.SessionKey, ts.FinalText)
 			// Log accumulated thinking to conversation DB.
 			if thinking := a.DrainThinking(ts.SessionKey); thinking != "" {
 				a.logConversationThinking(ts, thinking)

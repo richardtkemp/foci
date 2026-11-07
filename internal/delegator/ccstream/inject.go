@@ -215,6 +215,10 @@ func (b *Backend) beginTrackedTurn(inj delegator.Inject, exclusive bool, write f
 		b.typingFunc(true)
 	}
 
+	// After the begin, so a refused system turn leaves the running turn's
+	// switch alone; before the write, so CC reads it ahead of this turn's end.
+	b.setPromptSuggestions(inj.PromptSuggestion)
+
 	if err := b.writeInput(p, write); err != nil {
 		b.cancelTurn()
 		return fmt.Errorf("ccstream: send user message: %w", err)
@@ -433,6 +437,7 @@ func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) err
 		// the current run, so the reply belongs to the current foci turn and
 		// the turn completes at that run's idle. inj.Turn is intentionally
 		// ignored.
+		b.raisePromptSuggestions(inj)
 		return b.sendFold(trackedInputFor(inj), "")
 
 	case delegator.SourceSteer:
@@ -459,6 +464,7 @@ func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) err
 		// immediately) is deliberately not used — see sendFold
 		// for the NYI gating it should live behind. "Stop right now"
 		// semantics live in /reset hard, not Steer.
+		b.raisePromptSuggestions(inj)
 		return b.sendFold(trackedInputFor(inj), "next")
 
 	case delegator.SourceSystem:
@@ -520,6 +526,7 @@ func (b *Backend) sendCompact(ctx context.Context, text string) error {
 			b.turnMu.Unlock()
 			b.drainEdgeCallbacks()
 			b.resetTurnScratch()
+			b.setPromptSuggestions(false)
 			return b.sendUserMessage(text)
 		}
 		b.compactDeferred = true

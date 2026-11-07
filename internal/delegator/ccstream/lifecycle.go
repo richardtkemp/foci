@@ -41,6 +41,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	b.autoApproveRules = parseAutoApproveRules(opts.AutoApproveRules)
 	b.agents.MaxAge = opts.SubagentMaxAge
 	b.depthLeaf = opts.DepthLeaf
+	b.promptSuggestions = opts.PromptSuggestions
 
 	// Build command args.
 	args := []string{
@@ -53,10 +54,12 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		"--verbose",
 	}
 	if opts.PromptSuggestions {
-		// The flag alone is the switch in print mode; the env var alone does
-		// nothing (measured on CC 2.1.314, #2916). An agent's
-		// backend_config.env CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false still
-		// turns it off.
+		// The flag alone enables it in print mode; the env var alone does
+		// nothing (measured on CC 2.1.314, #2916). The flag cannot be changed
+		// later, so a session that may ever show a suggestion launches with
+		// it, and setPromptSuggestions decides turn by turn (#2922). An agent's
+		// backend_config.env CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false turns
+		// it off for good: CC reads that value once, at launch.
 		args = append(args, "--prompt-suggestions", "true")
 	}
 	if opts.Model != "" {
@@ -334,6 +337,11 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		// init", IsRunning() reports false, and DelegatedManager respawns on
 		// the next turn.
 		b.logger().Warnf("subprocess died before the initialize handshake: %v", err)
+	}
+	// Off until a user's turn asks for it (#2922). It cannot be off at launch:
+	// CC reads the launch env value once, and a false there can never come back.
+	if b.promptSuggestions {
+		b.writePromptSuggestionSwitch(false)
 	}
 
 	// Claim `running` only if no finalize path has already declared the

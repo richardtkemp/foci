@@ -286,6 +286,12 @@ type Agent struct {
 	// user's next prompt (#2916). Wired by the gateway to
 	// app.DeliverPromptSuggestion.
 	onPromptSuggestion func(sessionKey, text string)
+	// promptSuggestionSurface reports whether a session has anywhere to show a
+	// prediction (#2922). Wired to app.CanShowPromptSuggestion; nil means no.
+	promptSuggestionSurface func(sessionKey string) bool
+	// silentTurnEnded holds the sessions whose last turn gave no reply, whose
+	// prediction must not replace the chip (#2922).
+	silentTurnEnded sync.Map // sessionKey → struct{}
 
 	// onAliasChanged, when set, is fired after a backend-generated thread name
 	// (e.g. Codex) is persisted as a chat's alias, so the app can show the new

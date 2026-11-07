@@ -662,7 +662,12 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 			// sink is registered with no early deltas lost (#1261). The tasks
 			// that ended since the last run are its triggers (#2093).
 			open := b.onAutonomousOpen
-			b.edgeCallbacks = append(b.edgeCallbacks, func() { open(triggers) })
+			b.edgeCallbacks = append(b.edgeCallbacks, func() {
+				// Nobody asked for this run. CC reads the switch when the run
+				// ends, so this is in time (#2922).
+				b.setPromptSuggestions(false)
+				open(triggers)
+			})
 			autonomousOpen = true
 		}
 		b.turnMu.Unlock()
@@ -1067,14 +1072,67 @@ func (b *Backend) OnKeepAlive() {
 	b.touchActivity()
 }
 
+// promptSuggestionEnv is the variable CC checks when a turn ends, before it
+// starts a suggestion (2.1.314). apply_flag_settings can set it at runtime, which
+// is the only per-turn switch that works on our account (#2922, measured live):
+//   - promptSuggestionEnabled in apply_flag_settings: CC accepts it, and forks
+//     continue, because print mode reads that setting once at launch;
+//   - set_prompt_suggestions_paused: acknowledged, and forks continue, because it
+//     sits behind a server flag that is off.
+const (
+	promptSuggestionEnv = "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION"
+	promptSuggestionOff = "false"
+	// Empty is not "true": true also keeps suggestions running past CC's
+	// near-the-rate-limit gate, and CC's parser reads empty as unset.
+	promptSuggestionOn = ""
+)
+
+// setPromptSuggestions writes the per-turn switch when its value changes. A
+// session launched without --prompt-suggestions has no switch, so nothing is
+// written. CC replies with a control_response the reader logs.
+func (b *Backend) setPromptSuggestions(on bool) {
+	if !b.promptSuggestions || b.suggestionsOn.Swap(on) == on {
+		return
+	}
+	b.writePromptSuggestionSwitch(on)
+}
+
+// raisePromptSuggestions turns the switch on for user input folding into a
+// running run. It never lowers it: a fold from elsewhere (a spawn steer) says
+// nothing about the run it joins.
+func (b *Backend) raisePromptSuggestions(inj delegator.Inject) {
+	if inj.PromptSuggestion {
+		b.setPromptSuggestions(true)
+	}
+}
+
+func (b *Backend) writePromptSuggestionSwitch(on bool) {
+	value := promptSuggestionOff
+	if on {
+		value = promptSuggestionOn
+	}
+	err := b.writer.SendControl(newRequestID(), &ApplyFlagSettingsRequest{
+		Subtype:  "apply_flag_settings",
+		Settings: map[string]any{"env": map[string]string{promptSuggestionEnv: value}},
+	})
+	if err != nil {
+		b.logger().Warnf("prompt suggestion switch on=%v not written: %v", on, err)
+	}
+}
+
 // OnPromptSuggestion passes CC's predicted next prompt to the session (#2916).
 // CC generates it after a result and aborts the generation when the next input
 // arrives, but a line already on the pipe still reaches here: a suggestion that
 // lands while a turn runs predicts a message the user has already passed, so it
-// is dropped.
+// is dropped. So is one that lands with the switch off: it follows a turn that
+// was not the user's, and this holds even if a CC build ignores the switch.
 func (b *Backend) OnPromptSuggestion(msg *PromptSuggestionMessage) {
 	text := strings.TrimSpace(msg.Suggestion)
 	if text == "" {
+		return
+	}
+	if !b.suggestionsOn.Load() {
+		b.logger().Debugf("prompt suggestion dropped: the switch is off")
 		return
 	}
 	if b.IsTurnInFlight() {

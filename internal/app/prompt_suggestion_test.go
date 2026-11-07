@@ -42,3 +42,26 @@ func TestPromptSuggestion_NoPushNoUnread(t *testing.T) {
 		t.Fatalf("pushPreview = (%q, %v), want invisible", preview, visible)
 	}
 }
+
+// CanShowPromptSuggestion asks what delivery asks, so an app conversation that
+// adopted another platform's session counts, and an unbound session does not.
+func TestCanShowPromptSuggestion_FollowsBinding(t *testing.T) {
+	setActiveHub(nil)
+	if CanShowPromptSuggestion("scout/c1") {
+		t.Error("no hub: want false")
+	}
+	h := newTestHub()
+	setActiveHub(h)
+	t.Cleanup(func() { setActiveHub(nil) })
+	if CanShowPromptSuggestion("scout/c999") {
+		t.Error("no binding: want false")
+	}
+	b := h.ensureBinding(nil, "scout", "conv-can-show")
+	if !CanShowPromptSuggestion(b.key()) {
+		t.Errorf("bound session %q: want true", b.key())
+	}
+	h.adoptSession(b, "scout/c42")
+	if !CanShowPromptSuggestion("scout/c42") {
+		t.Error("adopted session, the one a Telegram chat claims: want true")
+	}
+}

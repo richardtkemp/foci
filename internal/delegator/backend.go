@@ -822,6 +822,7 @@ type StartOptions struct {
 	// after each turn and report it through SessionEvents.OnPromptSuggestion
 	// (#2916). Each prediction costs a model call, so the manager sets this
 	// only for a session a person reads: a root chat, never a batch or a branch.
+	// It makes prediction possible; Inject.PromptSuggestion decides each turn.
 	PromptSuggestions bool
 	ExecRegistry      any               // *tools.Registry — if set, used by DelegatedManager to create exec bridges
 	Env               map[string]string // extra environment variables to inject (e.g. BASH_ENV, FOCI_SOCK from exec bridge)
@@ -1123,6 +1124,14 @@ type Inject struct {
 	// Redeliveries is how many times this input has already been re-sent
 	// (PendingInput.Redeliveries); zero for a first write.
 	Redeliveries int
+
+	// PromptSuggestion says this input may be followed by a predicted next
+	// prompt: it is the user's own, on a surface that can show one (#2922). An
+	// inject that begins a turn sets the backend's switch to this value, so a
+	// turn nobody asked to predict pays nothing. A fold into a running turn can
+	// only raise it. Ignored by a backend launched without
+	// StartOptions.PromptSuggestions.
+	PromptSuggestion bool
 
 	// PendingWorkExempt lets a SourceSystem inject begin while the backend
 	// still tracks pending background work (a keepalive, whose whole purpose
