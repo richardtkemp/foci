@@ -9,12 +9,18 @@
 #      local run hangs up the remote make instead of orphaning it;
 #   3. tees the output to a local log under $FGW_ROOT, and copies back the run's
 #      own log (the "full log: <path>" line the test targets print);
-#   4. exits with the remote make's exit status (255 = ssh itself failed).
+#   4. with REMOTE_RESULT_CSV set, appends the run's unit row to that CSV on THIS
+#      host, as the local-test recipe does on a local run (#2907);
+#   5. exits with the remote make's exit status (255 = ssh itself failed).
 # DIR may start with ~/ : it is taken relative to the remote home.
 # REMOTE_NAME (env, optional) names the host in the closing line.
+# REMOTE_RESULT_CSV, REMOTE_RESULT_COMMIT (env, optional) are the history file and
+# the commit to record. The row is written only if the suite reached its verdict
+# line: a lost connection or a build that never started the suite is no result, so
+# a runner reading the history tests that commit again.
 set -uo pipefail
 
-usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; }
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 if [ $# -lt 3 ]; then usage >&2; exit 2; fi
 
@@ -55,10 +61,25 @@ ssh -tt "${live[@]}" "$host" "$cmd" < /dev/null 2>&1 | tr -d '\r' | tee "$log"
 status=${PIPESTATUS[0]}
 
 remote_log=$(grep -o 'full log: [^ ]*' "$log" | tail -1 | cut -d' ' -f3-)
+local_copy=
 if [ -n "$remote_log" ]; then
   local_copy=${log%.log}.mac.log
   if rsync -e "ssh ${live[*]}" --timeout=300 -q "$host:$remote_log" "$local_copy"; then
     echo ">>> remote-run: the Mac's full log ($remote_log) copied to $local_copy" >&2
+  else
+    local_copy=
+  fi
+fi
+
+if [ -n "${REMOTE_RESULT_CSV:-}" ]; then
+  if grep -qE '^(PASS|FAILED) — full log: ' "$log"; then
+    # Without the copy, the summary in the run's output still names the failures.
+    names=$(bash scripts/ci-failed-tests.sh go "${local_copy:-$log}")
+    mkdir -p "$(dirname "$REMOTE_RESULT_CSV")" &&
+      printf '%s,foci,%s,unit,%s,%s\n' "$(date -Is)" "${REMOTE_RESULT_COMMIT:-unknown}" \
+        "$([ "$status" -eq 0 ] && echo pass || echo fail)" "$names" >> "$REMOTE_RESULT_CSV"
+  else
+    echo ">>> remote-run: no verdict line in the output, so no result recorded" >&2
   fi
 fi
 echo ">>> remote-run: $target ran on ${REMOTE_NAME:-$host}, exit $status; output: $log" >&2

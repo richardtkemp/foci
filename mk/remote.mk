@@ -33,10 +33,9 @@
 #   test            dispatched, so make land's gate (LAND_TEST_TARGET=test) runs on
 #                   the Mac. Production is Linux: on the Mac local-test first runs
 #                   test-linux-compile (GOOS=linux go vet, test files included), and
-#                   the CI runner (foci-test-runner.sh) keeps testing main on Linux: it
-#                   calls local-test, not test. It must: the CI_HOOK row is not written
-#                   by a Mac run (.ci.mk is not synced), so a dispatched run would leave
-#                   the commit untested in its history and it would rerun forever (#2907).
+#                   a nightly unit run stays on Linux (foci-linux-nightly.py, #2907).
+#                   .ci.mk is not synced, so the Mac writes no CI_HOOK row: remote-run.sh
+#                   writes it HERE from the Mac's result, under remote_record below.
 #   lint            dispatched: the analysers run with GOOS=linux (LINT_ENV), so
 #                   they check the production build, with this host's Go
 #                   (LINT_GOTOOLCHAIN). Needs golangci-lint and deadcode in the
@@ -164,6 +163,12 @@ REMOTE_RUN_DIR ?= $(REMOTE_DIR)-wt/$(notdir $(CURDIR))
 # without the race detector (#2881).
 REMOTE_FWD_VARS := PKG RUN V COUNT TIMEOUT GOFLAGS
 
+# When a remote-test run's result goes into the CI_HOOK history (#2907). A row says
+# "this commit's suite gave this result", so: a hook is set, the tracked files are
+# the commit's own (an untracked stray is not a change: the CI checkout has some),
+# and go has no extra flags (a -race run is not the plain suite; it has its own row).
+remote_record = $(and $(filter remote-test,$@),$(CI_HOOK),$(if $(filter-out -ldflags=-w,$(GOFLAGS)),,yes),$(shell git -c safe.directory=$(CURDIR) diff --quiet HEAD >/dev/null 2>&1 && echo yes))
+
 # Entry guard of every remote-* target: expands only when that recipe runs.
 REMOTE_GUARD = $(if $(strip $(REMOTE_AVAIL)),@:,$(error $(if $(strip $(REMOTE_HOSTS)),every remote build host is UNREACHABLE (tried: $(strip $(REMOTE_HOSTS))),remote build host is NOT CONFIGURED (no REMOTE_HOSTS in .remote.mk)). $@ has no local fallback: run $(patsubst remote-%,%,$@) (dispatches) or local-$(patsubst remote-%,%,$@). Probe: $(foreach h,$(REMOTE_HOSTS),ssh -o ConnectTimeout=$(REMOTE_SSH_TIMEOUT) -o BatchMode=yes $(call remote_dest,$(h)) true;)))
 
@@ -180,11 +185,12 @@ $(REMOTE_DISPATCH):
 	  $(MAKE) --no-print-directory local-$@; \
 	fi
 
-# rsync this checkout to the Mac, run local-<target> there, copy its log back and
-# exit with the Mac's make status (scripts/remote-run.sh).
+# rsync this checkout to the Mac, run local-<target> there, copy its log back,
+# record its result when remote_record says so, and exit with the Mac's make status
+# (scripts/remote-run.sh).
 $(addprefix remote-,$(REMOTE_DISPATCH)):
 	$(REMOTE_GUARD)
-	@REMOTE_SSH_TIMEOUT='$(REMOTE_SSH_TIMEOUT)' FGW_ROOT='$(FGW_ROOT)' REMOTE_NAME='$(REMOTE_WHERE)' bash scripts/remote-run.sh '$(REMOTE_SSH_HOST)' '$(REMOTE_RUN_DIR)' local-$(patsubst remote-%,%,$@) \
+	@$(if $(remote_record),REMOTE_RESULT_CSV='$(CI_HOOK)' REMOTE_RESULT_COMMIT='$(GIT_COMMIT)') REMOTE_SSH_TIMEOUT='$(REMOTE_SSH_TIMEOUT)' FGW_ROOT='$(FGW_ROOT)' REMOTE_NAME='$(REMOTE_WHERE)' bash scripts/remote-run.sh '$(REMOTE_SSH_HOST)' '$(REMOTE_RUN_DIR)' local-$(patsubst remote-%,%,$@) \
 	  $(REMOTE_LOCK_ARGS) $(if $(filter remote-lint,$@),$(REMOTE_LINT_ARGS)) $(foreach v,$(REMOTE_FWD_VARS),$(if $(value $(v)),'$(v)=$(value $(v))'))
 
 # Offload a compile of the whole module to a Mac, cross-compiled for the Linux
