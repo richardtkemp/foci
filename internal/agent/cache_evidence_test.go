@@ -114,7 +114,7 @@ func TestNoteBranchInheritsRoot_NoopForRoot(t *testing.T) {
 func TestRecordCacheEvidence_WarnsWhenForkReadsLessThanSource(t *testing.T) {
 	logs := captureLogs(t)
 	a, _ := newCacheEvidenceTestAgent(t)
-	a.getSessionMeta(orchestratorTestKey).prevCacheRead = 5000
+	a.recordCacheEvidence(orchestratorTestKey, 5000, 20)
 
 	a.NoteBranchInheritsRoot(orchestratorTestBranchKey, orchestratorTestKey)
 	a.recordCacheEvidence(orchestratorTestBranchKey, 5000, 20)
@@ -149,5 +149,65 @@ func TestProcessAPIResponse_StampsCacheEvidence(t *testing.T) {
 	a.processAPIResponse(orchestratorTestKey, sm, resp, 0, time.Now(), 0)
 	if _, ok := idx.LastCacheTouch(orchestratorTestKey); !ok {
 		t.Fatal("a response with cache-read tokens did not stamp last_cache_touch")
+	}
+}
+
+// TestRecordCacheEvidence_ForkMissDoesNotWarmSource is #2929: a keepalive fork
+// whose first call reads less than its source's last cached read did not read
+// the source's newest cache entry, so it must not stamp the source (or root)
+// warm. Stamping it kept keepalive forking hourly at a full cache write each
+// (2026-11-07, 09:15-14:12) with nothing left to refresh.
+func TestRecordCacheEvidence_ForkMissDoesNotWarmSource(t *testing.T) {
+	t.Parallel()
+	a, idx := newCacheEvidenceTestAgent(t)
+	grandchild := orchestratorTestKey + "/b1700000002"
+	seedCacheTestRow(idx, grandchild)
+
+	a.recordCacheEvidence(orchestratorTestKey, 5000, 20)
+	a.recordCacheEvidence(orchestratorTestBranchKey, 5000, 20)
+	idx.ClearCacheTouch(orchestratorTestKey)
+	idx.ClearCacheTouch(orchestratorTestBranchKey)
+
+	// A miss: the fork read only the static prefix and wrote the rest.
+	a.NoteBranchInheritsRoot(grandchild, orchestratorTestBranchKey)
+	a.recordCacheEvidence(grandchild, 1200, 3800)
+	for _, k := range []string{orchestratorTestKey, orchestratorTestBranchKey} {
+		if _, ok := idx.LastCacheTouch(k); ok {
+			t.Errorf("a fork that missed its source's cache stamped %s warm", k)
+		}
+	}
+	if _, ok := idx.LastCacheTouch(grandchild); !ok {
+		t.Error("the fork's own cache write did not stamp the fork")
+	}
+
+	// A hit still warms both.
+	a.NoteBranchInheritsRoot(grandchild, orchestratorTestBranchKey)
+	a.recordCacheEvidence(grandchild, 5020, 30)
+	for _, k := range []string{orchestratorTestKey, orchestratorTestBranchKey} {
+		if _, ok := idx.LastCacheTouch(k); !ok {
+			t.Errorf("a fork that read its source's whole prefix did not stamp %s", k)
+		}
+	}
+}
+
+// TestNoteBranchInheritsRoot_BaselineIsSourcesLastCall: the miss baseline is
+// the source's last evidenced call, not its turn-end usage. On 2026-11-07
+// 03:43 depth leaves read the post-compaction parent's 85876 cached tokens,
+// a hit, but were compared with the pre-compaction turn figure of 202224 and
+// warned. Not parallel: captures the global log.
+func TestNoteBranchInheritsRoot_BaselineIsSourcesLastCall(t *testing.T) {
+	logs := captureLogs(t)
+	a, idx := newCacheEvidenceTestAgent(t)
+	a.getSessionMeta(orchestratorTestKey).prevCacheRead = 202224
+	a.recordCacheEvidence(orchestratorTestKey, 85876, 2589)
+	idx.ClearCacheTouch(orchestratorTestKey)
+
+	a.NoteBranchInheritsRoot(orchestratorTestBranchKey, orchestratorTestKey)
+	a.recordCacheEvidence(orchestratorTestBranchKey, 85876, 5001)
+	if _, ok := idx.LastCacheTouch(orchestratorTestKey); !ok {
+		t.Error("a fork that read the source's last cached prefix did not stamp the root")
+	}
+	if strings.Contains(logs.String(), "fork "+orchestratorTestBranchKey) {
+		t.Fatalf("warned on a fork that read the source's last cached prefix:\n%s", logs.String())
 	}
 }

@@ -54,6 +54,11 @@ type sessionMeta struct {
 	systemBlocks    []provider.SystemBlock // per-session system prompt snapshot (nil = rebuild from bootstrap)
 	apiSeqNum       int                    // per-session incrementing counter for payload log entries
 
+	// lastCallCacheRead is the cache-read count of this session's last model
+	// response with cache evidence (recordCacheEvidence): the size of its
+	// newest cached prefix, which a fork of it must read to refresh it (#2929).
+	lastCallCacheRead int
+
 	// Display overrides (empty = use agent/config default)
 	showToolCalls    string // "off"/"preview"/"full"
 	displayShowThink string // "off"/"compact"/"true" — distinct from API thinking mode

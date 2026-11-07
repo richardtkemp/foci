@@ -33,10 +33,11 @@ const branchRootWarmTTL = time.Hour
 // shared prefix and warms the source and the root too.
 type branchRootWarm struct {
 	root string
-	// source is the session the branch was forked from, and sourceRead its
-	// last known cache-read count when the branch was made. The branch's first
-	// call should read at least that much; less means the fork missed the
-	// source's cache (a WARN, Dick's ruling 2026-11-03).
+	// source is the session the branch was forked from, and sourceRead the
+	// cache-read count of the source's last evidenced call when the branch was
+	// made. The branch's first call should read at least that much; less means
+	// the fork missed the source's newest cache entry (a WARN, Dick's ruling
+	// 2026-11-03) and did not refresh it, so it does not warm the source (#2929).
 	source     string
 	sourceRead int
 	at         time.Time
@@ -59,9 +60,22 @@ func (a *Agent) recordCacheEvidence(sessionKey string, cacheRead, cacheWrite int
 	now := time.Now()
 	a.SessionIndex.TouchCacheTouch(sessionKey, now)
 	a.emitCacheExpiry(sessionKey)
+	a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.lastCallCacheRead = cacheRead })
 
 	pending, ok := a.takeBranchRootWarm(sessionKey)
 	if !ok {
+		return
+	}
+	// A fork that read less than its source's last cached read missed the
+	// source's newest cache entry: the entry was gone (2026-11-07 ~09:10, three
+	// roots lost theirs inside the 1h TTL with byte-identical prefixes) or the
+	// prefix differed. It refreshed nothing of the source's, and a fork cannot
+	// re-create that entry (its cache breakpoint sits after its own unique
+	// prompt, #2051), so the source stays as cold as it is. Stamping it here
+	// kept keepalive forking hourly at a full cache write each (#2929).
+	if pending.sourceRead > 0 && cacheRead < pending.sourceRead {
+		a.logger().Warnf("cache: fork %s first call read %d cached tokens, less than its source %s's prior read of %d (fork missed part of the source's cache; cache_write=%d); not counted as warming the source",
+			sessionKey, cacheRead, pending.source, pending.sourceRead, cacheWrite)
 		return
 	}
 	// The branch carries its source's whole conversation, so its first call
@@ -75,10 +89,6 @@ func (a *Agent) recordCacheEvidence(sessionKey string, cacheRead, cacheWrite int
 	for _, k := range warmed {
 		a.SessionIndex.TouchCacheTouch(k, now)
 		a.emitCacheExpiry(k)
-	}
-	if pending.sourceRead > 0 && cacheRead < pending.sourceRead {
-		a.logger().Warnf("cache: fork %s first call read %d cached tokens, less than its source %s's prior read of %d (fork missed part of the source's cache; cache_write=%d)",
-			sessionKey, cacheRead, pending.source, pending.sourceRead, cacheWrite)
 	}
 }
 
@@ -103,10 +113,13 @@ func (a *Agent) NoteBranchInheritsRoot(branchKey, parentKey string) {
 	if parentKey == "" {
 		parentKey = root
 	}
+	// The baseline is the source's last evidenced call, not its turn-end
+	// usage (prevCacheRead): a compaction or a turn still running moves the
+	// source's prefix before its turn ends (#2929).
 	a.metaMu.Lock()
 	sourceRead := 0
 	if m, ok := a.meta[parentKey]; ok {
-		sourceRead = m.prevCacheRead
+		sourceRead = m.lastCallCacheRead
 	}
 	a.metaMu.Unlock()
 
