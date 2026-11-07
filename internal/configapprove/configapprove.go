@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -255,9 +256,40 @@ func (s *Service) Submit(sub Submission) Status {
 	return s.statusOf(r)
 }
 
+// promptText is the approval prompt's markdown. Each value goes on its own
+// lines in a fenced code block (#2936): monospace on the app, Telegram and
+// Discord, and a long value (an array of tables) cannot run into its label or
+// the other value.
 func promptText(sessionKey string, p config.KeyPath, oldText, newText string) string {
-	return fmt.Sprintf("🔧 Config change requested\n\nSession: %s\nSetting: %s\nCurrent value: %s\nNew value: %s\n\nNothing changes unless you approve.",
-		sessionKey, p, oldText, newText)
+	return fmt.Sprintf("🔧 Config change requested\n\nSession: %s\nSetting: %s\n\nCurrent value:\n%s\n\nNew value:\n%s\n\nNothing changes unless you approve.",
+		sessionKey, p, fenced(oldText), fenced(newText))
+}
+
+// fenced wraps a rendered value in a fenced code block. RenderTOMLValue
+// output is a single line (strings escape their newlines), so the value can
+// never form a closing fence line itself.
+func fenced(v string) string {
+	f := codeFence(v)
+	return f + "\n" + v + "\n" + f
+}
+
+// codeFence is the fence for v: three backticks, or one more than v's
+// longest backtick run when that run is three or longer. CommonMark closes a
+// fence only on a run at least as long as the opener, so a value holding
+// backticks still renders as one block. (Telegram's converter and Discord
+// recognise only a three-backtick fence; a value holding ``` is rare enough
+// that they degrade there rather than in the app.)
+func codeFence(v string) string {
+	longest, run := 0, 0
+	for _, r := range v {
+		if r == '`' {
+			run++
+			longest = max(longest, run)
+		} else {
+			run = 0
+		}
+	}
+	return strings.Repeat("`", max(3, longest+1))
 }
 
 func newID() string {

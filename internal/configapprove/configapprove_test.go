@@ -118,7 +118,7 @@ func TestApprove_AppliesAndWrites(t *testing.T) {
 		t.Fatalf("submit: %+v", st)
 	}
 	p := h.prompt(0)
-	for _, want := range []string{"main/app/1", "agent_loop.max_tool_loops", "Current value: 10", "New value: 20"} {
+	for _, want := range []string{"main/app/1", "agent_loop.max_tool_loops", "Current value:\n```\n10\n```", "New value:\n```\n20\n```"} {
 		if !strings.Contains(p.Text, want) {
 			t.Errorf("prompt lacks %q:\n%s", want, p.Text)
 		}
@@ -303,6 +303,47 @@ func TestClampTimeout(t *testing.T) {
 	} {
 		if got := ClampTimeout(in); got != want {
 			t.Errorf("ClampTimeout(%s) = %s, want %s", in, got, want)
+		}
+	}
+}
+
+// TestPromptText_ValuesFencedOnOwnLines pins #2936: the current and new
+// values each sit in their own fenced code block (monospace on the app,
+// Telegram and Discord), separated from the labels and from each other by
+// line breaks, so a long value (an array of tables) cannot run into the
+// other value.
+func TestPromptText_ValuesFencedOnOwnLines(t *testing.T) {
+	p, err := config.ParseKeyPath("agent_loop.max_tool_loops")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := promptText("main/app/1", p, "10", "20")
+	want := "🔧 Config change requested\n\nSession: main/app/1\nSetting: agent_loop.max_tool_loops\n\n" +
+		"Current value:\n```\n10\n```\n\nNew value:\n```\n20\n```\n\nNothing changes unless you approve."
+	if got != want {
+		t.Errorf("promptText =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// TestCodeFence_LongerThanAnyBacktickRun proves a value holding backticks
+// still renders as one block: the fence is three backticks unless the value
+// itself holds a run of three or more, and then one longer than its longest
+// run (CommonMark closes a fence only on a run at least as long).
+func TestCodeFence_LongerThanAnyBacktickRun(t *testing.T) {
+	cases := map[string]string{
+		"10":                "```",
+		"\"a `b` c\"":       "```",
+		"\"x ``y`` z\"":     "```",
+		"\"x ```y``` z\"":   "````",
+		"\"a\\n`````\\nb\"": "``````",
+	}
+	for v, want := range cases {
+		if got := codeFence(v); got != want {
+			t.Errorf("codeFence(%q) = %q, want %q", v, got, want)
+		}
+		block := fenced(v)
+		if !strings.HasPrefix(block, want+"\n"+v+"\n"+want) {
+			t.Errorf("fenced(%q) = %q", v, block)
 		}
 	}
 }
