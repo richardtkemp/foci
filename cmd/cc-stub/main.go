@@ -376,6 +376,9 @@ func main() {
 	fs.StringVar(&appendSysPrompt, "append-system-prompt", "", "")
 	fs.BoolVar(&skipPermissions, "dangerously-skip-permissions", false, "")
 	fs.StringVar(&permissionMode, "permission-mode", "", "CC permission mode (foci batch sessions: auto)")
+	// Ignored, but it must be declared: Parse stops at the first flag it does not
+	// know, and every flag after it (--resume, --settings) would be lost.
+	fs.String("prompt-suggestions", "", "ignored")
 	fs.BoolVar(&helpFlag, "h", false, "show usage")
 	fs.BoolVar(&helpFlag, "help", false, "show usage")
 	if err := fs.Parse(os.Args[1:]); err != nil {
