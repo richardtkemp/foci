@@ -86,6 +86,16 @@ func TestBuildEnv_SetsRetryWatchdog(t *testing.T) {
 	}
 }
 
+// TestBuildEnv_SilentTurnReminderOff — Dick 2026-11-07 (#2908): every agent runs
+// without CC's "user hasn't heard from you" reminder.
+func TestBuildEnv_SilentTurnReminderOff(t *testing.T) {
+	clearEnvVar(t, "CLAUDE_CODE_SILENT_TURN_REMINDER")
+
+	if got, n := envValue(buildEnv(nil, nil), "CLAUDE_CODE_SILENT_TURN_REMINDER"); n == 0 || got != "0" {
+		t.Errorf("CLAUDE_CODE_SILENT_TURN_REMINDER = %q (n=%d), want %q", got, n, "0")
+	}
+}
+
 // TestBuildEnv_RetryWatchdogOverridable — a per-agent backend_config.env
 // value comes later in the env and wins.
 func TestBuildEnv_RetryWatchdogOverridable(t *testing.T) {

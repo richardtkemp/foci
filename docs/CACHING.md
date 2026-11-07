@@ -87,6 +87,8 @@ When conversation history is compressed, only the conversation portion changes. 
 ### Character file stability
 Character files are loaded into memory at startup and rebuilt from disk only on compaction or restart. Editing a character file doesn't immediately bust the cache — changes take effect at the next natural reload point.
 
+On a Claude Code session, a restart is not a reload point. foci rebuilds the prompt at each start and sends it, but CC keeps the prompt it recorded on the conversation's first request and reuses that record on every resume until a compaction (probed on CC 2.1.314, #2908). So a resumed session gets changed character files, skills, the environment block or the daily digest at its next compaction, and a new session gets them at once. This protects the cache across a restart and is the wanted behaviour (Dick, 2026-11-07).
+
 ### Session branching (cache sharing)
 Branch sessions copy the parent's system prompt + message history at a point in time. Because the prefix is byte-identical, the API hits cache (read pricing) instead of re-tokenizing (write pricing).
 
@@ -112,8 +114,8 @@ When idle, a lightweight branch session fires to keep the cache prefix warm — 
 |--------|--------|------|
 | Model switch | Full rebuild | ~$2.50 eq |
 | Service restart | New session, new cache | ~$2.50 eq |
-| Character file edit | No immediate impact; applies at next compaction/restart | Deferred |
-| Adding/removing skills | System prompt changes at next compaction/restart | Deferred |
+| Character file edit | No immediate impact; applies at next compaction (a restart does not refresh a resumed Claude Code session) | Deferred |
+| Adding/removing skills | System prompt changes at next compaction (same) | Deferred |
 
 ### Cache bust alerts
 

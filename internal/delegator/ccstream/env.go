@@ -100,6 +100,11 @@ func buildEnv(extra, hookRules map[string]string) []string {
 	// Uncapped retry of 529/429 (see ccRetryWatchdog).
 	env = append(env, "CLAUDE_CODE_RETRY_WATCHDOG="+ccRetryWatchdog)
 
+	// CC's "the user hasn't heard from you in a while" reminder does not fit
+	// foci: text before a tool call may not reach the user, and spawned and
+	// background sessions have no user (Dick 2026-11-07, #2908). Undocumented.
+	env = append(env, "CLAUDE_CODE_SILENT_TURN_REMINDER=0")
+
 	// The Bash tool must run bash: foci's foci_* shell functions reach it
 	// through BASH_ENV, which only bash reads. CC runs the Bash tool in the
 	// user's login shell ($SHELL) unless CLAUDE_CODE_SHELL names one, and on

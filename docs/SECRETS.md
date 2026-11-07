@@ -147,7 +147,7 @@ In-process edits (`/secrets set` and friends) mutate the shared store directly a
 
 **Still needs a restart** (read once at startup to build clients and tokens): provider API keys and clients (`anthropic.*`, OpenAI/Gemini tokens — bound into provider clients at startup), bot tokens, `brave.api_key`, voice keys, `http.api_key` (bound to the gateway's own HTTP auth at startup), and the tracing endpoint and Langfuse keys.
 
-**The system prompt's secret list only changes on restart.** The agent's system prompt lists secret names once, at startup, so the prompt and its cache are untouched: a newly added secret works immediately, but its NAME only appears in the prompt after a restart.
+**The system prompt's secret list only changes on restart.** The agent's system prompt lists secret names once, at startup, so the prompt and its cache are untouched: a newly added secret works immediately, but its NAME only appears in the prompt after a restart. A resumed Claude Code session sees it only at its next compaction (`docs/CACHING.md`, #2908).
 
 ## Domain-Locked Secrets (`http_request`)
 
