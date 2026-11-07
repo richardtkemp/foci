@@ -3208,3 +3208,71 @@ func equal(a, b []string) bool {
 	}
 	return true
 }
+
+// TestConvBinding_AgentStartedMs pins the start time behind the stop dialog's
+// "since" on the agent's own entry (#2913): a new tool call restarts it, even
+// with the same label, repeated deltas of one phase do not, retry attempts keep
+// the first attempt's time, and idle carries none. The frame and the roster
+// snapshot agree.
+func TestConvBinding_AgentStartedMs(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
+	s := newAppSink(b)
+	ctx := context.Background()
+	const old = int64(1000)
+	bash := turnevent.ToolCall{Name: "Bash", Args: []byte(`{"command":"make test"}`)}
+
+	before := time.Now().UnixMilli()
+	s.Emit(ctx, bash)
+	if got := b.info().ActivityAgentStartedMs; got < before {
+		t.Fatalf("first tool call startedMs = %d, want >= %d", got, before)
+	}
+	drain(t, c)
+
+	b.mu.Lock()
+	b.turnStartedMs = old
+	b.mu.Unlock()
+	time.Sleep(2 * time.Millisecond) // the second call's time must differ from the sent frame's
+	s.Emit(ctx, bash)
+	if got := b.info().ActivityAgentStartedMs; got < before {
+		t.Fatalf("identical second tool call kept startedMs %d", got)
+	}
+	var frames []map[string]any
+	for _, d := range drain(t, c) {
+		if d.t == fap.TypeActivity {
+			frames = append(frames, d.d)
+		}
+	}
+	if len(frames) != 1 || frames[0]["agentStartedMs"] != float64(b.info().ActivityAgentStartedMs) {
+		t.Fatalf("frames for the second call = %v", frames)
+	}
+
+	b.setTurnActivity(fap.ActivityKindThinking)
+	b.mu.Lock()
+	b.turnStartedMs = old
+	b.mu.Unlock()
+	b.setTurnActivity(fap.ActivityKindThinking)
+	if got := b.info().ActivityAgentStartedMs; got != old {
+		t.Fatalf("a repeated delta moved startedMs to %d", got)
+	}
+
+	b.setRetrying("retry 1")
+	b.mu.Lock()
+	b.retryStartedMs = old + 1
+	b.mu.Unlock()
+	b.setRetrying("retry 2")
+	if got := b.info().ActivityAgentStartedMs; got != old+1 {
+		t.Fatalf("a later retry attempt moved startedMs to %d", got)
+	}
+
+	b.setWaitingDetail("peer")
+	if got := b.info().ActivityAgentStartedMs; got < before {
+		t.Fatalf("waiting startedMs = %d, want >= %d", got, before)
+	}
+	b.setWaitingDetail("")
+
+	b.setTurnActivity(fap.ActivityKindIdle)
+	if got := b.info().ActivityAgentStartedMs; got != 0 {
+		t.Fatalf("idle startedMs = %d, want 0", got)
+	}
+}

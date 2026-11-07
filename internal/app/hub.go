@@ -2559,16 +2559,19 @@ type convBinding struct {
 	turnDetail     string                // turn-scoped detail (e.g. tool name)
 	turnCommand    string                // turn-scoped full tool command (kind=tool), for the stop dialog (#2138)
 	turnShell      bool                  // the turn-scoped tool is a shell command, stoppable on its own (#2140)
+	turnStartedMs  int64                 // when this tool call or turn phase began, unix ms (#2913)
 	retryDetail    string                // turn-scoped: CC is waiting to retry an API call, the text to show (#2260); empty if not
+	retryStartedMs int64                 // when the retry state began, unix ms; the attempts under it keep this time (#2913)
 	subagentDetail string                // running-subagent descriptions, empty if none
 	subagents      []fap.RunningSubagent // the structured running list behind subagentDetail (#2138)
 	spawns         []fap.RunningSubagent // the session's background spawns, listed after its subagents (#2139)
 	// spawnShells maps a running direct spawn's id to the shell call it was
 	// started from (tools.RunningSpawn.CallerShell): that call's
 	// background-command entry is hidden while the spawn runs (#2685).
-	spawnShells   map[string]string
-	waitingDetail string       // target agent id we're awaiting, empty if none
-	activitySent  fap.Activity // last-emitted Activity frame (zero == idle, nothing sent)
+	spawnShells      map[string]string
+	waitingDetail    string       // target agent id we're awaiting, empty if none
+	waitingStartedMs int64        // when the wait on waitingDetail began, unix ms (#2913)
+	activitySent     fap.Activity // last-emitted Activity frame (zero == idle, nothing sent)
 
 	// lastCmdHash fingerprints the command palette last sent on this
 	// conversation, so pushCommands is a no-op when nothing changed — the same
@@ -2788,7 +2791,7 @@ func (b *convBinding) info() fap.ConversationInfo {
 	defer b.mu.Unlock()
 	a := b.activityFrameLocked()
 	return fap.ConversationInfo{ID: b.convID, SessionKey: b.key(), LastSeq: b.seq, Activity: a.Kind, ActivityDetail: a.Detail,
-		ActivityAgentKind: a.AgentKind, ActivityAgentDetail: a.AgentDetail, ActivityAgentCommand: a.AgentCommand, ActivityAgentShell: a.AgentShell, Subagents: a.Subagents,
+		ActivityAgentKind: a.AgentKind, ActivityAgentDetail: a.AgentDetail, ActivityAgentCommand: a.AgentCommand, ActivityAgentShell: a.AgentShell, ActivityAgentStartedMs: a.AgentStartedMs, Subagents: a.Subagents,
 		LastActivityTs: b.lastActMs, LastPreview: b.lastPreview, CacheExpiryMs: b.cacheExpiryMs, DepthRootID: b.depthRoot}
 }
 
@@ -2819,25 +2822,26 @@ func (b *convBinding) resolveActivity() (fap.ActivityKind, string) {
 		}
 		return fap.ActivityKindSubagents, detail
 	}
-	kind, detail, _, _ := b.agentActivityLocked()
+	kind, detail, _, _, _ := b.agentActivityLocked()
 	return kind, detail
 }
 
 // agentActivityLocked resolves the AGENT's own activity, ignoring subagents:
-// waiting > retrying > turn-scoped > idle, plus the running tool's full command and
-// whether it is a shell command (#2140). This is what the app shows first,
-// above the subagent lines (#2138). Caller holds mu.
-func (b *convBinding) agentActivityLocked() (kind fap.ActivityKind, detail, command string, shell bool) {
+// waiting > retrying > turn-scoped > idle, plus the running tool's full command,
+// whether it is a shell command (#2140) and when that activity began (#2913).
+// This is what the app shows first, above the subagent lines (#2138). Caller
+// holds mu.
+func (b *convBinding) agentActivityLocked() (kind fap.ActivityKind, detail, command string, shell bool, startedMs int64) {
 	if b.waitingDetail != "" {
-		return fap.ActivityKindWaiting, b.waitingDetail, "", false
+		return fap.ActivityKindWaiting, b.waitingDetail, "", false, b.waitingStartedMs
 	}
 	if b.retryDetail != "" {
-		return fap.ActivityKindRetrying, b.retryDetail, "", false
+		return fap.ActivityKindRetrying, b.retryDetail, "", false, b.retryStartedMs
 	}
 	if b.turnKind != "" && b.turnKind != fap.ActivityKindIdle {
-		return b.turnKind, b.turnDetail, b.turnCommand, b.turnShell
+		return b.turnKind, b.turnDetail, b.turnCommand, b.turnShell, b.turnStartedMs
 	}
-	return fap.ActivityKindIdle, "", "", false
+	return fap.ActivityKindIdle, "", "", false, 0
 }
 
 // activityIdle reports whether the roster would report NO activity for this
@@ -2859,8 +2863,8 @@ func (b *convBinding) activityIdle() bool {
 func (b *convBinding) activityFrameLocked() fap.Activity {
 	kind, detail := b.resolveActivity()
 	a := fap.Activity{ConversationID: b.convID, Kind: string(kind), Detail: detail}
-	if ak, ad, cmd, shell := b.agentActivityLocked(); ak != fap.ActivityKindIdle {
-		a.AgentKind, a.AgentDetail, a.AgentCommand, a.AgentShell = string(ak), ad, cmd, shell
+	if ak, ad, cmd, shell, started := b.agentActivityLocked(); ak != fap.ActivityKindIdle {
+		a.AgentKind, a.AgentDetail, a.AgentCommand, a.AgentShell, a.AgentStartedMs = string(ak), ad, cmd, shell, started
 	}
 	subagents, _ := b.visibleSubagentsLocked()
 	if len(subagents)+len(b.spawns) > 0 {
@@ -2917,9 +2921,14 @@ func (b *convBinding) setTurnActivity(kind fap.ActivityKind) {
 // (#2138) and whether it is a shell command the dialog can stop on its own
 // (#2140). Every turn-scoped change is a sign the main call went through (or
 // the turn ended), so it also clears a retry state (#2260), in the same frame.
+// Every call of a tool kind is a new tool call, so it restarts the start time,
+// even with the same label; a phase keeps it across its repeated deltas (#2913).
 func (b *convBinding) setTurnTool(kind fap.ActivityKind, detail, command string, shell bool) {
 	b.applyActivity(func() {
 		b.retryDetail = ""
+		if kind == fap.ActivityKindTool || kind != b.turnKind {
+			b.turnStartedMs = time.Now().UnixMilli()
+		}
 		b.turnKind = kind
 		b.turnDetail = detail
 		b.turnCommand = command
@@ -2931,7 +2940,12 @@ func (b *convBinding) setTurnTool(kind fap.ActivityKind, detail, command string,
 // turn, with the text to show (#2260). The turn-scoped kind under it is kept,
 // so the activity goes back to it when the retry clears (setTurnTool).
 func (b *convBinding) setRetrying(detail string) {
-	b.applyActivity(func() { b.retryDetail = detail })
+	b.applyActivity(func() {
+		if b.retryDetail == "" {
+			b.retryStartedMs = time.Now().UnixMilli()
+		}
+		b.retryDetail = detail
+	})
 }
 
 // setCacheExpiry records the prompt-cache expiry (unix ms) and sends a
@@ -2992,7 +3006,12 @@ func (b *convBinding) removeSpawn(id string) {
 // setWaitingDetail records the session-scoped target agent this conversation is
 // awaiting a reply from (empty = not waiting) and re-emits on a resolved change.
 func (b *convBinding) setWaitingDetail(detail string) {
-	b.applyActivity(func() { b.waitingDetail = detail })
+	b.applyActivity(func() {
+		if detail != b.waitingDetail {
+			b.waitingStartedMs = time.Now().UnixMilli()
+		}
+		b.waitingDetail = detail
+	})
 }
 
 // applyActivity mutates the activity inputs under mu, recomputes the resolved
@@ -3021,7 +3040,7 @@ func (b *convBinding) applyActivity(mutate func()) {
 // the struct non-comparable with ==).
 func activityEqual(x, y fap.Activity) bool {
 	return x.ConversationID == y.ConversationID && x.Kind == y.Kind && x.Detail == y.Detail &&
-		x.AgentKind == y.AgentKind && x.AgentDetail == y.AgentDetail && x.AgentCommand == y.AgentCommand && x.AgentShell == y.AgentShell &&
+		x.AgentKind == y.AgentKind && x.AgentDetail == y.AgentDetail && x.AgentCommand == y.AgentCommand && x.AgentShell == y.AgentShell && x.AgentStartedMs == y.AgentStartedMs &&
 		slices.Equal(x.Subagents, y.Subagents)
 }
 

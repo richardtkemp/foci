@@ -329,14 +329,16 @@ type ConversationInfo struct {
 	// agent id (kind=waiting), the retry text (kind=retrying), else empty.
 	ActivityDetail string `json:"activityDetail,omitempty"`
 	// ActivityAgentKind, ActivityAgentDetail, ActivityAgentCommand,
-	// ActivityAgentShell and Subagents are the snapshot halves of the Activity
-	// frame's AgentKind, AgentDetail, AgentCommand, AgentShell and Subagents
+	// ActivityAgentShell, ActivityAgentStartedMs and Subagents are the snapshot
+	// halves of the Activity frame's AgentKind, AgentDetail, AgentCommand,
+	// AgentShell, AgentStartedMs and Subagents
 	// (#2138, #2140).
-	ActivityAgentKind    string            `json:"activityAgentKind,omitempty"`
-	ActivityAgentDetail  string            `json:"activityAgentDetail,omitempty"`
-	ActivityAgentCommand string            `json:"activityAgentCommand,omitempty"`
-	ActivityAgentShell   bool              `json:"activityAgentShell,omitempty"`
-	Subagents            []RunningSubagent `json:"subagents,omitempty"`
+	ActivityAgentKind      string            `json:"activityAgentKind,omitempty"`
+	ActivityAgentDetail    string            `json:"activityAgentDetail,omitempty"`
+	ActivityAgentCommand   string            `json:"activityAgentCommand,omitempty"`
+	ActivityAgentShell     bool              `json:"activityAgentShell,omitempty"`
+	ActivityAgentStartedMs int64             `json:"activityAgentStartedMs,omitempty"`
+	Subagents              []RunningSubagent `json:"subagents,omitempty"`
 	// LastActivityTs and LastPreview seed the roster row (last-active time + last
 	// message preview) so a freshly-paired device renders them without opening each
 	// chat to backfill. LastActivityTs is unix ms of the last visible frame.
@@ -631,7 +633,9 @@ func (Notification) Type() string { return TypeNotification }
 // (#2138): AgentKind/AgentDetail are the agent's OWN resolved activity
 // (waiting > retrying > tool > thinking > warming > typing, never "subagents"; empty =
 // idle), AgentCommand is the running tool call's full command, AgentShell says
-// that call is a shell command /stop commands can stop on its own (#2140), and
+// that call is a shell command /stop commands can stop on its own (#2140),
+// AgentStartedMs is when that own activity began, unix ms (the tool call, or the
+// phase, the retry state or the wait; 0 = unknown, #2913), and
 // Subagents lists every running subagent and background command. A client that
 // ignores them still gets the flattened Kind/Detail.
 type Activity struct {
@@ -642,6 +646,7 @@ type Activity struct {
 	AgentDetail    string            `json:"agentDetail,omitempty"`
 	AgentCommand   string            `json:"agentCommand,omitempty"`
 	AgentShell     bool              `json:"agentShell,omitempty"`
+	AgentStartedMs int64             `json:"agentStartedMs,omitempty"`
 	Subagents      []RunningSubagent `json:"subagents,omitempty"`
 }
 

@@ -349,7 +349,7 @@ func TestConvBindingFieldCensus(t *testing.T) {
 	// rather than something wrong.
 	restartSafe := map[string]bool{
 		"mu": true, "clients": true, "clientStates": true, "buffer": true,
-		"seenOrder": true, "turnKind": true, "turnDetail": true, "turnCommand": true, "turnShell": true, "retryDetail": true,
+		"seenOrder": true, "turnKind": true, "turnDetail": true, "turnCommand": true, "turnShell": true, "turnStartedMs": true, "retryStartedMs": true, "waitingStartedMs": true, "retryDetail": true,
 		"subagentDetail": true, "subagents": true, "spawns": true, "spawnShells": true, "waitingDetail": true,
 		"activitySent": true, "cacheExpiryMs": true, "lastCmdHash": true,
 		"lastMsgID": true, "readAfterTurn": true,
