@@ -1,11 +1,15 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"strings"
 	"testing"
 	"time"
 
+	"foci/internal/config"
 	"foci/internal/delegator"
+	"foci/internal/log"
 )
 
 // TestGet_SessionEnvIsBackendAgnostic pins WHERE the CC-only
@@ -112,7 +116,7 @@ func TestWantsPromptSuggestion(t *testing.T) {
 func TestPromptSuggestion_SilentTurnDropped(t *testing.T) {
 	a := &Agent{}
 	var got []string
-	a.SetOnPromptSuggestion(func(_, text string) { got = append(got, text) })
+	a.SetOnPromptSuggestion(func(_, text string) bool { got = append(got, text); return true })
 	be := &mockBackendDT{}
 	a.AttachDelivery(be, "a/c1")
 	se := be.sessionEvents
@@ -184,7 +188,7 @@ func TestRunInference_SilentReplyHoldsBackSuggestion(t *testing.T) {
 	be := &mockBackendDT{sessionFile: "/tmp/s.jsonl"}
 	a := &Agent{Model: "test-model", DelegatedManager: newMockDelegatedManager(t, be)}
 	var got []string
-	a.SetOnPromptSuggestion(func(_, text string) { got = append(got, text) })
+	a.SetOnPromptSuggestion(func(_, text string) bool { got = append(got, text); return true })
 	a.AttachDelivery(be, "test/s")
 
 	run := func(reply string) {
@@ -256,5 +260,65 @@ func TestRunInference_UserInputClearsSuggestion(t *testing.T) {
 				t.Errorf("stale calls = %d, want %d", got, c.want)
 			}
 		})
+	}
+}
+
+// The per-turn decision and the delivery outcome are in the log at DEBUG, so a
+// missing chip can be traced from foci.log (#2931). Not parallel: the logger is
+// process-global.
+func TestPromptSuggestion_DecisionAndDeliveryAreLogged(t *testing.T) {
+	var out bytes.Buffer
+	log.SetOutput(&out)
+	log.SetLevel(log.DEBUG)
+	t.Cleanup(func() { log.SetOutput(nil); log.SetLevel(log.INFO) })
+
+	a := &Agent{}
+	a.SetPromptSuggestionSurface(func(sk string) bool { return sk == "a/c1" })
+	a.wantsPromptSuggestion(true, "a/c1")
+	a.wantsPromptSuggestion(false, "a/c1")
+	a.wantsPromptSuggestion(true, "a/c2")
+	delivered := true
+	a.SetOnPromptSuggestion(func(_, _ string) bool { return delivered })
+	be := &mockBackendDT{}
+	a.AttachDelivery(be, "a/c1")
+	a.noteTurnReply("a/c1", "a real reply")
+	be.sessionEvents.OnPromptSuggestion("run the tests")
+	delivered = false
+	be.sessionEvents.OnPromptSuggestion("run the tests")
+
+	got := out.String()
+	for _, want := range []string{
+		"session=a/c1 prompt suggestion wanted=true",
+		"session=a/c1 prompt suggestion wanted=false: the user did not start this input",
+		"session=a/c2 prompt suggestion wanted=false: no app conversation is bound",
+		"session=a/c1 prompt suggestion delivered (13 bytes)",
+		"session=a/c1 prompt suggestion not delivered: no app conversation bound",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log lacks %q\nlog:\n%s", want, got)
+		}
+	}
+}
+
+// The limit is read live per turn, and a limit of 0 asks for no prediction at
+// all (#2931).
+func TestPromptSuggestion_MaxUsageIsLive(t *testing.T) {
+	limit := 75
+	a := &Agent{LiveConfigFn: func() *config.ResolvedAgentConfig {
+		return &config.ResolvedAgentConfig{Behavior: config.ResolvedBehavior{PromptSuggestionMaxUsage: limit}}
+	}}
+	a.SetPromptSuggestionSurface(func(string) bool { return true })
+	if got := a.promptSuggestionMaxUsage(); got != 75 {
+		t.Fatalf("limit = %d, want the live 75", got)
+	}
+	if !a.wantsPromptSuggestion(true, "a/c1") {
+		t.Fatal("limit 75: want a prediction")
+	}
+	limit = 0
+	if a.wantsPromptSuggestion(true, "a/c1") {
+		t.Fatal("limit 0 after a live edit: want none")
+	}
+	if got := (&Agent{}).promptSuggestionMaxUsage(); got != config.DefaultPromptSuggestionMaxUsage {
+		t.Fatalf("no live config: limit = %d, want the default", got)
 	}
 }

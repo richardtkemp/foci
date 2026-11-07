@@ -201,6 +201,10 @@ type Backend struct {
 	// Pending control responses (request_id → channel)
 	pendingControlMu sync.Mutex
 	pendingControls  map[string]chan json.RawMessage
+	// suggestionControls holds the request ids of prompt suggestion switch
+	// writes, each with the value it sent, so CC's answer is logged (#2931).
+	// Guarded by pendingControlMu.
+	suggestionControls map[string]bool
 
 	// Permissions
 	permMu       sync.Mutex
@@ -344,6 +348,23 @@ type Backend struct {
 	// suggestionsOn is the switch's last written value; see setPromptSuggestions.
 	promptSuggestions bool
 	suggestionsOn     atomic.Bool
+	// suggestMu serialises deciding and writing the switch, which both the
+	// inject path and the reader (rate-limit events) do (#2931). It guards
+	// the fields below.
+	suggestMu sync.Mutex
+	// suggestWanted is what the last turn asked for (Inject.PromptSuggestion);
+	// the switch is on only while the usage gate also allows it.
+	suggestWanted bool
+	// suggestMaxUsage is the turn's usage percent limit (default 90).
+	suggestMaxUsage int
+	// rateLimitStatus is the status of CC's last rate_limit_event
+	// ("allowed", "allowed_warning", "rejected").
+	rateLimitStatus string
+	// windowUsage is each rate-limit window's last reported utilization
+	// (0-1) and reset time, keyed by rateLimitType. An "allowed" event
+	// carries none and means that window is below CC's warning level: it is
+	// stored as 0. A window past its reset no longer counts.
+	windowUsage map[string]windowReading
 
 	// onAutonomousOpen is fired when the backend detects CC has begun a run foci
 	// did not open (session_state=running while !turnActive). The agent wires it

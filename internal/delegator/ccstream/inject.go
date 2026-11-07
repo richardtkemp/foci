@@ -217,7 +217,7 @@ func (b *Backend) beginTrackedTurn(inj delegator.Inject, exclusive bool, write f
 
 	// After the begin, so a refused system turn leaves the running turn's
 	// switch alone; before the write, so CC reads it ahead of this turn's end.
-	b.setPromptSuggestions(inj.PromptSuggestion)
+	b.setPromptSuggestionsLimit(inj.PromptSuggestion, inj.PromptSuggestionMaxUsage)
 
 	if err := b.writeInput(p, write); err != nil {
 		b.cancelTurn()
@@ -423,8 +423,8 @@ func (b *Backend) sendFold(in trackedInput, priority string) error {
 // only the types FoldsAttachment accepts.
 func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) error {
 	inFlight := b.IsTurnInFlight()
-	b.logger().Debugf("Inject: source=%s text_bytes=%d attachments=%d in_flight=%v",
-		inj.Source, len(inj.Text), len(inj.Attachments), inFlight)
+	b.logger().Debugf("Inject: source=%s text_bytes=%d attachments=%d in_flight=%v suggest=%v",
+		inj.Source, len(inj.Text), len(inj.Attachments), inFlight, inj.PromptSuggestion)
 
 	switch inj.Source {
 	case delegator.SourceUser:

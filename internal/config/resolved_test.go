@@ -398,3 +398,18 @@ func TestResolve_ReloadOnCompactGlobalFalseInherits(t *testing.T) {
 }
 
 func ptrFloat(v float64) *float64 { return &v }
+
+// behavior.prompt_suggestion_max_usage (#2931): 90 by default, a global value
+// applies, and an agent's value overrides it (0 included).
+func TestResolve_PromptSuggestionMaxUsage(t *testing.T) {
+	if got := Resolve(&Config{}, AgentConfig{}).Behavior.PromptSuggestionMaxUsage; got != 90 {
+		t.Errorf("default = %d, want 90", got)
+	}
+	cfg := &Config{Behavior: BehaviorConfig{PromptSuggestionMaxUsage: Ptr(70)}}
+	if got := Resolve(cfg, AgentConfig{}).Behavior.PromptSuggestionMaxUsage; got != 70 {
+		t.Errorf("global 70 = %d, want 70", got)
+	}
+	if got := Resolve(cfg, AgentConfig{Behavior: BehaviorConfig{PromptSuggestionMaxUsage: Ptr(0)}}).Behavior.PromptSuggestionMaxUsage; got != 0 {
+		t.Errorf("agent 0 over global 70 = %d, want 0", got)
+	}
+}

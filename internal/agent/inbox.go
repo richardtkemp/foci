@@ -42,6 +42,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"foci/internal/config"
 	"foci/internal/convo"
 	"foci/internal/delegator"
 	"foci/internal/log"
@@ -1067,7 +1068,7 @@ func (a *Agent) steerToBackend(be delegator.Delegator, env Envelope) bool {
 // the saved-to-disk notes, then the sender's text.
 func (a *Agent) steerInject(be delegator.Delegator, env Envelope) (inj delegator.Inject, ok bool) {
 	inj = delegator.Inject{Source: delegator.SourceSteer, Text: env.Text,
-		PromptSuggestion: a.wantsPromptSuggestion(true, env.SessionKey)}
+		PromptSuggestion: a.wantsPromptSuggestion(true, env.SessionKey), PromptSuggestionMaxUsage: a.promptSuggestionMaxUsage()}
 	if env.Ref.MessageID != "" {
 		inj.Refs = []delegator.InputRef{env.Ref}
 	}
@@ -2122,9 +2123,9 @@ func (a *Agent) SetTurnLifecycleHooks(onComplete, onEnd func()) {
 }
 
 // SetOnPromptSuggestion wires the callback that receives the backend's predicted
-// next prompt for a session (#2916). Set once at gateway setup, before any
-// backend starts.
-func (a *Agent) SetOnPromptSuggestion(fn func(sessionKey, text string)) {
+// next prompt for a session (#2916). It reports whether a conversation took it.
+// Set once at gateway setup, before any backend starts.
+func (a *Agent) SetOnPromptSuggestion(fn func(sessionKey, text string) bool) {
 	a.onPromptSuggestion = fn
 }
 
@@ -2154,8 +2155,37 @@ func (a *Agent) SetPromptSuggestionSurface(fn func(sessionKey string) bool) {
 // be followed by a predicted next prompt (#2922): the user started it (the #2320
 // definition the typing gate uses) and the session has somewhere to show it. The
 // surface is read per turn, so a session that moves to the app needs no relaunch.
+//
+// The decision is logged at DEBUG, so a missing suggestion can be traced to it
+// (#2931).
 func (a *Agent) wantsPromptSuggestion(userInput bool, sessionKey string) bool {
-	return userInput && a.promptSuggestionSurface != nil && a.promptSuggestionSurface(sessionKey)
+	if a.promptSuggestionSurface == nil {
+		return false
+	}
+	if !userInput {
+		a.logger().Debugf("session=%s prompt suggestion wanted=false: the user did not start this input", sessionKey)
+		return false
+	}
+	if !a.promptSuggestionSurface(sessionKey) {
+		a.logger().Debugf("session=%s prompt suggestion wanted=false: no app conversation is bound", sessionKey)
+		return false
+	}
+	if a.promptSuggestionMaxUsage() <= 0 {
+		a.logger().Debugf("session=%s prompt suggestion wanted=false: behavior.prompt_suggestion_max_usage is 0", sessionKey)
+		return false
+	}
+	a.logger().Debugf("session=%s prompt suggestion wanted=true", sessionKey)
+	return true
+}
+
+// promptSuggestionMaxUsage is the live behavior.prompt_suggestion_max_usage
+// (#2931): the plan usage percent at or above which the backend predicts
+// nothing. Read per turn, so a config edit applies at the next turn.
+func (a *Agent) promptSuggestionMaxUsage() int {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Behavior.PromptSuggestionMaxUsage
+	}
+	return config.DefaultPromptSuggestionMaxUsage
 }
 
 // noteTurnReply records whether a session's finished turn gave a reply. CC starts
@@ -2328,7 +2358,11 @@ func (a *Agent) AttachDelivery(be delegator.Delegator, sk string) {
 				if a.Redact != nil {
 					text = a.Redact(text)
 				}
-				a.onPromptSuggestion(sk, text)
+				if a.onPromptSuggestion(sk, text) {
+					a.logger().Debugf("session=%s prompt suggestion delivered (%d bytes)", sk, len(text))
+				} else {
+					a.logger().Debugf("session=%s prompt suggestion not delivered: no app conversation bound", sk)
+				}
 			},
 		}
 		a.sessionEvents[sk] = se

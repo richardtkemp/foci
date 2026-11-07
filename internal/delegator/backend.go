@@ -1133,6 +1133,12 @@ type Inject struct {
 	// StartOptions.PromptSuggestions.
 	PromptSuggestion bool
 
+	// PromptSuggestionMaxUsage is the plan usage percent at or above which no
+	// prediction runs (behavior.prompt_suggestion_max_usage, #2931), read when
+	// PromptSuggestion is set. Zero or less means the default. A config of 0
+	// never reaches here: the agent sends PromptSuggestion false instead.
+	PromptSuggestionMaxUsage int
+
 	// PendingWorkExempt lets a SourceSystem inject begin while the backend
 	// still tracks pending background work (a keepalive, whose whole purpose
 	// is keeping the prompt cache warm — holding it for the background-work

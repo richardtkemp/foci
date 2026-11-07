@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/log"
 )
 
 // The wire shape is from a live CC 2.1.314 run (#2916).
@@ -379,4 +380,127 @@ func TestAutonomousRun_TurnsSwitchOff(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the run was not adopted")
 	}
+}
+
+// The on value is "true", not empty (#2931). CC 2.1.314 skips a suggestion
+// whenever the account's rate-limit status is not "allowed", unless the env
+// value is exactly true, which lets allowed_warning through. Live on 7 Nov the
+// seven-day window sat at allowed_warning (76-78%) for days, and an empty on
+// value got no fork in 5 turns while "true" forked after every turn.
+func TestSwitchOnValuePassesRateLimitWarning(t *testing.T) {
+	t.Parallel()
+	b, lines := switchBackend(t, true)
+	b.setPromptSuggestions(true)
+	if got := lines.next(t); got != "env=true" {
+		t.Fatalf("switch on wrote %q, want env=true", got)
+	}
+}
+
+// The switch, CC's answer to it, each suggestion and each drop are in the log,
+// so "why no suggestion?" can be answered from foci.log (#2931).
+// Not parallel: the logger is process-global.
+func TestPromptSuggestion_SwitchAndDropsAreLogged(t *testing.T) {
+	out := captureLog(t)
+	log.SetLevel(log.DEBUG)
+	t.Cleanup(func() { log.SetLevel(log.INFO) })
+	b, lines := switchBackend(t, true)
+	b.startOpts.SessionKey = "clutch/c1"
+
+	b.setPromptSuggestions(true)
+	_ = lines.next(t)
+	b.pendingControlMu.Lock()
+	var reqID string
+	for id := range b.suggestionControls {
+		reqID = id
+	}
+	b.pendingControlMu.Unlock()
+	if reqID == "" {
+		t.Fatal("the switch write left no request to match CC's answer to")
+	}
+	b.OnControlResponse(json.RawMessage(`{"type":"control_response","response":{"subtype":"success","request_id":"` + reqID + `"}}`))
+	b.OnResult(&ResultMessage{Subtype: "success"})
+	b.OnPromptSuggestion(&PromptSuggestionMessage{Suggestion: "run the tests"})
+	// Through OnRateLimit, so its wiring to the gate is covered. Off a
+	// warning boundary, so no notice fires.
+	util := 0.77
+	b.OnRateLimit(&RateLimitEvent{RateLimitInfo: RateLimitInfo{Status: "rejected", RateLimitType: "seven_day", Utilization: &util}})
+	if got := lines.next(t); got != "env="+promptSuggestionOff {
+		t.Fatalf("a rejected status wrote %q, want the switch off", got)
+	}
+	b.OnPromptSuggestion(&PromptSuggestionMessage{Suggestion: "late"})
+
+	got := out.String()
+	for _, want := range []string{
+		"prompt suggestion switch on=true sent",
+		"prompt suggestion switch on=true: CC answered success",
+		"prompt suggestion: turn ended with the switch on (usage 0% (unknown), limit 90%, rate limit status unknown)",
+		"prompt suggestion received (13 bytes)",
+		"prompt suggestion held off: usage 77% (seven_day), limit 90%, rate limit status rejected",
+		"prompt suggestion switch on=false sent",
+		"prompt suggestion dropped: the switch is off",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log lacks %q\nlog:\n%s", want, got)
+		}
+	}
+}
+
+// The usage gate (#2931, Dick's ruling Q24): the switch is on below the turn's
+// limit and off at or above it, judged on the highest window CC reported, and
+// it follows rate-limit events that arrive between turns or mid-turn.
+func TestPromptSuggestion_UsageGate(t *testing.T) {
+	t.Parallel()
+	b, lines := switchBackend(t, true)
+	reading := func(window, status string, util float64, resetsAt float64) {
+		info := RateLimitInfo{Status: status, RateLimitType: window}
+		if util >= 0 {
+			info.Utilization = &util
+		}
+		if resetsAt != 0 {
+			info.ResetsAt = &resetsAt
+		}
+		b.noteRateLimitForSuggestions(info)
+	}
+	future := float64(time.Now().Add(time.Hour).Unix())
+
+	b.setPromptSuggestionsLimit(true, 90)
+	if got := lines.next(t); got != "env=true" {
+		t.Fatalf("on with no reading: wrote %q, want env=true", got)
+	}
+	reading("seven_day", "allowed_warning", 0.89, future)
+	lines.none(t) // 89% < 90%: stays on
+	reading("five_hour", "allowed_warning", 0.90, future)
+	if got := lines.next(t); got != "env=false" {
+		t.Fatalf("a window at the limit: wrote %q, want env=false", got)
+	}
+	reading("five_hour", "allowed", -1, future) // no utilization: below CC's warning level
+	if got := lines.next(t); got != "env=true" {
+		t.Fatalf("the highest window back at 89%%: wrote %q, want env=true", got)
+	}
+
+	// A lower limit on the next turn applies at its begin.
+	b.setPromptSuggestionsLimit(true, 80)
+	if got := lines.next(t); got != "env=false" {
+		t.Fatalf("limit 80 with a window at 89%%: wrote %q, want env=false", got)
+	}
+	// A window past its reset no longer counts.
+	reading("seven_day", "allowed_warning", 0.89, float64(time.Now().Add(-time.Minute).Unix()))
+	if got := lines.next(t); got != "env=true" {
+		t.Fatalf("the only high window has reset: wrote %q, want env=true", got)
+	}
+	// A turn that does not want a prediction turns it off whatever the usage.
+	b.setPromptSuggestions(false)
+	if got := lines.next(t); got != "env=false" {
+		t.Fatalf("an unwanted turn: wrote %q, want env=false", got)
+	}
+	// A reading with nobody wanting a prediction writes nothing.
+	reading("five_hour", "allowed", -1, future)
+	lines.none(t)
+	// Overage is not a plan window: a high one does not stop predictions.
+	b.setPromptSuggestionsLimit(true, 90)
+	if got := lines.next(t); got != "env=true" {
+		t.Fatalf("on again: wrote %q, want env=true", got)
+	}
+	reading("overage", "allowed", 0.99, future)
+	lines.none(t)
 }

@@ -15,7 +15,9 @@ func TestDeliverPromptSuggestion_BoundSessionGetsFrame(t *testing.T) {
 	client := fakeClient()
 	b.attach(client)
 
-	DeliverPromptSuggestion(b.key(), "run the tests")
+	if !DeliverPromptSuggestion(b.key(), "run the tests") {
+		t.Error("delivery to a bound conversation reported false")
+	}
 
 	got := drain(t, client)
 	if len(got) != 1 || got[0].t != fap.TypePromptSuggestion {
@@ -28,12 +30,16 @@ func TestDeliverPromptSuggestion_BoundSessionGetsFrame(t *testing.T) {
 
 func TestDeliverPromptSuggestion_NoHubOrBindingIsSilent(t *testing.T) {
 	setActiveHub(nil)
-	DeliverPromptSuggestion("scout/c1", "x") // no hub: no panic
+	if DeliverPromptSuggestion("scout/c1", "x") { // no hub: no panic
+		t.Error("delivery with no hub reported true")
+	}
 
 	h := newTestHub()
 	setActiveHub(h)
 	t.Cleanup(func() { setActiveHub(nil) })
-	DeliverPromptSuggestion("scout/c999", "x") // no binding: no panic
+	if DeliverPromptSuggestion("scout/c999", "x") { // no binding: no panic
+		t.Error("delivery with no binding reported true")
+	}
 }
 
 // A suggestion is not news: it must not buzz the phone or bump the unread count.

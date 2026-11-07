@@ -232,6 +232,8 @@ var (
 		"sessions.compaction_handoff_msg", "agent.sessions.compaction_handoff_msg",
 		"sessions.reload_on_compact", "agent.sessions.reload_on_compact",
 		"behavior.turn_lock_warn_threshold", "agent.behavior.turn_lock_warn_threshold",
+		// #2931: read per turn by Agent.promptSuggestionMaxUsage, carried on the inject.
+		"behavior.prompt_suggestion_max_usage", "agent.behavior.prompt_suggestion_max_usage",
 		"display.show_tool_calls", "agent.display.show_tool_calls", "platforms.display.show_tool_calls",
 		"display.statusline", "agent.display.statusline", "platforms.display.statusline",
 		// #1241: reflection session-end + compaction fields, read live at the

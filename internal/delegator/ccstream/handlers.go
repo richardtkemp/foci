@@ -408,6 +408,7 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	}
 	b.ledger.Load().enqueue(ccEvent{kind: ccResultEv, mu: msg.ModelUsage, running: b.agents.Pending(), stop: stop})
 	b.checkModelUsageMonotonic(msg.ModelUsage)
+	b.logSuggestionExpected()
 
 	b.turnMu.Lock()
 	turnActive := b.turnActive
@@ -1012,6 +1013,9 @@ func (b *Backend) OnControlResponse(raw json.RawMessage) {
 	if reqID == "" {
 		return
 	}
+	if b.logSuggestionSwitchAnswer(reqID, &env) {
+		return
+	}
 
 	// Check if this is the response to our initialize request.
 	b.mu.Lock()
@@ -1082,19 +1086,130 @@ func (b *Backend) OnKeepAlive() {
 const (
 	promptSuggestionEnv = "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION"
 	promptSuggestionOff = "false"
-	// Empty is not "true": true also keeps suggestions running past CC's
-	// near-the-rate-limit gate, and CC's parser reads empty as unset.
-	promptSuggestionOn = ""
+	// On is "true", not empty (#2931). CC skips a suggestion when the
+	// rate-limit status is not "allowed", unless this value is exactly true,
+	// which also passes "allowed_warning". A subscription's seven-day window
+	// warns from 75% and stays there until it resets, so an empty value (read
+	// as unset) gave no suggestion at all for days: measured live on 7 Nov at
+	// allowed_warning, empty forked 0 times in 5 turns and true after each.
+	// foci's own usage gate (suggestionUsageAllowsLocked) replaces CC's: the
+	// switch goes off at the configured limit, and on "rejected".
+	promptSuggestionOn = "true"
 )
 
-// setPromptSuggestions writes the per-turn switch when its value changes. A
-// session launched without --prompt-suggestions has no switch, so nothing is
-// written. CC replies with a control_response the reader logs.
-func (b *Backend) setPromptSuggestions(on bool) {
-	if !b.promptSuggestions || b.suggestionsOn.Swap(on) == on {
+// defaultPromptSuggestionMaxUsage is the usage percent limit when a turn
+// names none (config behavior.prompt_suggestion_max_usage's default).
+const defaultPromptSuggestionMaxUsage = 90
+
+// setPromptSuggestions records what this turn wants and writes the switch.
+// A session launched without --prompt-suggestions has no switch, so nothing
+// is written.
+func (b *Backend) setPromptSuggestions(want bool) {
+	b.setPromptSuggestionsLimit(want, 0)
+}
+
+// setPromptSuggestionsLimit is setPromptSuggestions with the turn's usage
+// limit; maxUsage <= 0 keeps the last one.
+func (b *Backend) setPromptSuggestionsLimit(want bool, maxUsage int) {
+	if !b.promptSuggestions {
+		return
+	}
+	b.suggestMu.Lock()
+	defer b.suggestMu.Unlock()
+	b.suggestWanted = want
+	if maxUsage > 0 {
+		b.suggestMaxUsage = maxUsage
+	}
+	b.applyPromptSuggestionsLocked()
+}
+
+// applyPromptSuggestionsLocked writes the switch when its value changes: on
+// while the turn wants a prediction and the usage gate allows it (#2931).
+// Called under suggestMu, after a turn's decision or a rate-limit event.
+func (b *Backend) applyPromptSuggestionsLocked() {
+	on := b.suggestWanted
+	if on {
+		if ok, why := b.suggestionUsageAllowsLocked(); !ok {
+			on = false
+			if b.suggestionsOn.Load() {
+				b.logger().Debugf("prompt suggestion held off: %s", why)
+			}
+		}
+	}
+	if b.suggestionsOn.Swap(on) == on {
 		return
 	}
 	b.writePromptSuggestionSwitch(on)
+}
+
+// suggestionUsageAllowsLocked is the usage gate: no prediction once the
+// highest reported window is at or above the turn's limit, or the account is
+// rejected. Below it the switch's "true" also passes CC's own
+// allowed_warning skip, by Dick's ruling (Q24, 7 Nov: "override below default
+// 90%"). why describes the state either way.
+func (b *Backend) suggestionUsageAllowsLocked() (ok bool, why string) {
+	limit := b.suggestMaxUsage
+	if limit <= 0 {
+		limit = defaultPromptSuggestionMaxUsage
+	}
+	top, window := 0.0, ""
+	now := float64(timeutil.Now().Unix())
+	for w, r := range b.windowUsage {
+		if r.resetsAt > 0 && r.resetsAt <= now {
+			continue
+		}
+		if r.util > top || window == "" {
+			top, window = r.util, w
+		}
+	}
+	pct := top * 100
+	desc := fmt.Sprintf("usage %.0f%% (%s), limit %d%%, rate limit status %s", pct, orUnknown(window), limit, orUnknown(b.rateLimitStatus))
+	if b.rateLimitStatus == "rejected" {
+		return false, desc
+	}
+	return pct < float64(limit), desc
+}
+
+// windowReading is one rate-limit window's last utilization (0-1) and its
+// reset time (unix seconds, 0 when not reported).
+type windowReading struct {
+	util     float64
+	resetsAt float64
+}
+
+func orUnknown(s string) string {
+	if s == "" {
+		return "unknown"
+	}
+	return s
+}
+
+// noteRateLimitForSuggestions records a rate_limit_event for the usage gate
+// and re-applies the switch: CC reads it when the run ends, so a crossing
+// mid-turn is in time.
+func (b *Backend) noteRateLimitForSuggestions(info RateLimitInfo) {
+	if !b.promptSuggestions || info.Status == "" {
+		return
+	}
+	b.suggestMu.Lock()
+	defer b.suggestMu.Unlock()
+	b.rateLimitStatus = info.Status
+	// Overage is paid usage past the plan, not a plan window: its
+	// utilization says nothing about how near the plan's limit is.
+	if info.RateLimitType != "" && !strings.HasPrefix(info.RateLimitType, "overage") {
+		if b.windowUsage == nil {
+			b.windowUsage = make(map[string]windowReading)
+		}
+		var r windowReading
+		if info.Utilization != nil {
+			r.util = *info.Utilization
+		}
+		if info.ResetsAt != nil {
+			r.resetsAt = *info.ResetsAt
+		}
+		b.windowUsage[info.RateLimitType] = r
+	}
+	b.applyPromptSuggestionsLocked()
 }
 
 // raisePromptSuggestions turns the switch on for user input folding into a
@@ -1102,22 +1217,69 @@ func (b *Backend) setPromptSuggestions(on bool) {
 // nothing about the run it joins.
 func (b *Backend) raisePromptSuggestions(inj delegator.Inject) {
 	if inj.PromptSuggestion {
-		b.setPromptSuggestions(true)
+		b.setPromptSuggestionsLimit(true, inj.PromptSuggestionMaxUsage)
 	}
 }
 
+// writePromptSuggestionSwitch sends the switch and logs it. CC's answer is
+// logged by OnControlResponse through suggestionControls (#2931).
 func (b *Backend) writePromptSuggestionSwitch(on bool) {
 	value := promptSuggestionOff
 	if on {
 		value = promptSuggestionOn
 	}
-	err := b.writer.SendControl(newRequestID(), &ApplyFlagSettingsRequest{
+	reqID := newRequestID()
+	b.pendingControlMu.Lock()
+	if b.suggestionControls == nil {
+		b.suggestionControls = make(map[string]bool)
+	}
+	b.suggestionControls[reqID] = on
+	b.pendingControlMu.Unlock()
+	err := b.writer.SendControl(reqID, &ApplyFlagSettingsRequest{
 		Subtype:  "apply_flag_settings",
 		Settings: map[string]any{"env": map[string]string{promptSuggestionEnv: value}},
 	})
 	if err != nil {
+		b.pendingControlMu.Lock()
+		delete(b.suggestionControls, reqID)
+		b.pendingControlMu.Unlock()
 		b.logger().Warnf("prompt suggestion switch on=%v not written: %v", on, err)
+		return
 	}
+	b.logger().Debugf("prompt suggestion switch on=%v sent (%s=%q, request %s)", on, promptSuggestionEnv, value, reqID)
+}
+
+// logSuggestionSwitchAnswer logs CC's answer to a switch write, and reports
+// whether reqID was one.
+func (b *Backend) logSuggestionSwitchAnswer(reqID string, env *controlResponseInbound) bool {
+	b.pendingControlMu.Lock()
+	on, ok := b.suggestionControls[reqID]
+	delete(b.suggestionControls, reqID)
+	b.pendingControlMu.Unlock()
+	if !ok {
+		return false
+	}
+	if env.Response.Subtype != "success" {
+		b.logger().Warnf("prompt suggestion switch on=%v: CC answered %s: %s", on, env.Response.Subtype, env.Response.Error)
+	} else {
+		b.logger().Debugf("prompt suggestion switch on=%v: CC answered success", on)
+	}
+	return true
+}
+
+// logSuggestionExpected says, at a result, that CC may now generate a
+// suggestion. CC reports none of its skips on the stream (2.1.314: too few
+// assistant messages, a cold cache, a rate limit, an empty or filtered
+// prediction), so this line followed by no "received" line is a skip; the
+// rate-limit one is named because foci can see it (#2931).
+func (b *Backend) logSuggestionExpected() {
+	if !b.promptSuggestions || !b.suggestionsOn.Load() {
+		return
+	}
+	b.suggestMu.Lock()
+	_, why := b.suggestionUsageAllowsLocked()
+	b.suggestMu.Unlock()
+	b.logger().Debugf("prompt suggestion: turn ended with the switch on (%s); no received line after this means CC skipped it", why)
 }
 
 // OnPromptSuggestion passes CC's predicted next prompt to the session (#2916).
@@ -1128,6 +1290,7 @@ func (b *Backend) writePromptSuggestionSwitch(on bool) {
 // was not the user's, and this holds even if a CC build ignores the switch.
 func (b *Backend) OnPromptSuggestion(msg *PromptSuggestionMessage) {
 	text := strings.TrimSpace(msg.Suggestion)
+	b.logger().Debugf("prompt suggestion received (%d bytes)", len(text))
 	if text == "" {
 		return
 	}
@@ -1165,6 +1328,7 @@ func (b *Backend) OnRateLimit(ev *RateLimitEvent) {
 	// can be explained from the log: the server picks the warning threshold
 	// (surpassedThreshold), not foci (#2120).
 	b.logger().Debugf("rate_limit_event received: %s", describeRateLimitInfo(info))
+	b.noteRateLimitForSuggestions(info)
 	b.reportUsageWindow(info)
 	if info.Status == "" || info.Status == "allowed" {
 		return

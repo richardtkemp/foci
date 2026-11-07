@@ -35,6 +35,20 @@ type ResolvedBehavior struct {
 	// (max_concurrent_turns_all_agents) is global-only and read straight from
 	// [behavior] by the gateway, so it deliberately has no resolved field.
 	MaxConcurrentTurns int
+	// PromptSuggestionMaxUsage is the plan usage percent at or above which
+	// a Claude Code backend predicts no next prompt (#2931, default 90).
+	PromptSuggestionMaxUsage int
+}
+
+// DefaultPromptSuggestionMaxUsage is behavior.prompt_suggestion_max_usage's
+// default, for a config that never had its tag defaults applied.
+const DefaultPromptSuggestionMaxUsage = 90
+
+func derefIntOr(p *int, def int) int {
+	if p == nil {
+		return def
+	}
+	return *p
 }
 
 func resolveBehavior(m BehaviorConfig) ResolvedBehavior {
@@ -45,6 +59,8 @@ func resolveBehavior(m BehaviorConfig) ResolvedBehavior {
 		EnableStopAliases:     DerefBool(m.EnableStopAliases),
 		StopAliases:           m.StopAliases,
 		MaxConcurrentTurns:    DerefInt(m.MaxConcurrentTurns),
+
+		PromptSuggestionMaxUsage: derefIntOr(m.PromptSuggestionMaxUsage, DefaultPromptSuggestionMaxUsage),
 	}
 }
 
