@@ -208,6 +208,11 @@ type TurnState struct {
 	// from JSONL into FinalModel.
 	LastServedModel string
 
+	// modelGenAtLoad is sessionMeta.modelGen when this turn loaded the meta.
+	// If it has moved by the turn's end, the session's model was set during the
+	// turn, so FinalModel is older than that choice and is not recorded (#2914).
+	modelGenAtLoad uint64
+
 	// --- Async coordination ---
 
 	// CompletionChan is closed when the turn actually completes.
@@ -369,6 +374,9 @@ func (s *sharedTurnOps) TouchActivity(ts *TurnState) {
 // Extracted from agent.go:440 and turn_delegated.go:36.
 func (s *sharedTurnOps) LoadSessionMeta(ts *TurnState) {
 	ts.SessionMeta = s.agent.getSessionMeta(ts.SessionKey)
+	s.agent.metaMu.Lock()
+	ts.modelGenAtLoad = ts.SessionMeta.modelGen
+	s.agent.metaMu.Unlock()
 }
 
 // LogConversationSent logs the outbound response text. Extracted from

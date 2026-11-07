@@ -904,19 +904,19 @@ func (t *DelegatedTransport) UpdateSessionMeta(ts *TurnState) {
 	ts.SessionMeta.prevCacheWrite = ts.FinalUsage.CacheCreationInputTokens
 
 	// Record the actual model reported by the backend so that
-	// SessionContextLimit uses the real context window. The modelUserSet flag
-	// protects against in-flight turns clobbering a freshly-set /model alias,
-	// but is cleared immediately after so that the next turn resolves the alias
-	// to its full name (e.g. "sonnet" → "claude-sonnet-4-5-...").
+	// SessionContextLimit uses the real context window. A turn loaded before the
+	// latest SetSessionModel reports a model older than that choice, so it does
+	// not record it, wherever its end lands relative to the switch (#2914). The
+	// next turn was loaded after the choice, so it resolves the alias to its
+	// full name (e.g. "sonnet" → "claude-sonnet-4-5-...").
 	// CC's "<synthetic>" sentinel (a result served without an API call — error
 	// turns, no-op replies) must never become the session's live model: branches
 	// launch on the root's live model, so recording it locks the session into
 	// `--model <synthetic>` → CC model error → another synthetic result,
 	// self-perpetuating (broke keepalive overnight 2026-07-13).
-	if ts.FinalModel != "" && ts.FinalModel != SyntheticModel && !ts.SessionMeta.modelUserSet {
+	if ts.FinalModel != "" && ts.FinalModel != SyntheticModel && ts.SessionMeta.modelGen == ts.modelGenAtLoad {
 		ts.SessionMeta.model = ts.FinalModel
 	}
-	ts.SessionMeta.modelUserSet = false
 }
 
 // LogUsage closes a delegated turn in the cost ledger. Every delegated backend

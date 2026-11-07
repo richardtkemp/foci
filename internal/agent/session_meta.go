@@ -48,7 +48,7 @@ type sessionMeta struct {
 	modelFormat     string                 // per-session format override, read only when this session owns the tuple (empty = agent default)
 	permissionMode  string                 // per-session CC permission mode (empty = ccstream default "default")
 	client          provider.Client        // per-session client override, read only when this session owns the tuple (nil = a.Client)
-	modelUserSet    bool                   // true if model was explicitly set by user (prevents backend clobber)
+	modelGen        uint64                 // counts SetSessionModel writes; a turn loaded under an older value reports a model chosen before the latest write (see TurnState.modelGenAtLoad)
 	contextLimit    int                    // override from backend get_context_usage; 0 = use model default
 	noCompact       bool                   // per-session no_compact flag (sticky across async operations)
 	systemBlocks    []provider.SystemBlock // per-session system prompt snapshot (nil = rebuild from bootstrap)
@@ -543,6 +543,7 @@ func (a *Agent) SetSessionModel(sessionKey, value, endpoint, format string, clie
 	sm.modelEndpoint = endpoint
 	sm.modelFormat = format
 	sm.client = client
+	sm.modelGen++
 	a.metaMu.Unlock()
 
 	if a.SessionIndex == nil {
@@ -612,20 +613,6 @@ func (a *Agent) SetModel(ctx context.Context, sessionKey string, model, endpoint
 	// The backend confirmed the switch (or there was none to confirm with,
 	// e.g. plain API-mode agents) — safe to record foci's own tracking now.
 	a.SetSessionModel(sessionKey, trackedModel, endpoint, format, client)
-
-	// Only arm modelUserSet if a delegated turn is currently in flight.
-	// The flag guards against that in-flight turn's stale FinalModel clobbering
-	// the user's fresh /model choice. If no turn is in flight there is nothing
-	// to protect against, so skip the flag entirely — the next turn's FinalModel
-	// will resolve the alias immediately.
-	sm := a.getSessionMeta(sessionKey)
-	if a.DelegatedManager != nil {
-		if mb, ok := a.DelegatedManager.getManaged(sessionKey); ok && mb.be.IsTurnInFlight() {
-			a.metaMu.Lock()
-			sm.modelUserSet = true
-			a.metaMu.Unlock()
-		}
-	}
 
 	// Query context usage to get the real context window size and resolved
 	// model name. This is zero-cost (no API call) and resolves aliases
