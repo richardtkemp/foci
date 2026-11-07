@@ -14,7 +14,9 @@ const activityDetailMax = 60
 // Bash and opencode's bash both carry one), else the foci_* commands in the
 // command line, else the tool name. The description comes first because it
 // describes the whole call: a compound command like "make deploy; foci_todo
-// complete 1" is the make, not the foci_todo (Dick, 2026-09-30).
+// complete 1" is the make, not the foci_todo (Dick, 2026-09-30). The
+// description or foci commands stand alone, with no "Bash: " prefix: Dick
+// asked for the bare description (#2950).
 //
 // args is the call's JSON input, or the raw command line for codex, whose
 // shell calls carry no JSON.
@@ -24,10 +26,10 @@ func ActivityLabel(name string, args []byte) string {
 	}
 	command, description := shellArgs(args)
 	if description = strings.TrimSpace(description); description != "" {
-		return name + ": " + Truncate(description, activityDetailMax)
+		return Truncate(description, activityDetailMax)
 	}
 	if cmds := FociCommands(command); len(cmds) > 0 {
-		return name + ": " + strings.Join(cmds, ", ")
+		return strings.Join(cmds, ", ")
 	}
 	return name
 }

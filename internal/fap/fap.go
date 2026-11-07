@@ -228,7 +228,7 @@ const (
 	// ActivityKindWarming: turn started, no output token yet.
 	ActivityKindWarming ActivityKind = "warming"
 	// ActivityKindTool: a tool is running (detail carries the tool name; for a
-	// shell call, also what it runs, e.g. "Bash: List todos" — toolformat.ActivityLabel).
+	// shell call, what it runs instead, e.g. "List todos" — toolformat.ActivityLabel).
 	ActivityKindTool ActivityKind = "tool"
 	// ActivityKindSubagents: one or more CC subagents (Agent-tool spawns) are
 	// running (detail carries their descriptions).

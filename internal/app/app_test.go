@@ -360,8 +360,8 @@ func TestAppSink_ShellActivityDescribesCall(t *testing.T) {
 	s := newAppSink(b)
 
 	s.Emit(context.Background(), turnevent.ToolCall{Name: "Bash", Args: []byte(`{"command":"foci_todo list","description":"List todos"}`)})
-	if got := b.info().ActivityDetail; got != "Bash: List todos" {
-		t.Fatalf("activity detail = %q, want %q", got, "Bash: List todos")
+	if got := b.info().ActivityDetail; got != "List todos" {
+		t.Fatalf("activity detail = %q, want %q", got, "List todos")
 	}
 }
 
@@ -441,7 +441,7 @@ func TestConvBinding_AgentActivityBesideSubagents(t *testing.T) {
 	s.Emit(ctx, turnevent.ToolCall{Name: "Bash", Args: []byte(`{"command":"make -C /x test","description":"Run tests"}`)})
 
 	info := b.info()
-	if info.Activity != "subagents" || info.ActivityAgentKind != "tool" || info.ActivityAgentDetail != "Bash: Run tests" ||
+	if info.Activity != "subagents" || info.ActivityAgentKind != "tool" || info.ActivityAgentDetail != "Run tests" ||
 		info.ActivityAgentCommand != "make -C /x test" || len(info.Subagents) != 1 || info.Subagents[0].Model != "haiku" {
 		t.Fatalf("snapshot = %+v", info)
 	}

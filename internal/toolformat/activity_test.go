@@ -7,7 +7,8 @@ import (
 
 // TestActivityLabel pins the running-tool caption for a shell call (#1110): a
 // delegated agent runs every foci tool through its shell, so the bare tool name
-// ("Bash") says nothing about what is running.
+// ("Bash") says nothing about what is running. The caption carries no "Bash: "
+// prefix (#2950): it is the description or the foci commands alone.
 func TestActivityLabel(t *testing.T) {
 	tests := []struct {
 		name string
@@ -16,22 +17,22 @@ func TestActivityLabel(t *testing.T) {
 		want string
 	}{
 		{"description wins over foci command", "Bash",
-			`{"command":"make deploy; foci_todo complete 1","description":"Deploy clients and close #1"}`, "Bash: Deploy clients and close #1"},
+			`{"command":"make deploy; foci_todo complete 1","description":"Deploy clients and close #1"}`, "Deploy clients and close #1"},
 		{"foci command when no description", "Bash",
-			`{"command":"foci_todo get 1110"}`, "Bash: foci_todo"},
+			`{"command":"foci_todo get 1110"}`, "foci_todo"},
 		{"several foci commands, deduped, in order", "Bash",
-			`{"command":"foci_todo get 1 && foci_ask '{}' ; foci_todo list"}`, "Bash: foci_todo, foci_ask"},
+			`{"command":"foci_todo get 1 && foci_ask '{}' ; foci_todo list"}`, "foci_todo, foci_ask"},
 		{"foci command after a pipe and in a subshell", "Bash",
-			`{"command":"echo x | foci_send_to_chat; (foci_remind now)"}`, "Bash: foci_send_to_chat, foci_remind"},
+			`{"command":"echo x | foci_send_to_chat; (foci_remind now)"}`, "foci_send_to_chat, foci_remind"},
 		{"description when no foci command", "Bash",
-			`{"command":"git status","description":"Show working tree status"}`, "Bash: Show working tree status"},
+			`{"command":"git status","description":"Show working tree status"}`, "Show working tree status"},
 		{"long description truncated", "Bash",
-			`{"command":"x","description":"` + longDesc + `"}`, "Bash: " + Truncate(longDesc, activityDetailMax)},
+			`{"command":"x","description":"` + longDesc + `"}`, Truncate(longDesc, activityDetailMax)},
 		{"neither: bare tool name", "Bash", `{"command":"git status"}`, "Bash"},
 		{"foci_ inside a word is not a command", "Bash",
 			`{"command":"cat /tmp/my_foci_notes FOCI_SOCK=x ls $foci_x"}`, "Bash"},
-		{"codex passes the raw command, not JSON", "bash", `foci_todo list --limit 5`, "bash: foci_todo"},
-		{"api shell tool", "shell", `{"command":"foci_memory_search foo"}`, "shell: foci_memory_search"},
+		{"codex passes the raw command, not JSON", "bash", `foci_todo list --limit 5`, "foci_todo"},
+		{"api shell tool", "shell", `{"command":"foci_memory_search foo"}`, "foci_memory_search"},
 		{"non-shell tool unchanged", "Read", `{"file_path":"/x","description":"y"}`, "Read"},
 		{"no args", "Bash", ``, "Bash"},
 	}
