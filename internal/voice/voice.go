@@ -112,6 +112,9 @@ func NewTTS(cfg config.TTSConfig, apiKey string, http HTTPOpts) (TTS, error) {
 	case "edge-tts":
 		return WithMaxChars(&EdgeTTS{Command: cfg.Command, Voice: cfg.Voice}, cfg.MaxChars), nil
 	case "openai":
+		if cfg.LocalSpeedControl && !FFmpegAvailable() {
+			voiceLog.Warnf("tts %q: local_speed_control: %s not on PATH; the rate is applied with the built-in stretch (lower quality)", cfg.ID, ffmpegBinary)
+		}
 		return WithMaxChars(&OpenAITTS{
 			Endpoint:       cfg.Endpoint,
 			APIKey:         apiKey,
@@ -287,7 +290,8 @@ type OpenAITTS struct {
 	ResponseFormat string  // e.g. "mp3", "wav" (default: "wav")
 	// LocalSpeed applies Speed here, by time-stretching the WAV response, and
 	// leaves it out of the request ([[tts]] local_speed_control, #2940). For an
-	// endpoint that ignores speed (Groq Orpheus, #2937).
+	// endpoint that ignores speed (Groq Orpheus, #2937). The stretch is ffmpeg
+	// atempo when ffmpeg is on PATH, else the built-in WSOLA (#2943).
 	LocalSpeed bool
 	HTTP       HTTPOpts
 }
@@ -358,8 +362,11 @@ func (o *OpenAITTS) Synthesize(ctx context.Context, text string) ([]byte, error)
 	}
 
 	if localRate {
-		stretched, err := stretchWAV(audioData, o.Speed)
+		stretched, err := stretchLocal(ctx, audioData, o.Speed)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, err
+			}
 			// Unexpected body (not PCM16 WAV): play it at its own rate rather
 			// than lose the reply.
 			voiceLog.Warnf("tts openai model=%s: rate %.2f not applied: %v", o.Model, o.Speed, err)
