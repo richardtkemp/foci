@@ -81,6 +81,7 @@ func (b *Backend) beginTurn(text string, turn *delegator.TurnEvents) error {
 	if params.Model != "" {
 		b.mu.Lock()
 		b.model = params.Model
+		b.modelSwitchPending = false
 		b.mu.Unlock()
 	}
 

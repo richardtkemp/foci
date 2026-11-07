@@ -12,6 +12,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/provider"
+	"foci/internal/turnevent"
 )
 
 // systemInjectRetryInterval bounds each WaitForTurn cycle in RunInference's
@@ -447,6 +448,19 @@ func (t *DelegatedTransport) waitOutSystemTurn(ts *TurnState, be delegator.Deleg
 	return nil
 }
 
+// emitLiveModel tells the turn's sink the model be reports, when it can name one
+// before the turn ends. A spawn whose agent has no configured model and whose
+// session has no finished turn has no other way to name it while it runs (#2879).
+func emitLiveModel(ctx context.Context, be delegator.Delegator) {
+	lr, ok := delegator.As[delegator.LiveModelReporter](be)
+	if !ok {
+		return
+	}
+	if m := lr.LiveModel(); m != "" {
+		turnevent.Emit(ctx, turnevent.ModelKnown{Model: m})
+	}
+}
+
 // beginTurn is RunInference's begin-turn half: dispatch ts.Prompt as a fresh,
 // fully-tracked turn on be (in-flight folding and answer capture have already
 // been ruled out).
@@ -477,6 +491,8 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 			}
 		}
 	}
+
+	emitLiveModel(ts.Ctx, be)
 
 	// Per-turn bookkeeping callbacks (nudge hooks + OnTurnComplete). Extracted so
 	// adopted autonomous turns build the identical completion accounting.

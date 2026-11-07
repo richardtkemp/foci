@@ -2996,6 +2996,18 @@ func (b *convBinding) addSpawn(s fap.RunningSubagent, callerShell string) {
 	})
 }
 
+// setSpawnModel changes one spawn's model. applyActivity compares with the last
+// sent frame, whose list activityFrameLocked copied, so an edit in place is seen.
+func (b *convBinding) setSpawnModel(id, model string) {
+	b.applyActivity(func() {
+		for i := range b.spawns {
+			if b.spawns[i].ID == id {
+				b.spawns[i].Model = model
+			}
+		}
+	})
+}
+
 func (b *convBinding) removeSpawn(id string) {
 	b.applyActivity(func() {
 		b.spawns = slices.DeleteFunc(b.spawns, func(s fap.RunningSubagent) bool { return s.ID == id })

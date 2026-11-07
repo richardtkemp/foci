@@ -178,6 +178,13 @@ type BackendRetry struct {
 // liveness indicators without coupling to content events.
 type Activity struct{}
 
+// ModelKnown names the model the turn runs on, as its backend reports it, while
+// the turn is still running. A backend that cannot say yet sends nothing, and
+// TurnComplete.Model names the model at the end. May come more than once.
+type ModelKnown struct {
+	Model string
+}
+
 // TurnComplete is the terminal event of every turn. It carries the final
 // accumulated text and usage. The agent emits it via defer so it always
 // fires, including on error paths (Err will be non-nil in that case).
@@ -204,6 +211,7 @@ func (RetryNotice) turnEvent()    {}
 func (RetrySuccess) turnEvent()   {}
 func (BackendRetry) turnEvent()   {}
 func (Activity) turnEvent()       {}
+func (ModelKnown) turnEvent()     {}
 func (TurnComplete) turnEvent()   {}
 
 // Sink receives events during a turn. One sink per turn; sinks are constructed

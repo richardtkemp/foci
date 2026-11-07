@@ -24,6 +24,14 @@ type recordingSpawnObserver struct {
 	// followups are the parent's spawn_send messages to a running spawn
 	// (SpawnPrompt), as "<id>=<message>".
 	followups []string
+	// models are the SpawnModel updates, as "<id>=<model>".
+	models []string
+}
+
+func (o *recordingSpawnObserver) SpawnModel(_, id, model string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.models = append(o.models, id+"="+model)
 }
 
 func (o *recordingSpawnObserver) SpawnStarted(parent string, s RunningSpawn, prompt string) {

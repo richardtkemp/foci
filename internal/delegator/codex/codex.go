@@ -159,11 +159,14 @@ type Backend struct {
 	compactDoneCh chan struct{}
 
 	// Pending control overrides (set by ControlSender, applied on next turn/start)
-	pendingModel    string
-	pendingEffort   string
-	pendingApproval string
-	pendingReviewer string
-	contextWindow   int
+	pendingModel string
+	// modelSwitchPending: a model was chosen that no turn/start has sent yet,
+	// so model still names the one before it (LiveModel).
+	modelSwitchPending bool
+	pendingEffort      string
+	pendingApproval    string
+	pendingReviewer    string
+	contextWindow      int
 
 	// Voice mode (#1445): EnterVoiceMode saves pendingEffort and forces "low"
 	// for the next turn; ExitVoiceMode restores it. voiceModeActive guards a

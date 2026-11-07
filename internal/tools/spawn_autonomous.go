@@ -102,7 +102,11 @@ func (a *spawnAutonomousSink) claim() {
 	tr.appendLog(parent, id, "message", spawnWokeNote)
 	s.deps.Notifier.MarkPending(parent)
 	if s.deps.Observer != nil {
-		s.deps.Observer.SpawnStarted(parent, a.running, spawnWokeNote)
+		shown := a.running
+		if info, ok := tr.spawnInfo(parent, id); ok {
+			shown = info // names the model, when an earlier run learned it (#2879)
+		}
+		s.deps.Observer.SpawnStarted(parent, shown, spawnWokeNote)
 	}
 }
 

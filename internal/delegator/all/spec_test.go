@@ -157,12 +157,12 @@ func TestSpecs_NudgesAndStreaming(t *testing.T) {
 }
 
 // TestSpecs_LiveModel pins each backend's live_model declaration to the
-// #2252 contract: only claude-code can name its running model before a turn
-// result (CC's system/init carries the resolved id from process start);
-// codex and opencode surface a model only at turn end, so they declare No
-// and delegator.As[LiveModelReporter] must refuse them.
+// #2252 contract: claude-code (CC's system/init carries the resolved id) and
+// codex (the thread start response, #2879) can name their running model before
+// a turn result; opencode surfaces a model only at session idle, so it declares
+// No and delegator.As[LiveModelReporter] must refuse it.
 func TestSpecs_LiveModel(t *testing.T) {
-	want := map[string]bool{"claude-code": true, "codex": false, "opencode": false}
+	want := map[string]bool{"claude-code": true, "codex": true, "opencode": false}
 	for name, w := range want {
 		s, ok := delegator.SpecFor(name)
 		if !ok {

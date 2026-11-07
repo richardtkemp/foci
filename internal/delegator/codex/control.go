@@ -20,6 +20,7 @@ func (b *Backend) SendControl(ctx context.Context, req delegator.ControlRequest)
 		}
 		b.mu.Lock()
 		b.pendingModel = resolution.BackendModel
+		b.modelSwitchPending = true
 		b.mu.Unlock()
 		b.logInfof("model override queued: %s (applies next turn)", resolution.BackendModel)
 		return nil

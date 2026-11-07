@@ -632,6 +632,7 @@ func (b *Backend) prepareConfiguredModel(ctx context.Context, resumed bool) erro
 	b.launchModel = resolution.BackendModel
 	if resumed {
 		b.pendingModel = resolution.BackendModel
+		b.modelSwitchPending = true
 	}
 	b.mu.Unlock()
 	return nil

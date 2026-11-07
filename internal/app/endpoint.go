@@ -250,6 +250,13 @@ func (SpawnObserver) SpawnPrompt(parentSession, id, message string) {
 	}
 }
 
+// SpawnModel names the model on the spawn's running entry (#2879).
+func (SpawnObserver) SpawnModel(parentSession, id, model string) {
+	if b := spawnBinding(parentSession); b != nil {
+		b.setSpawnModel(id, model)
+	}
+}
+
 // SpawnEnded completes the spawn's chit and drops it from the running list.
 func (SpawnObserver) SpawnEnded(parentSession, id string) {
 	if b := spawnBinding(parentSession); b != nil {

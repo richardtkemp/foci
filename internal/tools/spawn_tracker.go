@@ -80,6 +80,9 @@ type SpawnObserver interface {
 	// running, folded into its turn or queued for its next step (#2822). A
 	// message that resumes a finished spawn comes as SpawnStarted instead.
 	SpawnPrompt(parentSession, id, message string)
+	// SpawnModel reports the model a running spawn runs on, when it became known
+	// or changed after SpawnStarted (#2879).
+	SpawnModel(parentSession, id, model string)
 	// SpawnEnded reports the spawn finished, failed or was stopped.
 	SpawnEnded(parentSession, id string)
 }
@@ -484,6 +487,23 @@ func (t *SpawnTracker) finishOrNext(parent, id string, force bool) (next []strin
 	return nil, true, stopped, false, dropped
 }
 
+// setModel records the model a spawn runs on, reporting whether that changed it.
+func (t *SpawnTracker) setModel(parent, id, model string) bool {
+	if t == nil {
+		return false
+	}
+	t.mu.Lock()
+	s := t.spawns[parent][id]
+	if s == nil || s.info.Model == model {
+		t.mu.Unlock()
+		return false
+	}
+	s.info.Model = model
+	t.mu.Unlock()
+	t.persist(parent, id)
+	return true
+}
+
 // setOutcome records how a spawn's last run ended, for spawn_status.
 func (t *SpawnTracker) setOutcome(parent, id, outcome string) {
 	if t == nil {
@@ -744,6 +764,10 @@ func newSpawnID() string {
 	return "spawn-" + hex.EncodeToString(b[:])
 }
 
+// syntheticModel is Claude Code's name for a result served without an API call
+// (agent.SyntheticModel; this package cannot import agent).
+const syntheticModel = "<synthetic>"
+
 // spawnTextSink forwards a spawn's assistant text to the observer, and its
 // text and tool calls to the tracker's activity log, while the inner
 // BufferSink collects its final text. The API turn emits only the text between
@@ -761,8 +785,23 @@ type spawnTextSink struct {
 	blocks []string
 }
 
+// noteModel records the model the spawn's backend reports and, on a change,
+// updates the spawn's entry in the app. A spawn run as an agent with no configured
+// model has none when it starts (#2879). A result served with no API call names a
+// sentinel, not a model.
+func (s *spawnTextSink) noteModel(model string) {
+	if model == "" || model == syntheticModel || !s.tracker.setModel(s.parent, s.id, model) {
+		return
+	}
+	if s.obs != nil {
+		s.obs.SpawnModel(s.parent, s.id, model)
+	}
+}
+
 func (s *spawnTextSink) Emit(ctx context.Context, ev turnevent.Event) {
 	switch e := ev.(type) {
+	case turnevent.ModelKnown:
+		s.noteModel(e.Model)
 	case turnevent.TextBlock:
 		if e.Text != "" {
 			s.sawText.Store(true)
@@ -777,6 +816,7 @@ func (s *spawnTextSink) Emit(ctx context.Context, ev turnevent.Event) {
 	case turnevent.ToolCall:
 		s.tracker.appendLog(s.parent, s.id, "tool", toolCallSummary(e))
 	case turnevent.TurnComplete:
+		s.noteModel(e.Model)
 		s.mu.Lock()
 		rest := unstreamedText(e.FinalText, s.blocks)
 		s.mu.Unlock()
