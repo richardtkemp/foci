@@ -11,6 +11,7 @@ import (
 	"foci/internal/fap"
 	"foci/internal/ratelimit"
 	"foci/internal/turnevent"
+	"foci/internal/voice"
 )
 
 // #1809: a voice-mode TTS failure must reach the client as a per-bubble
@@ -134,4 +135,23 @@ func (f *flakyTTS) Synthesize(context.Context, string) ([]byte, error) {
 		return nil, errors.New("boom")
 	}
 	return []byte("clip"), nil
+}
+
+// #2919: every voice skipped the text. That is a configured limit, not a provider
+// error, and the client hears why.
+func TestAppSink_VoiceUnavailable_TooLongSaysSo(t *testing.T) {
+	s, c := voiceSink(t, &mockVoiceTTS{err: &voice.TextTooLongError{Chars: 500, Max: 200}})
+	ctx := agent.WithTrigger(context.Background(), "voice")
+
+	s.Emit(ctx, turnevent.TurnStart{})
+	s.Emit(ctx, turnevent.TextDelta{Delta: "Hello there"})
+	s.Emit(ctx, turnevent.TurnComplete{FinalText: "Hello there"})
+
+	ends := framesOf(drain(t, c), fap.TypeTextEnd)
+	if len(ends) != 1 {
+		t.Fatalf("want one text.end frame, got %d", len(ends))
+	}
+	if got, want := ends[0].d["voiceUnavailable"], "text too long"; got != want {
+		t.Errorf("voiceUnavailable = %v, want %q", got, want)
+	}
 }

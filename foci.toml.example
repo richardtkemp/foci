@@ -632,6 +632,7 @@ bind = "127.0.0.1"
 # response_format = "wav"                 # audio format: "mp3", "wav", etc.
 # replacements = { foci = "foki" }        # word replacements applied before synthesis
 # fallback = "edge"                       # entry to try on failure (unset = built-in edge-tts, "" = none)
+# max_chars = 200                         # a longer text skips this voice, with no provider call (unset = no limit)
 #
 # [[tts]]
 # id = "edge"

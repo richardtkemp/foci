@@ -21,6 +21,7 @@ type ChainEntry struct {
 // belonged to has passed, so waiting it out spends quota on audio nobody is
 // still listening for. The only useful response to a failed provider is an
 // immediate attempt against a different one — and if none is left, text-only.
+// A text over a link's max_chars skips that link in the same way (#2919).
 type FallbackTTS struct {
 	Chain []ChainEntry
 }
@@ -28,18 +29,33 @@ type FallbackTTS struct {
 // Synthesize tries each provider in order. The returned error joins every
 // attempt's failure, so errors.As still finds a *ratelimit.Error from any link
 // and callers keep classifying a quota exhaustion as the routine event it is.
+// When every link refused the text as too long, the error is one
+// *TextTooLongError. A skipped link in a chain that also failed for another
+// reason is text only, so errors.As cannot report the whole chain as a skip.
 func (f *FallbackTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
 	if len(f.Chain) == 0 {
 		return nil, errors.New("no TTS provider configured")
 	}
 	var errs []error
+	var tooLong *TextTooLongError
+	skipped := 0
 	for i, e := range f.Chain {
 		data, err := e.TTS.Synthesize(ctx, text)
 		if err == nil {
 			if i > 0 {
-				voiceLog.Infof("tts: synthesized via fallback %q (after %d failed provider(s))", e.ID, i)
+				voiceLog.Infof("tts: synthesized via fallback %q (after %d provider(s) failed or skipped)", e.ID, i)
 			}
 			return data, nil
+		}
+		var skip *TextTooLongError
+		if errors.As(err, &skip) {
+			tooLong = skip
+			skipped++
+			errs = append(errs, fmt.Errorf("%s: %v", e.ID, err)) //nolint:errorlint // %v on purpose: see the doc comment
+			if i+1 < len(f.Chain) {
+				voiceLog.Infof("tts %q skipped (%v) — falling back to %q", e.ID, err, f.Chain[i+1].ID)
+			}
+			continue
 		}
 		errs = append(errs, fmt.Errorf("%s: %w", e.ID, err))
 		// A dead context fails every remaining provider identically — stop
@@ -50,6 +66,9 @@ func (f *FallbackTTS) Synthesize(ctx context.Context, text string) ([]byte, erro
 		if i+1 < len(f.Chain) {
 			voiceLog.Infof("tts %q failed (%v) — falling back to %q", e.ID, err, f.Chain[i+1].ID)
 		}
+	}
+	if skipped == len(errs) {
+		return nil, tooLong
 	}
 	return nil, newChainError(errs)
 }

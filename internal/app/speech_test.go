@@ -134,3 +134,34 @@ func TestCaps_SpeechNamesOnly(t *testing.T) {
 		t.Errorf("server with no voices advertises speech: %s", bare)
 	}
 }
+
+// #2919: a text over the voice's maximum is refused with no provider call, so the
+// app moves to its next voice. The count is on the cleaned text.
+func TestServeSpeech_OverMaxCharsIs413WithNoProviderCall(t *testing.T) {
+	inner := &mockVoiceTTS{data: []byte("x")}
+	h, tok := speechHub(t, voice.WithMaxChars(inner, 4))
+	if w := postSpeech(h, tok, `{"source":"groq","text":"abcde"}`); w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("code = %d (%q)", w.Code, w.Body.String())
+	}
+	if len(inner.got) != 0 {
+		t.Fatalf("provider called with %q", inner.got)
+	}
+	// 8 characters of source, 4 after normalisation.
+	if w := postSpeech(h, tok, `{"source":"groq","text":"**abcd**"}`); w.Code != http.StatusOK {
+		t.Fatalf("cleaned text at the limit: code = %d (%q)", w.Code, w.Body.String())
+	}
+}
+
+func TestCaps_SpeechCarriesMaxChars(t *testing.T) {
+	h := newTestHub()
+	h.deps.SpeechSources = func() []voice.SpeechSource {
+		return []voice.SpeechSource{{ID: "groq", Kind: voice.SpeechKindAPI, MaxChars: 200}}
+	}
+	raw, err := json.Marshal(h.caps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"speech":[{"id":"groq","kind":"api","maxChars":200}]`) {
+		t.Errorf("caps = %s", raw)
+	}
+}

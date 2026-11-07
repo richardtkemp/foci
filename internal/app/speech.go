@@ -39,7 +39,7 @@ func (h *Hub) speechSources() []fap.SpeechSource {
 	}
 	out := make([]fap.SpeechSource, 0, len(sources))
 	for _, s := range sources {
-		out = append(out, fap.SpeechSource{ID: s.ID, Kind: s.Kind})
+		out = append(out, fap.SpeechSource{ID: s.ID, Kind: s.Kind, MaxChars: s.MaxChars})
 	}
 	return out
 }
@@ -47,8 +47,8 @@ func (h *Hub) speechSources() []fap.SpeechSource {
 // ServeSpeech handles POST /app/speech with a JSON speechRequest. The response is
 // the audio, with its sniffed content type. Errors, with a short body and never a
 // provider's own message: 400 bad request or no speakable text, 404 the source is
-// no longer available, 413 request too large, 429 the voice is rate limited,
-// 502 the voice failed. Cancelling the request cancels the synthesis.
+// no longer available, 413 request too large or text over the voice's max_chars
+// (no provider call), 429 the voice is rate limited, 502 the voice failed. Cancelling the request cancels the synthesis.
 func (h *Hub) ServeSpeech(w http.ResponseWriter, r *http.Request) {
 	dev, ok := h.authenticate(w, r)
 	if !ok {
@@ -90,6 +90,12 @@ func (h *Hub) ServeSpeech(w http.ResponseWriter, r *http.Request) {
 		err = errors.New("empty audio")
 	}
 	if err != nil {
+		var tooLong *voice.TextTooLongError
+		if errors.As(err, &tooLong) {
+			appLog.Infof("speech: device=%s source=%s skipped: %v", dev.DeviceID, req.Source, err)
+			http.Error(w, "text too long for this voice", http.StatusRequestEntityTooLarge)
+			return
+		}
 		var limited *ratelimit.Error
 		if errors.As(err, &limited) {
 			appLog.Infof("speech: device=%s source=%s rate limited: %v", dev.DeviceID, req.Source, err)

@@ -96,7 +96,7 @@ func (c *speechCatalog) Sources() []voice.SpeechSource {
 		if entry.Format == "edge-tts" {
 			kind = voice.SpeechKindEdge
 		}
-		out = append(out, voice.SpeechSource{ID: entry.ID, Kind: kind})
+		out = append(out, voice.SpeechSource{ID: entry.ID, Kind: kind, MaxChars: entry.MaxChars})
 	}
 	if !declaredBuiltin && c.hasCmd(builtinFallbackTTSID) {
 		out = append(out, voice.SpeechSource{ID: builtinFallbackTTSID, Kind: voice.SpeechKindEdge})

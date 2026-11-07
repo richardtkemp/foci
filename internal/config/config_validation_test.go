@@ -1019,3 +1019,13 @@ func TestValidateModelKeys_EmptyModelRequired(t *testing.T) {
 		t.Errorf("error = %q, want [models.a] model is required (first entry in sorted order)", err.Error())
 	}
 }
+
+func TestValidateTTSMaxChars(t *testing.T) {
+	if err := validateTTSMaxChars(&Config{TTS: []TTSConfig{{ID: "a", MaxChars: 200}, {ID: "b"}}}); err != nil {
+		t.Errorf("valid limits refused: %v", err)
+	}
+	err := validateTTSMaxChars(&Config{TTS: []TTSConfig{{ID: "a", MaxChars: -1}}})
+	if err == nil || !strings.Contains(err.Error(), "max_chars") {
+		t.Errorf("err = %v, want max_chars refused", err)
+	}
+}

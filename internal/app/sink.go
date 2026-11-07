@@ -232,6 +232,12 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 // stays a WARN. The client-facing reason likewise never carries the raw error:
 // only the rate-limit wait, or a generic "TTS provider error".
 func (s *appSink) ttsFailed(err error) {
+	var tooLong *voice.TextTooLongError
+	if errors.As(err, &tooLong) {
+		appLog.Infof("voice-mode: TTS %v — delivered text-only (conv=%s)", tooLong, s.b.convID)
+		s.backend.voiceUnavailable = "text too long"
+		return
+	}
 	var rl *ratelimit.Error
 	if errors.As(err, &rl) {
 		appLog.Infof("voice-mode: TTS %v — delivered text-only (conv=%s)", rl, s.b.convID)

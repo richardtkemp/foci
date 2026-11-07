@@ -295,6 +295,9 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 		if e.Fallback != nil {
 			add(prefix, "fallback", *e.Fallback)
 		}
+		if e.MaxChars != 0 {
+			add(prefix, "max_chars", e.MaxChars)
+		}
 	}
 	// stt
 	for i, e := range cfg.STT {

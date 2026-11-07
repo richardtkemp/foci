@@ -61,6 +61,17 @@ func validateIntRange(value, min, max int, fieldName string) error {
 	return nil
 }
 
+// validateTTSMaxChars rejects a negative [[tts]] max_chars at the door: read as
+// "no limit" it would send long text to a voice the user meant to limit.
+func validateTTSMaxChars(cfg *Config) error {
+	for _, e := range cfg.TTS {
+		if e.MaxChars < 0 {
+			return fmt.Errorf("[[tts]] id %q max_chars = %d: must not be negative", e.ID, e.MaxChars)
+		}
+	}
+	return nil
+}
+
 // validateWebFetchMaxBytes rejects a negative tools.web_fetch_max_bytes at the
 // global and each agent level (#2770). Zero is allowed and means the default.
 func validateWebFetchMaxBytes(cfg *Config) error {
@@ -316,6 +327,9 @@ func (cfg *Config) Validate(knownBackends []string) error {
 		return fmt.Errorf("[usage_hold] threshold = %d: must be 1 to 100 (a usage percentage)", *t)
 	}
 	if err := validateBehaviorTurnLimits(cfg); err != nil {
+		return err
+	}
+	if err := validateTTSMaxChars(cfg); err != nil {
 		return err
 	}
 	if err := validateWebFetchMaxBytes(cfg); err != nil {

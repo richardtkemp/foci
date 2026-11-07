@@ -440,7 +440,7 @@ Per-agent memory sources (`[[agents.memory.sources]]`) are documented in [Agent-
 
 Text-to-speech provider entries. Multiple entries are supported; the first is the default. Agents override by id via `tts = "id"` in their config.
 
-Entries form a **fallback chain** via `fallback`. When a provider fails — a rate limit, a quota, a dead endpoint — the next one in the chain is tried immediately and the reply still arrives as audio. There is no retry or wait: a spoken reply is live, so a provider that asks for a delay is skipped, not waited out. If the whole chain fails, the reply is delivered as text only.
+Entries form a **fallback chain** via `fallback`. When a provider fails — a rate limit, a quota, a dead endpoint — the next one in the chain is tried immediately and the reply still arrives as audio. There is no retry or wait: a spoken reply is live, so a provider that asks for a delay is skipped, not waited out. If the whole chain fails, the reply is delivered as text only. A text longer than an entry's `max_chars` skips that entry in the same way, with no call to the provider.
 
 foci auto-registers a built-in, key-less `edge-tts` provider under the id `edge-tts` whenever at least one `[[tts]]` entry is configured, and every entry falls back to it by default. Declare a `[[tts]]` entry with `id = "edge-tts"` to replace the built-in (e.g. to pin a voice), or set `fallback = ""` on an entry to opt it out.
 
@@ -457,6 +457,7 @@ foci auto-registers a built-in, key-less `edge-tts` provider under the id `edge-
 | `response_format` | string | `"wav"` | Audio format for OpenAI-compatible APIs: `"mp3"`, `"wav"`, `"opus"`, `"aac"`, `"flac"`. Groq only supports `"wav"`. |
 | `replacements` | map | `{}` | Word replacements applied to text before synthesis. Case-insensitive whole-word matching; preserves original case pattern. Example: `{ foci = "foki" }`. |
 | `fallback` | string | `"edge-tts"` | Id of the entry to try when this provider fails. Unset defaults to the built-in `edge-tts` provider (and to nothing for an entry that is already edge-tts). Set to `""` to disable fallback for this entry. |
+| `max_chars` | int | `0` | Longest text this voice takes, in characters (Unicode code points), counted on the text it would receive: after speech clean-up and word replacements. A longer text skips the voice with no provider call and goes to the next one. `0` means no limit. Applies to voice replies, voice notes and the app's Speak. Example: `200` on Groq Orpheus. As with every `[[tts]]` key, a change needs a restart. |
 
 ### `[[stt]]`
 

@@ -80,27 +80,33 @@ func WithRate(t TTS, rate float64) TTS {
 		cp := *p
 		cp.Speed = rate
 		return &cp
+	case *maxCharsTTS:
+		cp := *p
+		cp.inner = WithRate(p.inner, rate)
+		return &cp
 	default:
 		return t
 	}
 }
 
 // NewTTS creates a TTS provider from a TTSConfig and resolved API key.
-// Rate is NOT baked in — apply at resolution time via WithRate. http bounds the
+// Rate is NOT baked in — apply at resolution time via WithRate. MaxChars IS baked
+// in, so every path to this provider has the limit: a chain, /app/speech, and an
+// unknown agent override that gets the default provider. http bounds the
 // outbound HTTP call for API-backed providers (ignored by the CLI edge-tts).
 func NewTTS(cfg config.TTSConfig, apiKey string, http HTTPOpts) (TTS, error) {
 	switch cfg.Format {
 	case "edge-tts":
-		return &EdgeTTS{Command: cfg.Command, Voice: cfg.Voice}, nil
+		return WithMaxChars(&EdgeTTS{Command: cfg.Command, Voice: cfg.Voice}, cfg.MaxChars), nil
 	case "openai":
-		return &OpenAITTS{
+		return WithMaxChars(&OpenAITTS{
 			Endpoint:       cfg.Endpoint,
 			APIKey:         apiKey,
 			Model:          cfg.Model,
 			Voice:          cfg.Voice,
 			ResponseFormat: cfg.ResponseFormat,
 			HTTP:           http,
-		}, nil
+		}, cfg.MaxChars), nil
 	default:
 		return nil, fmt.Errorf("unknown TTS format %q (must be \"openai\" or \"edge-tts\")", cfg.Format)
 	}

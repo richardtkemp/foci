@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	"foci/internal/config"
+	"foci/internal/secrets"
 	"foci/internal/voice"
 )
 
@@ -115,4 +118,58 @@ func TestSpeechCatalog_AgentVoiceOverGlobal(t *testing.T) {
 	if rate, repls := c.agentVoice("other"); rate != 1.1 || repls["foci"] != "foki" {
 		t.Errorf("unknown agent: rate %v repls %v", rate, repls)
 	}
+}
+
+func TestSpeechCatalog_SourcesCarryMaxChars(t *testing.T) {
+	c := testSpeechCatalog([]config.TTSConfig{{ID: "groq", Format: "openai", MaxChars: 200}}, map[string]bool{"groq": true}, nil)
+	want := []voice.SpeechSource{{ID: "groq", Kind: "api", MaxChars: 200}}
+	if got := c.Sources(); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+// #2919, through the real build path: every way to reach a voice has its limit,
+// and the count is on the text after word replacements. The endpoint is
+// unroutable, so a provider call would surface as a different error.
+func TestInitVoice_MaxCharsOnEveryPath(t *testing.T) {
+	entries := []config.TTSConfig{{
+		ID: "groq", Format: "openai", Endpoint: "http://127.0.0.1:1/speech", Secret: "none",
+		MaxChars: 5, Replacements: map[string]string{"abc": "abcdefgh"},
+	}}
+	store, err := secrets.Load(filepath.Join(t.TempDir(), "secrets.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ttsMap, _ := initVoice(&config.Config{TTS: entries}, store)
+	edge := &stubTTS{"edge"}
+	ttsMap[builtinFallbackTTSID] = edge
+
+	assertTooLong := func(t *testing.T, tts voice.TTS, text string) {
+		t.Helper()
+		_, err := tts.Synthesize(t.Context(), text)
+		var tooLong *voice.TextTooLongError
+		if !errors.As(err, &tooLong) {
+			t.Errorf("err = %v, want TextTooLongError", err)
+		}
+	}
+	t.Run("the speech catalog's one voice", func(t *testing.T) {
+		c := &speechCatalog{cfg: &config.Config{TTS: entries}, ttsMap: ttsMap, hasKey: func(config.TTSConfig) bool { return true }, hasCmd: func(string) bool { return false }}
+		assertTooLong(t, c.Provider("a", "groq"), "123456")
+	})
+	t.Run("counted after word replacements", func(t *testing.T) {
+		c := &speechCatalog{cfg: &config.Config{TTS: entries}, ttsMap: ttsMap, hasKey: func(config.TTSConfig) bool { return true }, hasCmd: func(string) bool { return false }}
+		assertTooLong(t, c.Provider("a", "groq"), "abc")
+	})
+	t.Run("a chain skips to the next voice", func(t *testing.T) {
+		data, err := resolveTTS(ttsMap, entries, "groq", 1.5, nil).Synthesize(t.Context(), "123456")
+		if err != nil || string(data) != "edge" {
+			t.Errorf("data=%q err=%v, want the next voice", data, err)
+		}
+	})
+	t.Run("an unknown agent override that gets the default provider", func(t *testing.T) {
+		data, err := resolveTTS(ttsMap, entries, "nonesuch", 0, nil).Synthesize(t.Context(), "123456")
+		if err != nil || string(data) != "edge" {
+			t.Errorf("data=%q err=%v, want the next voice", data, err)
+		}
+	})
 }

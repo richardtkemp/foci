@@ -1144,6 +1144,10 @@ type TTSConfig struct {
 	// rate-limited cloud voice degrades to a local one rather than to silence.
 	// Set it to "" to disable fallback for this entry.
 	Fallback *string `toml:"fallback"`
+	// MaxChars is the longest text this voice takes, in characters, counted on the
+	// text it would receive. A longer text skips the voice with no provider call.
+	// 0 or unset means no limit.
+	MaxChars int `toml:"max_chars"`
 }
 
 // STTConfig describes a speech-to-text provider entry.

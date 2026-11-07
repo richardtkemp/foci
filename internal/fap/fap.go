@@ -278,10 +278,12 @@ type Caps struct {
 	Speech []SpeechSource `json:"speech,omitempty"`
 }
 
-// SpeechSource names one server voice. Kind is "api" or "edge".
+// SpeechSource names one server voice. Kind is "api" or "edge". MaxChars is the
+// voice's maximum text length in characters; absent means no limit.
 type SpeechSource struct {
-	ID   string `json:"id"`
-	Kind string `json:"kind"`
+	ID       string `json:"id"`
+	Kind     string `json:"kind"`
+	MaxChars int    `json:"maxChars,omitempty"`
 }
 
 // CommandInfo is one slash command advertised to the app for its command

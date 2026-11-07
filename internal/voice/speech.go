@@ -6,6 +6,9 @@ package voice
 type SpeechSource struct {
 	ID   string // the [[tts]] entry id, or the built-in "edge-tts"
 	Kind string // SpeechKindAPI or SpeechKindEdge
+	// MaxChars is the voice's [[tts]] max_chars, so the app can skip it without a
+	// request. 0 means no limit. The server enforces it either way.
+	MaxChars int
 }
 
 // The kinds of speech source. The app's default ladder puts API voices before
