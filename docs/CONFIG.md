@@ -451,13 +451,14 @@ foci auto-registers a built-in, key-less `edge-tts` provider under the id `edge-
 | `endpoint` | string | `""` | API endpoint URL (ignored for edge-tts). |
 | `model` | string | `""` | Model name (ignored for edge-tts). |
 | `voice` | string | `""` | Voice name (format-specific). `""` defaults to `"alloy"` for OpenAI. |
-| `rate` | float | `0` | Speed multiplier: `1.3` = 30% faster, `0.8` = 20% slower. `0` means omit/default. For an `openai` entry with a `wav` response, foci changes the rate itself (pitch kept) instead of sending `speed`, since some providers (Groq Orpheus) ignore it. |
+| `rate` | float | `0` | Speed multiplier: `1.3` = 30% faster, `0.8` = 20% slower. `0` means omit/default. Sent to the endpoint (`speed` for openai, `--rate` for edge-tts) unless `local_speed_control` is set. |
 | `secret` | string | `""` | Secret name in secrets.toml (e.g. `"groq.api_key"`). If empty, auto-detected from endpoint hostname. |
 | `command` | string | `"edge-tts"` | Binary for edge-tts format. |
 | `response_format` | string | `"wav"` | Audio format for OpenAI-compatible APIs: `"mp3"`, `"wav"`, `"opus"`, `"aac"`, `"flac"`. Groq only supports `"wav"`. |
 | `replacements` | map | `{}` | Word replacements applied to text before synthesis. Case-insensitive whole-word matching; preserves original case pattern. Example: `{ foci = "foki" }`. |
 | `fallback` | string | `"edge-tts"` | Id of the entry to try when this provider fails. Unset defaults to the built-in `edge-tts` provider (and to nothing for an entry that is already edge-tts). Set to `""` to disable fallback for this entry. |
 | `max_chars` | int | `0` | Longest text this voice takes, in characters (Unicode code points), counted on the text it would receive: after speech clean-up and word replacements. A longer text skips the voice with no provider call and goes to the next one. `0` means no limit. Applies to voice replies, voice notes and the app's Speak. Example: `200` on Groq Orpheus. As with every `[[tts]]` key, a change needs a restart. |
+| `local_speed_control` | bool | `false` | For an endpoint that ignores the speed it is sent (Groq Orpheus): foci leaves `speed` out of the request and applies `rate` itself, time-stretching the returned clip with pitch kept (pure Go, no binary needed). `openai` format with a `wav` response only; anything else is refused at load. If the clip is not 16-bit PCM WAV it plays at its own rate, with a warning. As with every `[[tts]]` key, a change needs a restart. |
 
 ### `[[stt]]`
 

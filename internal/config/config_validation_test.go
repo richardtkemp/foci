@@ -1029,3 +1029,26 @@ func TestValidateTTSMaxChars(t *testing.T) {
 		t.Errorf("err = %v, want max_chars refused", err)
 	}
 }
+
+func TestValidateTTSLocalSpeedControl(t *testing.T) {
+	// #2940: the local stretch reads PCM16 WAV from an openai-format voice only.
+	for _, e := range []TTSConfig{
+		{ID: "groq", Format: "openai", LocalSpeedControl: true},
+		{ID: "groq", Format: "openai", ResponseFormat: "wav", LocalSpeedControl: true},
+		{ID: "edge", Format: "edge-tts"},
+		{ID: "mp3", Format: "openai", ResponseFormat: "mp3"},
+	} {
+		if err := validateTTSLocalSpeedControl(&Config{TTS: []TTSConfig{e}}); err != nil {
+			t.Errorf("%+v refused: %v", e, err)
+		}
+	}
+	for _, e := range []TTSConfig{
+		{ID: "edge", Format: "edge-tts", LocalSpeedControl: true},
+		{ID: "mp3", Format: "openai", ResponseFormat: "mp3", LocalSpeedControl: true},
+	} {
+		err := validateTTSLocalSpeedControl(&Config{TTS: []TTSConfig{e}})
+		if err == nil || !strings.Contains(err.Error(), "local_speed_control") {
+			t.Errorf("%+v: err = %v, want local_speed_control refused", e, err)
+		}
+	}
+}

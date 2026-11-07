@@ -105,6 +105,7 @@ func NewTTS(cfg config.TTSConfig, apiKey string, http HTTPOpts) (TTS, error) {
 			Model:          cfg.Model,
 			Voice:          cfg.Voice,
 			ResponseFormat: cfg.ResponseFormat,
+			LocalSpeed:     cfg.LocalSpeedControl,
 			HTTP:           http,
 		}, cfg.MaxChars), nil
 	default:
@@ -269,9 +270,13 @@ type OpenAITTS struct {
 	APIKey         string  // Bearer token
 	Model          string  // e.g. "openai/tts-1-mini"
 	Voice          string  // e.g. "alloy"
-	Speed          float64 // 0.25–4.0 (default 1.0, 0 means omit); applied locally for a WAV response (#2937)
+	Speed          float64 // 0.25–4.0 (default 1.0, 0 means omit)
 	ResponseFormat string  // e.g. "mp3", "wav" (default: "wav")
-	HTTP           HTTPOpts
+	// LocalSpeed applies Speed here, by time-stretching the WAV response, and
+	// leaves it out of the request ([[tts]] local_speed_control, #2940). For an
+	// endpoint that ignores speed (Groq Orpheus, #2937).
+	LocalSpeed bool
+	HTTP       HTTPOpts
 }
 
 // ttsRequest is the JSON payload for an OpenAI-compatible TTS API call.
@@ -294,10 +299,11 @@ func (o *OpenAITTS) Synthesize(ctx context.Context, text string) ([]byte, error)
 		responseFormat = "wav"
 	}
 
-	// A WAV clip gets its rate applied here, not by the API: Groq's Orpheus
-	// accepts "speed" and ignores it (#2937). Sending it too would double the
-	// rate on a provider that does honour it. Other formats keep the API field.
-	localRate := responseFormat == "wav" && o.Speed != 0 && o.Speed != 1
+	// The endpoint gets the speed, unless the voice is marked LocalSpeed: then
+	// foci stretches the clip itself (Groq's Orpheus accepts "speed" and
+	// ignores it, #2937) and leaves speed out, so the rate is not applied twice.
+	// Config validation keeps LocalSpeed to WAV responses.
+	localRate := o.LocalSpeed && o.Speed != 0 && o.Speed != 1
 	apiSpeed := o.Speed
 	if localRate {
 		apiSpeed = 0

@@ -301,6 +301,9 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 		if e.MaxChars != 0 {
 			add(prefix, "max_chars", e.MaxChars)
 		}
+		if e.LocalSpeedControl {
+			add(prefix, "local_speed_control", true)
+		}
 	}
 	// stt
 	for i, e := range cfg.STT {

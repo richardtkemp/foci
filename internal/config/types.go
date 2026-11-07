@@ -1158,6 +1158,12 @@ type TTSConfig struct {
 	// text it would receive. A longer text skips the voice with no provider call.
 	// 0 or unset means no limit.
 	MaxChars int `toml:"max_chars"`
+	// LocalSpeedControl makes foci apply the speech rate itself, for a voice
+	// whose endpoint ignores the speed it is sent (Groq Orpheus, #2937). foci
+	// then omits speed from the request and time-stretches the returned WAV,
+	// keeping pitch. Unset: the endpoint gets the speed, the rule (#2940).
+	// openai format with a wav response only.
+	LocalSpeedControl bool `toml:"local_speed_control"`
 }
 
 // STTConfig describes a speech-to-text provider entry.

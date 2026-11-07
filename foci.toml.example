@@ -635,6 +635,7 @@ bind = "127.0.0.1"
 # replacements = { foci = "foki" }        # word replacements applied before synthesis
 # fallback = "edge"                       # entry to try on failure (unset = built-in edge-tts, "" = none)
 # max_chars = 200                         # a longer text skips this voice, with no provider call (unset = no limit)
+# local_speed_control = true             # foci applies rate itself (endpoint ignores speed); openai + wav only
 #
 # [[tts]]
 # id = "edge"

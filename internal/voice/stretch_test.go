@@ -10,6 +10,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"foci/internal/config"
 )
 
 // sinePCM16 returns secs seconds of a mono 16-bit sine at freq Hz.
@@ -108,8 +110,9 @@ func TestStretchWAV_RejectsNonPCM16(t *testing.T) {
 func TestOpenAITTS_WAVRateAppliedLocally(t *testing.T) {
 	// #2937: Groq's Orpheus endpoint accepts "speed" (it validates <= 5.0) but
 	// returns byte-identical audio at every value (live test, 2026-11-07). So
-	// for a WAV response foci applies the rate itself and does not send speed:
-	// the clip must come back shorter by the rate.
+	// for a voice marked LocalSpeed (#2940: [[tts]] local_speed_control) foci
+	// applies the rate itself and does not send speed: the clip must come back
+	// shorter by the rate.
 	const sr = 24000
 	pcm := sinePCM16(sr, 300, 2)
 	var gotBody string
@@ -120,7 +123,7 @@ func TestOpenAITTS_WAVRateAppliedLocally(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tts := &OpenAITTS{Endpoint: server.URL, APIKey: "key", Model: "m", Voice: "troy", Speed: 1.3}
+	tts := &OpenAITTS{Endpoint: server.URL, APIKey: "key", Model: "m", Voice: "troy", Speed: 1.3, LocalSpeed: true}
 	audio, err := tts.Synthesize(context.Background(), "hello")
 	if err != nil {
 		t.Fatalf("synthesize: %v", err)
@@ -166,12 +169,58 @@ func TestOpenAITTS_WAVRateUndecodableBodyKept(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tts := &OpenAITTS{Endpoint: server.URL, APIKey: "key", Model: "m", Speed: 1.3}
+	tts := &OpenAITTS{Endpoint: server.URL, APIKey: "key", Model: "m", Speed: 1.3, LocalSpeed: true}
 	audio, err := tts.Synthesize(context.Background(), "hello")
 	if err != nil {
 		t.Fatalf("synthesize: %v", err)
 	}
 	if string(audio) != "not a wav" {
 		t.Errorf("audio = %q, want the provider's bytes", audio)
+	}
+}
+
+func TestOpenAITTS_WAVRateSentToAPIByDefault(t *testing.T) {
+	// #2940, Dick's ruling: the endpoint's own speed is the rule, the local
+	// stretch the exception. A WAV voice without LocalSpeed sends speed and
+	// gets the provider's bytes back unchanged.
+	const sr = 24000
+	body := groqStyleWAV(sinePCM16(sr, 300, 1), sr)
+	var gotBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+
+	tts := &OpenAITTS{Endpoint: server.URL, APIKey: "key", Model: "m", Speed: 1.3}
+	audio, err := tts.Synthesize(context.Background(), "hello")
+	if err != nil {
+		t.Fatalf("synthesize: %v", err)
+	}
+	if !strings.Contains(gotBody, `"speed":1.3`) {
+		t.Errorf("speed not sent to the API: %s", gotBody)
+	}
+	if !bytes.Equal(audio, body) {
+		t.Error("audio changed locally on a voice without local speed control")
+	}
+}
+
+func TestNewTTS_LocalSpeedControlCarried(t *testing.T) {
+	// #2940: the [[tts]] key reaches the provider, and survives WithRate (which
+	// is how every caller applies the rate).
+	for _, want := range []bool{false, true} {
+		cfg := config.TTSConfig{Format: "openai", Endpoint: "http://x", LocalSpeedControl: want}
+		p, err := NewTTS(cfg, "k", HTTPOpts{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		o, ok := WithRate(p, 1.3).(*OpenAITTS)
+		if !ok {
+			t.Fatalf("WithRate returned %T, want *OpenAITTS", WithRate(p, 1.3))
+		}
+		if o.LocalSpeed != want || o.Speed != 1.3 {
+			t.Errorf("LocalSpeed=%v Speed=%v, want %v and 1.3", o.LocalSpeed, o.Speed, want)
+		}
 	}
 }

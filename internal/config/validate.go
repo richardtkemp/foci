@@ -72,6 +72,25 @@ func validateTTSMaxChars(cfg *Config) error {
 	return nil
 }
 
+// validateTTSLocalSpeedControl rejects local_speed_control on a [[tts]] entry
+// foci cannot stretch: the stretch reads PCM16 WAV from an openai-format
+// response only (#2940). Silently ignored there, the voice would play at the
+// wrong rate with the key apparently set.
+func validateTTSLocalSpeedControl(cfg *Config) error {
+	for _, e := range cfg.TTS {
+		if !e.LocalSpeedControl {
+			continue
+		}
+		if e.Format != "openai" {
+			return fmt.Errorf("[[tts]] id %q local_speed_control: needs format = \"openai\", got %q", e.ID, e.Format)
+		}
+		if e.ResponseFormat != "" && e.ResponseFormat != "wav" {
+			return fmt.Errorf("[[tts]] id %q local_speed_control: needs response_format = \"wav\", got %q", e.ID, e.ResponseFormat)
+		}
+	}
+	return nil
+}
+
 // validateWebFetchMaxBytes rejects a negative tools.web_fetch_max_bytes at the
 // global and each agent level (#2770). Zero is allowed and means the default.
 func validateWebFetchMaxBytes(cfg *Config) error {
@@ -330,6 +349,9 @@ func (cfg *Config) Validate(knownBackends []string) error {
 		return err
 	}
 	if err := validateTTSMaxChars(cfg); err != nil {
+		return err
+	}
+	if err := validateTTSLocalSpeedControl(cfg); err != nil {
 		return err
 	}
 	if err := validateWebFetchMaxBytes(cfg); err != nil {
