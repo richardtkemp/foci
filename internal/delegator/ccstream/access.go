@@ -24,6 +24,15 @@ var (
 	readOnlyBatchTools = append(append([]string(nil), readOnlyPreapproved...), "Bash")
 )
 
+// blockedCCTools are the Claude Code built-ins no foci session gets (#2934,
+// Dick 2026-11-07: "Block everywhere"): the subagent tool, under its current
+// name and its old one. Delegation goes through foci_spawn. Passed as
+// --disallowedTools, a deny rule CC applies before any allow rule, setting or
+// mode; probed on claude 2.1.314: with the flag the tool is gone from the
+// init event's tool list. A depth leaf also keeps its PreToolUse deny
+// (depthleaf.go), in case a CC version lists the tool anyway.
+var blockedCCTools = []string{"Agent", "Task"}
+
 // readOnlyBashAsk is the settings permission rule that makes Claude Code ask
 // foci about EVERY Bash call of a read-only batch (#2702). Without it CC runs
 // the commands its own classifier judges read-only (ls, jq, find, cat) with

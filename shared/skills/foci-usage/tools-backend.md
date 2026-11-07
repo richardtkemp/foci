@@ -13,7 +13,7 @@ For agents on the **Claude Code (CC) backend** (most foci agents). You have two 
 
 ## 1. CC-native tools
 
-foci does **not** replace CC's own tools (`Read`, `Edit`, `Bash`, `Agent`, ...). Use them for files, shell, search and sub-agents.
+foci does **not** replace CC's own tools (`Read`, `Edit`, `Bash`, ...). Use them for files, shell and search. CC's `Agent` (subagent) tool is removed from every session (#2934): start sub-agents with `foci_spawn` (**tools-backend-spawn.md**).
 
 ## 2. foci tools (as shell functions)
 

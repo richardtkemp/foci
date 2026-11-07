@@ -13,7 +13,9 @@ import (
 // gets DepthLeafRefusal as the tool result: the Agent tool (its old name Task
 // too) in the foreground and the background, Monitor, Workflow, a Bash call
 // with run_in_background, and a shell command that detaches itself (`&`,
-// nohup, setsid --fork, disown). No other session gets them.
+// nohup, setsid --fork, disown). No other session gets them. (Every session,
+// leaf or not, also launches without the Agent tool at all, #2934:
+// blockedCCTools; the leaf's Agent/Task rules stay as a second guard.)
 //
 // CC's own background switch (CLAUDE_CODE_DISABLE_BACKGROUND_TASKS) is
 // deliberately NOT set (Dick, 2026-11-01: "I don't really want anything

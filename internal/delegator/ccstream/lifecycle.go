@@ -52,6 +52,9 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		"--include-partial-messages",
 		"--include-hook-events",
 		"--verbose",
+		// No session of any kind gets CC's subagent tool (#2934): see
+		// blockedCCTools.
+		"--disallowedTools", strings.Join(blockedCCTools, ","),
 	}
 	if opts.PromptSuggestions {
 		// The flag alone enables it in print mode; the env var alone does

@@ -4,7 +4,8 @@
 
 Per-tool reference for the Claude Code (shell) backend. How `foci_*` shell functions work is in **tools-backend.md**. Every tool accepts `-h`/`--help`; read it before first use this session.
 
-### `foci_spawn` vs CC's `Agent` tool
+### `foci_spawn` (CC's `Agent` tool is removed)
+- `foci_spawn` is the only way to start a sub-agent. No Claude Code session has the `Agent` (old name `Task`) tool (#2934): foci launches CC without it. For parallel work, start several `--background` spawns.
 - `foci_spawn "<task>" --name <name>` runs a sub-call. `--name` is required, unique in this session (`all` is reserved; a run of spaces, a tab or a line break inside it is refused). The user sees the spawn by this name; `[SPAWN RESULT]` and `foci_spawn_status` show it, and the other spawn tools take it in place of the id. Older spawns show `(unnamed spawn)`.
 - The default mode is `character`: your full system prompt, tools and permission rules, but not this conversation. So the task text must carry everything it needs (ticket id, file paths, what done means).
 - It returns its result directly. With `--background` it runs in its own background session, returns at once with a spawn id, and you keep taking messages. A background spawn's result arrives ONCE as a `[SPAWN RESULT]` message; nothing else wakes you.
@@ -13,7 +14,7 @@ Per-tool reference for the Claude Code (shell) backend. How `foci_*` shell funct
 - `--agent <id>` runs AS another agent: its character, tools, workspace, permission rules, backend and model. The result comes back to you; nothing reaches that agent's chats. It implies character mode (do not pass `--context`); `--background` works. Its `send_to_chat` lands in YOUR chat; it cannot `send_to_session` or `remind`.
 - Every spawn first checks the plan allowance of the backend it runs on (the target's, with `--agent`). With less than `[tools] spawn_reserve_percent` (default 10%) left in the 5-hour or weekly window it is refused, naming the window, what is left and when it resets. `--use-reserve` runs it anyway. A backend with no usage data runs unchecked.
 - A clone's permission prompts reach the user headed `🐣 From spawn <id>: <name>` and never block your own turn. A character spawn's prompts are decided by the auto-approve rules, never asked. In auto mode nobody is asked. `/stop` stops your spawns too. A background spawn cannot start another.
-- In a depth leaf `foci_spawn` is the only way to start subagent or background work (#2625). The Agent tool, Monitor, Workflow and background shells are refused with a message (a timed-out foreground command is still backgrounded, not killed). A leaf may report while its spawns run: their results pass up the tree.
+- In a depth leaf `foci_spawn` is the only way to start subagent or background work (#2625). Monitor, Workflow and background shells are refused with a message (the Agent tool is absent, as in every session) (a timed-out foreground command is still backgrounded, not killed). A leaf may report while its spawns run: their results pass up the tree.
 
 ### `foci_spawn_send --id <name|spawn-id> "<message>"`
 - Tell a spawn more. A running spawn gets it folded into its current turn. A finished one resumes on its branch with its earlier context and reports a new `[SPAWN RESULT]`.

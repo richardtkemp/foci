@@ -379,6 +379,7 @@ func main() {
 	// Ignored, but it must be declared: Parse stops at the first flag it does not
 	// know, and every flag after it (--resume, --settings) would be lost.
 	fs.String("prompt-suggestions", "", "ignored")
+	fs.String("disallowedTools", "", "ignored (foci: Agent,Task in every session, #2934)")
 	fs.BoolVar(&helpFlag, "h", false, "show usage")
 	fs.BoolVar(&helpFlag, "help", false, "show usage")
 	if err := fs.Parse(os.Args[1:]); err != nil {
