@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/delegator/accounting"
+	"foci/internal/modelinfo"
 	"foci/internal/provider"
 	"foci/internal/session"
 )
@@ -209,5 +211,53 @@ func TestNoteBranchInheritsRoot_BaselineIsSourcesLastCall(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), "fork "+orchestratorTestBranchKey) {
 		t.Fatalf("warned on a fork that read the source's last cached prefix:\n%s", logs.String())
+	}
+}
+
+// TestNoteBranchInheritsRoot_BaselineSurvivesARestart is #2932: the source's
+// last cached read is in memory (lastCallCacheRead), so after a foci restart a
+// source that has not called since had baseline 0, a missed keepalive fork
+// stamped the root warm, and keepalive kept forking hourly (7 Nov, c7026 and
+// polaris). The ledger holds the source's last call; the fresh Agent (the
+// restart) must take its baseline from there. Not parallel: sets the live
+// ledger.
+func TestNoteBranchInheritsRoot_BaselineSurvivesARestart(t *testing.T) {
+	l, _, err := accounting.Open(filepath.Join(t.TempDir(), "api.db"), accounting.Options{})
+	if err != nil {
+		t.Fatalf("accounting.Open: %v", err)
+	}
+	accounting.SetLive(l)
+	t.Cleanup(func() { accounting.SetLive(nil); _ = l.Close() })
+
+	const root = "test-agent/c2932"
+	const fork = root + "/b1700002932"
+	when := time.Now().Add(-50 * time.Minute)
+	tn := accounting.Turn{TurnID: root + "@1", Session: root, AgentID: "test-agent",
+		Backend: accounting.BackendCCStream, Source: accounting.SourceUser, StartedAt: when}
+	r := accounting.APIResponse{ID: "m2932", Kind: accounting.KindCall, Provider: "anthropic",
+		Model: "claude-opus-5-5", Session: root, AgentID: "test-agent", TurnID: tn.TurnID,
+		Start: when, StopReason: "end_turn",
+		Tokens: modelinfo.Tokens{modelinfo.ClassInput: 2, modelinfo.ClassCacheRead: 12199, modelinfo.ClassCacheWrite1h: 44744}}
+	if err := accounting.Record(tn, r.Call()); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	// The restart: an Agent with no session meta for root.
+	a, idx := newCacheEvidenceTestAgent(t)
+	seedCacheTestRow(idx, root)
+	seedCacheTestRow(idx, fork)
+
+	// A miss: the fork read only the static prefix.
+	a.NoteBranchInheritsRoot(fork, root)
+	a.recordCacheEvidence(fork, 4096, 52000)
+	if _, ok := idx.LastCacheTouch(root); ok {
+		t.Fatal("after a restart, a fork that missed its source's cache stamped the root warm")
+	}
+
+	// A hit still warms the root.
+	a.NoteBranchInheritsRoot(fork, root)
+	a.recordCacheEvidence(fork, 12199, 300)
+	if _, ok := idx.LastCacheTouch(root); !ok {
+		t.Fatal("after a restart, a fork that read its source's cache did not stamp the root")
 	}
 }

@@ -288,6 +288,42 @@ func TestCacheWatch_SeedsFromTheLedgerAfterARestart(t *testing.T) {
 	}
 }
 
+// After a restart, NoteCacheFork's baseline for the agent's warm decision
+// (#2932) is the source's last call in api.db; 0 when the last one there is a
+// compaction, or the source has none.
+func TestNoteCacheFork_ReturnsTheSourcesReadAfterARestart(t *testing.T) {
+	l, _ := openLedger(t)
+	useLive(t, l)
+	book := func(id, session, kind string, when time.Time, read, write int) {
+		t.Helper()
+		r := APIResponse{ID: id, Kind: kind, Provider: "anthropic", Model: watchModel,
+			Session: session, AgentID: "a", TurnID: session + "@1", Start: when, StopReason: "end_turn",
+			Tokens: modelinfo.Tokens{modelinfo.ClassInput: 2, modelinfo.ClassCacheRead: read, modelinfo.ClassCacheWrite1h: write}}
+		tn := Turn{TurnID: session + "@1", Session: session, AgentID: "a", Backend: BackendCCStream, Source: SourceUser, StartedAt: when}
+		if err := Record(tn, r.Call()); err != nil {
+			t.Fatalf("Record %s: %v", id, err)
+		}
+	}
+	now := time.Now()
+	book("f1", "fork/c1", KindCall, now.Add(-50*time.Minute), 12199, 44744)
+	book("f2", "fork/c2", KindCall, now.Add(-50*time.Minute), 90000, 100)
+	book("f3", "fork/c2", KindCompaction, now.Add(-49*time.Minute), 90100, 500)
+
+	saved := watch
+	watch = newCacheWatch() // the restart
+	t.Cleanup(func() { watch = saved })
+
+	if got := NoteCacheFork("fork/c1/b1", "fork/c1"); got != 12199 {
+		t.Errorf("source's read after a restart = %d, want 12199 from api.db", got)
+	}
+	if got := NoteCacheFork("fork/c2/b1", "fork/c2"); got != 0 {
+		t.Errorf("source just compacted: read = %d, want 0", got)
+	}
+	if got := NoteCacheFork("fork/c3/b1", "fork/c3"); got != 0 {
+		t.Errorf("source with no calls: read = %d, want 0", got)
+	}
+}
+
 // Lineages untouched past every TTL are pruned; a pruned lineage's next call
 // is re-seeded (here: none, no ledger) and the watch stays bounded.
 func TestCacheWatch_PrunesStaleLineages(t *testing.T) {

@@ -207,11 +207,16 @@ func lineageKey(session, actor string) string { return session + "\x00" + actor 
 // conversation, so the branch's first call is checked against the source's
 // last call. Call it when the fork is made: a source that keeps working
 // afterwards must not raise what the fork is expected to read.
-func NoteCacheFork(branch, source string) { watch.noteFork(branch, source, time.Now()) }
+//
+// It returns the cache read of the source's last call, seeded from api.db
+// when this process has not seen one (a restart), or 0 when there is none or
+// the source was just compacted or reset. The agent's warm decision uses it
+// as its fork-miss baseline when it holds none of its own (#2932).
+func NoteCacheFork(branch, source string) int { return watch.noteFork(branch, source, time.Now()) }
 
-func (w *cacheWatch) noteFork(branch, source string, now time.Time) {
+func (w *cacheWatch) noteFork(branch, source string, now time.Time) int {
 	if branch == "" || source == "" || branch == source {
-		return
+		return 0
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -222,13 +227,16 @@ func (w *cacheWatch) noteFork(branch, source string, now time.Time) {
 	}
 	base := w.lineageLocked(source, "", 0, now)
 	var snap *cacheLineage
+	sourceRead := 0
 	if base != nil && !base.fresh {
 		c := *base
 		snap = &c
+		sourceRead = c.read
 	}
 	// A fork replaces whatever its key held: it is a new conversation.
 	w.dropSessionLocked(branch)
 	w.forks[branch] = cacheFork{source: source, base: snap, at: now}
+	return sourceRead
 }
 
 // NoteCacheReset records that session's conversation was reset or compacted:

@@ -118,7 +118,7 @@ func (a *Agent) NoteBranchInheritsRoot(branchKey, parentKey string) {
 	// The ledger's cache watch checks the fork's first call against the
 	// source's last call (read + write) as of now, and reports a miss with its
 	// cost and cause (#2930). The warm decision below stays here.
-	accounting.NoteCacheFork(branchKey, parentKey)
+	ledgerRead := accounting.NoteCacheFork(branchKey, parentKey)
 
 	// The baseline is the source's last evidenced call, not its turn-end
 	// usage (prevCacheRead): a compaction or a turn still running moves the
@@ -129,6 +129,13 @@ func (a *Agent) NoteBranchInheritsRoot(branchKey, parentKey string) {
 		sourceRead = m.lastCallCacheRead
 	}
 	a.metaMu.Unlock()
+	// lastCallCacheRead lives in memory: after a foci restart a source that
+	// has not called since has none, and a missed fork would stamp the root
+	// warm and keepalive would keep forking hourly (7 Nov, c7026 and polaris).
+	// The ledger's figure for the same call survives the restart (#2932).
+	if sourceRead == 0 {
+		sourceRead = ledgerRead
+	}
 
 	now := time.Now()
 	a.branchRootMu.Lock()
