@@ -140,7 +140,7 @@ func TestSafeClientBlocksHTTPSDowngrade(t *testing.T) {
 // previously it performed no filtering at all (P1-3).
 func TestWebFetchBlocksUnspecified(t *testing.T) {
 	params, _ := json.Marshal(map[string]any{"url": "http://0.0.0.0/"})
-	if _, err := webFetch(context.Background(), params, config.DefaultWebFetchMaxBytes); err == nil {
+	if _, err := webFetch(context.Background(), params, config.DefaultWebFetchMaxBytes, defaultFetchParseTimeout); err == nil {
 		t.Fatal("web_fetch to 0.0.0.0 should be blocked")
 	}
 }

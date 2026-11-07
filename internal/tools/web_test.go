@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -76,7 +77,7 @@ func TestParseReadableWithTimeoutFast(t *testing.T) {
 	u, _ := url.Parse("https://example.com")
 	art, err := parseReadableWithTimeout(
 		[]byte("<article><h1>Hi</h1><p>some body text here for readability</p></article>"),
-		u, 5*time.Second)
+		u, testFetchParseTimeout)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -553,6 +554,11 @@ var webFetchCorpus = []struct {
 	},
 }
 
+// testFetchParseTimeout is the parse budget for tests that assert on the
+// extraction. It is only a hang guard: with the production budget, a loaded host
+// or -race turns a slow parse into the whole-page fallback (#2905).
+const testFetchParseTimeout = 5 * time.Minute
+
 // fetchFixture serves a testdata fixture verbatim over httptest and runs it
 // through the web_fetch tool, so the full extraction path is exercised.
 func fetchFixture(t *testing.T, file string) string {
@@ -566,7 +572,7 @@ func fetchFixture(t *testing.T, file string) string {
 	}))
 	defer server.Close()
 	params, _ := json.Marshal(map[string]interface{}{"url": server.URL})
-	result, err := NewWebFetchTool(nil).Execute(context.Background(), params)
+	result, err := webFetch(context.Background(), params, webFetchLimit(nil), testFetchParseTimeout)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -784,6 +790,40 @@ func TestWebFetchCommentHeavyPageNoFalseWarnings(t *testing.T) {
 		if i := strings.Index(got, note); i >= 0 {
 			t.Errorf("warning %q fired on a correctly extracted page: %s", note, got[max(0, i-40):])
 		}
+	}
+}
+
+func TestWebFetchParseTimeoutSaysSo(t *testing.T) {
+	// #2905: a parse that outruns its budget returns the whole page, and the
+	// caller is told why comments and page chrome are in the result. Not
+	// parallel: it swaps readabilityFromReader. The parse blocks until the test
+	// ends, so the budget always fires, however loaded the host is.
+	orig := readabilityFromReader
+	defer func() { readabilityFromReader = orig }()
+	block := make(chan struct{})
+	defer close(block)
+	readabilityFromReader = func(io.Reader, *url.URL) (readability.Article, error) {
+		<-block
+		return readability.Article{}, nil
+	}
+	body, err := os.ReadFile(filepath.Join("testdata", "webfetch_corpus", "lesswrong_unlocking_emotional_brain.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(body)
+	}))
+	defer server.Close()
+	params, _ := json.Marshal(map[string]interface{}{"url": server.URL})
+	result, err := webFetch(context.Background(), params, webFetchLimit(nil), time.Millisecond)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result.Text, "memory reconsolidation") {
+		t.Error("post body missing from the whole-page fallback")
+	}
+	if !strings.Contains(result.Text, fmt.Sprintf(parseTimeoutNote, time.Millisecond)) {
+		t.Errorf("no timeout note on the fallback; result ends: %s", result.Text[max(0, len(result.Text)-200):])
 	}
 }
 

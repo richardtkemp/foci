@@ -23,6 +23,7 @@ const (
 	// runs on attacker-controlled HTML after the body is read. The x/net bump
 	// removes the known html.Parse DoS; this is independent defence-in-depth so
 	// a future parser pathology can't hang web_fetch past the network timeout.
+	// Past it, web_fetch returns the whole page with a note saying so (#2905).
 	defaultFetchParseTimeout = 10 * time.Second
 )
 

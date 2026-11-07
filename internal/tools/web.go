@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -44,7 +45,7 @@ func NewWebFetchTool(maxBytes func() int64) *Tool {
 			"required": ["url"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return webFetch(ctx, params, webFetchLimit(maxBytes))
+			return webFetch(ctx, params, webFetchLimit(maxBytes), defaultFetchParseTimeout)
 		},
 	}
 }
@@ -220,12 +221,16 @@ func hasAttr(n *html.Node, key string) bool {
 	return false
 }
 
+// errFetchParseTimeout marks a readability parse that outran its budget, as
+// opposed to one that failed on the page's content.
+var errFetchParseTimeout = errors.New("readability parse timed out")
+
 // parseReadableWithTimeout runs readability extraction under a wall-clock
 // timeout. readability/html.Parse is not context-cancellable, so on timeout the
 // background goroutine is left to finish (and exit) on its own via the buffered
 // channel — bounded in practice because the network body is capped by
 // web_fetch_max_bytes (default 1 MiB) and the x/net bump removes the known
-// infinite-loop inputs.
+// infinite-loop inputs. A timeout wraps errFetchParseTimeout.
 func parseReadableWithTimeout(body []byte, parsed *url.URL, timeout time.Duration) (readability.Article, error) {
 	type result struct {
 		article readability.Article
@@ -244,7 +249,7 @@ func parseReadableWithTimeout(body []byte, parsed *url.URL, timeout time.Duratio
 	case r := <-ch:
 		return r.article, r.err
 	case <-time.After(timeout):
-		return readability.Article{}, fmt.Errorf("readability parse exceeded %s", timeout)
+		return readability.Article{}, fmt.Errorf("%w: exceeded %s", errFetchParseTimeout, timeout)
 	}
 }
 
@@ -334,6 +339,11 @@ func isStubExtraction(extractedChars, visibleChars int) bool {
 	}
 	return float64(extractedChars) < stubRatio*float64(visibleChars)
 }
+
+// parseTimeoutNote is appended when the parse outran its budget and the whole
+// page was returned instead (#2905). The page is not at fault, so a retry can
+// give the clean extraction.
+const parseTimeoutNote = "\n\n---\n_[foci: article extraction timed out after %s, so this is the whole page — navigation, sidebars and comments included. A retry may extract the article alone.]_"
 
 // stubFallbackNote is appended when a stub extraction was replaced by the
 // whole page (#2065), so the caller knows why page chrome is present.
@@ -505,7 +515,7 @@ func webFetchLimit(maxBytes func() int64) int64 {
 	return config.DefaultWebFetchMaxBytes
 }
 
-func webFetch(ctx context.Context, params json.RawMessage, maxBytes int64) (ToolResult, error) {
+func webFetch(ctx context.Context, params json.RawMessage, maxBytes int64, parseTimeout time.Duration) (ToolResult, error) {
 	p, err := UnmarshalParams[struct {
 		URL string `json:"url"`
 		Raw bool   `json:"raw"`
@@ -585,7 +595,11 @@ func webFetch(ctx context.Context, params json.RawMessage, maxBytes int64) (Tool
 	// Try readability extraction, then convert to markdown. The parse is
 	// bounded by an independent wall-clock timeout (P2-1 defence-in-depth).
 	var htmlContent string
-	article, err := parseReadableWithTimeout(body, parsed, defaultFetchParseTimeout)
+	article, err := parseReadableWithTimeout(body, parsed, parseTimeout)
+	parseTimedOut := errors.Is(err, errFetchParseTimeout)
+	if parseTimedOut {
+		web_fetchLog.Warnf("session=%s url=%s body=%d bytes: %v; returning the whole page", SessionKeyFromContext(ctx), parsed.Hostname(), len(body), err)
+	}
 	usedArticle := err == nil && strings.TrimSpace(article.Content) != ""
 	extractedChars := len(strings.TrimSpace(article.TextContent))
 	var visibleChars int
@@ -618,6 +632,9 @@ func webFetch(ctx context.Context, params json.RawMessage, maxBytes int64) (Tool
 	}
 	if stub && err == nil {
 		md += fmt.Sprintf(stubFallbackNote, extractedChars, visibleChars)
+	}
+	if parseTimedOut {
+		md += fmt.Sprintf(parseTimeoutNote, parseTimeout)
 	}
 	if usedArticle {
 		// #2069: the thin and list-drop checks measure against the regions
