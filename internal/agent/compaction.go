@@ -14,7 +14,12 @@ import (
 	"foci/shared/prompts"
 )
 
-const delegatedCompactTimeout = 5 * time.Minute
+// delegatedCompactTimeout bounds runDelegatedCompact's wait for a delegated
+// backend to finish compacting. It is a hang guard, not an expected duration:
+// a codex compaction of a 379k-token context took 5m18s (work Mac,
+// 2026-11-07), so the earlier 5-minute budget reported real successes as
+// failures (#2947).
+const delegatedCompactTimeout = 20 * time.Minute
 
 // markCompacting / clearCompacting / IsCompacting latch whether a compaction
 // is in flight for a session, so /status can show "compacting" instead of
@@ -80,7 +85,14 @@ func (a *Agent) doCompact(ctx context.Context, sessionKey string, system []provi
 	compactClient, compactModel, compactFormat := a.ResolveCallSite(config.CallCompaction, sessionKey)
 	summary, err := a.Compactor.Compact(ctx, compactClient, sessionKey, compactModel, compactFormat, system, summaryPrompt, handoffMsg, dryRun)
 	if err != nil {
-		return CompactResult{OldMessageCount: oldCount}, fmt.Errorf("compaction failed: %w", err)
+		// The ⏳ is already out: resolve it, or the chat shows "in progress"
+		// forever (#2947). Dry-run too: it sent its own ⏳.
+		label := "Compaction"
+		if dryRun {
+			label = "Compaction dry-run"
+		}
+		a.resolveCompactionNotice(sessionKey, fmt.Sprintf("❌ %s failed: %v", label, err))
+		return CompactResult{OldMessageCount: oldCount}, &CompactionNoticeShownError{Err: fmt.Errorf("compaction failed: %w", err)}
 	}
 
 	result := CompactResult{OldMessageCount: oldCount, Summary: summary}
@@ -176,10 +188,14 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 		// the "compacted" notification and the session bounce, since nothing
 		// changed. Callers distinguish this via errors.Is.
 		a.logger().Debugf("session=%s delegated compaction declined by backend (no boundary)", sessionKey)
-		return delegator.ErrCompactionNoBoundary
+		a.resolveCompactionNotice(sessionKey, "ℹ️ Nothing to compact — session too short.")
+		return &CompactionNoticeShownError{Err: delegator.ErrCompactionNoBoundary}
 	}
 	if waitErr != nil {
-		return fmt.Errorf("wait for compaction: %w", waitErr)
+		// The ⏳ notice is already out: resolve it, or the chat shows
+		// "in progress" forever (#2947).
+		a.resolveCompactionNotice(sessionKey, compactionWaitFailedNotice(waitErr))
+		return &CompactionNoticeShownError{Err: fmt.Errorf("wait for compaction: %w", waitErr)}
 	}
 	// The conversation is a new one now: its next call reads only what the
 	// summary shares with the old prefix, which is no bust (#2930).
@@ -224,6 +240,51 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 		}
 	}
 	return nil
+}
+
+// CompactionNoticeShownError marks a compaction error whose outcome the chat
+// has already been told: the ⏳ notice was edited to ❌ or "nothing to
+// compact" through CompactionNotifyFunc. /compact uses it to drop its own
+// reply where that notice shows, so the user sees one message, not two
+// (#2891, #2947). It unwraps to the underlying error, so errors.Is checks
+// such as delegator.ErrCompactionNoBoundary still match.
+type CompactionNoticeShownError struct {
+	Err error
+}
+
+func (e *CompactionNoticeShownError) Error() string { return e.Err.Error() }
+func (e *CompactionNoticeShownError) Unwrap() error { return e.Err }
+
+// CompactionNoticeShown reports whether err is (or wraps) a
+// CompactionNoticeShownError.
+func CompactionNoticeShown(err error) bool {
+	var shown *CompactionNoticeShownError
+	return errors.As(err, &shown)
+}
+
+// resolveCompactionNotice edits the ⏳ "Compacting context..." notice to msg
+// through the notify hooks, for an outcome that is not "compacted". It is
+// called only after the ⏳ was sent, so it never posts a stray message for a
+// compaction that was never shown as started.
+func (a *Agent) resolveCompactionNotice(sessionKey, msg string) {
+	for _, fn := range a.CompactionNotifyFunc {
+		fn(sessionKey, msg, "")
+	}
+}
+
+// compactionWaitFailedNotice is the ❌ text for a failed wait. On a timeout or
+// a cancel foci only stopped waiting: the backend may still finish the
+// compaction (#2947 saw codex finish 18s after foci gave up), so the text says
+// so rather than claiming the compaction failed.
+func compactionWaitFailedNotice(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Sprintf("❌ Compaction did not finish within %s; foci stopped waiting. The backend may still complete it.", delegatedCompactTimeout)
+	case errors.Is(err, context.Canceled):
+		return "❌ Compaction cancelled; foci stopped waiting. The backend may still complete it."
+	default:
+		return fmt.Sprintf("❌ Compaction failed: %v", err)
+	}
 }
 
 // compactionResumePrompt is the self-injected nudge sent after a compaction

@@ -1574,7 +1574,7 @@ func (a *Agent) waitUserTurnGates(ctx context.Context, sk string) bool {
 	// clears, then dispatch as a clean turn — further arrivals accumulate
 	// in inb.ch and batch via drainAvailable once the gate opens (same as
 	// the #767 gate above). Poll rather than event-wait: clearCompacting
-	// has no broadcast and the IsCompacting latch self-heals (5-min
+	// has no broadcast and the IsCompacting latch self-heals (delegatedCompactTimeout
 	// expiry), so a poll cannot miss-wake-wedge. Compaction is rare and
 	// brief; in the common auto path the worker is already past compaction
 	// by the time it dequeues, so this never spins.

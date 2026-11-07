@@ -401,8 +401,8 @@ func (b *Backend) sendSummarize(ctx context.Context) error {
 	// /summarize is synchronous: opencode runs the full summarisation LLM
 	// call server-side before returning. This can take 30-60s+ on large
 	// sessions — far longer than the shared client's 30s cap. Use a
-	// deadline-less client and rely on the context (delegatedCompactTimeout,
-	// 5 min) to bound the call.
+	// deadline-less client and rely on the context (agent delegatedCompactTimeout)
+	// to bound the call.
 	return b.postMessageWithClient(ctx, "/summarize", body, &http.Client{})
 }
 

@@ -348,12 +348,23 @@ func CompactCommand() *Command {
 			// The post-compaction restart would kill it (#1539).
 			return Response{Text: compactRefusal(bw.Running)}, nil
 		}
+		// A decline or a failure that already resolved the ⏳ notice (to
+		// "nothing to compact" or ❌) is told once, by that notice, where it
+		// shows in the app (#2891, #2947). Elsewhere the reply stays.
+		noticeTold := agent.CompactionNoticeShown(err) && compactNoticeConfirmsInApp(req, cc, sk)
 		if errors.Is(err, delegator.ErrCompactionNoBoundary) {
 			// Backend declined to compact (e.g. too few messages). Not an
 			// error to surface — report the no-op plainly (#1267).
+			if noticeTold {
+				return Response{}, nil
+			}
 			return Response{Text: "Nothing to compact — session too short."}, nil
 		}
 		if err != nil {
+			if noticeTold {
+				commandLog.Warnf("session=%s /compact failed (told by the ❌ notice): %v", sk, err)
+				return Response{}, nil
+			}
 			return Response{}, err
 		}
 		if compactNoticeConfirmsInApp(req, cc, sk) {

@@ -4111,3 +4111,34 @@ func TestExitIsExpected_NilError(t *testing.T) {
 		t.Error("exitIsExpected(nil, closing=true) = true, want false")
 	}
 }
+
+// TestWaitForCompactionStart_ReleasedByIdleWithoutBoundary (#2947): a /compact
+// run that goes idle without a "compacting" status or a boundary must release
+// the start wait too, so the caller reads the decline at once instead of
+// waiting out the whole compaction timeout.
+func TestWaitForCompactionStart_ReleasedByIdleWithoutBoundary(t *testing.T) {
+	t.Parallel()
+	b := &Backend{}
+	b.ArmCompactionWait()
+	b.ArmCompactionStartWait()
+
+	done := make(chan error, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	go func() { done <- b.WaitForCompactionStart(ctx) }()
+
+	raw, _ := json.Marshal(SessionStateMessage{Subtype: "session_state_changed", State: "idle"})
+	b.OnSystem("session_state_changed", raw)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("WaitForCompactionStart err = %v, want nil (released by the decline)", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("WaitForCompactionStart still blocked after idle-without-boundary")
+	}
+	if err := b.WaitForCompaction(context.Background()); !errors.Is(err, delegator.ErrCompactionNoBoundary) {
+		t.Fatalf("WaitForCompaction err = %v, want ErrCompactionNoBoundary", err)
+	}
+}

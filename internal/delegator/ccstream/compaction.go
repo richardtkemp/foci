@@ -202,6 +202,17 @@ func (b *Backend) signalCompactionAbort() {
 		return
 	}
 	b.resolveCompactionWait(delegator.ErrCompactionNoBoundary)
+	// A /compact that went idle without ever reporting status "compacting"
+	// must also release the start wait, or runDelegatedCompact sits in
+	// WaitForCompactionStart for the whole delegatedCompactTimeout (20 min
+	// since #2947) before it reads the decline.
+	if b.compactCh != nil && b.compactStartCh != nil {
+		select {
+		case b.compactStartCh <- struct{}{}:
+		default:
+		}
+		b.compactStartCh = nil
+	}
 }
 
 // WaitForCompaction blocks until compact_boundary is received (nil), the

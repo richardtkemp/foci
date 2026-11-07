@@ -2674,7 +2674,9 @@ func TestDelegatedTransport_RunCompaction_SendCommandError(t *testing.T) {
 }
 
 // TestDelegatedTransport_RunCompaction_WaitForTurnError verifies that when
-// WaitForTurn times out, the notify callback is not called.
+// WaitForTurn fails, the notify callback fires once with a ❌ that resolves the
+// ⏳ notice, never the ✅ "compacted" text (#2947: before, it was not called
+// at all and the chat showed "in progress" forever).
 func TestDelegatedTransport_RunCompaction_WaitForTurnError(t *testing.T) {
 	t.Parallel()
 	be := &mockBackendDT{
@@ -2686,13 +2688,13 @@ func TestDelegatedTransport_RunCompaction_WaitForTurnError(t *testing.T) {
 
 	store := session.NewStore(t.TempDir())
 	comp := compaction.NewCompactor(store, 0.8)
-	notifyCalled := false
+	var notifies []string
 	a := &Agent{
 		Model:            "test-model",
 		Compactor:        comp,
 		DelegatedManager: newMockDelegatedManager(t, be),
 	}
-	a.CompactionNotifyFunc.Add(func(_, _, _ string) { notifyCalled = true })
+	a.CompactionNotifyFunc.Add(func(_, msg, _ string) { notifies = append(notifies, msg) })
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
 	ts.SessionMeta = a.getSessionMeta(ts.SessionKey)
@@ -2705,8 +2707,8 @@ func TestDelegatedTransport_RunCompaction_WaitForTurnError(t *testing.T) {
 
 	tr.RunCompaction(ts)
 
-	if notifyCalled {
-		t.Error("CompactionNotifyFunc should not be called when WaitForTurn fails")
+	if len(notifies) != 1 || !strings.HasPrefix(notifies[0], "❌") {
+		t.Errorf("notify messages = %q, want one ❌ resolving the ⏳ when WaitForTurn fails", notifies)
 	}
 }
 
