@@ -33,9 +33,7 @@ type AgentSetupParams struct {
 	SessionIndex    *session.SessionIndex
 	ToolDetailStore *tooldetail.Store
 	STT             voice.STT
-	TTS             voice.TTS
 	STTMap          map[string]voice.STT
-	TTSMap          map[string]voice.TTS
 	Ctx             context.Context //nolint:containedctx
 
 	// ReclaimHook is called when a facet session is reclaimed.
@@ -44,9 +42,6 @@ type AgentSetupParams struct {
 	// DisplayOverrideFn returns per-session display overrides.
 	// See platform.AgentConnectionParams for details.
 	DisplayOverrideFn func(sessionKey string) platform.DisplaySettings
-
-	// ResolveTTS resolves the TTS provider for a given agent config.
-	ResolveTTS func(ttsMap map[string]voice.TTS, ttsEntries []config.TTSConfig, ttsID string, rate float64, replacements map[string]string) voice.TTS
 
 	// ResolveSTT resolves the STT provider for a given agent config.
 	ResolveSTT func(sttMap map[string]voice.STT, sttEntries []config.STTConfig, agentSTT string, replacements map[string]string) voice.STT
@@ -231,9 +226,6 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	if p.STT != nil {
 		primaryBot.SetTranscriber(p.STT)
 	}
-	if p.TTS != nil {
-		primaryBot.SetTTS(p.TTS)
-	}
 	primaryBot.updateDisplay(func(d BotDisplayConfig) BotDisplayConfig {
 		d.ToolCallPreviewChars = cfg.Tools.ToolCallPreviewChars
 		return d
@@ -274,7 +266,6 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 		facetBot.SetAllowedUsersOnly(resolveAllowedUsersOnly(acfg, cfg))
 		ConfigureFacetBot(facetBot, FacetBotConfig{
 			STTProvider:     p.ResolveSTT(p.STTMap, cfg.STT, config.DerefStr(acfg.Voice.STT), voice.MergeReplacements(cfg.Voice.STTReplacements, acfg.Voice.STTReplacements)),
-			TTSProvider:     p.ResolveTTS(p.TTSMap, cfg.TTS, config.DerefStr(acfg.Voice.TTS), config.DerefFloat(acfg.Voice.TTSRate), voice.MergeReplacements(cfg.Voice.TTSReplacements, acfg.Voice.TTSReplacements)),
 			AgentConfig:     acfg,
 			GlobalConfig:    cfg,
 			Resolved:        p.Resolved, // static-cfg:ignore: plumbing — see comment on the ConfigureFacetConn call above
@@ -334,7 +325,6 @@ func newGroupThrottle(durStr string, bot *Bot) *platform.GroupThrottle {
 // FacetBotConfig holds common settings applied to every facet bot.
 type FacetBotConfig struct {
 	STTProvider     voice.STT
-	TTSProvider     voice.TTS
 	AgentConfig     config.AgentConfig
 	GlobalConfig    *config.Config
 	Resolved        *config.ResolvedAgentConfig
@@ -346,9 +336,6 @@ type FacetBotConfig struct {
 func ConfigureFacetBot(bot *Bot, mc FacetBotConfig) {
 	if mc.STTProvider != nil {
 		bot.SetTranscriber(mc.STTProvider)
-	}
-	if mc.TTSProvider != nil {
-		bot.SetTTS(mc.TTSProvider)
 	}
 	ApplyAgentDisplaySettings(bot, mc.Resolved.PlatformDisplay("telegram"), mc.Resolved.Debug, mc.Resolved.TelegramLongPollTimeout) // static-cfg:ignore: see comment on the ConfigureFacetConn call in SetupAgent
 	bot.fileMode, _ = config.ParseFileMode(mc.GlobalConfig.FileMode)

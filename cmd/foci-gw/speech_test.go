@@ -23,9 +23,10 @@ func testSpeechCatalog(tts []config.TTSConfig, keyed map[string]bool, cmds map[s
 	for _, e := range tts {
 		ttsMap[e.ID] = &stubTTS{e.ID}
 	}
+	v := &ttsVoices{entries: tts, providers: ttsMap}
 	return &speechCatalog{
-		cfg:     &config.Config{TTS: tts},
-		ttsMap:  ttsMap,
+		cfg:     &config.Config{},
+		voices:  func() *ttsVoices { return v },
 		hasKey:  func(e config.TTSConfig) bool { return keyed[e.ID] },
 		hasCmd:  func(name string) bool { return cmds[name] },
 		builtin: &stubTTS{"builtin"},
@@ -140,7 +141,8 @@ func TestInitVoice_MaxCharsOnEveryPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ttsMap, _ := initVoice(&config.Config{TTS: entries}, store)
+	reg, _ := initVoice(&config.Config{TTS: entries}, store)
+	ttsMap := reg.Voices().providers
 	edge := &stubTTS{"edge"}
 	ttsMap[builtinFallbackTTSID] = edge
 
@@ -153,11 +155,11 @@ func TestInitVoice_MaxCharsOnEveryPath(t *testing.T) {
 		}
 	}
 	t.Run("the speech catalog's one voice", func(t *testing.T) {
-		c := &speechCatalog{cfg: &config.Config{TTS: entries}, ttsMap: ttsMap, hasKey: func(config.TTSConfig) bool { return true }, hasCmd: func(string) bool { return false }}
+		c := &speechCatalog{cfg: &config.Config{}, voices: reg.Voices, hasKey: func(config.TTSConfig) bool { return true }, hasCmd: func(string) bool { return false }}
 		assertTooLong(t, c.Provider("a", "groq"), "123456")
 	})
 	t.Run("counted after word replacements", func(t *testing.T) {
-		c := &speechCatalog{cfg: &config.Config{TTS: entries}, ttsMap: ttsMap, hasKey: func(config.TTSConfig) bool { return true }, hasCmd: func(string) bool { return false }}
+		c := &speechCatalog{cfg: &config.Config{}, voices: reg.Voices, hasKey: func(config.TTSConfig) bool { return true }, hasCmd: func(string) bool { return false }}
 		assertTooLong(t, c.Provider("a", "groq"), "abc")
 	})
 	t.Run("a chain skips to the next voice", func(t *testing.T) {

@@ -18,18 +18,21 @@ import (
 // [[tts]] entry this host can actually run, plus the built-in edge-tts. Unlike
 // initVoice's fallback, the built-in is offered with no [[tts]] entries at all
 // (Dick, 2026-11-05: "use edge-tts if available on the host").
+//
+// The voices come from the live [[tts]] build (#2942): each call reads it once,
+// so a [[tts]] edit reaches the next Sources or Provider call.
 type speechCatalog struct {
-	cfg     *config.Config
-	ttsMap  map[string]voice.TTS
+	cfg     *config.Config // agent voice settings only; [[tts]] comes from voices
+	voices  func() *ttsVoices
 	hasKey  func(entry config.TTSConfig) bool
 	hasCmd  func(name string) bool
 	builtin voice.TTS
 }
 
-func newSpeechCatalog(cfg *config.Config, ttsMap map[string]voice.TTS, store *secrets.Store) *speechCatalog {
+func newSpeechCatalog(cfg *config.Config, tts *ttsRegistry, store *secrets.Store) *speechCatalog {
 	return &speechCatalog{
 		cfg:    cfg,
-		ttsMap: ttsMap,
+		voices: tts.Voices,
 		hasKey: func(entry config.TTSConfig) bool {
 			return resolveVoiceAPIKey(store, entry.Secret, entry.Endpoint) != "" || isLoopbackEndpoint(entry.Endpoint)
 		},
@@ -66,10 +69,10 @@ func isLoopbackEndpoint(endpoint string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// available reports whether a [[tts]] entry can run here. A missing key or binary
-// hides the source: naming it would only promise a failure.
-func (c *speechCatalog) available(entry config.TTSConfig) bool {
-	if entry.ID == "" || c.ttsMap[entry.ID] == nil {
+// available reports whether a [[tts]] entry of build v can run here. A missing
+// key or binary hides the source: naming it would only promise a failure.
+func (c *speechCatalog) available(v *ttsVoices, entry config.TTSConfig) bool {
+	if entry.ID == "" || v.providers[entry.ID] == nil {
 		return false
 	}
 	if entry.Format == "edge-tts" {
@@ -87,9 +90,10 @@ func (c *speechCatalog) available(entry config.TTSConfig) bool {
 func (c *speechCatalog) Sources() []voice.SpeechSource {
 	var out []voice.SpeechSource
 	declaredBuiltin := false
-	for _, entry := range c.cfg.TTS {
+	v := c.build()
+	for _, entry := range v.entries {
 		declaredBuiltin = declaredBuiltin || entry.ID == builtinFallbackTTSID
-		if !c.available(entry) {
+		if !c.available(v, entry) {
 			continue
 		}
 		kind := voice.SpeechKindAPI
@@ -109,20 +113,32 @@ func (c *speechCatalog) Sources() []voice.SpeechSource {
 // Nil when the source is not one Sources lists.
 func (c *speechCatalog) Provider(agentID, sourceID string) voice.TTS {
 	rate, repls := c.agentVoice(agentID)
-	for i := range c.cfg.TTS {
-		entry := &c.cfg.TTS[i]
+	v := c.build()
+	for i := range v.entries {
+		entry := &v.entries[i]
 		if entry.ID != sourceID {
 			continue
 		}
-		if !c.available(*entry) {
+		if !c.available(v, *entry) {
 			return nil
 		}
-		return decorateTTS(c.ttsMap[entry.ID], entry, rate, repls)
+		return decorateTTS(v.providers[entry.ID], entry, rate, repls)
 	}
 	if sourceID == builtinFallbackTTSID && c.hasCmd(builtinFallbackTTSID) {
 		return decorateTTS(c.builtin, nil, rate, repls)
 	}
 	return nil
+}
+
+// build is the current [[tts]] build; never nil, so an empty catalog still
+// offers the built-in.
+func (c *speechCatalog) build() *ttsVoices {
+	if c.voices != nil {
+		if v := c.voices(); v != nil {
+			return v
+		}
+	}
+	return &ttsVoices{}
 }
 
 // agentVoice is the agent's speech rate and word replacements over the global

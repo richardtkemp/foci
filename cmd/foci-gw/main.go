@@ -326,26 +326,25 @@ Subcommands:
 
 	// ========== Voice providers ==========
 	braveKey, _ := sec.store.Get("brave.api_key")
-	ttsMap, sttMap := initVoice(cfg, sec.store)
+	ttsVoices, sttMap := initVoice(cfg, sec.store)
 
 	// ========== Live config-apply ==========
 	// Routes config edits to hot fields into the running process; appliers are
 	// registered after agent setup (registerLiveAppliers), edits before that
 	// are file-only like any restart-required field.
 	gwLiveApply = newLiveApply(configPath, gwConfigProtect)
+	registerTTSLiveApplier(gwLiveApply, ttsVoices)
 
 	// ========== Platform messaging ==========
-	speech := newSpeechCatalog(cfg, ttsMap, sec.store)
+	speech := newSpeechCatalog(cfg, ttsVoices, sec.store)
 	plat, err := platform.InitMessaging(cfg, platform.ProviderDeps{
 		Config:        cfg,
 		SecretStore:   sec.store,
 		Sessions:      si.sessions,
 		SessionIndex:  si.sessionIndex,
 		STTMap:        sttMap,
-		TTSMap:        ttsMap,
 		Ctx:           ctx,
 		ResolveSTT:    resolveSTT,
-		ResolveTTS:    resolveTTS,
 		SpeechSources: speech.Sources,
 		SpeechTTS:     speech.Provider,
 		ApplyLive:     gwLiveApply.Apply,
@@ -404,7 +403,7 @@ Subcommands:
 		si:           si,
 		sec:          sec,
 		mem:          mem,
-		ttsMap:       ttsMap,
+		tts:          ttsVoices,
 		sttMap:       sttMap,
 		braveKey:     braveKey,
 		gwSocketPath: gwSocketPath,
@@ -641,7 +640,7 @@ Subcommands:
 		sessions:          si.sessions,
 		cfg:               cfg,
 		ctx:               ctx,
-		ttsMap:            ttsMap,
+		tts:               ttsVoices,
 		sttMap:            sttMap,
 		connMgr:           connMgr,
 		reloadCredentials: reloadCreds,

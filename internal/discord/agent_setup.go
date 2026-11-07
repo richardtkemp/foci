@@ -75,9 +75,7 @@ type AgentSetupParams struct {
 	SessionIndex    *session.SessionIndex
 	ToolDetailStore *tooldetail.Store
 	STT             voice.STT
-	TTS             voice.TTS
 	STTMap          map[string]voice.STT
-	TTSMap          map[string]voice.TTS
 	Ctx             context.Context //nolint:containedctx
 
 	// ReclaimHook is called when a facet session is reclaimed.
@@ -85,9 +83,6 @@ type AgentSetupParams struct {
 
 	// DisplayOverrideFn returns per-session display overrides.
 	DisplayOverrideFn func(sessionKey string) platform.DisplaySettings
-
-	// ResolveTTS resolves the TTS provider for a given agent config.
-	ResolveTTS func(ttsMap map[string]voice.TTS, ttsEntries []config.TTSConfig, ttsID string, rate float64, replacements map[string]string) voice.TTS
 
 	// ResolveSTT resolves the STT provider for a given agent config.
 	ResolveSTT func(sttMap map[string]voice.STT, sttEntries []config.STTConfig, agentSTT string, replacements map[string]string) voice.STT
@@ -278,9 +273,6 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 
 	if p.STT != nil {
 		primaryBot.SetTranscriber(p.STT)
-	}
-	if p.TTS != nil {
-		primaryBot.SetTTS(p.TTS)
 	}
 	primaryBot.updateDisplay(func(d BotDisplayConfig) BotDisplayConfig {
 		d.ToolCallPreviewChars = cfg.Tools.ToolCallPreviewChars

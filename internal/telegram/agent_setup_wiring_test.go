@@ -14,14 +14,10 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
-// fakeSTT/fakeTTS are inert voice providers for wiring tests.
+// fakeSTT is an inert voice provider for wiring tests.
 type fakeSTT struct{}
 
 func (fakeSTT) Transcribe(_ context.Context, _ []byte, _ string) (string, error) { return "", nil }
-
-type fakeTTS struct{}
-
-func (fakeTTS) Synthesize(_ context.Context, _ string) ([]byte, error) { return nil, nil }
 
 // setupAgentFixture returns AgentSetupParams for agent "scout" with the bot
 // token secret present, plus the global config used.
@@ -61,9 +57,6 @@ func setupAgentFixture(t *testing.T) AgentSetupParams {
 		Resolved:     config.Resolve(cfg, acfg),
 		ResolveSTT: func(map[string]voice.STT, []config.STTConfig, string, map[string]string) voice.STT {
 			return fakeSTT{}
-		},
-		ResolveTTS: func(map[string]voice.TTS, []config.TTSConfig, string, float64, map[string]string) voice.TTS {
-			return fakeTTS{}
 		},
 	}
 }
@@ -267,14 +260,13 @@ func TestConfigureFacetBot_WiresSessionPersistence(t *testing.T) {
 	acfg := config.AgentConfig{ID: "scout"}
 	ConfigureFacetBot(b, FacetBotConfig{
 		STTProvider:  fakeSTT{},
-		TTSProvider:  fakeTTS{},
 		AgentConfig:  acfg,
 		GlobalConfig: cfg,
 		Resolved:     config.Resolve(cfg, acfg),
 		SessionIndex: idx,
 	})
-	if b.transcriber == nil || b.tts == nil {
-		t.Error("voice providers not installed")
+	if b.transcriber == nil {
+		t.Error("STT provider not installed")
 	}
 
 	b.SetSessionKey("agent:scout:branch:x")

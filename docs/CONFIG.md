@@ -444,6 +444,8 @@ Entries form a **fallback chain** via `fallback`. When a provider fails — a ra
 
 foci auto-registers a built-in, key-less `edge-tts` provider under the id `edge-tts` whenever at least one `[[tts]]` entry is configured, and every entry falls back to it by default. Declare a `[[tts]]` entry with `id = "edge-tts"` to replace the built-in (e.g. to pin a voice), or set `fallback = ""` on an entry to opt it out.
 
+`[[tts]]` applies live when changed with `/config set` or `foci config set` (the whole array, `tts`, or one entry, `tts[<id>]`): adding, removing or reordering an entry, or changing any of its keys, reaches the next speech request with no restart. A speech request already in progress finishes with the voices it started with. The app reads the voice list for read-to-me when it connects, so it sees a change at its next connection. A hand edit to foci.toml still needs a restart.
+
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `id` | string | `""` | Lookup key for agent overrides. |
@@ -457,8 +459,8 @@ foci auto-registers a built-in, key-less `edge-tts` provider under the id `edge-
 | `response_format` | string | `"wav"` | Audio format for OpenAI-compatible APIs: `"mp3"`, `"wav"`, `"opus"`, `"aac"`, `"flac"`. Groq only supports `"wav"`. |
 | `replacements` | map | `{}` | Word replacements applied to text before synthesis. Case-insensitive whole-word matching; preserves original case pattern. Example: `{ foci = "foki" }`. |
 | `fallback` | string | `"edge-tts"` | Id of the entry to try when this provider fails. Unset defaults to the built-in `edge-tts` provider (and to nothing for an entry that is already edge-tts). Set to `""` to disable fallback for this entry. |
-| `max_chars` | int | `0` | Longest text this voice takes, in characters (Unicode code points), counted on the text it would receive: after speech clean-up and word replacements. A longer text skips the voice with no provider call and goes to the next one. `0` means no limit. Applies to voice replies, voice notes and the app's Speak. Example: `200` on Groq Orpheus. As with every `[[tts]]` key, a change needs a restart. |
-| `local_speed_control` | bool | `false` | For an endpoint that ignores the speed it is sent (Groq Orpheus): foci leaves `speed` out of the request and applies `rate` itself, time-stretching the returned clip with pitch kept (pure Go, no binary needed). `openai` format with a `wav` response only; anything else is refused at load. If the clip is not 16-bit PCM WAV it plays at its own rate, with a warning. As with every `[[tts]]` key, a change needs a restart. |
+| `max_chars` | int | `0` | Longest text this voice takes, in characters (Unicode code points), counted on the text it would receive: after speech clean-up and word replacements. A longer text skips the voice with no provider call and goes to the next one. `0` means no limit. Applies to voice replies, voice notes and the app's Speak. Example: `200` on Groq Orpheus. |
+| `local_speed_control` | bool | `false` | For an endpoint that ignores the speed it is sent (Groq Orpheus): foci leaves `speed` out of the request and applies `rate` itself, time-stretching the returned clip with pitch kept (pure Go, no binary needed). `openai` format with a `wav` response only; anything else is refused at load. If the clip is not 16-bit PCM WAV it plays at its own rate, with a warning. |
 
 ### `[[stt]]`
 

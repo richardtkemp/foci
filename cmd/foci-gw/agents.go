@@ -122,7 +122,7 @@ type setupParams struct {
 	todoStore       *memory.TodoStore
 	taskListStore   *memory.TaskListStore
 	sessionIndex    *session.SessionIndex
-	ttsMap          map[string]voice.TTS
+	tts             *ttsRegistry
 	sttMap          map[string]voice.STT
 	braveKey        string
 	gwSocketPath    string                    // Unix socket path for same-user CLI auth (injected into child env as FOCI_GW_SOCK)
@@ -264,7 +264,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	resolvedLive := p.resolvedLive
 	agentTTS := func() voice.TTS {
 		vc := resolvedLive.Load().Voice
-		return resolveTTS(p.ttsMap, p.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls)
+		return p.tts.Resolve(vc.TTS, vc.TTSRate, ttsRepls)
 	}
 
 	// Register all tools from the single data-driven table (see tool_table.go),

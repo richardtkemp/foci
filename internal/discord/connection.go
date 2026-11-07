@@ -87,7 +87,6 @@ type Bot struct {
 	OnUserMessage      func()
 
 	transcriber voice.STT
-	tts         voice.TTS
 
 	mq       *platform.MessageQueue // shared message queue (commands + receive funnel)
 	agentRef *agent.Agent           // per-agent inbox + Enqueue access; nil for tests, set in agent_setup
@@ -266,11 +265,6 @@ func (b *Bot) SessionKeyForChannelID(channelID int64) string {
 // SetTranscriber sets the STT provider for inbound voice notes.
 func (b *Bot) SetTranscriber(t voice.STT) {
 	b.transcriber = t
-}
-
-// SetTTS sets the TTS provider for outbound voice notes.
-func (b *Bot) SetTTS(t voice.TTS) {
-	b.tts = t
 }
 
 // SetDisplayOverrideFn sets the callback that provides per-session display overrides.

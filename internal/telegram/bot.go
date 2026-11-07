@@ -102,7 +102,6 @@ type Bot struct {
 	apiBase            string                            // override for /file/bot<token>/<path> base URL ("" = api.telegram.org)
 
 	transcriber voice.STT // nil = voice notes not supported
-	tts         voice.TTS // nil = TTS not available
 
 	mq       *platform.MessageQueue // shared message queue (commands + receive funnel)
 	agentRef *agent.Agent           // per-agent inbox + Enqueue access; nil for tests, set in agent_setup
@@ -435,11 +434,6 @@ func (b *Bot) SessionKeyForChatID(chatID int64) string {
 // SetTranscriber sets the STT provider for inbound voice notes.
 func (b *Bot) SetTranscriber(t voice.STT) {
 	b.transcriber = t
-}
-
-// SetTTS sets the TTS provider for outbound voice notes.
-func (b *Bot) SetTTS(t voice.TTS) {
-	b.tts = t
 }
 
 // SetDisplayOverrideFn sets the callback that provides per-session display overrides.

@@ -62,9 +62,9 @@ type appSink struct {
 	// nil = no agent context: the root-less SKILL.md rule only, nothing to open.
 	skillScopeFn func() skills.ReadScope
 
-	// tts is the agent's resolved voice.TTS provider (#1439), reused from the
-	// same voice.TTS/ResolveTTS/VoiceConfig machinery telegram's outbound
-	// voice-note path uses. nil = no TTS configured, so voice-mode bundling is
+	// tts is the agent's voice.TTS provider (#1439), resolved per call from the
+	// live [[tts]] voices like the send_to_chat voice-note path. nil, or one
+	// that is not voice.Configured, means no TTS: voice-mode bundling is
 	// skipped and the turn degrades to a text-only reply — no error.
 	tts voice.TTS
 
@@ -263,7 +263,7 @@ func (s *appSink) ttsFailed(err error) {
 // A synthesis error is logged and swallowed — same graceful degrade as
 // no-TTS-configured, never fails the turn.
 func (s *appSink) synthesizeVoiceMode(ctx context.Context, e turnevent.TurnComplete) []byte {
-	if s.tts == nil || e.Err != nil {
+	if !voice.Configured(s.tts) || e.Err != nil {
 		return nil
 	}
 	if agent.TriggerFromContext(ctx) != "voice" {
@@ -300,7 +300,7 @@ func (s *appSink) synthesizeVoiceMode(ctx context.Context, e turnevent.TurnCompl
 // synthesizeVoiceMode. A synthesis error is logged and swallowed, matching
 // synthesizeVoiceMode's graceful degrade.
 func (s *appSink) synthesizeVoiceModeBlock(ctx context.Context, rawText string) {
-	if s.tts == nil || agent.TriggerFromContext(ctx) != "voice" {
+	if !voice.Configured(s.tts) || agent.TriggerFromContext(ctx) != "voice" {
 		return
 	}
 	text := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(rawText))

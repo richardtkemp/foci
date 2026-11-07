@@ -32,7 +32,7 @@ type httpHandlerDeps struct {
 	sessions          *session.Store
 	cfg               *config.Config
 	ctx               context.Context
-	ttsMap            map[string]voice.TTS
+	tts               *ttsRegistry
 	sttMap            map[string]voice.STT
 	connMgr           platform.ConnectionManager
 	reloadCredentials func() error

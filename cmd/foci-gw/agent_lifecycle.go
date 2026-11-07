@@ -36,7 +36,7 @@ type agentEnv struct {
 	si              sessionInfra
 	sec             secretsResult
 	mem             *memorySystem
-	ttsMap          map[string]voice.TTS
+	tts             *ttsRegistry
 	sttMap          map[string]voice.STT
 	braveKey        string
 	gwSocketPath    string
@@ -111,7 +111,7 @@ func (e *agentEnv) buildAgent(acfg config.AgentConfig) *agentInstance {
 		todoStore:       am.todos,
 		taskListStore:   am.taskList,
 		sessionIndex:    e.si.sessionIndex,
-		ttsMap:          e.ttsMap,
+		tts:             e.tts,
 		sttMap:          e.sttMap,
 		braveKey:        e.braveKey,
 		gwSocketPath:    e.gwSocketPath,

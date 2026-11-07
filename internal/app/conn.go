@@ -835,10 +835,11 @@ func (c *appConn) NewTurnSink(env agent.Envelope) (turnevent.Sink, func()) {
 		sink.skillScopeFn = c.agentRef.SkillScope
 	}
 	// Voice-mode bundling (#1439): reuse the agent's already-resolved TTS
-	// provider (same voice.TTS/ResolveTTS machinery telegram's send_to_chat
+	// provider (same voice.TTS/resolveTTS machinery the send_to_chat
 	// voice notes use) to synthesize this turn's reply when it originated from
-	// spoken input (trigger=="voice"). nil c.tts (no TTS configured) leaves
-	// sink.tts nil, so appSink degrades to text-only — no error.
+	// spoken input (trigger=="voice"). With no voice configured (c.tts nil, or
+	// a live resolver that resolves to none: voice.Configured), appSink
+	// degrades to text-only — no error.
 	sink.tts = c.tts
 	sink.attachVoice = func(audio []byte) error { return c.sendVoiceModeAttachment(b, audio) }
 	sink.afterTurn = func() { c.hub.finishTurnRead(b) }

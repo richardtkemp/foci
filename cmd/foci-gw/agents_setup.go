@@ -358,12 +358,15 @@ func setupPlatformConnections(
 	// (tts_replacements/stt_replacements) stay static — map-field addressability
 	// for them is a separate follow-up.
 	//
-	// sttMap/ttsMap are built once at startup from [[stt]]/[[tts]] entries
-	// (provider definitions, not hot-reloadable) — only wrap with the lazy
-	// adapter when at least one provider actually exists. A voice.STT/voice.TTS
-	// interface holding a non-nil *lazySTT/*lazyTTS is itself non-nil even
-	// when resolve() would return nil, which would break every `transcriber
-	// == nil` / `tts == nil` "no provider configured" check downstream.
+	// sttMap is built once at startup from [[stt]] entries (restart-only), so
+	// the lazy STT adapter is installed only when a provider exists: a
+	// voice.STT interface holding a non-nil *lazySTT is itself non-nil even
+	// when resolve() would return nil, which would break the `transcriber ==
+	// nil` "no provider configured" checks downstream.
+	//
+	// The [[tts]] voices are live (#2942): a [[tts]] edit can add the first
+	// voice or remove the last one. So the lazy TTS adapter is always installed,
+	// and its consumer asks voice.Configured instead of comparing with nil.
 	var sttParam voice.STT
 	if len(p.sttMap) > 0 {
 		sttParam = &lazySTT{resolve: func() voice.STT {
@@ -372,10 +375,10 @@ func setupPlatformConnections(
 		}}
 	}
 	var ttsParam voice.TTS
-	if len(p.ttsMap) > 0 {
+	if p.tts != nil {
 		ttsParam = &lazyTTS{resolve: func() voice.TTS {
 			vc := p.resolvedLive.Load().Voice
-			return resolveTTS(p.ttsMap, p.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls)
+			return p.tts.Resolve(vc.TTS, vc.TTSRate, ttsRepls)
 		}}
 	}
 	results := p.plat.SetupAgentConnection(platform.AgentConnectionParams{

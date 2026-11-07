@@ -43,15 +43,19 @@ func voiceHTTPOpts(cfg *config.Config) voice.HTTPOpts {
 	}
 }
 
-// initVoice sets up TTS and STT providers from [[tts]] and [[stt]] config arrays.
-// Returns maps keyed by entry ID; the first entry is also keyed as "" (default).
-func initVoice(cfg *config.Config, store *secrets.Store) (ttsMap map[string]voice.TTS, sttMap map[string]voice.STT) {
-	ttsMap = make(map[string]voice.TTS)
-	sttMap = make(map[string]voice.STT)
+// initVoice sets up the TTS voices and the STT providers from the [[tts]] and
+// [[stt]] config arrays. The STT map is keyed by entry ID, the first entry also
+// keyed as "" (default). The TTS voices live in a registry that a [[tts]] edit
+// rebuilds (#2942).
+func initVoice(cfg *config.Config, store *secrets.Store) (*ttsRegistry, map[string]voice.STT) {
+	return newTTSRegistry(cfg, store), initSTT(cfg, store)
+}
 
-	httpOpts := voiceHTTPOpts(cfg)
-
-	for i, entry := range cfg.TTS {
+// buildTTSProviders builds one provider per [[tts]] entry, keyed by entry ID;
+// the first entry is also keyed as "" (default).
+func buildTTSProviders(entries []config.TTSConfig, store *secrets.Store, httpOpts voice.HTTPOpts) map[string]voice.TTS {
+	ttsMap := make(map[string]voice.TTS)
+	for i, entry := range entries {
 		apiKey := resolveVoiceAPIKey(store, entry.Secret, entry.Endpoint)
 		t, err := voice.NewTTS(entry, apiKey, httpOpts)
 		if err != nil {
@@ -77,6 +81,13 @@ func initVoice(cfg *config.Config, store *secrets.Store) (ttsMap map[string]voic
 			mainLog.Infof("TTS %q enabled (built-in fallback)", builtinFallbackTTSID)
 		}
 	}
+	return ttsMap
+}
+
+// initSTT builds the STT providers from [[stt]]. They are restart-only.
+func initSTT(cfg *config.Config, store *secrets.Store) map[string]voice.STT {
+	sttMap := make(map[string]voice.STT)
+	httpOpts := voiceHTTPOpts(cfg)
 
 	for i, entry := range cfg.STT {
 		apiKey := resolveVoiceAPIKey(store, entry.Secret, entry.Endpoint)
@@ -91,8 +102,7 @@ func initVoice(cfg *config.Config, store *secrets.Store) (ttsMap map[string]voic
 		}
 		mainLog.Infof("STT %q enabled (format=%s model=%s)", entry.ID, entry.Format, entry.Model)
 	}
-
-	return ttsMap, sttMap
+	return sttMap
 }
 
 // builtinFallbackTTSID is the id of the free, key-less edge-tts provider foci
@@ -254,12 +264,20 @@ func (l *lazySTT) STTCredential() voice.STTCredential {
 }
 
 // lazyTTS re-resolves the underlying voice.TTS on every call instead of once
-// at setup, so voice.tts/voice.tts_rate changes propagate without a restart
-// for this consumer too (the send_to_chat tool's own TTS already does this
-// via the agentTTS closure in agents.go; this covers the bot-connection path).
+// at setup, so voice.tts/voice.tts_rate and [[tts]] changes propagate without
+// a restart for this consumer too (the send_to_chat tool's own TTS already
+// does this via the agentTTS closure in agents.go; this covers the
+// bot-connection path).
+//
+// A *lazyTTS is never nil, even while no voice is configured, so it reports
+// that through Configured: a consumer checks voice.Configured, not `== nil`,
+// and stays text-only until a live [[tts]] edit adds a voice (#2942).
 type lazyTTS struct {
 	resolve func() voice.TTS
 }
+
+// Configured reports whether a call made now would reach a provider.
+func (l *lazyTTS) Configured() bool { return l.resolve() != nil }
 
 func (l *lazyTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
 	tts := l.resolve()

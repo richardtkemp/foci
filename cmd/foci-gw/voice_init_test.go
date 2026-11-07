@@ -234,7 +234,7 @@ func TestInitVoice_RegistersBuiltinFallback(t *testing.T) {
 	cfg := &config.Config{TTS: []config.TTSConfig{
 		{ID: "groq", Format: "openai", Endpoint: "https://api.groq.com/openai/v1/audio/speech", Model: "m"},
 	}}
-	ttsMap, _ := initVoice(cfg, newTestStore(t, map[string]string{"groq.api_key": "k"}))
+	ttsMap := mustTTSMap(initVoice(cfg, newTestStore(t, map[string]string{"groq.api_key": "k"})))
 
 	if _, ok := ttsMap[builtinFallbackTTSID]; !ok {
 		t.Fatalf("ttsMap has no %q provider; got keys %v", builtinFallbackTTSID, mapKeys(ttsMap))
@@ -248,7 +248,7 @@ func TestInitVoice_RegistersBuiltinFallback(t *testing.T) {
 // must survive the built-in — a deployment that configured no TTS gets none.
 func TestInitVoice_NoTTSConfiguredStaysEmpty(t *testing.T) {
 	t.Parallel()
-	ttsMap, _ := initVoice(&config.Config{}, newTestStore(t, nil))
+	ttsMap := mustTTSMap(initVoice(&config.Config{}, newTestStore(t, nil)))
 	if len(ttsMap) != 0 {
 		t.Errorf("ttsMap = %v, want empty when no [[tts]] entries are configured", mapKeys(ttsMap))
 	}
@@ -261,7 +261,7 @@ func TestInitVoice_ConfiguredEdgeEntryWins(t *testing.T) {
 	cfg := &config.Config{TTS: []config.TTSConfig{
 		{ID: builtinFallbackTTSID, Format: "edge-tts", Voice: "en-GB-RyanNeural"},
 	}}
-	ttsMap, _ := initVoice(cfg, newTestStore(t, nil))
+	ttsMap := mustTTSMap(initVoice(cfg, newTestStore(t, nil)))
 
 	edge, ok := ttsMap[builtinFallbackTTSID].(*voice.EdgeTTS)
 	if !ok {
@@ -438,4 +438,9 @@ func mapKeys(m map[string]voice.TTS) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// mustTTSMap is the provider map of initVoice's current [[tts]] build.
+func mustTTSMap(reg *ttsRegistry, _ map[string]voice.STT) map[string]voice.TTS {
+	return reg.Voices().providers
 }

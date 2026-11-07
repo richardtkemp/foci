@@ -65,6 +65,19 @@ type TTS interface {
 	Synthesize(ctx context.Context, text string) ([]byte, error)
 }
 
+// Configured reports whether t can speak now. A nil t cannot. A t that
+// resolves its provider per call (and so is never nil itself) answers through
+// a Configured method; any other t can.
+func Configured(t TTS) bool {
+	if t == nil {
+		return false
+	}
+	if c, ok := t.(interface{ Configured() bool }); ok {
+		return c.Configured()
+	}
+	return true
+}
+
 // WithRate returns a copy of the TTS provider with the given speech rate.
 // If the provider doesn't support rate overrides, it returns itself unchanged.
 func WithRate(t TTS, rate float64) TTS {

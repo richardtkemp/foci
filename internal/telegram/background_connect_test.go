@@ -259,7 +259,7 @@ func TestBackgroundConnect_FacetSessionRestoredOnConnect(t *testing.T) {
 		mgr: NewBotManager(),
 		deps: platform.ProviderDeps{
 			Config: fx.GlobalConfig, SecretStore: fx.SecretStore, SessionIndex: idx, Sessions: sessions,
-			Ctx: fx.Ctx, ResolveSTT: fx.ResolveSTT, ResolveTTS: fx.ResolveTTS,
+			Ctx: fx.Ctx, ResolveSTT: fx.ResolveSTT,
 		},
 	}
 	// Through the provider, as boot does, so its restore hook is the one wired.
