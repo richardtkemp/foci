@@ -67,7 +67,9 @@ const cacheDefaultTTL = 5 * time.Minute
 // should have read.
 type CacheReport struct {
 	Session, Actor, Backend, Model string
-	At                             time.Time
+	// AgentID is the agent the call ran as.
+	AgentID string
+	At      time.Time
 	// Class is CacheClassBust or CacheClassExpiry; Cause names the likely
 	// cause (a CacheCause* constant).
 	Class, Cause string
@@ -116,7 +118,8 @@ func (r CacheReport) String() string {
 }
 
 // CacheReportHook, when set, receives every cache report. The gateway logs
-// them. Called synchronously after a booking commits: it must be quick.
+// them and posts each bust to a chat (#2933). Called synchronously after a
+// booking commits: it must be quick.
 var CacheReportHook func(CacheReport)
 
 // cacheLineage is the last checked call of one (session, actor).
@@ -450,7 +453,7 @@ func checkCache(b Booking, base *cacheLineage, source, prompt string, read, writ
 	}
 	since := b.BilledAt.Sub(base.touched)
 	r := CacheReport{
-		Session: b.Session, Actor: b.Actor, Backend: b.Backend, Model: b.Model, At: b.BilledAt,
+		Session: b.Session, Actor: b.Actor, Backend: b.Backend, Model: b.Model, AgentID: b.AgentID, At: b.BilledAt,
 		Class: CacheClassBust, Expected: expected, Read: read, Lost: lost, Write: write,
 		Since: since, TTL: base.ttl, Source: source, PrevModel: base.model,
 	}

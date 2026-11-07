@@ -214,6 +214,8 @@ var (
 		"notify.compaction_debug", "agent.notify.compaction_debug", "platforms.notify.compaction_debug",
 		// #1857: read live by the ccstream rate-limit hook off LiveConfig().
 		"notify.rate_limit_notify_to", "agent.notify.rate_limit_notify_to",
+		// #2933: read live by the cache-bust alert off LiveConfig().
+		"notify.cache_bust_notify", "agent.notify.cache_bust_notify",
 		"display.stream_output", "agent.display.stream_output", "platforms.display.stream_output",
 		"display.table_wrap_lines", "agent.display.table_wrap_lines", "platforms.display.table_wrap_lines",
 		"display.table_style", "agent.display.table_style", "platforms.display.table_style",

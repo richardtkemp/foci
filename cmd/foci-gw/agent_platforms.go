@@ -80,6 +80,22 @@ func wireAgentPlatformCallbacks(
 		})
 	}
 
+	// Cache bust alert (#2933): every booked call's cache read is checked
+	// (accounting/cachewatch.go); a bust is posted to the session's chat, else
+	// up the family tree, else the default chat. [notify] cache_bust_notify is
+	// read at each bust, so the setting is live.
+	registerCacheAlert(acfg.ID, newCacheAlertSink(backendPromptDeps{
+		ag: ag, connMgr: connMgr, sessionIdx: sessionIndex, agentID: acfg.ID,
+		live:           depthSessionLive,
+		owner:          tools.SpawnBranchOwner,
+		defaultSession: func() string { return defaultSessionKeyFor(ag, acfg.ID) },
+	}, func() bool {
+		if resolvedLive == nil {
+			return true
+		}
+		return resolvedLive.Load().Notify.CacheBustNotify
+	}))
+
 	// Usage hold (#2491): each agent posts its own start/end notice in its
 	// default chat.
 	ag.UsageHoldNotifyFunc = func(text string) {

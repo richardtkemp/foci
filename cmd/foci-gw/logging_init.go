@@ -104,10 +104,12 @@ func initLogging(cfg *config.Config, processStart time.Time) func() {
 	// Every booked call, on every backend, is checked for a cache read below
 	// what its request should have read (#2930): a bust at WARN, an expiry
 	// (the TTL ran out) at INFO. Each line names the session, the expected and
-	// actual read, the rewrite's cost and the likely cause.
+	// actual read, the rewrite's cost and the likely cause. A bust is also
+	// posted to a chat by its agent's sink (#2933, cache_alert.go).
 	accounting.CacheReportHook = func(r accounting.CacheReport) {
 		if r.Class == accounting.CacheClassBust {
 			ledgerLog.Warnf("%s", r)
+			dispatchCacheAlert(r)
 			return
 		}
 		ledgerLog.Infof("%s", r)

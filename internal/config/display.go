@@ -84,6 +84,9 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	if cfg.Notify.RateLimitNotifyTo != nil {
 		add("notify", "rate_limit_notify_to", *cfg.Notify.RateLimitNotifyTo)
 	}
+	if cfg.Notify.CacheBustNotify != nil {
+		add("notify", "cache_bust_notify", *cfg.Notify.CacheBustNotify)
+	}
 	if cfg.Sessions.FacetNoCompact != nil {
 		add("sessions", "facet_no_compact", *cfg.Sessions.FacetNoCompact)
 	}
@@ -403,6 +406,9 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	}
 	if agent.Notify.RateLimitNotifyTo != nil {
 		add("rate_limit_notify_to", *agent.Notify.RateLimitNotifyTo)
+	}
+	if agent.Notify.CacheBustNotify != nil {
+		add("cache_bust_notify", *agent.Notify.CacheBustNotify)
 	}
 	if agent.Notify.StartupNotify != nil {
 		add("startup_notify", *agent.Notify.StartupNotify)

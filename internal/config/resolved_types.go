@@ -531,6 +531,7 @@ type ResolvedNotify struct {
 	CompactionDebug     bool           // default false
 	WarningMaxPerWindow int            // default 3
 	RateLimitNotifyTo   string         // default "session" (#1857)
+	CacheBustNotify     bool           // default true (#2933)
 }
 
 func resolveNotify(m NotifyConfig) ResolvedNotify {
@@ -543,6 +544,7 @@ func resolveNotify(m NotifyConfig) ResolvedNotify {
 		CompactionDebug:     m.CompactionDebugEnabled(),
 		WarningMaxPerWindow: DerefInt(m.WarningMaxPerWindow),
 		RateLimitNotifyTo:   m.RateLimitNotifyTarget(),
+		CacheBustNotify:     m.CacheBustNotifyEnabled(),
 	}
 }
 

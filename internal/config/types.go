@@ -735,6 +735,7 @@ type NotifyConfig struct {
 	CompactionDebug     *bool           `toml:"compaction_debug"                        hot:"event" desc:"Attach the full compaction summary as a file whenever compaction runs, to inspect what got summarized"`                                                                                                                                                                                                                                                                        // send compaction summary as file attachment
 	WarningMaxPerWindow *int            `toml:"warning_max_per_window"   default:"3"    hot:"event" scope:"global,agent" desc:"Maximum identical warning notifications sent within a time window before further repeats are suppressed, to avoid spamming chat (default 3)"`                                                                                                                                                                                                             // max identical warnings per window before suppression (default 3)
 	RateLimitNotifyTo   *string         `toml:"rate_limit_notify_to" default:"session" hot:"event" scope:"global,agent" choices:"session,default,both" desc:"Where an Anthropic usage-limit warning is delivered: session sends it to the chat whose session hit the limit (falling back to the default chat), default always sends it to the agent's default chat, both sends it to each when they differ (never copied out of a session whose platform confines replies, e.g. Slack)"` // #1857
+	CacheBustNotify     *bool           `toml:"cache_bust_notify"    default:"true" hot:"event" scope:"global,agent" desc:"Send a chat notification when a model call reads less of the prompt cache than it should have (a cache bust), naming the session, the tokens lost, the likely cause and the cost. Sent to the session's chat, else the nearest visible chat above it, else the agent's default chat. A cache that expired after its time-to-live is not reported"`            // #2933
 }
 
 // Rate-limit notice delivery targets for [notify] rate_limit_notify_to.
@@ -784,6 +785,14 @@ func (n NotifyConfig) StartupNotifyEnabled() bool {
 func (n NotifyConfig) CompactionNotifyEnabled() bool {
 	if n.CompactionNotify != nil {
 		return *n.CompactionNotify
+	}
+	return true
+}
+
+// CacheBustNotifyEnabled returns the resolved value (default: true, #2933).
+func (n NotifyConfig) CacheBustNotifyEnabled() bool {
+	if n.CacheBustNotify != nil {
+		return *n.CacheBustNotify
 	}
 	return true
 }

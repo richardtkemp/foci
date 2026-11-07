@@ -66,6 +66,7 @@ model = "anthropic/claude-haiku-4-5-20251001"
 # task_list_notify = true                  # send notification on task list changes
 # warning_max_per_window = 3               # max identical warnings per window before suppression
 # rate_limit_notify_to = "session"         # usage-limit warnings: "session", "default", or "both"
+# cache_bust_notify = true                 # chat alert when a call misses the prompt cache (a bust; not a TTL expiry)
 
 # [nudge]
 # nudge_enable = true                      # enable mid-turn behavioral reminders

@@ -1972,6 +1972,20 @@ warms its source stays `recordCacheEvidence`'s decision (#2929). `NoteCacheFork`
 the source's last read (api.db-seeded after a restart) as that decision's fallback
 baseline (#2932).
 
+**Cache-bust chat alert** (`cmd/foci-gw/cache_alert.go`, #2933). `initLogging`'s hook
+also hands every `bust` (never an `expiry`) to `dispatchCacheAlert`, which looks up the
+report's agent (`CacheReport.AgentID`, else the session key's) in the `cacheAlerts`
+registry and runs that agent's sink on its own goroutine (the hook runs inside the
+booking). Each agent registers its sink in `wireAgentPlatformCallbacks`; the sink reads
+`[notify] cache_bust_notify` (default true, global or per agent) off `LiveConfig()` at
+each bust, then `notifyUpTree` posts it along `backendPromptTargets` (the walk backend
+prompts and app media use: the session's own chat, a spawn's owner chain, each live
+ancestor, the root, the agent's default session). A chat takes it when its send returns a
+message id (`SessionNotifier.SendNotificationToSession`, else `SendNotificationDirect`): an
+app branch with no conversation returns none, so the walk moves on. A redirected alert
+carries `originNote`'s "From session …" line. A session whose platform confines replies
+(Slack) is offered only its own chat.
+
 **Direct API adapter** (`apicall.go`, the backend switched in P2). `APIResponse.Call()`
 makes one response one call: `backend='api'`, key = the provider's response id (else
 `<kind>:<session>@<start nanos>`), `finality='completed'`, cache writes `cache_write_1h`
