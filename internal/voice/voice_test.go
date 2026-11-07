@@ -183,7 +183,8 @@ func TestOpenAITTS_DefaultVoice(t *testing.T) {
 
 func TestOpenAITTS_SpeedIncluded(t *testing.T) {
 	// Proves that a non-zero Speed value is included in the JSON payload sent
-	// to the TTS API, enabling playback rate control.
+	// to the TTS API, enabling playback rate control, for a format foci cannot
+	// stretch itself (a WAV response is stretched locally instead, #2937).
 	var gotBody string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -194,11 +195,12 @@ func TestOpenAITTS_SpeedIncluded(t *testing.T) {
 	defer server.Close()
 
 	tts := &OpenAITTS{
-		Endpoint: server.URL,
-		APIKey:   "key",
-		Model:    "model",
-		Voice:    "alloy",
-		Speed:    1.5,
+		Endpoint:       server.URL,
+		APIKey:         "key",
+		Model:          "model",
+		Voice:          "alloy",
+		Speed:          1.5,
+		ResponseFormat: "mp3",
 	}
 
 	_, err := tts.Synthesize(context.Background(), "test")

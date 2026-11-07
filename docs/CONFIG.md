@@ -451,7 +451,7 @@ foci auto-registers a built-in, key-less `edge-tts` provider under the id `edge-
 | `endpoint` | string | `""` | API endpoint URL (ignored for edge-tts). |
 | `model` | string | `""` | Model name (ignored for edge-tts). |
 | `voice` | string | `""` | Voice name (format-specific). `""` defaults to `"alloy"` for OpenAI. |
-| `rate` | float | `0` | Speed multiplier: `1.3` = 30% faster, `0.8` = 20% slower. `0` means omit/default. |
+| `rate` | float | `0` | Speed multiplier: `1.3` = 30% faster, `0.8` = 20% slower. `0` means omit/default. For an `openai` entry with a `wav` response, foci changes the rate itself (pitch kept) instead of sending `speed`, since some providers (Groq Orpheus) ignore it. |
 | `secret` | string | `""` | Secret name in secrets.toml (e.g. `"groq.api_key"`). If empty, auto-detected from endpoint hostname. |
 | `command` | string | `"edge-tts"` | Binary for edge-tts format. |
 | `response_format` | string | `"wav"` | Audio format for OpenAI-compatible APIs: `"mp3"`, `"wav"`, `"opus"`, `"aac"`, `"flac"`. Groq only supports `"wav"`. |

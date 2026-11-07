@@ -269,7 +269,7 @@ type OpenAITTS struct {
 	APIKey         string  // Bearer token
 	Model          string  // e.g. "openai/tts-1-mini"
 	Voice          string  // e.g. "alloy"
-	Speed          float64 // 0.25–4.0 (default 1.0, 0 means omit)
+	Speed          float64 // 0.25–4.0 (default 1.0, 0 means omit); applied locally for a WAV response (#2937)
 	ResponseFormat string  // e.g. "mp3", "wav" (default: "wav")
 	HTTP           HTTPOpts
 }
@@ -294,11 +294,20 @@ func (o *OpenAITTS) Synthesize(ctx context.Context, text string) ([]byte, error)
 		responseFormat = "wav"
 	}
 
+	// A WAV clip gets its rate applied here, not by the API: Groq's Orpheus
+	// accepts "speed" and ignores it (#2937). Sending it too would double the
+	// rate on a provider that does honour it. Other formats keep the API field.
+	localRate := responseFormat == "wav" && o.Speed != 0 && o.Speed != 1
+	apiSpeed := o.Speed
+	if localRate {
+		apiSpeed = 0
+	}
+
 	payload, err := json.Marshal(&ttsRequest{
 		Model:          o.Model,
 		Input:          text,
 		Voice:          voice,
-		Speed:          o.Speed,
+		Speed:          apiSpeed,
 		ResponseFormat: responseFormat,
 	})
 	if err != nil {
@@ -329,5 +338,15 @@ func (o *OpenAITTS) Synthesize(ctx context.Context, text string) ([]byte, error)
 		return nil, fmt.Errorf("tts API error %d: %s", resp.StatusCode, string(audioData))
 	}
 
+	if localRate {
+		stretched, err := stretchWAV(audioData, o.Speed)
+		if err != nil {
+			// Unexpected body (not PCM16 WAV): play it at its own rate rather
+			// than lose the reply.
+			voiceLog.Warnf("tts openai model=%s: rate %.2f not applied: %v", o.Model, o.Speed, err)
+			return audioData, nil
+		}
+		return stretched, nil
+	}
 	return audioData, nil
 }
