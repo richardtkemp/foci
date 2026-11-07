@@ -677,6 +677,13 @@ const taskTypeBash = "local_bash"
 // subagents/workflows/<run id>/, and workflow_tail.go reads them (#2130).
 const taskTypeWorkflow = "local_workflow"
 
+// PromptSuggestionMessage is CC's prediction of the user's next prompt, sent
+// after a result when CC was launched with --prompt-suggestions (#2916).
+type PromptSuggestionMessage struct {
+	Type       string `json:"type"` // "prompt_suggestion"
+	Suggestion string `json:"suggestion"`
+}
+
 // RateLimitEvent carries rate limit utilization from the Anthropic API,
 // emitted by CC on status transitions (allowed → allowed_warning → rejected).
 type RateLimitEvent struct {

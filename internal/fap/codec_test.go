@@ -405,6 +405,7 @@ func TestEncode_AllServerFrames(t *testing.T) {
 	frames := []ServerFrame{
 		HelloServer{Version: 1, Caps: Caps{Versions: []int{1}, Speech: []SpeechSource{{ID: "groq", Kind: "api"}}}},
 		TurnStart{ConversationID: "c", TurnID: "t"},
+		PromptSuggestion{ConversationID: "c", Text: "run the tests"},
 		TextDelta{ConversationID: "c", TurnID: "t", Text: "x"},
 		TextEnd{ConversationID: "c", TurnID: "t", MessageID: "m", FinalText: &final},
 		ServerMessage{ConversationID: "c", MessageID: "m", Role: "agent", Text: "hi"},

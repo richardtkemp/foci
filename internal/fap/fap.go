@@ -99,6 +99,9 @@ const (
 	// pending wake reminders (#2600), re-sent on every change; an empty list
 	// clears the indicator. Snapshot half: ConversationInfo.Reminders.
 	TypeReminders = "reminders"
+	// TypePromptSuggestion carries the agent backend's prediction of what the
+	// user will type next (#2916). The app shows it until the conversation moves on.
+	TypePromptSuggestion = "prompt.suggestion"
 	// TypeAskgwPrompts (server->app) carries the WHOLE list of pending askgw
 	// prompts (#2707): questions an external App (e.g. aisudo) asks the human
 	// through foci's ask-gateway. Not tied to any agent or conversation; the
@@ -696,6 +699,16 @@ type CacheExpiry struct {
 }
 
 func (CacheExpiry) Type() string { return TypeCacheExpiry }
+
+// PromptSuggestion is the agent backend's prediction of the user's next prompt
+// (#2916). The app offers Text as one tap to send. It stays valid until the
+// conversation's next turn or message, so a replay in order is correct.
+type PromptSuggestion struct {
+	ConversationID string `json:"conversationId"`
+	Text           string `json:"text"`
+}
+
+func (PromptSuggestion) Type() string { return TypePromptSuggestion }
 
 // PendingReminder is one pending wake reminder (foci_remind wake=true) set
 // from a conversation's session (#2600). Passive reminders are never sent:

@@ -52,6 +52,13 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		"--include-hook-events",
 		"--verbose",
 	}
+	if opts.PromptSuggestions {
+		// The flag alone is the switch in print mode; the env var alone does
+		// nothing (measured on CC 2.1.314, #2916). An agent's
+		// backend_config.env CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false still
+		// turns it off.
+		args = append(args, "--prompt-suggestions", "true")
+	}
 	if opts.Model != "" {
 		// Strip any "provider/" prefix — CC's --model expects a bare
 		// model name (e.g. "claude-sonnet-5"), not the provider-qualified

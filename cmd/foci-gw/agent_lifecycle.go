@@ -177,6 +177,8 @@ func (e *agentEnv) buildAgent(acfg config.AgentConfig) *agentInstance {
 	// change (turn entry, branch-warms-root, reset) — not only turns that
 	// complete through a live app sink (#1217).
 	inst.ag.SetOnCacheExpiry(app.SetCacheExpiry)
+	// Show the backend's predicted next prompt in the app's composer (#2916).
+	inst.ag.SetOnPromptSuggestion(app.DeliverPromptSuggestion)
 	// Show each chat's pending wake reminders in the app, kept current on
 	// every set, fire, cancel and run (#2600).
 	app.SetReminderStore(acfg.ID, am.reminders, inst.ag.SystemInputHeld)

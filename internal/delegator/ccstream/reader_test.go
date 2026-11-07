@@ -22,6 +22,7 @@ type mockHandler struct {
 	unknownCtl   []string // "reqID/subtype"
 	toolProgress []*ToolProgressMessage
 	streamEvents []json.RawMessage
+	suggestions  []*PromptSuggestionMessage
 }
 
 func (h *mockHandler) OnAssistant(msg *AssistantMessage) { h.assistants = append(h.assistants, msg) }
@@ -49,6 +50,9 @@ func (h *mockHandler) OnStreamEvent(raw json.RawMessage) {
 }
 func (h *mockHandler) OnKeepAlive()                  {}
 func (h *mockHandler) OnRateLimit(_ *RateLimitEvent) {}
+func (h *mockHandler) OnPromptSuggestion(msg *PromptSuggestionMessage) {
+	h.suggestions = append(h.suggestions, msg)
+}
 func (h *mockHandler) OnSystem(subtype string, _ json.RawMessage) {
 	h.systems = append(h.systems, subtype)
 }

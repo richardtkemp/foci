@@ -28,6 +28,7 @@ type Handler interface {
 	OnToolProgress(msg *ToolProgressMessage)
 	OnStreamEvent(raw json.RawMessage)
 	OnRateLimit(msg *RateLimitEvent)
+	OnPromptSuggestion(msg *PromptSuggestionMessage)
 	OnKeepAlive()
 	OnSystem(subtype string, raw json.RawMessage)
 	OnReaderStopped(err error)
@@ -232,6 +233,14 @@ func (rd *Reader) dispatch(line []byte) {
 			return
 		}
 		rd.handler.OnRateLimit(&msg)
+
+	case "prompt_suggestion":
+		var msg PromptSuggestionMessage
+		if err := json.Unmarshal(line, &msg); err != nil {
+			rd.lg.Warnf("dropping malformed prompt_suggestion: %v", err)
+			return
+		}
+		rd.handler.OnPromptSuggestion(&msg)
 
 	default:
 		rd.lg.Debugf("unknown message type %q", env.Type)

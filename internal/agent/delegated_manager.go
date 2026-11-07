@@ -612,6 +612,9 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string, u
 		return nil, fmt.Errorf("%w: %s", ErrEphemeralSessionLost, sessionKey)
 	}
 	opts.DepthLeaf = m.DepthLeaf != nil && m.DepthLeaf(sessionKey)
+	_, isBatch := m.batchSpecFor(sessionKey)
+	// A depth leaf's composer has no suggestion chip, so it would pay for nothing.
+	opts.PromptSuggestions = !opts.DepthLeaf && wantsPromptSuggestions(sessionKey, isBatch)
 
 	// A batch session (RunBatch) launches with the caller's system prompt
 	// (or the agent's own, for AgentPrompt), model and workdir, at the model's
@@ -1678,6 +1681,18 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 			})
 		}
 	}
+}
+
+// wantsPromptSuggestions says whether a session's backend should predict the
+// user's next prompt (#2916): a root chat session that is not a batch. A branch,
+// a batch or an independent session has no chat to show the prediction in, and
+// each prediction is a model call. An unparseable key gets none.
+func wantsPromptSuggestions(sessionKey string, isBatch bool) bool {
+	if isBatch {
+		return false
+	}
+	k, err := session.ParseSessionKey(sessionKey)
+	return err == nil && k.IsRoot() && k.Type == 'c'
 }
 
 // saveResumeID persists the backend session ID to state.db and appends it to

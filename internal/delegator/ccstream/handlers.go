@@ -1067,6 +1067,25 @@ func (b *Backend) OnKeepAlive() {
 	b.touchActivity()
 }
 
+// OnPromptSuggestion passes CC's predicted next prompt to the session (#2916).
+// CC generates it after a result and aborts the generation when the next input
+// arrives, but a line already on the pipe still reaches here: a suggestion that
+// lands while a turn runs predicts a message the user has already passed, so it
+// is dropped.
+func (b *Backend) OnPromptSuggestion(msg *PromptSuggestionMessage) {
+	text := strings.TrimSpace(msg.Suggestion)
+	if text == "" {
+		return
+	}
+	if b.IsTurnInFlight() {
+		b.logger().Debugf("prompt suggestion dropped: a turn is in flight")
+		return
+	}
+	if se := b.sessionEvents.Load(); se != nil && se.OnPromptSuggestion != nil {
+		se.OnPromptSuggestion(text)
+	}
+}
+
 // OnRateLimit handles CC's structured rate_limit_event: CC emits it on status
 // transitions (allowed → allowed_warning → rejected) with the API's
 // utilization. Past the "allowed" threshold we surface a WARNING via the

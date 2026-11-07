@@ -42,3 +42,40 @@ func TestGet_SessionEnvIsBackendAgnostic(t *testing.T) {
 		}
 	}
 }
+
+// TestWantsPromptSuggestions pins who pays for a prediction (#2916): only a root
+// chat session, where someone can read it.
+func TestWantsPromptSuggestions(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		key   string
+		batch bool
+		want  bool
+	}{
+		{"clutch/c123", false, true},
+		{"clutch/c123", true, false},
+		{"clutch/c123/b1709596800", false, false},
+		{"clutch/c123/i1709596801", false, false},
+		{"clutch/iresearch", false, false},
+		{"not a key", false, false},
+	}
+	for _, c := range cases {
+		if got := wantsPromptSuggestions(c.key, c.batch); got != c.want {
+			t.Errorf("wantsPromptSuggestions(%q, batch=%v) = %v, want %v", c.key, c.batch, got, c.want)
+		}
+	}
+}
+
+func TestGet_RootChatLaunchesWithPromptSuggestions(t *testing.T) {
+	t.Parallel()
+	mgr, mocks := newTestManager(t, nil)
+	if _, err := mgr.Get(context.Background(), "test-agent/c1"); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	be := (*mocks)[0]
+	be.mu.Lock()
+	defer be.mu.Unlock()
+	if !be.startOpts.PromptSuggestions {
+		t.Fatal("a root chat session launched without PromptSuggestions")
+	}
+}

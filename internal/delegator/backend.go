@@ -817,11 +817,16 @@ type StartOptions struct {
 	// or reported. A backend refuses every way to start subagent or
 	// background work in it except foci_spawn (DepthLeafRefusal). Resolved
 	// by the DelegatedManager at each Start; false for every other session.
-	DepthLeaf        bool
-	ExecRegistry     any               // *tools.Registry — if set, used by DelegatedManager to create exec bridges
-	Env              map[string]string // extra environment variables to inject (e.g. BASH_ENV, FOCI_SOCK from exec bridge)
-	AutoApproveRules []string          // foci-level auto-approve patterns (e.g. "Bash:git *", "Read")
-	SubagentMaxAge   time.Duration     // prune threshold for tracked background tasks (0 = tracker default 2h); from [cc_backend].background_task_max_age
+	DepthLeaf bool
+	// PromptSuggestions asks the backend to predict the user's next prompt
+	// after each turn and report it through SessionEvents.OnPromptSuggestion
+	// (#2916). Each prediction costs a model call, so the manager sets this
+	// only for a session a person reads: a root chat, never a batch or a branch.
+	PromptSuggestions bool
+	ExecRegistry      any               // *tools.Registry — if set, used by DelegatedManager to create exec bridges
+	Env               map[string]string // extra environment variables to inject (e.g. BASH_ENV, FOCI_SOCK from exec bridge)
+	AutoApproveRules  []string          // foci-level auto-approve patterns (e.g. "Bash:git *", "Read")
+	SubagentMaxAge    time.Duration     // prune threshold for tracked background tasks (0 = tracker default 2h); from [cc_backend].background_task_max_age
 
 	// SystemPromptFunc, when non-nil, is the single per-session prompt
 	// generator: called at each session Start with the session key to produce
@@ -884,6 +889,11 @@ type SessionEvents struct {
 	OnToolStart      func(id, name, input string)                       // tool execution began
 	OnToolEnd        func(id, name, output string, isError bool)        // tool execution finished
 	OnAPIRetry       func(r APIRetry)                                   // the backend is waiting to retry a failed API call of the main thread (#2260); optional
+
+	// OnPromptSuggestion carries the backend's prediction of what the user
+	// will type next (#2916). It arrives between turns, never during one.
+	// Optional; a backend with no such feature never calls it.
+	OnPromptSuggestion func(text string)
 }
 
 // APIRetry is one retry of a failed API call by a backend that owns inference

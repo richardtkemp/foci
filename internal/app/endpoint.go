@@ -282,6 +282,23 @@ func SetCacheExpiry(sessionKey string, expiryMs int64) {
 	}
 }
 
+// DeliverPromptSuggestion sends the backend's predicted next prompt to the
+// conversation bound to sessionKey (#2916). The frame is stored and replayed
+// like any other, so a phone asleep when it was generated still gets it, in
+// order with the frames that make it stale. No-op when the app provider is not
+// running or the session has no bound conversation.
+func DeliverPromptSuggestion(sessionKey, text string) {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return
+	}
+	if b := h.bindingForSession(sessionKey); b != nil {
+		b.send(fap.PromptSuggestion{ConversationID: b.convID, Text: text})
+	}
+}
+
 // deliverBoundPrompt sends one durable ExternalPrompt frame to the
 // conversation bound to sessionKey — the shared bound-only chit rule behind
 // DeliverExternalPrompt and DeliverAgentMessage. No-op when the app provider

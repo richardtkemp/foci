@@ -282,6 +282,10 @@ type Agent struct {
 	// warmth indicator refreshes on ANY cache (re)warm — not only turns that
 	// complete through a live app sink. Wired by the gateway to app.SetCacheExpiry.
 	onCacheExpiry func(sessionKey string, expiryMs int64)
+	// onPromptSuggestion, when set, receives the backend's prediction of the
+	// user's next prompt (#2916). Wired by the gateway to
+	// app.DeliverPromptSuggestion.
+	onPromptSuggestion func(sessionKey, text string)
 
 	// onAliasChanged, when set, is fired after a backend-generated thread name
 	// (e.g. Codex) is persisted as a chat's alias, so the app can show the new

@@ -2119,6 +2119,13 @@ func (a *Agent) SetTurnLifecycleHooks(onComplete, onEnd func()) {
 	a.onTurnEnd = onEnd
 }
 
+// SetOnPromptSuggestion wires the callback that receives the backend's predicted
+// next prompt for a session (#2916). Set once at gateway setup, before any
+// backend starts.
+func (a *Agent) SetOnPromptSuggestion(fn func(sessionKey, text string)) {
+	a.onPromptSuggestion = fn
+}
+
 // SetOnCacheExpiry wires the callback fired whenever a session's cache warmth
 // changes (see the onCacheExpiry field). Wired once at gateway setup to
 // app.SetCacheExpiry so the client's warmth indicator tracks the DB value.
@@ -2263,6 +2270,17 @@ func (a *Agent) AttachDelivery(be delegator.Delegator, sk string) {
 				// A BackendRetry, never a RetryNotice: only the app shows it (#2260).
 				router.Emit(context.Background(), turnevent.BackendRetry{Endpoint: r.Endpoint, Attempt: r.Attempt,
 					MaxRetries: r.MaxRetries, Delay: r.Delay, Status: r.Status, Category: r.Category})
+			},
+			OnPromptSuggestion: func(text string) {
+				// Not through the router: this arrives between turns, when no
+				// turn's sink is there to take it.
+				if a.onPromptSuggestion == nil {
+					return
+				}
+				if a.Redact != nil {
+					text = a.Redact(text)
+				}
+				a.onPromptSuggestion(sk, text)
 			},
 		}
 		a.sessionEvents[sk] = se
