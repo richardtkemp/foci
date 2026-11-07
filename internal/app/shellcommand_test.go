@@ -96,6 +96,20 @@ func (s *shellHarness) waitEnvelope(t *testing.T) agent.Envelope {
 	return agent.Envelope{}
 }
 
+// waitFile waits until path exists: a command signals the test that it has
+// reached a point in its script.
+func waitFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("%s did not appear", path)
+}
+
 // sendCancel puts a shell.cancel frame through the real inbound decoder and gate.
 func (s *shellHarness) sendCancel(t *testing.T, convID, runID string, seq int) {
 	t.Helper()
@@ -348,7 +362,10 @@ func TestShellCommand_App_SmallOutputIsWholeInTheFrame(t *testing.T) {
 // agent both say cancelled; the output after the kill never appears.
 func TestShellCommand_App_CancelKillsTheCommand(t *testing.T) {
 	s := newShellHarness(t, 1000, time.Minute)
-	s.send("!echo before; sleep 300; echo after")
+	// The command creates a marker in its cwd once "before" is written, so the
+	// test cancels only after the output it asserts exists (#2952: under load the
+	// shell had not run its first echo when the cancel arrived).
+	s.send("!echo before; : > before.done; sleep 300; echo after")
 
 	var running fap.ShellCommand
 	frames := drain(t, s.client)
@@ -364,6 +381,7 @@ func TestShellCommand_App_CancelKillsTheCommand(t *testing.T) {
 		t.Fatal("a cancel for another conversation ended the command")
 	}
 
+	waitFile(t, filepath.Join(s.ag.UserShell.WorkDir, "before.done"))
 	start := time.Now()
 	s.sendCancel(t, "conv-1", running.RunID, 2)
 	env := s.waitEnvelope(t)
