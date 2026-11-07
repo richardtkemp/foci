@@ -558,12 +558,17 @@ foci config show
 foci config get <path> [--config <file>]
 foci config set <path> <value> [--wait <duration>] [--session <key>]
 foci config unset <path> [--wait <duration>] [--session <key>]
+foci config add <path> <value> [--wait <duration>] [--session <key>]
 foci config wait <request-id> [--wait <duration>]
 ```
 
-`show` prints the running config with secrets redacted (`/config toml`). `get` reads the config file and prints `<path> = <value>`, or that the path is unset. `set` and `unset` send the request (`POST /config/request`), wait for the answer (long-polling `GET /config/request?id=`), and print one outcome: `applied`, `denied`, `timed out`, or `failed: <reason>`; the exit code is 0 only for `applied`. `wait` follows a request made earlier — `/config set k=v` sent over the HTTP API (`foci command`, `foci send`) creates one and replies with its id instead of writing. `--wait` is how long the user has to answer (default 10m, at most 1h). The session defaults to `$FOCI_SESSION_KEY`; the agent is its first segment.
+`show` prints the running config with secrets redacted (`/config toml`). `get` reads the config file and prints `<path> = <value>`, or that the path is unset. `set`, `unset` and `add` send the request (`POST /config/request`), wait for the answer (long-polling `GET /config/request?id=`), and print one outcome: `applied`, `denied`, `timed out`, or `failed: <reason>`; the exit code is 0 only for `applied`. `wait` follows a request made earlier — `/config set k=v` sent over the HTTP API (`foci command`, `foci send`) creates one and replies with its id instead of writing. `--wait` is how long the user has to answer (default 10m, at most 1h). The session defaults to `$FOCI_SESSION_KEY`; the agent is its first segment.
 
-Paths are TOML dotted keys, with `agents[<id>]` selecting one agent's block: `agent_loop.max_tool_loops`, `agents[main].nudge.enable`, `models."claude.fast".id`, `blocked_paths`. Values are TOML values; a value for an array of tables (`[{path = "/x"}]`) replaces the whole array. Before the prompt is shown, the request must change the file only at the path and the result must pass `foci check config`; otherwise it fails at once. On Approve the gateway re-reads the file and refuses if the value at the path changed in the meantime. After a gateway restart a waiting command reports `failed`.
+Paths are TOML dotted keys, with `agents[<id>]` selecting one agent's block: `agent_loop.max_tool_loops`, `agents[main].nudge.enable`, `models."claude.fast".id`, `blocked_paths`. Values are TOML values; a value for an array of tables (`[{path = "/x"}]`) replaces the whole array, but only the elements that differ are rewritten, so the others keep their layout and comments.
+
+**One array element (#2938).** A path may end in a selector naming one element of an array (an array of tables included): `rules[my_rule]` (the table whose `name`, else `id`, is `my_rule`, or the string element equal to it), `rules[tool=Bash]` (the table whose field equals the value; must match exactly one), `rules[3]` (index, from 0), `paths["/tmp/x"]` (quote a value that is not a bare word). `set` on such a path replaces only that element, `unset` removes it together with the full-line comments directly above it, and `add <array> <value>` appends one element (creating the array when absent). The prompt shows only the element; when an edit removes comments, the prompt's new value names them. The other elements and every other line keep their text.
+
+Before the prompt is shown, the request must change the file only at the path and the result must pass `foci check config`; otherwise it fails at once. On Approve the gateway re-reads the file and refuses if the value at the path changed in the meantime. After a gateway restart a waiting command reports `failed`.
 
 **Examples:**
 ```bash
@@ -571,6 +576,8 @@ foci config get agent_loop.max_tool_loops
 foci config set agent_loop.max_tool_loops 20
 foci config set 'agents[main].model' '"opus"' --wait 30m
 foci config unset 'agents[main].nudge.enable'
+foci config unset 'agents[main].backend_config.pretool_rules[old_rule]'
+foci config add 'agents[main].backend_config.pretool_rules' '{name = "new_rule", tool = "Bash", command = "x", reason = "y"}'
 ```
 
 ---

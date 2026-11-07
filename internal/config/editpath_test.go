@@ -70,8 +70,9 @@ func TestPlanSetPath_Shapes(t *testing.T) {
 		{"agents[main].model", `"sonnet"`, `model = "sonnet"`},
 		{"agents[other].nudge.enable", "false", "enable = false"},
 		{"agents[main].nudge.enable", "false", "enable = false"},
-		{"blocked_paths", `[{path = "/x"}, {path = "/y"}]`, `blocked_paths = [{path = "/x"}, {path = "/y"}]`},
-		{"agents[main].platforms", `[{id = "app"}]`, `platforms = [{id = "app"}]`},
+		// An array of tables keeps its [[...]] form (#2938).
+		{"blocked_paths", `[{path = "/x"}, {path = "/y"}]`, `path = "/y"`},
+		{"agents[main].platforms", `[{id = "app"}]`, `id = "app"`},
 		{`models."claude.fast".id`, `"claude-sonnet"`, `id = "claude-sonnet"`},
 		{"new_section.when", "2026-11-01T10:00:00Z", "when = 2026-11-01T10:00:00Z"},
 		{"agent_loop.list", `["a", 1.5, true]`, `list = ["a", 1.5, true]`},
@@ -100,14 +101,15 @@ func TestPlanSetPath_Shapes(t *testing.T) {
 }
 
 // TestPlanSetPath_ArrayOfTablesReplacedWhole proves a set of a path written
-// as [[blocked_paths]] blocks replaces every block: no old entry survives.
+// as [[blocked_paths]] blocks replaces every block: no old entry survives,
+// and the new value keeps the [[...]] form (#2938).
 func TestPlanSetPath_ArrayOfTablesReplacedWhole(t *testing.T) {
 	next, err := PlanSetPath(editFixture, mustPath(t, "blocked_paths"), `[{path = "/x"}]`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(next, "[[blocked_paths]]") || strings.Contains(next, `"/etc"`) {
-		t.Errorf("old blocks survive:\n%s", next)
+	if strings.Count(next, "[[blocked_paths]]") != 1 || strings.Contains(next, `"/etc"`) || strings.Contains(next, `"/root"`) {
+		t.Errorf("want one [[blocked_paths]] block holding /x:\n%s", next)
 	}
 }
 

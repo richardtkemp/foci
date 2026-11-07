@@ -71,19 +71,19 @@ other_key = true
 	data, _ := os.ReadFile(path)
 	result := string(data)
 
-	if !strings.Contains(result, `auto_approve = ["Bash:ls *", "Read:/tmp/*"]`) {
-		t.Errorf("new single-line array not found:\n%s", result)
+	// The array is edited element by element (#2938): it keeps its
+	// multi-line layout and its comment, and reads back as the new value.
+	got, ok, err := LookupPath(result, KeyPath{Keys: []string{"permissions", "auto_approve"}})
+	if err != nil || !ok || !valuesEqual(got, []any{"Bash:ls *", "Read:/tmp/*"}) {
+		t.Errorf("auto_approve = %v (ok %v, err %v), want [Bash:ls *, Read:/tmp/*]:\n%s", got, ok, err, result)
 	}
 	for _, orphan := range []string{`"Bash:git *"`, `"Read:*"`} {
 		if strings.Contains(result, orphan) {
 			t.Errorf("orphaned old-array fragment %q left in file (corruption):\n%s", orphan, result)
 		}
 	}
-	// No line should be a bare "]" (the old array's dangling close).
-	for _, line := range strings.Split(result, "\n") {
-		if strings.TrimSpace(line) == "]" {
-			t.Errorf("orphaned bare ] line left in file (corruption):\n%s", result)
-		}
+	if !strings.Contains(result, "# composable rules") {
+		t.Errorf("the array's comment was dropped:\n%s", result)
 	}
 	if !strings.Contains(result, "other_key = true") {
 		t.Errorf("adjacent key not preserved:\n%s", result)

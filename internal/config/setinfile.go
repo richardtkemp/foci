@@ -206,7 +206,7 @@ func setInAgentBlock(lines []string, agentID, key, value string) (string, []stri
 		if err != nil {
 			return "", nil, err
 		}
-		return old, replaceSpan(lines, loc.found, end, fmt.Sprintf("%s = %s", loc.lineKey, value)), nil
+		return old, rewriteAssignment(lines, loc.found, end, loc.lineKey, value), nil
 	}
 
 	tablePath, leaf, dotted := cutLastDot(key)
@@ -432,13 +432,15 @@ func replaceOrInsertKey(lines []string, from, to int, key, value string) (string
 	// First pass: look for an active (uncommented) key line.
 	for i := from; i < to; i++ {
 		if top[i] && active.MatchString(lines[i]) {
-			// Replace the value's whole span (it may be multi-line) with the
-			// single new line, else the old body lines are orphaned.
+			// Replace the value's whole span (it may be multi-line), else
+			// the old body lines are orphaned. rewriteAssignment keeps the
+			// line's indent and trailing comment, and edits an array
+			// element by element so the comments inside it stay (#2938).
 			end, old, err := valueSpan(lines, i)
 			if err != nil {
 				return "", nil, err
 			}
-			return old, replaceSpan(lines, i, end, fmt.Sprintf("%s = %s", key, value)), nil
+			return old, rewriteAssignment(lines, i, end, key, value), nil
 		}
 	}
 

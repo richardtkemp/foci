@@ -112,6 +112,23 @@ func TestConfigSet_RefusedAtOnce(t *testing.T) {
 	}
 }
 
+// TestConfigAdd_PostsAddWithValue proves `foci config add` (#2938) posts op
+// add with its value, and needs exactly a path and a value.
+func TestConfigAdd_PostsAddWithValue(t *testing.T) {
+	t.Setenv("FOCI_SESSION_KEY", "main/app/1")
+	f := &fakeConfigGateway{submit: configapprove.Status{Outcome: configapprove.Failed, Reason: "x"}}
+	srv := httptest.NewServer(f)
+	defer srv.Close()
+	var out, errOut strings.Builder
+	cmdConfig(srv.URL, []string{"add", "a.list", `"v"`}, &out, &errOut)
+	if f.posted["op"] != "add" || f.posted["path"] != "a.list" || f.posted["value"] != `"v"` {
+		t.Errorf("posted %v", f.posted)
+	}
+	if code := cmdConfig(srv.URL, []string{"add", "a.list"}, &out, &errOut); code != 2 {
+		t.Errorf("add without a value: exit %d", code)
+	}
+}
+
 // TestConfigSet_NeedsSession proves set without a session is a usage error.
 func TestConfigSet_NeedsSession(t *testing.T) {
 	t.Setenv("FOCI_SESSION_KEY", "")

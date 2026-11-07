@@ -16,7 +16,7 @@ import (
 // editpath.go edits ANY TOML key path in foci.toml (#479): a top-level or
 // nested key, a key inside one [[agents]] block chosen by its id, a key that
 // needs TOML quoting, or a whole array of tables, with any TOML value. It is
-// the file half of the agent config tool (`foci config set|unset`).
+// the file half of the agent config tool (`foci config set|unset|add`).
 //
 // The edit is textual, so comments and layout outside the edited span are
 // kept. Because a textual edit of TOML has many shapes (a key line, a
@@ -29,9 +29,137 @@ import (
 // KeyPath names one key in the config file. AgentID non-empty means a key
 // inside the [[agents]] block whose id is AgentID; Keys are the unquoted
 // dotted-key segments relative to that block (or to the file's root table).
+// Elem non-nil names ONE element of the array at Keys (#2938).
 type KeyPath struct {
 	AgentID string
 	Keys    []string
+	Elem    *ElemSel
+}
+
+// ElemSel picks one element of an array, written after the array's key in
+// brackets:
+//
+//	[3]             the element at index 3 (counting from 0)
+//	[field=value]   the table whose field equals value
+//	[value]         the table whose name (else id) equals value, or the
+//	                string element equal to value
+//
+// A value that is not a bare key is quoted: ["/tmp/x"], [name="a b"].
+type ElemSel struct {
+	Index int // >= 0 selects by position; -1 otherwise
+	Field string
+	Value string
+}
+
+// String renders the selector in brackets.
+func (e ElemSel) String() string {
+	switch {
+	case e.Index >= 0:
+		return "[" + strconv.Itoa(e.Index) + "]"
+	case e.Field != "":
+		return "[" + renderDottedKey([]string{e.Field}) + "=" + renderDottedKey([]string{e.Value}) + "]"
+	}
+	return "[" + renderDottedKey([]string{e.Value}) + "]"
+}
+
+// Array is the path of the array p's element selector applies to (p itself
+// when it has no selector).
+func (p KeyPath) Array() KeyPath {
+	return KeyPath{AgentID: p.AgentID, Keys: p.Keys}
+}
+
+// parseElemSel parses the selector text between the brackets.
+func parseElemSel(s string) (ElemSel, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ElemSel{}, errors.New("empty element selector []")
+	}
+	if n, err := strconv.Atoi(s); err == nil {
+		if n < 0 {
+			return ElemSel{}, fmt.Errorf("element index %d is negative", n)
+		}
+		return ElemSel{Index: n}, nil
+	}
+	sel := ElemSel{Index: -1}
+	value := s
+	if keys, rest, err := parseDottedKey(s); err == nil && len(keys) == 1 && strings.HasPrefix(rest, "=") {
+		sel.Field = keys[0]
+		value = strings.TrimSpace(rest[1:])
+	}
+	if value == "" {
+		return ElemSel{}, fmt.Errorf("element selector [%s] has no value", s)
+	}
+	if value[0] == '"' || value[0] == '\'' {
+		keys, rest, err := parseDottedKey(value)
+		if err != nil || len(keys) != 1 || strings.TrimSpace(rest) != "" {
+			return ElemSel{}, fmt.Errorf("element selector [%s]: bad quoted value", s)
+		}
+		value = keys[0]
+	}
+	sel.Value = value
+	return sel, nil
+}
+
+// cutSelector splits "[...]" at the start of s into the text inside the
+// brackets and the rest, honouring quotes inside.
+func cutSelector(s string) (inner, rest string, err error) {
+	for i := 1; i < len(s); i++ {
+		switch s[i] {
+		case '"', '\'':
+			e, serr := scanStringEnd(s, i)
+			if serr != nil {
+				return "", "", serr
+			}
+			i = e - 1
+		case ']':
+			return s[1:i], s[i+1:], nil
+		}
+	}
+	return "", "", errors.New("unclosed '['")
+}
+
+// resolveElem returns the index of the element sel picks in arr.
+func resolveElem(arr []any, sel ElemSel, arrP KeyPath) (int, error) {
+	if sel.Index >= 0 {
+		if sel.Index >= len(arr) {
+			return 0, fmt.Errorf("%s has %d elements; there is no element %d", arrP, len(arr), sel.Index)
+		}
+		return sel.Index, nil
+	}
+	match := func(field string) []int {
+		var out []int
+		for i, e := range arr {
+			switch v := e.(type) {
+			case map[string]any:
+				if fv, ok := v[field]; ok {
+					if s, isStr := fv.(string); (isStr && s == sel.Value) || (!isStr && RenderTOMLValue(fv) == sel.Value) {
+						out = append(out, i)
+					}
+				}
+			case string:
+				if sel.Field == "" && v == sel.Value {
+					out = append(out, i)
+				}
+			}
+		}
+		return out
+	}
+	var hits []int
+	if sel.Field != "" {
+		hits = match(sel.Field)
+	} else if hits = match("name"); len(hits) == 0 {
+		hits = match("id")
+	}
+	switch len(hits) {
+	case 1:
+		return hits[0], nil
+	case 0:
+		if sel.Field != "" {
+			return 0, fmt.Errorf("no element of %s has %s = %q", arrP, sel.Field, sel.Value)
+		}
+		return 0, fmt.Errorf("no element of %s has name or id %q, or equals it", arrP, sel.Value)
+	}
+	return 0, fmt.Errorf("%d elements of %s match %s; pick one by index, e.g. %s[%d]", len(hits), arrP, sel, arrP, hits[0])
 }
 
 // agentsKey is the array of tables holding the agents.
@@ -64,6 +192,21 @@ func ParseKeyPath(s string) (KeyPath, error) {
 	if err != nil {
 		return KeyPath{}, fmt.Errorf("key path %q: %w", s, err)
 	}
+	if strings.HasPrefix(rest, "[") {
+		inner, after, err := cutSelector(rest)
+		if err != nil {
+			return KeyPath{}, fmt.Errorf("key path %q: element selector: %w", s, err)
+		}
+		sel, err := parseElemSel(inner)
+		if err != nil {
+			return KeyPath{}, fmt.Errorf("key path %q: %w", s, err)
+		}
+		if strings.TrimSpace(after) != "" {
+			return KeyPath{}, fmt.Errorf("key path %q: an element selector [...] must end the path (got %q after it)", s, after)
+		}
+		p.Elem = &sel
+		rest = ""
+	}
 	if strings.TrimSpace(rest) != "" {
 		return KeyPath{}, fmt.Errorf("key path %q: unexpected %q after the key", s, rest)
 	}
@@ -77,6 +220,9 @@ func ParseKeyPath(s string) (KeyPath, error) {
 // String renders the path in ParseKeyPath's syntax.
 func (p KeyPath) String() string {
 	k := renderDottedKey(p.Keys)
+	if p.Elem != nil {
+		k += p.Elem.String()
+	}
 	if p.AgentID != "" {
 		return agentsKey + "[" + p.AgentID + "]." + k
 	}
@@ -306,24 +452,7 @@ func (d *tomlDoc) agentIDOf(si int) string {
 // trailingComment returns " # ..." when the assignment's last line ends in a
 // comment after the value, so an in-place rewrite keeps it.
 func (d *tomlDoc) trailingComment(k docKey) string {
-	_, old, err := valueSpan(d.lines, k.start)
-	if err != nil {
-		return ""
-	}
-	oldLines := strings.Split(strings.TrimSpace(old), "\n")
-	lastVal := strings.TrimSpace(oldLines[len(oldLines)-1])
-	last := d.lines[k.end]
-	if k.end == k.start {
-		last = last[strings.Index(last, "=")+1:]
-	}
-	idx := strings.LastIndex(last, lastVal)
-	if lastVal == "" || idx < 0 {
-		return ""
-	}
-	if tail := strings.TrimSpace(last[idx+len(lastVal):]); strings.HasPrefix(tail, "#") {
-		return " " + tail
-	}
-	return ""
+	return assignTrailingComment(d.lines, k.start, k.end)
 }
 
 // valueText is the raw value text of an assignment (all its lines).
@@ -435,6 +564,9 @@ func (d *tomlDoc) withoutDefs(pd pathDefs) []string {
 // inline tables). A whole array of tables is replaced. The result is
 // verified (VerifyPathEdit) before it is returned.
 func PlanSetPath(content string, p KeyPath, value string) (string, error) {
+	if p.Elem != nil {
+		return planElementEdit(content, p, elemReplace, value)
+	}
 	want, err := DecodeTOMLValue(value)
 	if err != nil {
 		return "", err
@@ -453,6 +585,11 @@ func PlanSetPath(content string, p KeyPath, value string) (string, error) {
 	}
 
 	var candidates []string
+	// 0. An array set to an array: edit only the elements that differ, so
+	// the others keep their layout and the comments between them (#2938).
+	if next, ok := planArrayDiff(content, p, want, value); ok {
+		candidates = append(candidates, next)
+	}
 	// 1. Rewrite the one existing assignment in place.
 	if len(pd.exact) == 1 && len(pd.under) == 0 && len(pd.sections) == 0 {
 		k := pd.exact[0]
@@ -483,6 +620,9 @@ func PlanSetPath(content string, p KeyPath, value string) (string, error) {
 // PlanUnsetPath returns content with every definition of the key at p
 // removed. An absent key is an error: there is nothing to change.
 func PlanUnsetPath(content string, p KeyPath) (string, error) {
+	if p.Elem != nil {
+		return planElementEdit(content, p, elemRemove, "")
+	}
 	d, err := parseDoc(content)
 	if err != nil {
 		return "", err
@@ -699,7 +839,18 @@ func LookupPath(content string, p KeyPath) (any, bool, error) {
 		return nil, false, err
 	}
 	v, ok := lookupIn(c, p.Keys)
-	return v, ok, nil
+	if !ok || p.Elem == nil {
+		return v, ok, nil
+	}
+	arr, isArr := asArray(v)
+	if !isArr {
+		return nil, false, fmt.Errorf("%s is not an array, so it has no element %s", p.Array(), p.Elem)
+	}
+	k, err := resolveElem(arr, *p.Elem, p.Array())
+	if err != nil {
+		return nil, false, err
+	}
+	return arr[k], true, nil
 }
 
 // VerifyPathEdit checks that next differs from cur ONLY at p and, for a set,
@@ -729,12 +880,12 @@ func VerifyPathEdit(cur, next string, p KeyPath, want any, unset bool) error {
 		return fmt.Errorf("%s is still set after the edit", p)
 	case !unset && !ok:
 		return fmt.Errorf("%s is not set after the edit", p)
-	case !unset && !reflect.DeepEqual(got, want):
+	case !unset && !valuesEqual(got, want):
 		return fmt.Errorf("%s would read %s, not %s", p, RenderTOMLValue(got), RenderTOMLValue(want))
 	}
 	deleteIn(bc, p.Keys)
 	deleteIn(ac, p.Keys)
-	if !reflect.DeepEqual(before, after) {
+	if !reflect.DeepEqual(normValue(before), normValue(after)) {
 		return fmt.Errorf("the edit would change something other than %s", p)
 	}
 	return nil

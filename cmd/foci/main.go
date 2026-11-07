@@ -706,7 +706,7 @@ Commands:
   debug session <key>  Tail a session file with formatted output
   pretool list|test    Check PreToolUse rules against the config (see foci pretool -h)
   check config|nudge   Check the config file or an agent's nudge-rules.json, read-only (see foci check -h)
-  config show|get|set|unset|wait
+  config show|get|set|unset|add|wait
                        Read the config, or ask the user to approve a change to it (see foci config -h)
   version              Print version information
 

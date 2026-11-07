@@ -3488,16 +3488,24 @@ Endpoints for external integration. All endpoints accept an optional `agent` par
 
 foci.toml is `root:foci-secrets 0664`: agents can read it, only root and foci-gw (the one process holding `foci-secrets`) can write it. **Every gateway load checks that shape** (`config.CheckConfigProtected`, chosen once in main as `gwConfigProtect`; nil under `skip_security_checks` or off Linux): startup exits, `liveApply.Apply` applies nothing and returns an error, and `liveRules` (the delegated pretool/stop rule sources) keeps the previous rules. **Every gateway write is in place** (`config.WriteConfigFile`, used by SetInFile, UnsetInFile, SetTableArray, the app editor's `checkedFileEdit` and the approval write), so the inode, owner, group and mode survive; a rename would hand the file to the gateway's user.
 
+**Every gateway write is textual and keeps comments (#2938).** Each writer changes only the lines of the value it sets: `config.rewriteAssignment` (SetInFile's key replace, used by `/config set` from chat, the app editor's scalar/list puts and its map-object merge) keeps the line's indent and trailing comment, and turns an array-into-array change into element edits (`diffArrayAssignment`), so unchanged elements and the comments between them stay. `PlanSetTableArray` (the app editor's object lists) edits only the `[[section]]` blocks that differ (`planTableArrayDiff`, accepted only when it decodes exactly like the whole rewrite). `PlanSetPath` tries the same element diff first. Removing an element also removes the full-line comments directly above it; the approval prompt names any comment an edit removes (`config.DroppedComments`).
+
 An agent changes a setting through the approval flow:
 
 ```
-foci config set <path> <value>        (cmd/foci/cmd_config.go)
+foci config set|unset|add <path> [<value>]   (cmd/foci/cmd_config.go)
   → POST /config/request {session, op, path, value, timeout_secs}   (same auth as /command)
       → configapprove.Service.Submit
-          → config.ParseKeyPath → read file → config.LookupPath (old value)
-          → config.PlanSetPath / PlanUnsetPath     ← any TOML key path; candidates tried in order,
+          → config.ParseKeyPath (a trailing [sel] = one array element, KeyPath.Elem, #2938)
+            → read file → config.LookupPath (old value: the key, or the one element)
+          → config.PlanSetPath / PlanUnsetPath / PlanAddElement
+                                                    ← any TOML key path; candidates tried in order,
                                                       each verified by config.VerifyPathEdit (the decoded
-                                                      file differs ONLY at the path, holds the value)
+                                                      file differs ONLY at the path, holds the value).
+                                                      Element ops and an array-to-array set go through
+                                                      arrayedit.go's editors (inline array / [[...]]
+                                                      sections): only the differing elements change
+          → config.DroppedComments(cur, next)       ← named in the prompt's new value, never silent
           → configcheck.CheckContent(next)          ← the foci check config verdict, no auto-approve preview
           → fail: {outcome: failed, reason}, no prompt
           → Present: platform.SendInteractiveMessageWithID to defaultSessionKeyFor(agent) with

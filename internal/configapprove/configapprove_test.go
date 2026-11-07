@@ -313,11 +313,7 @@ func TestClampTimeout(t *testing.T) {
 // line breaks, so a long value (an array of tables) cannot run into the
 // other value.
 func TestPromptText_ValuesFencedOnOwnLines(t *testing.T) {
-	p, err := config.ParseKeyPath("agent_loop.max_tool_loops")
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := promptText("main/app/1", p, "10", "20")
+	got := promptText("main/app/1", "agent_loop.max_tool_loops", "10", "20")
 	want := "🔧 Config change requested\n\nSession: main/app/1\nSetting: agent_loop.max_tool_loops\n\n" +
 		"Current value:\n```\n10\n```\n\nNew value:\n```\n20\n```\n\nNothing changes unless you approve."
 	if got != want {
@@ -346,4 +342,79 @@ func TestCodeFence_LongerThanAnyBacktickRun(t *testing.T) {
 			t.Errorf("fenced(%q) = %q", v, block)
 		}
 	}
+}
+
+// rulesConfig holds an array of rules with a comment above one of them.
+const rulesConfig = `[[agents]]
+id = "main"
+backend_config.pretool_rules = [
+  { name = "keep", tool = "Bash", reason = "a" },
+  # why drop exists
+  { name = "drop", tool = "Bash", reason = "b" },
+]
+`
+
+// TestElement_RemoveShowsOnlyTheElement proves `unset arr[name]` (#2938):
+// the prompt shows only that element as the current value, names the comment
+// it removes, and Approve writes a file that lost only those lines; the live
+// apply gets the array's address.
+func TestElement_RemoveShowsOnlyTheElement(t *testing.T) {
+	h := newHarness(t)
+	if err := os.WriteFile(h.path, []byte(rulesConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st := h.svc.Submit(Submission{AgentID: "main", SessionKey: "main/app/1", Op: OpUnset, Path: "agents[main].backend_config.pretool_rules[drop]"})
+	if st.Outcome != Pending {
+		t.Fatalf("submit: %+v", st)
+	}
+	if st.Old != `{name = "drop", reason = "b", tool = "Bash"}` || strings.Contains(st.Old, "keep") {
+		t.Errorf("old = %s, want only the dropped element", st.Old)
+	}
+	if !strings.HasPrefix(st.New, "(element removed)") || !strings.Contains(st.New, "# why drop exists") {
+		t.Errorf("new = %q, want the removal and the comment it removes", st.New)
+	}
+	if text := h.prompt(0).Text; !strings.Contains(text, "pretool_rules[drop]") || strings.Contains(text, `"keep"`) {
+		t.Errorf("prompt text:\n%s", text)
+	}
+	h.prompt(0).OnAnswer(true)
+	want := strings.Replace(rulesConfig, "  # why drop exists\n  { name = \"drop\", tool = \"Bash\", reason = \"b\" },\n", "", 1)
+	if got := h.file(); got != want {
+		t.Errorf("file:\n%s\nwant:\n%s", got, want)
+	}
+	if len(h.applied) != 1 || h.applied[0] != "agents[main].backend_config.pretool_rules[drop]" {
+		t.Errorf("applied = %v", h.applied)
+	}
+	if sec, key := mustKeyPath(t, h.applied[0]).LiveApplyAddress(); sec != "agent" || key != "backend_config.pretool_rules" {
+		t.Errorf("live-apply address = %s %s", sec, key)
+	}
+}
+
+// TestElement_Add proves `add` appends one element and the prompt shows
+// only the new element.
+func TestElement_Add(t *testing.T) {
+	h := newHarness(t)
+	if err := os.WriteFile(h.path, []byte(rulesConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st := h.svc.Submit(Submission{AgentID: "main", SessionKey: "main/app/1", Op: OpAdd, Path: "agents[main].backend_config.pretool_rules", Value: `{ name = "new", tool = "Read", reason = "c" }`})
+	if st.Outcome != Pending || strings.Contains(st.Old, "keep") || st.New != `{name = "new", reason = "c", tool = "Read"}` {
+		t.Fatalf("submit: %+v", st)
+	}
+	h.prompt(0).OnAnswer(true)
+	if got := h.file(); !strings.Contains(got, "  { name = \"new\", tool = \"Read\", reason = \"c\" },\n]") || !strings.Contains(got, "# why drop exists") {
+		t.Errorf("file:\n%s", got)
+	}
+	bad := h.svc.Submit(Submission{AgentID: "main", SessionKey: "main/app/1", Op: OpAdd, Path: "agents[main].backend_config.pretool_rules[keep]", Value: `{name = "x"}`})
+	if bad.Outcome != Failed || !strings.Contains(bad.Reason, "without a selector") {
+		t.Errorf("add with selector: %+v", bad)
+	}
+}
+
+func mustKeyPath(t *testing.T, s string) config.KeyPath {
+	t.Helper()
+	p, err := config.ParseKeyPath(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

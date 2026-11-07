@@ -36,10 +36,13 @@ var logger = log.NewComponentLogger("configapprove")
 // Op is what a request does to the path.
 type Op string
 
-// The two operations.
+// The operations. A path may end in an element selector (arr[name],
+// arr[3], arr[field=value], #2938): set then replaces that one element and
+// unset removes it. add appends one element to the array the path names.
 const (
 	OpSet   Op = "set"
 	OpUnset Op = "unset"
+	OpAdd   Op = "add"
 )
 
 // Outcome is where a request stands.
@@ -169,34 +172,60 @@ func ClampTimeout(t time.Duration) time.Duration {
 
 // plan computes the edited content from cur.
 func plan(cur string, p config.KeyPath, op Op, value string) (string, error) {
-	if op == OpUnset {
+	switch op {
+	case OpUnset:
 		return config.PlanUnsetPath(cur, p)
+	case OpAdd:
+		return config.PlanAddElement(cur, p, value)
 	}
 	return config.PlanSetPath(cur, p, value)
 }
 
 // validate plans the edit on the current file and runs every check that
-// does not need the user. It returns the planned content and the old value.
-func (s *Service) validate(sub Submission, p config.KeyPath) (next string, old any, oldSet bool, err error) {
+// does not need the user. It returns the current and planned content and
+// the old value.
+func (s *Service) validate(sub Submission, p config.KeyPath) (cur, next string, old any, oldSet bool, err error) {
 	data, err := os.ReadFile(s.d.ConfigPath)
 	if err != nil {
-		return "", nil, false, fmt.Errorf("read config: %w", err)
+		return "", "", nil, false, fmt.Errorf("read config: %w", err)
 	}
-	cur := string(data)
-	old, oldSet, err = config.LookupPath(cur, p)
+	cur = string(data)
+	if sub.Op == OpAdd && p.Elem != nil {
+		return "", "", nil, false, fmt.Errorf("add appends to an array: name the array without a selector (%s), not %s", p.Array(), p)
+	}
+	old, oldSet, err = lookupOld(cur, p, sub.Op)
 	if err != nil {
-		return "", nil, false, err
+		return "", "", nil, false, err
 	}
 	next, err = plan(cur, p, sub.Op, sub.Value)
 	if err != nil {
-		return "", nil, false, err
+		return "", "", nil, false, err
 	}
 	if s.d.CheckContent != nil {
 		if err := s.d.CheckContent(next, s.d.ConfigPath); err != nil {
-			return "", nil, false, fmt.Errorf("the changed config would not pass the config check: %w", err)
+			return "", "", nil, false, fmt.Errorf("the changed config would not pass the config check: %w", err)
 		}
 	}
-	return next, old, oldSet, nil
+	return cur, next, old, oldSet, nil
+}
+
+// lookupOld is the value the request changes, as the prompt shows it and the
+// approval re-checks it: the key's value, or the one element a selector
+// names. An add changes no existing value, so it has none.
+func lookupOld(cur string, p config.KeyPath, op Op) (any, bool, error) {
+	if op == OpAdd {
+		return nil, false, nil
+	}
+	return config.LookupPath(cur, p)
+}
+
+// droppedNote names the comments an edit removes, so none goes silently.
+func droppedNote(cur, next string) string {
+	gone := config.DroppedComments(cur, next)
+	if len(gone) == 0 {
+		return ""
+	}
+	return "\n(also removes the comment: " + strings.Join(gone, " / ") + ")"
 }
 
 // Submit validates a request and, when it passes, shows the approval prompt
@@ -204,25 +233,36 @@ func (s *Service) validate(sub Submission, p config.KeyPath) (next string, old a
 // Failed at once with the reason, and no prompt is shown.
 func (s *Service) Submit(sub Submission) Status {
 	s.prune()
-	if sub.Op != OpSet && sub.Op != OpUnset {
-		return Status{Outcome: Failed, Reason: fmt.Sprintf("unknown operation %q (want set or unset)", sub.Op)}
+	if sub.Op != OpSet && sub.Op != OpUnset && sub.Op != OpAdd {
+		return Status{Outcome: Failed, Reason: fmt.Sprintf("unknown operation %q (want set, unset or add)", sub.Op)}
 	}
 	p, err := config.ParseKeyPath(sub.Path)
 	if err != nil {
 		return Status{Outcome: Failed, Reason: err.Error()}
 	}
-	_, old, oldSet, err := s.validate(sub, p)
+	cur, next, old, oldSet, err := s.validate(sub, p)
 	if err != nil {
 		return Status{Outcome: Failed, Path: p.String(), Reason: err.Error()}
 	}
 	newText := "(unset)"
-	if sub.Op == OpSet {
+	if p.Elem != nil {
+		newText = "(element removed)"
+	}
+	if sub.Op != OpUnset {
 		v, _ := config.DecodeTOMLValue(sub.Value) // validate already decoded it
 		newText = config.RenderTOMLValue(v)
 	}
 	oldText := "(unset)"
-	if oldSet {
+	switch {
+	case sub.Op == OpAdd:
+		oldText = "(none: a new element is appended)"
+	case oldSet:
 		oldText = config.RenderTOMLValue(old)
+	}
+	newText += droppedNote(cur, next)
+	shownPath := p.String()
+	if sub.Op == OpAdd {
+		shownPath += " (add element)"
 	}
 
 	r := &request{
@@ -233,7 +273,7 @@ func (s *Service) Submit(sub Submission) Status {
 		oldSet:     oldSet,
 		done:       make(chan struct{}),
 	}
-	r.status = Status{ID: r.id, Outcome: Pending, Path: p.String(), Old: oldText, New: newText}
+	r.status = Status{ID: r.id, Outcome: Pending, Path: shownPath, Old: oldText, New: newText}
 	s.mu.Lock()
 	s.reqs[r.id] = r
 	s.mu.Unlock()
@@ -242,8 +282,8 @@ func (s *Service) Submit(sub Submission) Status {
 		ID:         r.id,
 		AgentID:    sub.AgentID,
 		SessionKey: sub.SessionKey,
-		Summary:    "config change " + p.String(),
-		Text:       promptText(sub.SessionKey, p, oldText, newText),
+		Summary:    "config change " + shownPath,
+		Text:       promptText(sub.SessionKey, shownPath, oldText, newText),
 		OnAnswer:   func(approve bool) string { return s.answer(r.id, approve) },
 		OnExpire:   func() { s.timeout(r.id) },
 	})
@@ -260,7 +300,7 @@ func (s *Service) Submit(sub Submission) Status {
 // lines in a fenced code block (#2936): monospace on the app, Telegram and
 // Discord, and a long value (an array of tables) cannot run into its label or
 // the other value.
-func promptText(sessionKey string, p config.KeyPath, oldText, newText string) string {
+func promptText(sessionKey, p string, oldText, newText string) string {
 	return fmt.Sprintf("🔧 Config change requested\n\nSession: %s\nSetting: %s\n\nCurrent value:\n%s\n\nNew value:\n%s\n\nNothing changes unless you approve.",
 		sessionKey, p, fenced(oldText), fenced(newText))
 }
@@ -382,7 +422,7 @@ func (s *Service) apply(r *request) error {
 		return fmt.Errorf("read config: %w", err)
 	}
 	cur := string(data)
-	old, oldSet, err := config.LookupPath(cur, r.path)
+	old, oldSet, err := lookupOld(cur, r.path, r.Op)
 	if err != nil {
 		return err
 	}

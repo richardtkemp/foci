@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -36,7 +37,83 @@ func SetTableArray(path, section string, entries []map[string]any, mode os.FileM
 // post-edit content computed from candidate content, touching no disk. It
 // keeps SetTableArray's own output convention — the result always ends in
 // exactly one trailing newline — so the two are byte-identical.
+//
+// When the array already exists, only the entries that differ are edited
+// (planTableArrayDiff, #2938), so unchanged blocks keep their comments and
+// layout; the result must decode exactly as the whole rewrite below would.
 func PlanSetTableArray(content, section string, entries []map[string]any) (string, error) {
+	whole, err := planSetTableArrayWhole(content, section, entries)
+	if err != nil {
+		return "", err
+	}
+	if next, ok := planTableArrayDiff(content, section, entries, whole); ok {
+		return next, nil
+	}
+	return whole, nil
+}
+
+// planTableArrayDiff edits the existing array at section element by element
+// into entries. ok is false when it cannot, or when its result does not
+// decode exactly like whole (the full rewrite).
+func planTableArrayDiff(content, section string, entries []map[string]any, whole string) (string, bool) {
+	keys := strings.Split(section, ".")
+	if len(entries) == 0 || keys[0] == agentsKey {
+		return "", false
+	}
+	for _, k := range keys {
+		if !bareKeyRe.MatchString(k) {
+			return "", false
+		}
+	}
+	p := KeyPath{Keys: keys}
+	cur, set, err := LookupPath(content, p)
+	if err != nil || !set {
+		return "", false
+	}
+	oldArr, ok := asArray(cur)
+	if !ok {
+		return "", false
+	}
+	texts := make([]string, len(entries))
+	newArr := make([]any, len(entries))
+	for i, entry := range entries {
+		names := make([]string, 0, len(entry))
+		for k := range entry {
+			if !bareKeyRe.MatchString(k) {
+				return "", false
+			}
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		parts := make([]string, len(names))
+		for j, k := range names {
+			v, err := formatTableArrayValue(entry[k])
+			if err != nil {
+				return "", false
+			}
+			parts[j] = k + " = " + v
+		}
+		texts[i] = "{" + strings.Join(parts, ", ") + "}"
+		if newArr[i], err = DecodeTOMLValue(texts[i]); err != nil {
+			return "", false
+		}
+	}
+	ed, err := arrayEditorFor(content, p)
+	if err != nil || applyArrayDiff(ed, oldArr, newArr, texts) != nil {
+		return "", false
+	}
+	next := strings.TrimRight(ed.result(), "\n") + "\n"
+	got, err1 := decodeDoc(next)
+	want, err2 := decodeDoc(whole)
+	if err1 != nil || err2 != nil || !reflect.DeepEqual(normValue(got), normValue(want)) {
+		return "", false
+	}
+	return next, true
+}
+
+// planSetTableArrayWhole rewrites every [[section]] block (the original
+// PlanSetTableArray).
+func planSetTableArrayWhole(content, section string, entries []map[string]any) (string, error) {
 	lines := strings.Split(content, "\n")
 	// strings.Split on a trailing "\n" yields a final "" element; strip it so
 	// block-boundary scanning (which treats EOF as a block terminator) isn't

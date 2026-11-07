@@ -29,6 +29,7 @@ Ask for one change per request. Say in chat why you are asking before you run it
 | `foci config get <path>` | The value at `<path>` in the config file, or `<path> is unset` (its default applies). |
 | `foci config set <path> <value>` | Ask the user to approve setting `<path>` to `<value>`; waits for the answer. |
 | `foci config unset <path>` | Ask the user to approve removing `<path>`; waits for the answer. |
+| `foci config add <path> <value>` | Ask the user to approve appending one element to the array at `<path>`; waits for the answer. |
 | `foci config wait <id>` | Follow a request made earlier, e.g. one `/config set` made over the HTTP API. |
 
 Flags: `--wait <duration>` sets how long the user has to answer (default 10m, at most 1h); `--session <key>` overrides `$FOCI_SESSION_KEY`; `--config <file>` points `get` at another file.
@@ -45,7 +46,13 @@ agents[main].nudge.enable          a nested key in agent "main"
 models."claude.fast".id            a quoted segment
 blocked_paths                      a whole array of tables
 agents[main].platforms             one agent's array of tables
+blocked_paths[etc]                 ONE element: the table whose name (else id) is "etc"
+rules[tool=Bash]                   ONE element: the table whose tool is "Bash"
+rules[3]                           ONE element: index 3, counting from 0
+paths["/tmp/x"]                    ONE element: the string "/tmp/x" (quote non-bare values)
 ```
+
+To change one element of an array, name it with a selector instead of resending the whole array: `set` replaces just that element, `unset` removes it (and the comment lines directly above it), and the user's prompt shows only that element. `add` appends one.
 
 ## Values
 
@@ -59,9 +66,12 @@ foci config set reflection.interval '"2h"'
 foci config set 'agents[main].system.system_files' '["character/SOUL.md", "character/CRAFT.md"]'
 foci config set blocked_paths '[{path = "/etc"}, {path = "/root"}]'   # replaces the whole array
 foci config unset 'agents[main].effort'
+foci config unset 'agents[main].backend_config.pretool_rules[old_rule]'     # remove one rule
+foci config set 'agents[main].backend_config.pretool_rules[old_rule]' '{name = "old_rule", tool = "Bash", command = "x", reason = "y"}'
+foci config add 'agents[main].backend_config.pretool_rules' '{name = "new_rule", tool = "Bash", command = "x", reason = "y"}'
 ```
 
-A set of an array of tables replaces every entry: list all the entries you want to keep.
+A set of a whole array replaces every entry: list all the entries you want to keep. Only the entries that differ are rewritten, so the others keep their layout and comments. For one entry, prefer a selector.
 
 ## What the user sees
 

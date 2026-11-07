@@ -87,7 +87,7 @@ func requestConfigApproval(sessionKey string, op configapprove.Op, path, value s
 // configRequestBody is POST /config/request's body.
 type configRequestBody struct {
 	Session     string `json:"session"` // the requesting session key; its first segment is the agent
-	Op          string `json:"op"`      // set | unset
+	Op          string `json:"op"`      // set | unset | add
 	Path        string `json:"path"`
 	Value       string `json:"value,omitempty"`
 	TimeoutSecs int    `json:"timeout_secs,omitempty"`

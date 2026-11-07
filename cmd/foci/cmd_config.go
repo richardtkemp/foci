@@ -25,9 +25,14 @@ import (
 //	foci config get <path>               the value at <path> in the config FILE, or that it is unset
 //	foci config set <path> <value>       ask the user to approve setting <path>
 //	foci config unset <path>             ask the user to approve removing <path>
+//	foci config add <path> <value>       ask the user to approve appending one element to the array at <path>
 //	foci config wait <id>                follow a request made earlier (e.g. by /config set over HTTP)
 //
-// set, unset and wait print exactly one outcome — applied, denied, timed out
+// A path may end in an element selector (rules[name], rules[3],
+// rules[field=value], #2938): set replaces that one element, unset removes
+// it, and the prompt shows only that element.
+//
+// set, unset, add and wait print exactly one outcome — applied, denied, timed out
 // or failed (with a reason) — and exit 0 only for applied.
 
 // Poll pacing, swappable in tests.
@@ -63,7 +68,7 @@ func cmdConfig(base string, args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "get":
 		return configGetCmd(rest, stdout, stderr)
-	case "set", "unset", "wait":
+	case "set", "unset", "add", "wait":
 		return configRequestCmd(base, sub, rest, stdout, stderr)
 	default:
 		_, _ = fmt.Fprintf(stderr, "config: unknown subcommand %q\n", sub)
@@ -137,7 +142,7 @@ func configRequestCmd(base, sub string, args []string, stdout, stderr io.Writer)
 			want = 1
 		}
 		if len(args) != want {
-			_, _ = fmt.Fprintf(stderr, "usage: foci config %s\n", map[string]string{"set": "set <path> <value> [--wait <duration>]", "unset": "unset <path> [--wait <duration>]"}[sub])
+			_, _ = fmt.Fprintf(stderr, "usage: foci config %s\n", map[string]string{"set": "set <path> <value> [--wait <duration>]", "add": "add <path> <value> [--wait <duration>]", "unset": "unset <path> [--wait <duration>]"}[sub])
 			return 2
 		}
 		if session == "" {
@@ -148,7 +153,7 @@ func configRequestCmd(base, sub string, args []string, stdout, stderr io.Writer)
 			return 2
 		}
 		body := map[string]any{"session": session, "op": sub, "path": args[0], "timeout_secs": int(timeout / time.Second)}
-		if sub == "set" {
+		if sub != "unset" {
 			body["value"] = args[1]
 		}
 		var err error
@@ -252,7 +257,7 @@ func printConfigOutcome(w io.Writer, st configapprove.Status) int {
 }
 
 func configUsage(w io.Writer) {
-	_, _ = fmt.Fprintf(w, `Usage: foci config <show|get|set|unset|wait> [args]
+	_, _ = fmt.Fprintf(w, `Usage: foci config <show|get|set|unset|add|wait> [args]
 
 foci.toml is read-only to agents. A change is a request: the user sees the
 setting, its current value and the new value in chat, and taps Approve or
@@ -263,18 +268,31 @@ Subcommands:
   get <path>                 The value at <path> in the config file, or that it is unset
   set <path> <value>         Ask the user to approve setting <path> to <value>
   unset <path>               Ask the user to approve removing <path> (its default applies)
+  add <path> <value>         Ask the user to approve appending one element to the array at <path>
   wait <request-id>          Follow a request made earlier (e.g. by /config set over HTTP)
 
 Paths are TOML dotted keys; agents[<id>] selects one agent's block:
   agent_loop.max_tool_loops   agents[main].nudge.enable   models."claude.fast".id
 
+A path may end in a selector that names ONE element of an array (an array
+of tables included). set then replaces only that element, unset removes it
+(with the comment lines directly above it), and the prompt shows only it:
+  rules[my_rule]      the table whose name (else id) is my_rule, or the
+                      string element "my_rule"
+  rules[tool=Bash]    the table whose tool is "Bash" (must match one)
+  rules[3]            the element at index 3, counting from 0
+  paths["/tmp/x"]     quote a value that is not a bare word
+  foci config unset 'agents[main].backend_config.pretool_rules[old_rule]'
+  foci config add 'agents[main].backend_config.pretool_rules' '{name = "x", tool = "Bash", command = "y"}'
+
 Values are TOML values: "text", 42, 1.5, true, 2026-11-01T10:00:00Z,
 ["a", "b"], {key = "v"}, or [{path = "/x"}, {path = "/y"}] for a whole array
-of tables (replaced whole). Quote the value for your shell, and quote a
-path holding agents[...] (the brackets are a shell glob):
+of tables. A whole array set to a new array changes only the elements that
+differ: the others keep their layout and comments. Quote the value for your
+shell, and quote a path holding [...] (the brackets are a shell glob):
   foci config set 'agents[main].model' '"opus"'
 
-set, unset and wait print one outcome: applied, denied, timed out, or failed
+set, unset, add and wait print one outcome: applied, denied, timed out, or failed
 with a reason. Exit 0 only for applied.
 
 Flags:
