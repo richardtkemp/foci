@@ -16,7 +16,10 @@ func (a *Agent) processAPIResponse(sessionKey string, sm *sessionMeta, resp *pro
 	// Cache bust detection: cache_read dropped significantly vs previous request.
 	// Works for any provider that reports CacheReadInputTokens (Anthropic, OpenAI).
 	// The prevCacheRead > 0 guard ensures we only fire when there was prior cache data.
-	if a.cacheBustDetect() && len(a.CacheBustAlert) > 0 && sm.prevCacheRead > 0 {
+	a.metaMu.Lock()
+	prevCacheRead, prevRequestTime := sm.prevCacheRead, sm.prevRequestTime
+	a.metaMu.Unlock()
+	if a.cacheBustDetect() && len(a.CacheBustAlert) > 0 && prevCacheRead > 0 {
 		idleThresh := a.cacheBustIdleThreshold(sessionKey)
 		if idleThresh == 0 {
 			idleThresh = 10 * time.Minute
@@ -25,16 +28,18 @@ func (a *Agent) processAPIResponse(sessionKey string, sm *sessionMeta, resp *pro
 		// last_cache_touch captured at this turn's entry), not the message
 		// received-time — the cache TTL clock starts when a request refreshes the
 		// cache, so request time is the correct basis for "did it lapse naturally".
-		idle := !sm.prevRequestTime.IsZero() && now.Sub(sm.prevRequestTime) > idleThresh
-		if !idle && resp.Usage.CacheReadInputTokens < sm.prevCacheRead {
+		idle := !prevRequestTime.IsZero() && now.Sub(prevRequestTime) > idleThresh
+		if !idle && resp.Usage.CacheReadInputTokens < prevCacheRead {
 			for _, fn := range a.CacheBustAlert {
-				fn(sessionKey, sm.prevCacheRead, resp.Usage.CacheReadInputTokens)
+				fn(sessionKey, prevCacheRead, resp.Usage.CacheReadInputTokens)
 			}
 		}
 	}
 	// Update cache baseline after every API call so subsequent iterations
 	// within the same tool_use turn don't re-fire the detection.
+	a.metaMu.Lock()
 	sm.prevCacheRead = resp.Usage.CacheReadInputTokens
+	a.metaMu.Unlock()
 
 	// This response is the evidence that stamps cache warmth (#2509).
 	a.recordCacheEvidence(sessionKey, resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)

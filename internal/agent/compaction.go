@@ -285,9 +285,7 @@ func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []
 	if a.NudgeReloadFunc != nil {
 		a.NudgeReloadFunc()
 	}
-	sm.systemBlocks = nil
-	// Reset cache baseline — next request will have a different prefix
-	sm.prevCacheRead = 0
+	a.resetAfterCompaction(sm)
 	return true
 }
 

@@ -188,7 +188,7 @@ var statuslineFields = map[string]func(statuslineInputs) string{
 // structured meta channel (the app provider's `meta` frame) render instead of
 // the text [meta] header: the human-readable gap since the previous message.
 func (a *Agent) MetaStatus(sessionKey string) (gap string) {
-	if sm := a.getSessionMeta(sessionKey); sm != nil && !sm.lastMessageTime.IsZero() {
+	if sm := a.snapshotSessionMeta(sessionKey); !sm.lastMessageTime.IsZero() {
 		gap = display.FormatDuration(time.Since(sm.lastMessageTime))
 	}
 	return

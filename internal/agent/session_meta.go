@@ -15,6 +15,11 @@ import (
 )
 
 // sessionMeta tracks per-session state for metadata injection.
+//
+// Every field is guarded by Agent.metaMu: a turn holds the pointer, but keepalive
+// scans, the app's meta frames, forks and an adopted turn's completion goroutine
+// reach the same value from other goroutines, so the turn lock does not cover it
+// (#2912).
 type sessionMeta struct {
 	// lastMessageTime is the received-time of the message that triggered the
 	// PREVIOUS turn (ts.UserMessageTime — ReceivedAt, or StartedAt for system
@@ -963,7 +968,36 @@ func (a *Agent) ClearSessionState(sessionKey string) {
 // next API call won't trigger a false cache-bust warning. Call this after any
 // operation that changes the message prefix (e.g. manual compaction).
 func (a *Agent) ResetCacheBaseline(sessionKey string) {
-	a.getSessionMeta(sessionKey).prevCacheRead = 0
+	a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.prevCacheRead = 0 })
+}
+
+// resetAfterCompaction drops what a compaction made stale on sm: its cached
+// system prompt (compaction may have changed memory files; only this session's
+// goes, so other sessions keep their byte-identical prompts) and its cache
+// baseline (the next request has a different prefix).
+func (a *Agent) resetAfterCompaction(sm *sessionMeta) {
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	sm.systemBlocks = nil
+	sm.prevCacheRead = 0
+}
+
+// stampLastMessageTime records the turn's message time, the base of the next
+// turn's [meta] gap=.
+func (a *Agent) stampLastMessageTime(ts *TurnState) {
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	ts.SessionMeta.lastMessageTime = ts.UserMessageTime()
+}
+
+// snapshotSessionMeta returns a copy of the session's meta, for a reader that
+// uses several fields or holds them across slow work. The copy shares
+// systemBlocks and client with the original: it is for reading only.
+func (a *Agent) snapshotSessionMeta(sessionKey string) sessionMeta {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	return *sm
 }
 
 // formatCost formats a dollar cost, trimming unnecessary trailing zeros.

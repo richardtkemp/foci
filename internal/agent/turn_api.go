@@ -615,6 +615,8 @@ func (t *APITransport) UpdateSessionMeta(ts *TurnState) {
 	if ts.SessionMeta == nil || ts.FinalUsage == nil {
 		return
 	}
+	t.agent.metaMu.Lock()
+	defer t.agent.metaMu.Unlock()
 	ts.SessionMeta.prevCost = ts.FinalCost
 	ts.SessionMeta.prevInput = ts.FinalUsage.InputTokens
 	ts.SessionMeta.prevOutput = ts.FinalUsage.OutputTokens

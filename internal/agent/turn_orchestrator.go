@@ -130,7 +130,7 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	// here on the API transport, in recordTurnRan on the delegated one (see
 	// Phase 1b).
 	if !delegated && ts.SessionMeta != nil {
-		ts.SessionMeta.lastMessageTime = ts.UserMessageTime()
+		a.stampLastMessageTime(ts)
 	}
 	tc.BuildSystemAndTools(ts)
 	tc.InjectNudges(ts)

@@ -154,8 +154,11 @@ func (a *Agent) statusScratchpad(sessionKey string) string {
 // (which calls Bootstrap.Reload) does not bust the cache for other sessions.
 func (a *Agent) buildSystemBlocks(sessionKey string) []provider.SystemBlock {
 	sm := a.getSessionMeta(sessionKey)
-	if sm.systemBlocks != nil {
-		return sm.systemBlocks
+	a.metaMu.Lock()
+	cached := sm.systemBlocks
+	a.metaMu.Unlock()
+	if cached != nil {
+		return cached
 	}
 
 	system := a.Bootstrap.SystemBlocks()
@@ -190,7 +193,9 @@ func (a *Agent) buildSystemBlocks(sessionKey string) []provider.SystemBlock {
 		}
 	}
 
+	a.metaMu.Lock()
 	sm.systemBlocks = result
+	a.metaMu.Unlock()
 	return result
 }
 

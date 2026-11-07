@@ -31,7 +31,7 @@ func (a *Agent) composeTurnText(ctx context.Context, sessionKey string, turnMode
 	if now.IsZero() {
 		now = time.Now()
 	}
-	sm := a.getSessionMeta(sessionKey)
+	sm := a.snapshotSessionMeta(sessionKey)
 	trigger := TriggerFromContext(ctx)
 	platName := triggerToPlatform(trigger)
 
@@ -46,7 +46,7 @@ func (a *Agent) composeTurnText(ctx context.Context, sessionKey string, turnMode
 		now:        now,
 		model:      turnModel,
 		platform:   platName,
-		sm:         sm,
+		sm:         &sm,
 		agent:      a,
 		sessionKey: sessionKey,
 	})

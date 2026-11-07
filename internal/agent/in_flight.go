@@ -447,7 +447,7 @@ func (a *Agent) recordTurnActivity(ts *TurnState) {
 // reaching the backend is not a model response (#2509, recordCacheEvidence).
 func (a *Agent) recordTurnRan(ts *TurnState) {
 	if ts.SessionMeta != nil {
-		ts.SessionMeta.lastMessageTime = ts.UserMessageTime()
+		a.stampLastMessageTime(ts)
 	}
 }
 

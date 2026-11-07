@@ -895,6 +895,9 @@ func (t *DelegatedTransport) UpdateSessionMeta(ts *TurnState) {
 	if ts.SessionMeta == nil || ts.FinalUsage == nil {
 		return
 	}
+	a := t.agent
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
 	ts.SessionMeta.prevInput = ts.FinalUsage.InputTokens
 	ts.SessionMeta.prevOutput = ts.FinalUsage.OutputTokens
 	ts.SessionMeta.prevCacheRead = ts.FinalUsage.CacheReadInputTokens
@@ -1080,7 +1083,6 @@ func (t *DelegatedTransport) RunCompaction(ts *TurnState) {
 	// Turn-specific post-compact state: per-turn session meta caches are
 	// stale now that CC has rewritten the transcript.
 	if ts.SessionMeta != nil {
-		ts.SessionMeta.systemBlocks = nil
-		ts.SessionMeta.prevCacheRead = 0
+		a.resetAfterCompaction(ts.SessionMeta)
 	}
 }
