@@ -91,7 +91,7 @@ model = "anthropic/claude-haiku-4-5-20251001"
 # enable_stop_aliases = true               # enable stop command aliases
 # max_concurrent_turns = 0                 # max user conversations ONE agent works on at once; 0 = no limit (waiting senders get a queued notice; restart required)
 # max_concurrent_turns_all_agents = 0      # max user conversations across ALL agents at once (global only); 0 = no limit (restart required)
-# prompt_suggestion_max_usage = 90        # plan usage % (highest window) at or above which no next-message suggestion runs; 0 = off (live)
+# prompt_suggestion_max_usage = 0         # plan usage % (highest window) at or above which no next-message suggestion runs; 0 = off (default), e.g. 90 turns them on (live)
 
 # [voice]
 # tts = ""                                 # TTS provider id (empty = default entry)

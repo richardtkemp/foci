@@ -36,13 +36,14 @@ type ResolvedBehavior struct {
 	// [behavior] by the gateway, so it deliberately has no resolved field.
 	MaxConcurrentTurns int
 	// PromptSuggestionMaxUsage is the plan usage percent at or above which
-	// a Claude Code backend predicts no next prompt (#2931, default 90).
+	// a Claude Code backend predicts no next prompt (#2931); 0, the default, is
+	// off (#2951).
 	PromptSuggestionMaxUsage int
 }
 
 // DefaultPromptSuggestionMaxUsage is behavior.prompt_suggestion_max_usage's
 // default, for a config that never had its tag defaults applied.
-const DefaultPromptSuggestionMaxUsage = 90
+const DefaultPromptSuggestionMaxUsage = 0
 
 func derefIntOr(p *int, def int) int {
 	if p == nil {

@@ -1097,8 +1097,10 @@ const (
 	promptSuggestionOn = "true"
 )
 
-// defaultPromptSuggestionMaxUsage is the usage percent limit when a turn
-// names none (config behavior.prompt_suggestion_max_usage's default).
+// defaultPromptSuggestionMaxUsage is the usage percent limit for a turn that
+// wants a prediction but names no limit. It is not the config default: that
+// is 0, off (#2951), and a limit of 0 never reaches here because the agent
+// sends PromptSuggestion false instead.
 const defaultPromptSuggestionMaxUsage = 90
 
 // setPromptSuggestions records what this turn wants and writes the switch.

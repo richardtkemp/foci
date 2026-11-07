@@ -399,11 +399,19 @@ func TestResolve_ReloadOnCompactGlobalFalseInherits(t *testing.T) {
 
 func ptrFloat(v float64) *float64 { return &v }
 
-// behavior.prompt_suggestion_max_usage (#2931): 90 by default, a global value
-// applies, and an agent's value overrides it (0 included).
+// behavior.prompt_suggestion_max_usage (#2931): 0 (off) by default (#2951), a
+// global value applies, and an agent's value overrides it (0 included).
 func TestResolve_PromptSuggestionMaxUsage(t *testing.T) {
-	if got := Resolve(&Config{}, AgentConfig{}).Behavior.PromptSuggestionMaxUsage; got != 90 {
-		t.Errorf("default = %d, want 90", got)
+	if got := Resolve(&Config{}, AgentConfig{}).Behavior.PromptSuggestionMaxUsage; got != 0 {
+		t.Errorf("default = %d, want 0 (off, #2951)", got)
+	}
+	var loaded Config
+	ApplyTagDefaults(&loaded)
+	if p := loaded.Behavior.PromptSuggestionMaxUsage; p != nil && *p != 0 {
+		t.Errorf("tag default = %d, want 0 (off, #2951)", *p)
+	}
+	if got := Resolve(&loaded, AgentConfig{}).Behavior.PromptSuggestionMaxUsage; got != 0 {
+		t.Errorf("resolved after tag defaults = %d, want 0 (off, #2951)", got)
 	}
 	cfg := &Config{Behavior: BehaviorConfig{PromptSuggestionMaxUsage: Ptr(70)}}
 	if got := Resolve(cfg, AgentConfig{}).Behavior.PromptSuggestionMaxUsage; got != 70 {

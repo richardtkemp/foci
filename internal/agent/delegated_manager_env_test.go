@@ -90,8 +90,27 @@ func TestGet_RootChatLaunchesWithPromptSuggestions(t *testing.T) {
 // wantsPromptSuggestion pins requirement 1 and the first half of 2 of #2922: only
 // a user's input on a session with somewhere to show it asks for a prediction, and
 // the surface is read each time, so a session that moves to the app needs nothing.
-func TestWantsPromptSuggestion(t *testing.T) {
+// suggestionsEnabled gives a with a live config whose
+// behavior.prompt_suggestion_max_usage is 90: suggestions are off by default
+// (#2951), so a test of the per-turn decision turns them on first.
+func suggestionsEnabled(a *Agent) *Agent {
+	a.LiveConfigFn = func() *config.ResolvedAgentConfig {
+		return &config.ResolvedAgentConfig{Behavior: config.ResolvedBehavior{PromptSuggestionMaxUsage: 90}}
+	}
+	return a
+}
+
+// With no live config the default applies, and the default is off (#2951).
+func TestWantsPromptSuggestion_OffByDefault(t *testing.T) {
 	a := &Agent{}
+	a.SetPromptSuggestionSurface(func(string) bool { return true })
+	if a.wantsPromptSuggestion(true, "a/c1") {
+		t.Fatal("default config: want no prediction")
+	}
+}
+
+func TestWantsPromptSuggestion(t *testing.T) {
+	a := suggestionsEnabled(&Agent{})
 	if a.wantsPromptSuggestion(true, "a/c1") {
 		t.Error("no surface wired: want false")
 	}
@@ -158,7 +177,7 @@ func TestRunInference_PromptSuggestionFollowsTurn(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			be := &mockBackendDT{sessionFile: "/tmp/s.jsonl"}
-			a := &Agent{Model: "test-model", DelegatedManager: newMockDelegatedManager(t, be)}
+			a := suggestionsEnabled(&Agent{Model: "test-model", DelegatedManager: newMockDelegatedManager(t, be)})
 			a.SetPromptSuggestionSurface(func(string) bool { return c.surface })
 			ctx := WithTrigger(context.Background(), c.trigger)
 			if c.user {
@@ -272,7 +291,7 @@ func TestPromptSuggestion_DecisionAndDeliveryAreLogged(t *testing.T) {
 	log.SetLevel(log.DEBUG)
 	t.Cleanup(func() { log.SetOutput(nil); log.SetLevel(log.INFO) })
 
-	a := &Agent{}
+	a := suggestionsEnabled(&Agent{})
 	a.SetPromptSuggestionSurface(func(sk string) bool { return sk == "a/c1" })
 	a.wantsPromptSuggestion(true, "a/c1")
 	a.wantsPromptSuggestion(false, "a/c1")
