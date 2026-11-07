@@ -335,18 +335,21 @@ Subcommands:
 	gwLiveApply = newLiveApply(configPath, gwConfigProtect)
 
 	// ========== Platform messaging ==========
+	speech := newSpeechCatalog(cfg, ttsMap, sec.store)
 	plat, err := platform.InitMessaging(cfg, platform.ProviderDeps{
-		Config:       cfg,
-		SecretStore:  sec.store,
-		Sessions:     si.sessions,
-		SessionIndex: si.sessionIndex,
-		STTMap:       sttMap,
-		TTSMap:       ttsMap,
-		Ctx:          ctx,
-		ResolveSTT:   resolveSTT,
-		ResolveTTS:   resolveTTS,
-		ApplyLive:    gwLiveApply.Apply,
-		Restart:      command.Restart,
+		Config:        cfg,
+		SecretStore:   sec.store,
+		Sessions:      si.sessions,
+		SessionIndex:  si.sessionIndex,
+		STTMap:        sttMap,
+		TTSMap:        ttsMap,
+		Ctx:           ctx,
+		ResolveSTT:    resolveSTT,
+		ResolveTTS:    resolveTTS,
+		SpeechSources: speech.Sources,
+		SpeechTTS:     speech.Provider,
+		ApplyLive:     gwLiveApply.Apply,
+		Restart:       command.Restart,
 	})
 	if err != nil {
 		log.Fatalf("main", "init messaging: %v", err)

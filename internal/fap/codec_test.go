@@ -403,7 +403,7 @@ func TestEncode_AllServerFrames(t *testing.T) {
 	cost := 0.12
 	final := "done"
 	frames := []ServerFrame{
-		HelloServer{Version: 1, Caps: Caps{Versions: []int{1}}},
+		HelloServer{Version: 1, Caps: Caps{Versions: []int{1}, Speech: []SpeechSource{{ID: "groq", Kind: "api"}}}},
 		TurnStart{ConversationID: "c", TurnID: "t"},
 		TextDelta{ConversationID: "c", TurnID: "t", Text: "x"},
 		TextEnd{ConversationID: "c", TurnID: "t", MessageID: "m", FinalText: &final},

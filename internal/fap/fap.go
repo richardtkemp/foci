@@ -273,6 +273,15 @@ type Caps struct {
 	Push     []string `json:"push,omitempty"`
 	Features []string `json:"features,omitempty"`
 	Host     string   `json:"host,omitempty"` // public host the app reconnects to (§2.1/§6)
+	// Speech lists the voices POST /app/speech can use (#2858): names only, never
+	// a key. Absent on a server without that endpoint or with no usable voice.
+	Speech []SpeechSource `json:"speech,omitempty"`
+}
+
+// SpeechSource names one server voice. Kind is "api" or "edge".
+type SpeechSource struct {
+	ID   string `json:"id"`
+	Kind string `json:"kind"`
 }
 
 // CommandInfo is one slash command advertised to the app for its command

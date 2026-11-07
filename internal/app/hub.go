@@ -471,6 +471,7 @@ func (h *Hub) caps() fap.Caps {
 	if h.configEditAvailable() {
 		c.Features = append(c.Features, featureConfigEdit)
 	}
+	c.Speech = h.speechSources()
 	return c
 }
 

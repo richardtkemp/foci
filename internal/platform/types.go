@@ -767,6 +767,12 @@ type ProviderDeps struct {
 	ResolveSTT   func(map[string]voice.STT, []config.STTConfig, string, map[string]string) voice.STT
 	ResolveTTS   func(map[string]voice.TTS, []config.TTSConfig, string, float64, map[string]string) voice.TTS
 
+	// SpeechSources lists the voices the app may ask for by name, and SpeechTTS
+	// returns one of them, with no fallback chain, for an agent (#2858). nil = no
+	// read-to-me on this server.
+	SpeechSources func() []voice.SpeechSource
+	SpeechTTS     func(agentID, sourceID string) voice.TTS
+
 	// ApplyLive pushes a just-edited config field into the running process
 	// when the field is hot (has a live applier). Section is the REGISTRY
 	// section ("agent" for per-agent overrides). Returns applied=false for

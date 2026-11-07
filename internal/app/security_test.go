@@ -85,6 +85,7 @@ func restEndpoints(h *Hub) []endpoint {
 		{"history", http.MethodGet, "/app/history?conversationId=c", "", h.ServeHistory},
 		{"replay", http.MethodGet, "/app/replay?conversationId=c", "", h.ServeReplay},
 		{"stt", http.MethodGet, "/app/stt?agentId=c", "", h.ServeSTT},
+		{"speech", http.MethodPost, "/app/speech", `{"source":"s","text":"hi"}`, h.ServeSpeech},
 		{"blob-post", http.MethodPost, "/app/blob", "x", h.ServeBlobPost},
 		{"blob-get", http.MethodGet, "/app/blob/abc", "", h.ServeBlobGet},
 		{"avatar", http.MethodGet, "/app/avatar/clutch", "", h.ServeAvatar},

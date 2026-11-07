@@ -76,3 +76,17 @@ func TestAppSTTEndpoint_NamedInStartupLog(t *testing.T) {
 		t.Errorf("registered-endpoints log does not name /app/stt:\n%s", logs)
 	}
 }
+
+// TestAppSpeechEndpoint_Registered: the same proof for POST /app/speech (#2858).
+func TestAppSpeechEndpoint_Registered(t *testing.T) {
+	enableAppProvider(t)
+	d, _ := httpTestSetup(t, httpTestOpts{})
+	mux := newTestMux(d)
+
+	r := httptest.NewRequest(http.MethodPost, "/app/speech", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("POST /app/speech without a token = %d, want the hub's 401 (404 = route not registered)", w.Code)
+	}
+}
