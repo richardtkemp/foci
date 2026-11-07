@@ -286,6 +286,10 @@ type Agent struct {
 	// user's next prompt (#2916). Wired by the gateway to
 	// app.DeliverPromptSuggestion.
 	onPromptSuggestion func(sessionKey, text string)
+	// onPromptSuggestionStale, when set, hears that the user's input reached a
+	// session's backend, so its shown prediction is out of date (#2924). Wired by
+	// the gateway to app.ClearPromptSuggestion.
+	onPromptSuggestionStale func(sessionKey string)
 	// promptSuggestionSurface reports whether a session has anywhere to show a
 	// prediction (#2922). Wired to app.CanShowPromptSuggestion; nil means no.
 	promptSuggestionSurface func(sessionKey string) bool

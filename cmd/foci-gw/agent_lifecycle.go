@@ -179,6 +179,7 @@ func (e *agentEnv) buildAgent(acfg config.AgentConfig) *agentInstance {
 	inst.ag.SetOnCacheExpiry(app.SetCacheExpiry)
 	// Show the backend's predicted next prompt in the app's composer (#2916).
 	inst.ag.SetOnPromptSuggestion(app.DeliverPromptSuggestion)
+	inst.ag.SetOnPromptSuggestionStale(app.ClearPromptSuggestion)
 	inst.ag.SetPromptSuggestionSurface(app.CanShowPromptSuggestion)
 	// Show each chat's pending wake reminders in the app, kept current on
 	// every set, fire, cancel and run (#2600).

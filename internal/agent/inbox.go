@@ -1037,6 +1037,7 @@ func (a *Agent) steerToBackend(be delegator.Delegator, env Envelope) bool {
 	switch {
 	case err == nil:
 		a.logger().Debugf("inbox: urgent dispatch sk=%s sent %dB attachments=%d", env.SessionKey, len(inj.Text), len(inj.Attachments))
+		a.noteUserInputDelivered(env.SessionKey)
 		// The sender's text as a turn records it (attributedText), not
 		// inj.Text: a fresh turn's recv row holds what the sender wrote, not
 		// the attachment notes prepended to it.
@@ -2125,6 +2126,22 @@ func (a *Agent) SetTurnLifecycleHooks(onComplete, onEnd func()) {
 // backend starts.
 func (a *Agent) SetOnPromptSuggestion(fn func(sessionKey, text string)) {
 	a.onPromptSuggestion = fn
+}
+
+// SetOnPromptSuggestionStale wires the callback that hears the user's input
+// reached a session's backend (#2924). Set once at gateway setup, before any
+// backend starts.
+func (a *Agent) SetOnPromptSuggestionStale(fn func(sessionKey string)) {
+	a.onPromptSuggestionStale = fn
+}
+
+// noteUserInputDelivered takes down a session's predicted prompt: the user has
+// answered it (#2924). Only user input does this, by the #2320 definition, so a
+// background turn with nothing to show leaves the prediction up.
+func (a *Agent) noteUserInputDelivered(sessionKey string) {
+	if a.onPromptSuggestionStale != nil {
+		a.onPromptSuggestionStale(sessionKey)
+	}
 }
 
 // SetPromptSuggestionSurface wires the check that a session can show a predicted

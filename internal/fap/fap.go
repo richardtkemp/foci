@@ -702,7 +702,10 @@ func (CacheExpiry) Type() string { return TypeCacheExpiry }
 
 // PromptSuggestion is the agent backend's prediction of the user's next prompt
 // (#2916). The app offers Text as one tap to send. It stays valid until the
-// conversation's next turn or message, so a replay in order is correct.
+// conversation's next visible reply or the user's next input, so a replay in order
+// is correct. An empty Text takes the suggestion down: the server sends that when
+// the user's input reaches the backend (#2924). A silent background turn sends
+// nothing that clears it.
 type PromptSuggestion struct {
 	ConversationID string `json:"conversationId"`
 	Text           string `json:"text"`

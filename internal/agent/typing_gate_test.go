@@ -372,3 +372,27 @@ func TestTypingGate_SteerIntoTypinglessRunShowsTyping(t *testing.T) {
 		t.Fatalf("TypingFunc calls after the steer = %v, want [true]", got)
 	}
 }
+
+// User input that joins a run instead of beginning a turn also takes down a shown
+// prediction (#2924): an autonomous run can be going while the chip is up, and its
+// fold shows the app no turn start.
+func TestPromptSuggestionStale_FoldAndSteer(t *testing.T) {
+	t.Parallel()
+	a, be, _ := newTypingTestAgent(t)
+	a.inboxCtx = context.Background()
+	got := 0
+	a.SetOnPromptSuggestionStale(func(string) { got++ })
+	RegisterPlatformTrigger("app")
+	be.setTurnInFlight(true)
+
+	runTypingTurn(t, a, context.Background(), "app")
+	if got != 1 {
+		t.Fatalf("after a fold: stale calls = %d, want 1", got)
+	}
+	if !a.steerToBackend(be, Envelope{SessionKey: "test/s", Text: "also this"}) {
+		t.Fatal("steer did not fold into the running turn")
+	}
+	if got != 2 {
+		t.Fatalf("after a steer: stale calls = %d, want 2", got)
+	}
+}

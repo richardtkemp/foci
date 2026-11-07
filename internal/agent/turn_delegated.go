@@ -402,6 +402,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 			return err
 		}
 		t.logger().Debugf("RunInference: Inject(SourceUser, follow-up) done sk=%s", ts.SessionKey)
+		a.noteUserInputDelivered(ts.SessionKey)
 		// The in-flight turn owns the run and the router's registration; this
 		// turn folds into it and delivers nothing of its own (see TurnState.
 		// foldedFollowUp — Phase 3.5 skips its registration for exactly the
@@ -651,6 +652,9 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 	if err == nil {
 		ts.inputDelivered = true
 		a.markTurnDispatched(ts.TurnDetail)
+		if typingAllowed {
+			a.noteUserInputDelivered(ts.SessionKey)
+		}
 		// Primary has reached the backend. Signal the inbox so turnActive
 		// flips true and any further follow-ups can safely steer via
 		// Inject(SourceSteer) instead of racing the primary's write. See

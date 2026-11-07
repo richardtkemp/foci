@@ -348,7 +348,10 @@ func TestConvBindingFieldCensus(t *testing.T) {
 	// own reply, so "" until the first message after a restart marks nothing
 	// rather than something wrong.
 	restartSafe := map[string]bool{
-		"mu": true, "clients": true, "clientStates": true, "buffer": true,
+		// suggestionSent: false only skips a clear. The next visible reply still
+		// takes down a chip from before the restart (#2924).
+		"suggestionSent": true,
+		"mu":             true, "clients": true, "clientStates": true, "buffer": true,
 		"seenOrder": true, "turnKind": true, "turnDetail": true, "turnCommand": true, "turnShell": true, "turnStartedMs": true, "retryStartedMs": true, "waitingStartedMs": true, "retryDetail": true,
 		"subagentDetail": true, "subagents": true, "spawns": true, "spawnShells": true, "waitingDetail": true,
 		"activitySent": true, "cacheExpiryMs": true, "lastCmdHash": true,

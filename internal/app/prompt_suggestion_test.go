@@ -65,3 +65,40 @@ func TestCanShowPromptSuggestion_FollowsBinding(t *testing.T) {
 		t.Error("adopted session, the one a Telegram chat claims: want true")
 	}
 }
+
+// The clear is an empty suggestion frame, sent once for each suggestion, so a
+// conversation with no chip gets no frame on an ordinary user turn (#2924).
+func TestClearPromptSuggestion_OneEmptyFramePerSuggestion(t *testing.T) {
+	setActiveHub(nil)
+	ClearPromptSuggestion("scout/c1") // no hub: no panic
+
+	h := newTestHub()
+	setActiveHub(h)
+	t.Cleanup(func() { setActiveHub(nil) })
+	ClearPromptSuggestion("scout/c999") // no binding: no panic
+
+	b := h.ensureBinding(nil, "scout", "conv-clear")
+	client := fakeClient()
+	b.attach(client)
+
+	ClearPromptSuggestion(b.key())
+	if got := drain(t, client); len(got) != 0 {
+		t.Fatalf("no suggestion sent: frames = %v, want none", types(got))
+	}
+
+	DeliverPromptSuggestion(b.key(), "run the tests")
+	drain(t, client)
+	ClearPromptSuggestion(b.key())
+	got := drain(t, client)
+	if len(got) != 1 || got[0].t != fap.TypePromptSuggestion {
+		t.Fatalf("frames = %v, want exactly one %s", types(got), fap.TypePromptSuggestion)
+	}
+	if text, present := got[0].d["text"]; !present || text != "" || got[0].d["conversationId"] != "conv-clear" {
+		t.Errorf("frame = %v, want empty text on conv-clear", got[0].d)
+	}
+
+	ClearPromptSuggestion(b.key())
+	if got := drain(t, client); len(got) != 0 {
+		t.Fatalf("second clear: frames = %v, want none", types(got))
+	}
+}

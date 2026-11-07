@@ -295,7 +295,27 @@ func DeliverPromptSuggestion(sessionKey, text string) {
 		return
 	}
 	if b := h.bindingForSession(sessionKey); b != nil {
+		b.suggestionSent.Store(true)
 		b.send(fap.PromptSuggestion{ConversationID: b.convID, Text: text})
+	}
+}
+
+// ClearPromptSuggestion takes down the chip of the conversation bound to
+// sessionKey, because the user's input has reached the backend (#2924). The client
+// cannot tell a user's turn from a silent background one by its activity, and not
+// every user's turn shows it a message first (an ask answered on another device).
+// The frame is an empty prompt.suggestion. A conversation that was sent no
+// suggestion gets no frame, so an ordinary turn costs nothing. No-op when the app
+// provider is not running or the session has no bound conversation.
+func ClearPromptSuggestion(sessionKey string) {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return
+	}
+	if b := h.bindingForSession(sessionKey); b != nil && b.suggestionSent.Swap(false) {
+		b.send(fap.PromptSuggestion{ConversationID: b.convID})
 	}
 }
 

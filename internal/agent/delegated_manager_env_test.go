@@ -211,3 +211,50 @@ func TestRunInference_SilentReplyHoldsBackSuggestion(t *testing.T) {
 		t.Fatalf("after a reply: delivered %q, want one", got)
 	}
 }
+
+// Only the user's input takes down a shown prediction: a turn nobody started must
+// leave the chip alone (#2924). The surface is not part of this: a chip left from
+// before the session moved stays out of date either way.
+func TestRunInference_UserInputClearsSuggestion(t *testing.T) {
+	RegisterPlatformTrigger("app")
+	RegisterPlatformTrigger("telegram")
+	cases := []struct {
+		name    string
+		trigger string
+		user    bool
+		want    int
+	}{
+		{"app user", "app", false, 1},
+		{"ask answer", "ask_grader", true, 1},
+		{"telegram user", "telegram", false, 1},
+		{"cron send", "external", false, 0},
+		{"keepalive", TriggerKeepalive, false, 0},
+		{"reflection", "reflection", false, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			be := &mockBackendDT{sessionFile: "/tmp/s.jsonl"}
+			a := &Agent{Model: "test-model", DelegatedManager: newMockDelegatedManager(t, be)}
+			got := 0
+			a.SetOnPromptSuggestionStale(func(sk string) {
+				if sk == "test/s" {
+					got++
+				}
+			})
+			ctx := WithTrigger(context.Background(), c.trigger)
+			if c.user {
+				ctx = WithUserInput(ctx)
+			}
+			ts := NewTurnState(ctx, "test/s", []string{"x"}, nil)
+			ts.Trigger = c.trigger
+			ts.Prompt = "x"
+			ts.StartedAt = time.Now()
+			if err := (&DelegatedTransport{sharedTurnOps{agent: a}}).RunInference(ts); err != nil {
+				t.Fatalf("RunInference: %v", err)
+			}
+			if got != c.want {
+				t.Errorf("stale calls = %d, want %d", got, c.want)
+			}
+		})
+	}
+}

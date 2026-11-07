@@ -2532,8 +2532,11 @@ type convBinding struct {
 	// key() or identity() — never cached across a call that may block — and
 	// write it only through setIdent. Lock-free, so readers holding b.mu or
 	// h.mu need no further lock.
-	ident  atomic.Pointer[bindingIdent]
-	chatID int64
+	ident atomic.Pointer[bindingIdent]
+	// suggestionSent says a prompt suggestion went out and no clear has followed
+	// (#2924). See ClearPromptSuggestion.
+	suggestionSent atomic.Bool
+	chatID         int64
 
 	replayDepth int           // config-driven buffer depth; 0 = code default
 	replayTTL   time.Duration // config-driven buffer TTL; 0 = code default
