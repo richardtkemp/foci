@@ -9,6 +9,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/delegator"
+	"foci/internal/delegator/accounting"
 	"foci/internal/provider"
 	"foci/shared/prompts"
 )
@@ -94,6 +95,7 @@ func (a *Agent) doCompact(ctx context.Context, sessionKey string, system []provi
 			fn(sessionKey, fmt.Sprintf("✅ Dry-run complete — %d messages would be summarised. Summary sent.", oldCount), summary)
 		}
 	} else {
+		accounting.NoteCacheReset(sessionKey) // a new conversation: its next call is no bust (#2930)
 		for _, fn := range a.CompactionNotifyFunc {
 			fn(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", oldCount), summary)
 		}
@@ -179,6 +181,9 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 	if waitErr != nil {
 		return fmt.Errorf("wait for compaction: %w", waitErr)
 	}
+	// The conversation is a new one now: its next call reads only what the
+	// summary shares with the old prefix, which is no bust (#2930).
+	accounting.NoteCacheReset(sessionKey)
 
 	// The backend compacted internally; recover its summary where it can so
 	// the notice gets a tappable summary chit (#1390). A missing summary only

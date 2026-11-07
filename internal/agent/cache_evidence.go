@@ -3,6 +3,7 @@ package agent
 import (
 	"time"
 
+	"foci/internal/delegator/accounting"
 	"foci/internal/session"
 )
 
@@ -74,7 +75,8 @@ func (a *Agent) recordCacheEvidence(sessionKey string, cacheRead, cacheWrite int
 	// prompt, #2051), so the source stays as cold as it is. Stamping it here
 	// kept keepalive forking hourly at a full cache write each (#2929).
 	if pending.sourceRead > 0 && cacheRead < pending.sourceRead {
-		a.logger().Warnf("cache: fork %s first call read %d cached tokens, less than its source %s's prior read of %d (fork missed part of the source's cache; cache_write=%d); not counted as warming the source",
+		// INFO: the per-call detector (accounting/cachewatch.go) reports the miss at WARN (#2930).
+		a.logger().Infof("cache: fork %s first call read %d cached tokens, less than its source %s's prior read of %d (fork missed part of the source's cache; cache_write=%d); not counted as warming the source",
 			sessionKey, cacheRead, pending.source, pending.sourceRead, cacheWrite)
 		return
 	}
@@ -113,6 +115,11 @@ func (a *Agent) NoteBranchInheritsRoot(branchKey, parentKey string) {
 	if parentKey == "" {
 		parentKey = root
 	}
+	// The ledger's cache watch checks the fork's first call against the
+	// source's last call (read + write) as of now, and reports a miss with its
+	// cost and cause (#2930). The warm decision below stays here.
+	accounting.NoteCacheFork(branchKey, parentKey)
+
 	// The baseline is the source's last evidenced call, not its turn-end
 	// usage (prevCacheRead): a compaction or a turn still running moves the
 	// source's prefix before its turn ends (#2929).

@@ -8,6 +8,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/delegator"
+	"foci/internal/delegator/accounting"
 	"foci/internal/modelcaps"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
@@ -934,6 +935,7 @@ func (a *Agent) persistSessionString(sessionKey, prefix, value string) {
 // session key is a stable identity — a reset session keeps its key but starts
 // from a clean slate.
 func (a *Agent) ClearSessionState(sessionKey string) {
+	accounting.NoteCacheReset(sessionKey) // a deliberate reset starts a new cache lineage (#2930)
 	a.metaMu.Lock()
 	delete(a.meta, sessionKey)
 	a.metaMu.Unlock()
@@ -960,6 +962,7 @@ func (a *Agent) ClearSessionState(sessionKey string) {
 // next API call won't trigger a false cache-bust warning. Call this after any
 // operation that changes the message prefix (e.g. manual compaction).
 func (a *Agent) ResetCacheBaseline(sessionKey string) {
+	accounting.NoteCacheReset(sessionKey) // and the cache watch's (#2930)
 	a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.prevCacheRead = 0 })
 }
 

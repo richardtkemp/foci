@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/accounting"
 	"foci/internal/log"
 	"foci/internal/session"
 	"foci/internal/telemetry"
@@ -678,6 +679,8 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string, u
 	// Fingerprint the effective prompt this session launches with, so a later
 	// compaction can skip the reload-bounce when nothing on disk changed.
 	promptHash := log.SystemHash([]string{opts.SystemPrompt})
+	// The cache watch names a dropped read after a prompt change as one (#2930).
+	accounting.NoteCachePrompt(sessionKey, promptHash)
 	// The prompt the backend actually launches with is the one worth tracing;
 	// the next turn on this session records its hash (and the text, once).
 	telemetry.RegisterSystemPrompt(sessionKey, opts.SystemPrompt, "launch")

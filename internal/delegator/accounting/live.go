@@ -39,6 +39,7 @@ func observe(b Booking) {
 	if BookedHook != nil {
 		BookedHook(b)
 	}
+	observeCache(b) // every call, every backend, is checked for a dropped cache read (#2930)
 }
 
 // live is the process's ledger: the api.db the gateway opened at startup.

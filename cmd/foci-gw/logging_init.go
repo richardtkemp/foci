@@ -101,6 +101,19 @@ func initLogging(cfg *config.Config, processStart time.Time) func() {
 		cleanups = append(cleanups, stopRotation)
 	}
 
+	// Every booked call, on every backend, is checked for a cache read below
+	// what its request should have read (#2930): a bust at WARN, an expiry
+	// (the TTL ran out) at INFO. Each line names the session, the expected and
+	// actual read, the rewrite's cost and the likely cause.
+	accounting.CacheReportHook = func(r accounting.CacheReport) {
+		if r.Class == accounting.CacheClassBust {
+			ledgerLog.Warnf("%s", r)
+			return
+		}
+		ledgerLog.Infof("%s", r)
+	}
+	cleanups = append(cleanups, func() { accounting.CacheReportHook = nil })
+
 	// The cost ledger (#2111) in api.db. Opening a pre-ledger api.db migrates
 	// it — once, under a VACUUM INTO backup, in one transaction — so the
 	// cutover happens at the first start of a binary that books through it.
