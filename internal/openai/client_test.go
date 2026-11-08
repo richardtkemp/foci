@@ -334,7 +334,7 @@ func TestMessagesToOpenAI(t *testing.T) {
 		{Role: "assistant", Content: provider.TextContent("hi there")},
 	}
 
-	result := messagesToOpenAI(system, msgs)
+	result := messagesToOpenAI(system, msgs, "")
 	// 1 developer + 1 user + 1 assistant = 3
 	if len(result) != 3 {
 		t.Fatalf("messages = %d, want 3", len(result))
@@ -354,7 +354,7 @@ func TestMessagesToOpenAI_ToolResult(t *testing.T) {
 		}},
 	}
 
-	result := messagesToOpenAI(nil, msgs)
+	result := messagesToOpenAI(nil, msgs, "")
 	if len(result) != 1 {
 		t.Fatalf("messages = %d, want 1", len(result))
 	}
@@ -676,7 +676,7 @@ func TestBuildParams_WithReasoning(t *testing.T) {
 		Thinking: &provider.ThinkingConfig{Type: "adaptive"},
 	}
 
-	params := buildParams(req, false)
+	params := buildParams(req, false, "")
 	data, err := json.Marshal(params)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -711,7 +711,7 @@ func TestBuildParams_NoReasoningByDefault(t *testing.T) {
 		},
 	}
 
-	params := buildParams(req, false)
+	params := buildParams(req, false, "")
 	data, err := json.Marshal(params)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -739,7 +739,7 @@ func TestBuildParams_WithEffort(t *testing.T) {
 		Output: &provider.OutputConfig{Effort: "high"},
 	}
 
-	params := buildParams(req, false)
+	params := buildParams(req, false, "")
 	data, err := json.Marshal(params)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -780,7 +780,7 @@ func TestBuildParams_WithThinkingAndEffort(t *testing.T) {
 		Output:   &provider.OutputConfig{Effort: "high"},
 	}
 
-	params := buildParams(req, false)
+	params := buildParams(req, false, "")
 	data, err := json.Marshal(params)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -828,7 +828,7 @@ func TestBuildParams_WithProviderRouting(t *testing.T) {
 		},
 	}
 
-	params := buildParams(req, false)
+	params := buildParams(req, false, "")
 	data, err := json.Marshal(params)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -886,7 +886,7 @@ func TestBuildParams_NoProviderRoutingByDefault(t *testing.T) {
 		},
 	}
 
-	params := buildParams(req, false)
+	params := buildParams(req, false, "")
 	data, err := json.Marshal(params)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -923,7 +923,7 @@ func TestBuildParams_ReasoningSurvivesAlongsideProviderRouting(t *testing.T) {
 		},
 	}
 
-	params := buildParams(req, false)
+	params := buildParams(req, false, "")
 	data, err := json.Marshal(params)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -966,7 +966,7 @@ func TestBuildParams_RoutingVariantSuffixPassesThroughUnchanged(t *testing.T) {
 				{Role: "user", Content: provider.TextContent("hello")},
 			},
 		}
-		params := buildParams(req, false)
+		params := buildParams(req, false, "")
 		if params.Model != tc.wantWire {
 			t.Errorf("buildParams(%q).Model = %q, want %q", tc.reqModel, params.Model, tc.wantWire)
 		}
@@ -1253,7 +1253,7 @@ func TestBuildParams_SessionIDAlongsideReasoningAndTruncated(t *testing.T) {
 		ProviderRouting: &provider.ProviderRouting{Only: []string{"deepinfra"}},
 		SessionKey:      long,
 	}
-	data, err := json.Marshal(buildParams(req, true))
+	data, err := json.Marshal(buildParams(req, true, ""))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}

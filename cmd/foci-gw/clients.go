@@ -208,12 +208,12 @@ func (r *clientRegistry) build(cfg *config.Config, endpointName, format string) 
 			mainLog.Errorf("%s not found in secrets — endpoint %q (openai format) unavailable", apiKeyName, endpointName)
 			return nil
 		}
-		opts := []oai.Option{oai.WithHTTPTimeout(httpTimeout)}
+		opts := []oai.Option{oai.WithHTTPTimeout(httpTimeout), oai.WithInstructionRole(epCfg.InstructionRole)}
 		url := epCfg.URLForFormat("openai")
 		if url != "" {
 			opts = append(opts, oai.WithBaseURL(url))
 		}
-		mainLog.Infof("openai client ready for endpoint %q (url=%s)", endpointName, url)
+		mainLog.Infof("openai client ready for endpoint %q (url=%s instruction_role=%s)", endpointName, url, epCfg.EffectiveInstructionRole())
 		return oai.NewClient(apiKey, opts...)
 	}
 	return nil

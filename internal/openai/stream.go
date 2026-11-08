@@ -32,7 +32,7 @@ func (c *Client) StreamMessage(ctx context.Context, req *provider.MessageRequest
 // Errors that occur before any deltas are emitted are retryable (pre-stream).
 // Errors after deltas have been emitted are returned as-is (mid-stream, not retryable).
 func (c *Client) streamOnce(ctx context.Context, req *provider.MessageRequest, handler *provider.StreamHandler) (*provider.MessageResponse, error) {
-	params := buildParams(req, c.isOpenRouter())
+	params := buildParams(req, c.isOpenRouter(), c.instructionRole)
 	params.StreamOptions.IncludeUsage = param.NewOpt(true)
 
 	wireReq, _ := json.Marshal(params)

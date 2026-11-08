@@ -755,6 +755,7 @@ Format is auto-inferred from model name: `claude-*` → anthropic, `gemini-*` �
 | `gemini_url` | string | `""` | Gemini-format URL for multi-format endpoints. |
 | `api_key` | string | `""` | Secret name in secrets store (e.g. `"openrouter.api_key"`). |
 | `http_timeout` | string | varies | HTTP timeout. Go duration format. Default `"120s"` for most endpoints, `"600s"` for anthropic (extended thinking). |
+| `instruction_role` | string | `"developer"` | OpenAI format only: the message role that carries the system prompt, `"developer"` or `"system"`. Any other value fails config load. Some OpenAI-compatible servers drop the developer role and still return success, so the model runs with no system prompt: Ollama's Qwen renderer does this. Set `"system"` for such an endpoint. |
 
 Built-in endpoint defaults:
 - `anthropic` — `format = "anthropic"`, `api_key = "anthropic.api_key"`, `http_timeout = "600s"`
@@ -774,7 +775,7 @@ Then use it: `model = "local/my-fine-tuned-model"`.
 
 Clients are lazy-initialized on first use — endpoints that are never referenced don't create connections.
 
-Endpoint changes apply live (no restart) when made with `foci config set` or the app config editor: the next API call to a changed endpoint uses its new `url`, `api_key` or `http_timeout`. Calls already running finish on the old settings. An edit that leaves an endpoint unable to build a client (e.g. `api_key` names a missing secret) keeps the old client and logs an error. Removing an endpoint does not stop clients already built for it until a restart. A hand edit to foci.toml still needs a restart.
+Endpoint changes apply live (no restart) when made with `foci config set` or the app config editor: the next API call to a changed endpoint uses its new `url`, `api_key`, `http_timeout` or `instruction_role`. Calls already running finish on the old settings. An edit that leaves an endpoint unable to build a client (e.g. `api_key` names a missing secret) keeps the old client and logs an error. Removing an endpoint does not stop clients already built for it until a restart. A hand edit to foci.toml still needs a restart.
 
 ### `[tools]`
 

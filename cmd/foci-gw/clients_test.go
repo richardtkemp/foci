@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,6 +24,7 @@ type fakeOpenAI struct {
 	srv     *httptest.Server
 	calls   atomic.Int32
 	auth    atomic.Value
+	role    atomic.Value // role of the first message of the last call
 	entered chan struct{}
 	hold    chan struct{}
 }
@@ -32,6 +35,14 @@ func newFakeOpenAI(t *testing.T, name string) *fakeOpenAI {
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.calls.Add(1)
 		f.auth.Store(r.Header.Get("Authorization"))
+		var body struct {
+			Messages []struct {
+				Role string `json:"role"`
+			} `json:"messages"`
+		}
+		if b, err := io.ReadAll(r.Body); err == nil && json.Unmarshal(b, &body) == nil && len(body.Messages) > 0 {
+			f.role.Store(body.Messages[0].Role)
+		}
 		if f.hold != nil {
 			f.entered <- struct{}{}
 			<-f.hold
@@ -220,5 +231,42 @@ func TestLiveApplyCoversLiveMapObjectSections(t *testing.T) {
 		if !spec.Live && has {
 			t.Errorf("mapObject section %s has an applier but is not marked Live", spec.Section)
 		}
+	}
+}
+
+// TestClientRegistry_InstructionRoleAppliesLive (#2987): the openai client
+// built for an endpoint sends the system prompt with the endpoint's
+// instruction_role, and an edit to instruction_role alone reaches the next
+// call through a handle a caller already holds.
+func TestClientRegistry_InstructionRoleAppliesLive(t *testing.T) {
+	f := newFakeOpenAI(t, "A")
+	store := testSecrets(t, "[local]\napi_key = \"k\"\n")
+	r := newClientRegistry(endpointsCfg(config.EndpointConfig{Format: "openai", URL: f.srv.URL}), store, context.Background())
+
+	send := func(c provider.Client) string {
+		t.Helper()
+		req := &provider.MessageRequest{
+			Model: "m", MaxTokens: 10,
+			System:   []provider.SystemBlock{{Type: "text", Text: "SKILLS-MARKER"}},
+			Messages: []provider.Message{{Role: "user", Content: provider.TextContent("hi")}},
+		}
+		if _, err := provider.Send(context.Background(), c, req, nil, nil, nil, nil); err != nil {
+			t.Fatalf("send: %v", err)
+		}
+		got, _ := f.role.Load().(string)
+		return got
+	}
+
+	held := r.GetClient("local", "openai")
+	if held == nil {
+		t.Fatal("GetClient returned nil")
+	}
+	if got := send(held); got != "developer" {
+		t.Fatalf("default instruction_role: first message role = %q, want developer", got)
+	}
+
+	r.Reconfigure(endpointsCfg(config.EndpointConfig{Format: "openai", URL: f.srv.URL, InstructionRole: "system"}))
+	if got := send(held); got != "system" {
+		t.Fatalf("after instruction_role = system: first message role = %q, want system (edit did not apply live)", got)
 	}
 }

@@ -625,6 +625,7 @@ var mapObjectFieldSpecs = []MapObjectFieldSpec{
 		{Key: "gemini_url", Type: FieldString, Description: "Gemini-format URL override"},
 		{Key: "api_key", Type: FieldString, Description: "Secret name for API key (e.g. openrouter.api_key)"},
 		{Key: "http_timeout", Type: FieldDuration, Description: "HTTP timeout for this endpoint (default 120s)"},
+		{Key: "instruction_role", Type: FieldString, Description: "OpenAI-format role for the system prompt: developer (default) or system (Ollama drops developer)"},
 	}},
 }
 

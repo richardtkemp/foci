@@ -22,13 +22,15 @@ const openRouterSessionIDMax = 256
 // buildParams translates a provider.MessageRequest into OpenAI ChatCompletionNewParams.
 // openRouter gates fields only OpenRouter accepts (session_id); a strict
 // OpenAI-compatible endpoint may reject unknown top-level fields.
-func buildParams(req *provider.MessageRequest, openRouter bool) openai.ChatCompletionNewParams {
+// instructionRole is the endpoint's role for the system prompt (see
+// messagesToOpenAI).
+func buildParams(req *provider.MessageRequest, openRouter bool, instructionRole string) openai.ChatCompletionNewParams {
 	// Strip developer prefix (e.g., "openai/gpt-4o" → "gpt-4o")
 	modelID := config.StripDeveloperPrefix(req.Model)
 
 	params := openai.ChatCompletionNewParams{
 		Model:    modelID,
-		Messages: messagesToOpenAI(req.System, req.Messages),
+		Messages: messagesToOpenAI(req.System, req.Messages, instructionRole),
 	}
 
 	if req.MaxTokens > 0 {
@@ -92,10 +94,15 @@ func buildParams(req *provider.MessageRequest, openRouter bool) openai.ChatCompl
 }
 
 // messagesToOpenAI converts system blocks and provider messages to OpenAI message params.
-func messagesToOpenAI(system []provider.SystemBlock, msgs []provider.Message) []openai.ChatCompletionMessageParamUnion {
+//
+// The system blocks become ONE instruction message, sent with instructionRole:
+// "system" sends a system message; anything else (the default, "") sends a
+// developer message. The role is per endpoint because some OpenAI-compatible
+// servers silently drop the developer role (Ollama's Qwen renderer, #2987).
+func messagesToOpenAI(system []provider.SystemBlock, msgs []provider.Message, instructionRole string) []openai.ChatCompletionMessageParamUnion {
 	var result []openai.ChatCompletionMessageParamUnion
 
-	// System blocks → developer message (concatenated text)
+	// System blocks → one instruction message (concatenated text)
 	if len(system) > 0 {
 		var parts []string
 		for _, b := range system {
@@ -104,7 +111,12 @@ func messagesToOpenAI(system []provider.SystemBlock, msgs []provider.Message) []
 			}
 		}
 		if len(parts) > 0 {
-			result = append(result, openai.DeveloperMessage(strings.Join(parts, "\n\n")))
+			text := strings.Join(parts, "\n\n")
+			if instructionRole == config.InstructionRoleSystem {
+				result = append(result, openai.SystemMessage(text))
+			} else {
+				result = append(result, openai.DeveloperMessage(text))
+			}
 		}
 	}
 

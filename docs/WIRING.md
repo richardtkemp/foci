@@ -1712,7 +1712,7 @@ Implements `provider.Client` using `google.golang.org/genai` SDK. Translation la
 ## OpenAI API Client (`openai/`)
 
 Implements `provider.Client` and `provider.StreamingClient` using `github.com/openai/openai-go/v3` SDK. Translation layer converts between provider-neutral types and OpenAI wire format:
-- `messagesToOpenAI()` — system blocks → `DeveloperMessage`, tool results → `ToolMessage`, images → `image_url` parts
+- `messagesToOpenAI()` — system blocks → ONE instruction message whose role is the endpoint's `instruction_role` (`DeveloperMessage` by default, `SystemMessage` for `"system"`; set per endpoint via `oai.WithInstructionRole` in `cmd/foci-gw/clients.go`, live on an [endpoints] edit, #2987), tool results → `ToolMessage`, images → `image_url` parts
 - `toolsToOpenAI()` — `ToolDef` → `ChatCompletionFunctionTool`, server tools filtered out
 - `responseFromOpenAI()` — finish reason mapping (`"stop"` → `"end_turn"`, `"tool_calls"` → `"tool_use"`), usage extraction, `ToolCalls` → `tool_use` ContentBlock
 - `classifyError()` — maps SDK `*openai.Error` to `provider.APIError`

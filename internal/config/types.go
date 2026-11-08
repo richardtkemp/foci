@@ -1382,6 +1382,29 @@ type EndpointConfig struct {
 	// Shared:
 	APIKey      string `toml:"api_key"`      // secret name in secrets store (e.g. "openrouter.api_key")
 	HTTPTimeout string `toml:"http_timeout"` // Go duration (default "120s")
+
+	// InstructionRole is the OpenAI-format message role that carries the
+	// composed system prompt: "developer" (default) or "system". An endpoint
+	// capability: some OpenAI-compatible servers (Ollama's Qwen renderer)
+	// silently drop the "developer" role, so the model runs with no system
+	// prompt and the call still succeeds (#2987). Ignored by the anthropic
+	// and gemini formats.
+	InstructionRole string `toml:"instruction_role"`
+}
+
+// Instruction roles accepted by EndpointConfig.InstructionRole.
+const (
+	InstructionRoleDeveloper = "developer"
+	InstructionRoleSystem    = "system"
+)
+
+// EffectiveInstructionRole returns the endpoint's instruction role, with the
+// empty value meaning the default ("developer").
+func (e EndpointConfig) EffectiveInstructionRole() string {
+	if e.InstructionRole == "" {
+		return InstructionRoleDeveloper
+	}
+	return e.InstructionRole
 }
 
 // SupportsFormat reports whether this endpoint supports the given wire format.

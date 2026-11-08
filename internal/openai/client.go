@@ -29,14 +29,19 @@ type Client struct {
 	apiKey  string        // kept for debug key-suffix logging
 	baseURL string        // stored for Endpoint() identification
 	timeout time.Duration // total cap for non-streaming, inter-chunk idle cap for streaming
+
+	// instructionRole is the message role carrying the system prompt:
+	// "developer" or "system" ([endpoints.*] instruction_role, #2987).
+	instructionRole string
 }
 
 // Option configures a Client.
 type Option func(*clientConfig)
 
 type clientConfig struct {
-	baseURL     string
-	httpTimeout time.Duration
+	baseURL         string
+	httpTimeout     time.Duration
+	instructionRole string
 }
 
 // WithBaseURL sets a custom API base URL (e.g. for OpenRouter, Together, local LLMs).
@@ -47,6 +52,13 @@ func WithBaseURL(url string) Option {
 // WithHTTPTimeout sets the HTTP client timeout.
 func WithHTTPTimeout(d time.Duration) Option {
 	return func(c *clientConfig) { c.httpTimeout = d }
+}
+
+// WithInstructionRole sets the message role that carries the system prompt:
+// "developer" or "system". Empty keeps the default ("developer"). The value
+// is validated at config load ([endpoints.*] instruction_role, #2987).
+func WithInstructionRole(role string) Option {
+	return func(c *clientConfig) { c.instructionRole = role }
 }
 
 // NewClient creates an OpenAI API client.
@@ -72,7 +84,7 @@ func NewClient(apiKey string, opts ...Option) *Client {
 	}
 
 	client := openai.NewClient(sdkOpts...)
-	return &Client{client: &client, apiKey: apiKey, baseURL: cfg.baseURL, timeout: cfg.httpTimeout}
+	return &Client{client: &client, apiKey: apiKey, baseURL: cfg.baseURL, timeout: cfg.httpTimeout, instructionRole: cfg.instructionRole}
 }
 
 // Endpoint returns a human-readable name for this client's API endpoint.
@@ -106,7 +118,7 @@ func (c *Client) logGenerationID(result *provider.MessageResponse, model string)
 
 // SendMessage sends a message to the OpenAI API and returns a provider-neutral response.
 func (c *Client) SendMessage(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
-	params := buildParams(req, c.isOpenRouter())
+	params := buildParams(req, c.isOpenRouter(), c.instructionRole)
 
 	// Non-streaming: total wall-clock deadline via context (replacing the
 	// removed http.Client.Timeout). (P2-6.)

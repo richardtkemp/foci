@@ -462,6 +462,11 @@ func (cfg *Config) Validate(knownBackends []string) error {
 		if !validFormats[ep.Format] {
 			return fmt.Errorf("[endpoints.%s] format = %q: must be \"anthropic\", \"openai\", or \"gemini\"", name, ep.Format)
 		}
+		switch ep.InstructionRole {
+		case "", InstructionRoleDeveloper, InstructionRoleSystem:
+		default:
+			return fmt.Errorf("[endpoints.%s] instruction_role = %q: must be \"developer\" or \"system\"", name, ep.InstructionRole)
+		}
 	}
 
 	// Sessions
