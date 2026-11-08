@@ -87,6 +87,9 @@ type Hub struct {
 	// autoName names open chats that have no name set on purpose, from the
 	// conversation, with pinSum's model (#2962).
 	autoName *autoNamer
+	// subAct keeps each running subagent's latest steps and its Stop-view
+	// summary (#2960).
+	subAct *subagentActivityStore
 
 	// helloMu guards helloByDevice/helloWarns only — deliberately not h.mu,
 	// which is held across conversation fan-out; a disconnect must never queue
@@ -319,6 +322,7 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		deps:          deps,
 		pinSum:        newPinSummariser(appCfg, secretGetter(deps, pinSummarySecret)),
 		autoName:      newAutoNamer(appCfg),
+		subAct:        newSubagentActivityStore(),
 		pairKeys:      newPairKeyStore(),
 		blobs:         blobs,
 		mermaid:       mermaidR,

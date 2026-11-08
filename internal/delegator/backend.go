@@ -885,11 +885,16 @@ type SessionEvents struct {
 	OnSubagentText   func(groupKey, text string, runIndex int)          // raw text block from a subagent (Task tool); groupKey = parent tool_use id (STABLE across reactivations); runIndex = which run it belongs to (#1355)
 	OnSubagentEnd    func(groupKey string, runIndex int)                // a subagent RUN (groupKey, runIndex) completed (one task_notification:completed)
 	OnSubagentPrompt func(groupKey, prompt string, runIndex int)        // a SendMessage follow-up sent to an ALREADY-RUNNING subagent (#1419); no new run/chit — attaches to the CURRENT run
-	OnTextDelta      func(delta string)                                 // streaming text delta (content_block_delta)
-	OnThinkingDelta  func(delta string)                                 // streaming thinking delta (content_block_delta)
-	OnToolStart      func(id, name, input string)                       // tool execution began
-	OnToolEnd        func(id, name, output string, isError bool)        // tool execution finished
-	OnAPIRetry       func(r APIRetry)                                   // the backend is waiting to retry a failed API call of the main thread (#2260); optional
+	// OnSubagentTool reports one tool call a subagent made (groupKey as for
+	// OnSubagentText; input is the call's raw JSON input). Activity only, for
+	// the app's Stop-view summaries (#2960): never delivered as a message.
+	// Optional; a backend that cannot see a subagent's tool calls never calls it.
+	OnSubagentTool  func(groupKey, name, input string)
+	OnTextDelta     func(delta string)                          // streaming text delta (content_block_delta)
+	OnThinkingDelta func(delta string)                          // streaming thinking delta (content_block_delta)
+	OnToolStart     func(id, name, input string)                // tool execution began
+	OnToolEnd       func(id, name, output string, isError bool) // tool execution finished
+	OnAPIRetry      func(r APIRetry)                            // the backend is waiting to retry a failed API call of the main thread (#2260); optional
 
 	// OnPromptSuggestion carries the backend's prediction of what the user
 	// will type next (#2916). It arrives between turns, never during one.

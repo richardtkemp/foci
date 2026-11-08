@@ -26,6 +26,14 @@ type recordingSpawnObserver struct {
 	followups []string
 	// models are the SpawnModel updates, as "<id>=<model>".
 	models []string
+	// tools are the SpawnTool lines, as "<id>=<line>".
+	tools []string
+}
+
+func (o *recordingSpawnObserver) SpawnTool(_, id, line string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.tools = append(o.tools, id+"="+line)
 }
 
 func (o *recordingSpawnObserver) SpawnModel(_, id, model string) {
@@ -168,9 +176,14 @@ func TestSpawnTextSink_ForwardsBlocksAndAnswer(t *testing.T) {
 	ctx := context.Background()
 	sink.Emit(ctx, turnevent.TextBlock{Text: "step"})
 	sink.Emit(ctx, turnevent.ToolCall{Name: "read"})
+	sink.Emit(ctx, turnevent.ToolCall{Name: "bash", Args: json.RawMessage(`{"command":  "ls"}`)})
 	sink.Emit(ctx, turnevent.TurnComplete{FinalText: "answer"})
 	if got := strings.Join(obs.texts, "|"); got != "s=step|s=answer" {
 		t.Errorf("texts = %q", got)
+	}
+	// Each tool call is the spawn's activity for the Stop-view summary (#2960).
+	if got := strings.Join(obs.tools, "|"); got != `s=read|s=bash {"command": "ls"}` {
+		t.Errorf("tools = %q", got)
 	}
 	if buf.FinalText() != "answer" {
 		t.Errorf("buffer final = %q", buf.FinalText())

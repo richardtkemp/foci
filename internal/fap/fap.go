@@ -168,6 +168,12 @@ const (
 	// as it was without the feature.
 	TypePinSummarize = "pin.summarize"
 	TypePinSummary   = "pin.summary"
+	// TypeSubagentSummarize (app->server) asks, while the app's Stop view is
+	// open, for a summary of what each listed subagent is doing now (#2960);
+	// TypeSubagentSummary (server->app) is one entry's answer, sent to the
+	// asking socket only. Socket-level, like the pin summary pair.
+	TypeSubagentSummarize = "subagent.summarize"
+	TypeSubagentSummary   = "subagent.summary"
 	// TypeScrollPut (app->server) mirrors where the user left a conversation
 	// (#2144); TypeScrollSync (server->app) fans it to the user's other devices
 	// and is replayed after a hello, exactly like the draft pair.
@@ -1393,6 +1399,29 @@ type PinSummary struct {
 }
 
 func (PinSummary) Type() string { return TypePinSummary }
+
+// SubagentSummarize asks for a summary of at most six words of what each
+// running subagent or spawn in IDs is doing now (app->server, #2960). The app
+// sends it only while its Stop view is open, and again every few seconds while
+// it stays open. IDs are RunningSubagent ids of ConversationID's Activity. The
+// server answers each id with a SubagentSummary when it has a summary: its
+// last one when the entry's activity has not changed since, a new one
+// otherwise (at most one model call per entry every 10 s). An id with no
+// recorded activity, or whose summary failed, gets no answer.
+type SubagentSummarize struct {
+	ConversationID string   `json:"conversationId"`
+	IDs            []string `json:"ids"`
+}
+
+// SubagentSummary is one subagent's current-step summary (server->client,
+// #2960), at most six words, sent to the socket that asked.
+type SubagentSummary struct {
+	ConversationID string `json:"conversationId"`
+	ID             string `json:"id"`
+	Summary        string `json:"summary"`
+}
+
+func (SubagentSummary) Type() string { return TypeSubagentSummary }
 
 // ScrollPut mirrors where the user left a conversation's scroll view to the
 // server (app->server, #2144). Sent on the same "leave" event as DraftPut, and

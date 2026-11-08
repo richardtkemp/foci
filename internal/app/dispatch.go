@@ -174,6 +174,8 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.handlePinsList(client)
 	case fap.PinSummarize:
 		h.handlePinSummarize(client, f)
+	case fap.SubagentSummarize:
+		h.handleSubagentSummarize(client, f)
 	case fap.ScrollPut:
 		h.handleScroll(client, f)
 	case fap.ConvPinPut:

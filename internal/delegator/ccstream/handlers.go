@@ -221,7 +221,8 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	if !isTopLevel {
 		// Surface sub-agent text as blockquoted intermediate replies so
 		// the user can follow sub-agent progress. Tool_use blocks are not
-		// forwarded — the parent tracker owns tool visibility.
+		// delivered — the parent tracker owns tool visibility — but they are
+		// reported through OnSubagentTool as the subagent's activity (#2960).
 		//
 		// Route via OnSubagentText (carrying the parent tool_use id as the
 		// group key) when the consumer supports it — that lets the platform
@@ -256,6 +257,12 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 		}
 		if se != nil {
 			for _, block := range msg.Message.Content {
+				// A subagent's tool call is its activity too: the app's Stop
+				// view summarises it (#2960). Not delivered as text.
+				if block.Type == "tool_use" && se.OnSubagentTool != nil {
+					se.OnSubagentTool(groupKey, block.Name, string(block.Input))
+					continue
+				}
 				if block.Type != "text" || block.Text == "" {
 					continue
 				}

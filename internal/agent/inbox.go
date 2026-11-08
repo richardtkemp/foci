@@ -2129,6 +2129,30 @@ func (a *Agent) SetOnPromptSuggestion(fn func(sessionKey, text string) bool) {
 	a.onPromptSuggestion = fn
 }
 
+// SetOnSubagentActivity wires the callback that hears each step of a
+// session's subagents (#2960): kind "text", "tool" or "end". Set once at
+// gateway setup, before any backend starts.
+func (a *Agent) SetOnSubagentActivity(fn func(sessionKey, groupKey, kind, text string)) {
+	a.onSubagentActivity = fn
+}
+
+// subagentToolLine is a subagent tool call as one activity line: the tool name,
+// then its raw input. The receiver collapses whitespace and caps the length.
+func subagentToolLine(name, input string) string {
+	if input = strings.TrimSpace(input); input == "" || input == "{}" {
+		return name
+	}
+	return name + " " + input
+}
+
+// noteSubagentActivity reports one subagent step to the activity callback,
+// when one is wired.
+func (a *Agent) noteSubagentActivity(sk, groupKey, kind, text string) {
+	if a.onSubagentActivity != nil && groupKey != "" {
+		a.onSubagentActivity(sk, groupKey, kind, text)
+	}
+}
+
 // SetOnPromptSuggestionStale wires the callback that hears the user's input
 // reached a session's backend (#2924). Set once at gateway setup, before any
 // backend starts.
@@ -2317,9 +2341,16 @@ func (a *Agent) AttachDelivery(be delegator.Delegator, sk string) {
 				router.Emit(context.Background(), turnevent.SubagentStart{GroupKey: groupKey, Label: label, RunIndex: runIndex, Prompt: prompt})
 			},
 			OnSubagentText: func(groupKey, text string, runIndex int) {
+				a.noteSubagentActivity(sk, groupKey, "text", text)
 				router.Emit(context.Background(), turnevent.SubagentText{GroupKey: groupKey, Text: text, RunIndex: runIndex})
 			},
+			OnSubagentTool: func(groupKey, name, input string) {
+				// Not through the router: activity for the app's Stop view
+				// (#2960), never a message.
+				a.noteSubagentActivity(sk, groupKey, "tool", subagentToolLine(name, input))
+			},
 			OnSubagentEnd: func(groupKey string, runIndex int) {
+				a.noteSubagentActivity(sk, groupKey, "end", "")
 				router.Emit(context.Background(), turnevent.SubagentEnd{GroupKey: groupKey, RunIndex: runIndex})
 			},
 			OnSubagentPrompt: func(groupKey, prompt string, runIndex int) {

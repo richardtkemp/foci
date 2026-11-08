@@ -290,6 +290,12 @@ type Agent struct {
 	// session's backend, so its shown prediction is out of date (#2924). Wired by
 	// the gateway to app.ClearPromptSuggestion.
 	onPromptSuggestionStale func(sessionKey string)
+	// onSubagentActivity, when set, hears each step of a session's subagents:
+	// kind "text" (a text block), "tool" (a tool call: text is the tool name
+	// and its input) or "end" (the run ended, text empty). The app's Stop view
+	// summarises the latest steps (#2960). Wired by the gateway to
+	// app.NoteSubagentActivity.
+	onSubagentActivity func(sessionKey, groupKey, kind, text string)
 	// promptSuggestionSurface reports whether a session has anywhere to show a
 	// prediction (#2922). Wired to app.CanShowPromptSuggestion; nil means no.
 	promptSuggestionSurface func(sessionKey string) bool

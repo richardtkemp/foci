@@ -957,8 +957,8 @@ type AppSpecific struct {
 	// Pin label summary (#2956): when the user pins a message, the app asks
 	// the server for a short summary to prefill the label field. The server
 	// calls OpenRouter with the openrouter.api_key secret.
-	PinSummaryModel    string `toml:"pin_summary_model"    hot:"event" desc:"OpenRouter model that writes the suggested label when a message is pinned in the app (default meta-llama/llama-3.1-8b-instruct; set to off to disable)"`
-	PinSummaryProvider string `toml:"pin_summary_provider" hot:"event" desc:"OpenRouter provider(s) the pin label summary is sent to first, comma-separated, falling back to others if they fail (default groq; set to any to let OpenRouter choose)"`
+	PinSummaryModel    string `toml:"pin_summary_model"    hot:"event" desc:"OpenRouter model that writes the suggested label when a message is pinned in the app, and the six-word summary of each subagent's current step in the app's Stop view (default meta-llama/llama-3.1-8b-instruct; set to off to disable both, and the automatic chat name)"`
+	PinSummaryProvider string `toml:"pin_summary_provider" hot:"event" desc:"OpenRouter provider(s) the pin label and Stop-view summaries are sent to first, comma-separated, falling back to others if they fail (default groq; set to any to let OpenRouter choose)"`
 	// Automatic chat name (#2962): an open app chat without a name set by the
 	// user or an agent is named from its conversation by the pin summary's
 	// model (pin_summary_model / pin_summary_provider, openrouter.api_key).

@@ -76,6 +76,9 @@ type SpawnObserver interface {
 	SpawnStarted(parentSession string, s RunningSpawn, prompt string)
 	// SpawnText reports one block of the spawn's assistant text.
 	SpawnText(parentSession, id, text string)
+	// SpawnTool reports one tool call of the spawn, as one line (the tool name
+	// and its input), for the app's Stop-view summary (#2960).
+	SpawnTool(parentSession, id, line string)
 	// SpawnPrompt reports a parent's spawn_send message to a spawn that is
 	// running, folded into its turn or queued for its next step (#2822). A
 	// message that resumes a finished spawn comes as SpawnStarted instead.
@@ -814,7 +817,11 @@ func (s *spawnTextSink) Emit(ctx context.Context, ev turnevent.Event) {
 			s.tracker.appendLog(s.parent, s.id, "text", e.Text)
 		}
 	case turnevent.ToolCall:
-		s.tracker.appendLog(s.parent, s.id, "tool", toolCallSummary(e))
+		line := toolCallSummary(e)
+		if s.obs != nil {
+			s.obs.SpawnTool(s.parent, s.id, line)
+		}
+		s.tracker.appendLog(s.parent, s.id, "tool", line)
 	case turnevent.TurnComplete:
 		s.noteModel(e.Model)
 		s.mu.Lock()

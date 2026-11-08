@@ -428,6 +428,7 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		PinsAll{Conversations: []PinGroup{{ConversationID: "c", AgentID: "a", Title: "t", Pins: []PinnedMessage{{MessageID: "m", Label: "L", Snippet: "s", SentMs: 1}}}}},
 		PinSummary{RequestID: "r", MessageID: "m", Summary: "flight times for Athens"},
 		PinSummary{RequestID: "r", MessageID: "m"},
+		SubagentSummary{ConversationID: "c", ID: "toolu_1", Summary: "Reading the config loader"},
 		ScrollSync{ConversationID: "c", MessageID: "m", Following: false},
 		ConvPinSync{ConversationID: "c", Pinned: true},
 		CheckboxSync{DocumentID: "b", Lines: []int{1}},
@@ -645,6 +646,35 @@ func TestEncode_PinSummary(t *testing.T) {
 	}
 	if strings.Contains(wire, `"summary"`) {
 		t.Errorf("empty summary on the wire: %s", wire)
+	}
+}
+
+// TestDecode_SubagentSummarize pins the app->server half of the Stop-view
+// summaries (#2960): the Kotlin encoder's field names.
+func TestDecode_SubagentSummarize(t *testing.T) {
+	in, err := Decode(`{"t":"subagent.summarize","id":"i1","d":{"conversationId":"c1","ids":["toolu_a","spawn-b"]}}`)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	f, ok := in.Frame.(SubagentSummarize)
+	if !ok {
+		t.Fatalf("frame = %T, want SubagentSummarize", in.Frame)
+	}
+	if f.ConversationID != "c1" || len(f.IDs) != 2 || f.IDs[0] != "toolu_a" || f.IDs[1] != "spawn-b" {
+		t.Errorf("decoded = %+v", f)
+	}
+}
+
+// TestEncode_SubagentSummary pins the server->app answer's field names.
+func TestEncode_SubagentSummary(t *testing.T) {
+	wire, err := Encode(SubagentSummary{ConversationID: "c1", ID: "toolu_a", Summary: "Reading the parser"}, 0, 0, "", "")
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	for _, want := range []string{`"t":"subagent.summary"`, `"conversationId":"c1"`, `"id":"toolu_a"`, `"summary":"Reading the parser"`} {
+		if !strings.Contains(wire, want) {
+			t.Errorf("wire = %s, missing %s", wire, want)
+		}
 	}
 }
 

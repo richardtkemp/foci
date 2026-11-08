@@ -236,9 +236,16 @@ func (SpawnObserver) SpawnStarted(parentSession string, s tools.RunningSpawn, pr
 
 // SpawnText adds one block of the spawn's text to its chit.
 func (SpawnObserver) SpawnText(parentSession, id, text string) {
+	NoteSubagentActivity(parentSession, id, "text", text)
 	if b := spawnBinding(parentSession); b != nil {
 		b.send(fap.SubagentText{ConversationID: b.convID, GroupKey: id, Text: text, RunIndex: 1})
 	}
+}
+
+// SpawnTool records one tool call of the spawn as its activity, for the
+// Stop-view summary (#2960). Nothing is shown in the chit.
+func (SpawnObserver) SpawnTool(parentSession, id, line string) {
+	NoteSubagentActivity(parentSession, id, "tool", line)
 }
 
 // SpawnPrompt adds a parent's spawn_send message to the spawn's running chit
@@ -259,6 +266,7 @@ func (SpawnObserver) SpawnModel(parentSession, id, model string) {
 
 // SpawnEnded completes the spawn's chit and drops it from the running list.
 func (SpawnObserver) SpawnEnded(parentSession, id string) {
+	NoteSubagentActivity(parentSession, id, "end", "")
 	if b := spawnBinding(parentSession); b != nil {
 		b.send(fap.SubagentEnd{ConversationID: b.convID, GroupKey: id, RunIndex: 1})
 		b.removeSpawn(id)
