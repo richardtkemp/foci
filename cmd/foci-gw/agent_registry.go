@@ -48,6 +48,16 @@ func (r *agentRegistry) Get(id string) (*agentInstance, bool) {
 	return inst, ok
 }
 
+// liveTTSRate is the running agent's current voice.tts_rate, false when no
+// agent has this id (#2944).
+func (r *agentRegistry) liveTTSRate(id string) (float64, bool) {
+	inst, ok := r.Get(id)
+	if !ok {
+		return 0, false
+	}
+	return inst.LiveConfig().Voice.TTSRate, true
+}
+
 // Default returns the first-registered agent (the default target when a
 // caller names none), or false when there is none.
 func (r *agentRegistry) Default() (*agentInstance, bool) {

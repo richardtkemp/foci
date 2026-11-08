@@ -22,17 +22,23 @@ import (
 // The voices come from the live [[tts]] build (#2942): each call reads it once,
 // so a [[tts]] edit reaches the next Sources or Provider call.
 type speechCatalog struct {
-	cfg     *config.Config // agent voice settings only; [[tts]] comes from voices
-	voices  func() *ttsVoices
-	hasKey  func(entry config.TTSConfig) bool
-	hasCmd  func(name string) bool
-	builtin voice.TTS
+	cfg    *config.Config // word replacements, and the rate of an agent liveRate does not know; [[tts]] comes from voices
+	voices func() *ttsVoices
+	// liveRate is a running agent's current voice.tts_rate (#2944), read per
+	// request so a live edit reaches the next reading as it reaches voice-mode
+	// replies. False for an id with no running agent; nil in tests that need
+	// only the startup config.
+	liveRate func(agentID string) (float64, bool)
+	hasKey   func(entry config.TTSConfig) bool
+	hasCmd   func(name string) bool
+	builtin  voice.TTS
 }
 
-func newSpeechCatalog(cfg *config.Config, tts *ttsRegistry, store *secrets.Store) *speechCatalog {
+func newSpeechCatalog(cfg *config.Config, tts *ttsRegistry, store *secrets.Store, agents *agentRegistry) *speechCatalog {
 	return &speechCatalog{
-		cfg:    cfg,
-		voices: tts.Voices,
+		cfg:      cfg,
+		voices:   tts.Voices,
+		liveRate: agents.liveTTSRate,
 		hasKey: func(entry config.TTSConfig) bool {
 			return resolveVoiceAPIKey(store, entry.Secret, entry.Endpoint) != "" || isLoopbackEndpoint(entry.Endpoint)
 		},
@@ -142,7 +148,10 @@ func (c *speechCatalog) build() *ttsVoices {
 }
 
 // agentVoice is the agent's speech rate and word replacements over the global
-// ones. An unknown agent gets the global ones.
+// ones. The rate of a running agent is its live one (liveRate, #2944), so a
+// `/config set voice.tts_rate` applies here as it does to voice-mode replies.
+// The replacements, and the rate of an unknown agent, come from the startup
+// config: tts_replacements is restart-only on every speaking path.
 func (c *speechCatalog) agentVoice(agentID string) (float64, map[string]string) {
 	rate, repls := config.DerefFloat(c.cfg.Voice.TTSRate), c.cfg.Voice.TTSReplacements
 	for i := range c.cfg.Agents {
@@ -153,7 +162,13 @@ func (c *speechCatalog) agentVoice(agentID string) (float64, map[string]string) 
 		if acfg.Voice.TTSRate != nil {
 			rate = *acfg.Voice.TTSRate
 		}
-		return rate, voice.MergeReplacements(repls, acfg.Voice.TTSReplacements)
+		repls = voice.MergeReplacements(repls, acfg.Voice.TTSReplacements)
+		break
+	}
+	if c.liveRate != nil {
+		if live, ok := c.liveRate(agentID); ok {
+			rate = live
+		}
 	}
 	return rate, repls
 }

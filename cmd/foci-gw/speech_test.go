@@ -175,3 +175,31 @@ func TestInitVoice_MaxCharsOnEveryPath(t *testing.T) {
 		}
 	})
 }
+
+// TestSpeechCatalog_LiveTTSRate: a live voice.tts_rate edit, applied by the real
+// re-resolve applier, reaches the rate Speak uses on its next request, as it
+// reaches voice-mode replies (#2944). The startup config still says the old rate.
+func TestSpeechCatalog_LiveTTSRate(t *testing.T) {
+	oldRate, newRate := 1.1, 1.6
+	base := &config.Config{Voice: config.VoiceConfig{TTSRate: &oldRate}, Agents: []config.AgentConfig{{ID: "a"}}}
+	inst := &agentInstance{id: "a", resolved: config.NewLiveValue(config.Resolve(base, base.Agents[0]))}
+	agents := registryFromMap(map[string]*agentInstance{"a": inst})
+	c := &speechCatalog{cfg: base, liveRate: agents.liveTTSRate}
+	if rate, _ := c.agentVoice("a"); rate != oldRate {
+		t.Fatalf("before edit: rate %v, want %v", rate, oldRate)
+	}
+
+	la := newLiveApply("", nil)
+	registerLiveAppliers(la, agents)
+	fresh := &config.Config{Voice: config.VoiceConfig{TTSRate: &newRate}, Agents: []config.AgentConfig{{ID: "a"}}}
+	if err := la.appliers["voice.tts_rate"](fresh); err != nil {
+		t.Fatalf("applier: %v", err)
+	}
+
+	if rate, _ := c.agentVoice("a"); rate != newRate {
+		t.Errorf("after live edit: rate %v, want %v (Speak still reads the startup config)", rate, newRate)
+	}
+	if rate, _ := c.agentVoice("other"); rate != oldRate {
+		t.Errorf("unknown agent: rate %v, want the startup global %v", rate, oldRate)
+	}
+}

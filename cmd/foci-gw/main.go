@@ -335,8 +335,12 @@ Subcommands:
 	gwLiveApply = newLiveApply(configPath, gwConfigProtect)
 	registerTTSLiveApplier(gwLiveApply, ttsVoices)
 
+	// The agent registry is empty until agent setup below; it is made here
+	// because the speech catalog reads each agent's live voice.tts_rate from it.
+	agents := newAgentRegistry()
+
 	// ========== Platform messaging ==========
-	speech := newSpeechCatalog(cfg, ttsVoices, sec.store)
+	speech := newSpeechCatalog(cfg, ttsVoices, sec.store, agents)
 	plat, err := platform.InitMessaging(cfg, platform.ProviderDeps{
 		Config:        cfg,
 		SecretStore:   sec.store,
@@ -386,8 +390,8 @@ Subcommands:
 	// starts a NEW agent live, with no restart (#963): liveAgentStarter runs
 	// the same per-agent build (agentEnv.buildAgent) for the block it wrote
 	// and appends the agent to the registry. Edits to existing blocks, and
-	// hand-added blocks, still take effect only on restart.
-	agents := newAgentRegistry()
+	// hand-added blocks, still take effect only on restart. The registry
+	// itself is made above, before the speech catalog that reads it.
 
 	agentResolverFn := newAgentResolver(agents)
 	agentListFn := newAgentLister(agents)
