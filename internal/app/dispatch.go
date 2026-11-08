@@ -794,6 +794,9 @@ func (h *Hub) handleDraft(client *wsClient, f fap.DraftPut) {
 	h.mu.RLock()
 	b := h.convs[f.ConversationID]
 	h.mu.RUnlock()
+	// The length, never the text: a draft is private and this goes to foci.log. The
+	// line exists so "did the device's put arrive?" has a direct answer (#2971).
+	appLog.Debugf("draft %s: put from device=%s len=%d bound=%t", f.ConversationID, client.deviceID, len(f.Text), b != nil)
 	if b == nil {
 		return
 	}

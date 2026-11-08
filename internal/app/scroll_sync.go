@@ -65,6 +65,8 @@ func (h *Hub) handleScroll(client *wsClient, f fap.ScrollPut) {
 	h.mu.RLock()
 	b := h.convs[f.ConversationID]
 	h.mu.RUnlock()
+	// Direct evidence for "did the device's put arrive?" (#2971).
+	appLog.Debugf("scroll %s: put from device=%s msg=%s following=%t bound=%t", f.ConversationID, client.deviceID, s.MessageID, s.Following, b != nil)
 	if b == nil {
 		return
 	}
