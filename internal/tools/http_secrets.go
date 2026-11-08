@@ -99,6 +99,17 @@ func validateAndResolveSecrets(
 	}
 	bodyRefs := secrets.FindSecretRefs(bodyText.String())
 
+	// Every non-bitwarden ref must have the "section.key" form. The checks
+	// below split the name on "." and index both halves; a sectionless
+	// {{secret:NAME}} used to panic there and take the gateway down (#2961).
+	for _, refs := range [][]string{headerRefs, bodyRefs} {
+		for _, name := range refs {
+			if !bitwarden.IsBitwardenRef(name) && !strings.Contains(name, ".") {
+				return nil, fmt.Errorf("secret reference {{secret:%s}} has no section: use the {{secret:section.key}} form, e.g. {{secret:custom.%s}}", name, name)
+			}
+		}
+	}
+
 	// Enforce allowed_in_body: secrets in body/body_file/form_fields are blocked
 	// unless explicitly listed in allowed_in_body for the secret's section.
 	for _, name := range bodyRefs {
@@ -106,9 +117,9 @@ func validateAndResolveSecrets(
 			return nil, fmt.Errorf("bitwarden secret %q is not permitted in request body", name)
 		}
 		if store != nil && !store.IsAllowedInBody(name) {
-			parts := strings.SplitN(name, ".", 2)
+			section, key, _ := strings.Cut(name, ".")
 			return nil, fmt.Errorf("secret %q found in request body but not listed in allowed_in_body for [%s] — add %q to allowed_in_body in secrets.toml to permit body resolution",
-				name, parts[0], parts[1])
+				name, section, key)
 		}
 	}
 

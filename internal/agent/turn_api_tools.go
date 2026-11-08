@@ -113,7 +113,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, td *TurnDetail, turnClient
 		a.logger().Debugf("session=%s tool_use: %s (%d bytes)", sessionKey, block.Name, len(block.Input))
 		emitToolCall(ctx, block.Name, block.ID, block.Input)
 		td.ToolName = block.Name
-		result, err := tool.Execute(toolCtx, block.Input)
+		result, err := tool.Call(toolCtx, block.Input)
 		td.ToolName = ""
 		if ctx.Err() != nil {
 			return nil, ctx.Err()

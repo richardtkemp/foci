@@ -3,11 +3,16 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"runtime/debug"
 	"sort"
 	"strings"
 
+	"foci/internal/log"
 	"foci/internal/provider"
 )
+
+var toolLog = log.NewComponentLogger("tool")
 
 // ToolResult is the return value from a tool execution.
 type ToolResult struct {
@@ -80,6 +85,22 @@ type Tool struct {
 	// auto-approve rule exist, so a running session gains it the moment the
 	// gate opens. Execute must therefore refuse by itself while closed.
 	Available func() bool
+}
+
+// Call runs t.Execute and turns a panic in it into an ordinary error (#2961).
+// Every caller that runs a tool on an agent's behalf (the exec bridge, the
+// API tool loop, the spawn tool loop) calls this, never Execute directly: a
+// tool panic on a goroutine with no recover kills foci-gw and every session
+// it hosts, where the right outcome is one failed tool call. Panics in
+// goroutines a tool starts itself are not covered and need their own recover.
+func (t *Tool) Call(ctx context.Context, params json.RawMessage) (res ToolResult, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			toolLog.Errorf("tool %s panicked: %v\n%s", t.Name, r, debug.Stack())
+			res, err = ToolResult{}, fmt.Errorf("internal error: tool %s panicked: %v", t.Name, r)
+		}
+	}()
+	return t.Execute(ctx, params)
 }
 
 // available reports whether t is open to the model right now.

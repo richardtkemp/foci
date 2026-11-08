@@ -2411,7 +2411,7 @@ ETL's `tail` is retired once this is deployed (it would double-emit); `backfill`
 
 ## Tool System (`tools/`)
 
-Each tool is a `Tool` struct with `Execute func(ctx, params) (ToolResult, error)`. `ToolResult` contains `Text` (the tool's text output) and optional `ExtraBlocks` (additional content blocks like document blocks for PDFs). Registry maps name → tool. See [TOOLS.md](TOOLS.md) for the canonical tool reference. Data-flow summary:
+Each tool is a `Tool` struct with `Execute func(ctx, params) (ToolResult, error)`. `ToolResult` contains `Text` (the tool's text output) and optional `ExtraBlocks` (additional content blocks like document blocks for PDFs). Registry maps name → tool. Callers run a tool through `Tool.Call`, never `Execute` directly: `Call` recovers a panic in `Execute` into an ordinary error (logged with its stack under component `tool`), so a tool bug fails one call instead of killing foci-gw (#2961). The three callers are the exec bridge (`handleConn`, which also recovers its own request/response handling), the API tool loop (`agent/turn_api_tools.go`) and the spawn tool loop (`spawn.go`). See [TOOLS.md](TOOLS.md) for the canonical tool reference. Data-flow summary:
 
 | Tool | File | What it does |
 |------|------|-------------|

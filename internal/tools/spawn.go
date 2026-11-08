@@ -1276,7 +1276,7 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (string, error) {
 				continue
 			}
 			spawnLog.Debugf("session=%s tool_use: %s", sessionKey, block.Name)
-			result, err := tool.Execute(ctx, block.Input)
+			result, err := tool.Call(ctx, block.Input)
 			if err != nil {
 				toolResults = append(toolResults, provider.ToolResultBlock(
 					block.ID, fmt.Sprintf("Error: %s", err), true,

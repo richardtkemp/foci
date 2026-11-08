@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -192,6 +193,15 @@ func (b *ExecBridge) acceptLoop(ln net.Listener, backoff acceptBackoff) {
 func (b *ExecBridge) handleConn(conn net.Conn) {
 	defer b.wg.Done()
 	defer func() { _ = conn.Close() }()
+	// A panic on this goroutine would kill foci-gw (#2961). The tool itself
+	// runs under Tool.Call, which recovers; this catches the bridge's own
+	// request and response handling.
+	defer func() {
+		if r := recover(); r != nil {
+			execbridgeLog.Errorf("session=%s exec bridge panic: %v\n%s", SessionKeyFromContext(b.ctx), r, debug.Stack())
+			writeError(conn, fmt.Sprintf("exec bridge internal error: panic: %v", r))
+		}
+	}()
 
 	// Same-user authentication (defence in depth alongside the 0600 socket
 	// mode): the exec bridge runs tools in-process at gateway privilege, so a
@@ -261,7 +271,7 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 	if pid, err := peercred.PID(uc); err == nil {
 		ctx = WithCallerPID(ctx, pid)
 	}
-	result, err := tool.Execute(ctx, req.Params)
+	result, err := tool.Call(ctx, req.Params)
 	if err != nil {
 		// Convergence-point logging: every exec-bridge tool error surfaces
 		// here so it appears in service logs (individual tools return errors
