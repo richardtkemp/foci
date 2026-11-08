@@ -391,8 +391,9 @@ Generated from each backend's `Spec.ConfigKeys` / `Spec.StartFields` (`internal/
 | `port` | ✗ | ✗ | ✓ |
 | `default_permission` | ✗ | ✗ | ✓ |
 | `batch_model` (gateway) | ✓ | ✓ | ✓ |
+| `claude_ai_skills` (gateway) | ✓ | ✗ | ✗ |
 
-(gateway) = read by the gateway for the backend, not by the backend package; `env` reaches a backend that reads `StartOptions.Env`, `pretool_rules` / `stop_rules` one declaring `pretool_rules` / `stop_rules`.
+(gateway) = read by the gateway for the backend, not by the backend package; `env` reaches a backend that reads `StartOptions.Env`, `pretool_rules` / `stop_rules` one declaring `pretool_rules` / `stop_rules`, `claude_ai_skills` the claude-code config family.
 
 - claude-code folds the global `[cc_backend]` section into its backend_config (Spec.ConfigFamily).
 - opencode folds the global `[opencode_backend]` section into its backend_config (Spec.ConfigFamily).

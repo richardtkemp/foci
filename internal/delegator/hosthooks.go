@@ -56,6 +56,12 @@ type HostHooks struct {
 	// StopRules is the live source of the Stop-hook rules, read at every
 	// session start. Honoured by a backend declaring CapStopRules.
 	StopRules func() []stoprule.Rule
+
+	// ClaudeAISkills is the live source of backend_config.claude_ai_skills
+	// (#2953), read at every session start: whether the claude.ai account's
+	// synced skills are listed. Honoured by the Claude Code backend
+	// (ConfigFamilyClaudeCode); nil = false (hidden).
+	ClaudeAISkills func() bool
 }
 
 // HostHooksAcceptor is implemented by backends that take HostHooks

@@ -1660,11 +1660,14 @@ workspace = "/home/coder/projects/myapp"
 # binary = ""                 # Override path to backend executable (default: $PATH)
 # idle_timeout = "3h"         # Session idle shutdown duration; overrides [sessions] idle_timeout (default 3h). Must parse as a positive duration or config load fails
 # batch_model = "haiku"       # Model for foci's own small background jobs (see below)
+# claude_ai_skills = false    # Claude Code only: list the claude.ai account's skills (see below)
 
 # Environment variables passed to the backend subprocess:
 # [agents.backend_config.env]
 # CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS = "1"
 ```
+
+`claude_ai_skills` (Claude Code only, default `false`) decides whether the agent's Claude Code sessions list the skills Claude Code syncs from the claude.ai account (`anthropic-skills:pdf`, `docx`, `xlsx`, `computer-use`, ... — 13 skills, about 10k characters of skill listing on CC 2.1.314). foci passes `syncClaudeAiSkills` with this value in the `--settings` of every Claude Code launch, so the skills are hidden on every host, whatever `~/.claude/settings.json` says. A `false` in any settings source wins (probed on CC 2.1.314): `true` lists the skills only on a host whose `~/.claude/settings.json` does not set `syncClaudeAiSkills = false` itself. Plugin skills (for example Cloudflare's) and Claude Code's bundled skills are not affected. The value is read from the config file at each Claude Code launch, so a change (by `/config set`, the app editor or a hand edit) reaches the next new or resumed session; a running session keeps its listing.
 
 #### Extra writable paths — `[sandbox]`
 

@@ -27,6 +27,13 @@ func TestHonoursConfigKey(t *testing.T) {
 	if s.HonoursConfigKey("env") {
 		t.Error(`HonoursConfigKey("env") = true for a backend that never reads StartOptions.Env`)
 	}
+	// claude_ai_skills is Claude Code's syncClaudeAiSkills (#2953).
+	for family, want := range map[string]bool{ConfigFamilyClaudeCode: true, ConfigFamilyOpencode: false} {
+		s.ConfigFamily = family
+		if got := s.HonoursConfigKey("claude_ai_skills"); got != want {
+			t.Errorf("HonoursConfigKey(claude_ai_skills) for family %q = %v, want %v", family, got, want)
+		}
+	}
 }
 
 func TestIgnoredConfigKeys(t *testing.T) {

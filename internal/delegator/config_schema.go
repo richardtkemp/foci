@@ -50,6 +50,8 @@ var gatewayConfigKeys = map[string]func(Spec) bool{
 	// Installed through HostHooks.
 	"pretool_rules": func(s Spec) bool { return s.Supports(CapPreToolRules) },
 	"stop_rules":    func(s Spec) bool { return s.Supports(CapStopRules) },
+	// Claude Code's syncClaudeAiSkills setting (#2953).
+	"claude_ai_skills": func(s Spec) bool { return s.ConfigFamily == ConfigFamilyClaudeCode },
 }
 
 // HonoursConfigKey reports whether an agent on this backend gets any effect

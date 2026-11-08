@@ -127,6 +127,11 @@ var (
 	// reflection snapshot. The shared dir and skills_dir stay restart-only.
 	liveApplySkillsAddrs = []string{"skills.extra_dirs", "agent.skills.extra_dirs"}
 
+	// Read from the config file at every Claude Code launch (#2953,
+	// liveClaudeAISkills), like the pretool rules: there is no handle to push
+	// into, so the applier only confirms the edit; the next CC launch reads it.
+	liveApplyCCLaunchAddrs = []string{"agent.backend_config.claude_ai_skills"}
+
 	// modelinfo is an object[] section (not scalar hot-tagged fields), so it
 	// has no per-field registry rows. The bare section address is what
 	// Apply(section, "") looks up — the app editor's object-list edit path.
@@ -293,6 +298,8 @@ func registerLiveAppliers(la *liveApply, agents *agentRegistry) {
 		applyUsageHoldThreshold(fresh)
 		return nil
 	})
+
+	la.register(liveApplyCCLaunchAddrs, func(*config.Config) error { return nil })
 
 	la.register(liveApplySkillsAddrs, func(fresh *config.Config) error {
 		for _, freshAcfg := range fresh.Agents {

@@ -26,6 +26,13 @@ import (
 // captures warnings.
 func launchArgs(t *testing.T, cfg map[string]any, batch bool, access delegator.BatchAccess) []string {
 	t.Helper()
+	return launchArgsWithHooks(t, cfg, batch, access, nil)
+}
+
+// launchArgsWithHooks is launchArgs with host hooks installed before Start
+// (nil = none).
+func launchArgsWithHooks(t *testing.T, cfg map[string]any, batch bool, access delegator.BatchAccess, hooks *delegator.HostHooks) []string {
+	t.Helper()
 	log.SetWarnHook(func(log.Level, string, string) {})
 	dir := t.TempDir()
 	out := filepath.Join(dir, "args.txt")
@@ -44,6 +51,9 @@ func launchArgs(t *testing.T, cfg map[string]any, batch bool, access delegator.B
 		t.Fatalf("newFromConfig: %v", err)
 	}
 	be := b.(*Backend)
+	if hooks != nil {
+		be.SetHostHooks(*hooks)
+	}
 	if err := be.Start(context.Background(), delegator.StartOptions{WorkDir: dir, AgentID: "argtest", SkipPermissions: batch, BatchAccess: access}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}

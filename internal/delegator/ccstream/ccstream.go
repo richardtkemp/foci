@@ -265,6 +265,9 @@ type Backend struct {
 	// preToolRules yields the resolved pretool rules (#2028) baked into the
 	// PreToolUse hook command at each Start. Set via SetHostHooks.
 	preToolRules func() []pretool.Rule
+	// claudeAISkills yields backend_config.claude_ai_skills (#2953), read at
+	// every Start; nil = false (the claude.ai skills are hidden).
+	claudeAISkills func() bool
 	// stopRules yields the agent's stop rules (#2089) baked into the Stop
 	// hook command at each Start. Set via SetHostHooks.
 	stopRules func() []stoprule.Rule

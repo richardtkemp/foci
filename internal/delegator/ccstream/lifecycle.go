@@ -158,9 +158,11 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		}
 		hookSettings = s
 	}
-	if hookSettings != "" {
-		args = append(args, "--settings", hookSettings)
+	settings, err := launchSettings(hookSettings, b.claudeAISkills != nil && b.claudeAISkills())
+	if err != nil {
+		return err
 	}
+	args = append(args, "--settings", settings)
 
 	// Production runs use "claude" (resolved via $PATH); integration tests
 	// inject a stub via the binary config knob (folded into b.cfg by

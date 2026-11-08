@@ -83,6 +83,8 @@ func (b *Backend) RunningSubagents() []delegator.RunningSubagent { return b.agen
 //   - PreToolRules (#2028) and StopRules (#2089) are read at every Start and
 //     baked into that CC process's hook command line, so a source that reads
 //     the live config makes an edit reach the next session (#2033).
+//   - ClaudeAISkills (#2953) is read at every Start too: it sets the
+//     syncClaudeAiSkills key of the launch's --settings (launchSettings).
 func (b *Backend) SetHostHooks(h delegator.HostHooks) {
 	b.onAuthFailure = h.OnAuthFailure
 	b.onLoginExpiry = h.OnLoginExpiry
@@ -92,6 +94,7 @@ func (b *Backend) SetHostHooks(h delegator.HostHooks) {
 	b.onUsageWindow = h.OnUsageWindow
 	b.preToolRules = h.PreToolRules
 	b.stopRules = h.StopRules
+	b.claudeAISkills = h.ClaudeAISkills
 }
 
 // SetOnAutonomousOpen registers a hook fired when the backend detects CC has

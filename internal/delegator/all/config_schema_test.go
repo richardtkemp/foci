@@ -131,7 +131,8 @@ func renderConfigSchema(specs []delegator.Spec) string {
 	// A Spec whose package reads nothing honours exactly the keys the
 	// gateway reads for it.
 	gateway := delegator.Spec{
-		StartFields: []string{"Env"},
+		ConfigFamily: delegator.ConfigFamilyClaudeCode,
+		StartFields:  []string{"Env"},
 		Caps: map[delegator.Capability]delegator.Support{
 			delegator.CapPreToolRules: delegator.Yes(),
 			delegator.CapStopRules:    delegator.Yes(),
@@ -149,7 +150,8 @@ func renderConfigSchema(specs []delegator.Spec) string {
 		b.WriteString("\n")
 	}
 	b.WriteString("\n(gateway) = read by the gateway for the backend, not by the backend package; " +
-		"`env` reaches a backend that reads `StartOptions.Env`, `pretool_rules` / `stop_rules` one declaring `pretool_rules` / `stop_rules`.\n\n")
+		"`env` reaches a backend that reads `StartOptions.Env`, `pretool_rules` / `stop_rules` one declaring `pretool_rules` / `stop_rules`, " +
+		"`claude_ai_skills` the claude-code config family.\n\n")
 	for _, s := range specs {
 		if s.ConfigFamily != "" {
 			b.WriteString("- " + s.Name + " folds the global `" + familySections[s.ConfigFamily] + "` section into its backend_config (Spec.ConfigFamily).\n")

@@ -209,6 +209,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	if spec.Supports(delegator.CapStopRules) {
 		stopRules = liveStopRules(agentID, p.configPath, resolveStopRules(agentID, backendConfig.StopRules))
 	}
+	// backend_config.claude_ai_skills (#2953): whether CC lists the claude.ai
+	// account's skills, read at every launch like the rules above.
+	claudeAISkills := liveClaudeAISkills(agentID, p.configPath, config.DerefBool(backendConfig.ClaudeAISkills))
 
 	// The gateway's callbacks into the backend, built once per agent with no
 	// backend-specific branching (#2154 Phase 3, HostHooks). A backend takes
@@ -253,6 +256,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		OnUsageWindow:   ag.ObserveUsage,
 		PreToolRules:    preToolRules,
 		StopRules:       stopRules,
+		ClaudeAISkills:  claudeAISkills,
 	}
 	if spec.Supports(delegator.CapRelogin) {
 		hostHooks.OnAuthFailure = func(detail string) {
@@ -1355,37 +1359,56 @@ func liveStopRules(agentID, configPath string, startup []stoprule.Rule) func() [
 	return liveRules(agentID, configPath, gwConfigProtect, "stop", startup, (*config.Config).StopRules)
 }
 
-// liveRules is the shared body of the live rule sources: re-read the file on
-// every call, resolve this agent's rules with resolve, and keep the last good
-// set when the file doesn't load, fails the protection check (protect, #479;
-// nil skips it) or has lost the agent.
+// liveRules is the shared body of the live rule sources: liveValue, plus a
+// warning for each rule the merge left unusable.
 func liveRules[R any](agentID, configPath string, protect func(string) error, kind string, startup []R,
 	resolve func(*config.Config, string) ([]R, []string, bool)) func() []R {
+	return liveValue(agentID, configPath, protect, kind+" rules", startup,
+		func(cfg *config.Config, id string) ([]R, bool) {
+			rules, skipped, ok := resolve(cfg, id)
+			if ok {
+				warnSkippedRules(id, kind, skipped)
+			}
+			return rules, ok
+		})
+}
+
+// liveClaudeAISkills is the live source of backend_config.claude_ai_skills
+// (#2953), read at every CC launch like the pretool rules.
+func liveClaudeAISkills(agentID, configPath string, startup bool) func() bool {
+	return liveValue(agentID, configPath, gwConfigProtect, "claude_ai_skills", startup, (*config.Config).ClaudeAISkills)
+}
+
+// liveValue re-reads the config file on every call and resolves this agent's
+// value with resolve. It keeps the last good value when the file doesn't load,
+// fails the protection check (protect, #479; nil skips it) or has lost the
+// agent. what names the value in the warnings.
+func liveValue[T any](agentID, configPath string, protect func(string) error, what string, startup T,
+	resolve func(*config.Config, string) (T, bool)) func() T {
 	var mu sync.Mutex
 	last := startup
 	lg := log.NewComponentLogger("agent:" + agentID)
-	return func() []R {
+	return func() T {
 		mu.Lock()
 		defer mu.Unlock()
 		if configPath == "" {
 			return last
 		}
 		if err := checkConfigLoad(protect, configPath); err != nil {
-			lg.Warnf("%s rules: keeping the previous rules: %v", kind, err)
+			lg.Warnf("%s: keeping the previous value: %v", what, err)
 			return last
 		}
 		fresh, err := config.Load(configPath, delegator.RegisteredNames())
 		if err != nil {
-			lg.Warnf("%s rules: config reload failed, keeping the previous rules: %v", kind, err)
+			lg.Warnf("%s: config reload failed, keeping the previous value: %v", what, err)
 			return last
 		}
-		rules, skipped, ok := resolve(fresh, agentID)
+		v, ok := resolve(fresh, agentID)
 		if !ok {
-			lg.Warnf("%s rules: agent missing from reloaded config, keeping the previous rules", kind)
+			lg.Warnf("%s: agent missing from reloaded config, keeping the previous value", what)
 			return last
 		}
-		warnSkippedRules(agentID, kind, skipped)
-		last = rules
+		last = v
 		return last
 	}
 }

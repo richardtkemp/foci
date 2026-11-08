@@ -1123,3 +1123,15 @@ func (cfg *Config) PreToolRules(agentID string) (rules []pretool.Rule, skipped [
 	}
 	return nil, nil, false
 }
+
+// ClaudeAISkills reports whether an agent's Claude Code sessions list the
+// claude.ai account's synced skills (backend_config.claude_ai_skills, #2953;
+// unset = false). ok is false when no agent has that id.
+func (cfg *Config) ClaudeAISkills(agentID string) (on, ok bool) {
+	for _, a := range cfg.Agents {
+		if a.ID == agentID {
+			return DerefBool(a.BackendConfig.ClaudeAISkills), true
+		}
+	}
+	return false, false
+}

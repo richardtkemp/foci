@@ -84,3 +84,31 @@ func TestLiveStopRules(t *testing.T) {
 		t.Errorf("broken file dropped the last good rules: %+v", got)
 	}
 }
+
+// TestLiveClaudeAISkills proves backend_config.claude_ai_skills reaches the
+// next CC launch the same way (#2953): unset is false, an edit is picked up,
+// and a broken file keeps the last good value.
+func TestLiveClaudeAISkills(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "foci.toml")
+	write := func(body string) {
+		t.Helper()
+		cfg := "[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n[[agents]]\nid = \"a\"\nbackend = \"claude-code\"\n" + body
+		if err := os.WriteFile(path, []byte(cfg), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("")
+	source := liveClaudeAISkills("a", path, true)
+	if source() {
+		t.Fatal("unset claude_ai_skills = true, want false")
+	}
+	write("[agents.backend_config]\nclaude_ai_skills = true\n")
+	if !source() {
+		t.Fatal("edit to true not picked up")
+	}
+	write("this is = = not toml")
+	if !source() {
+		t.Error("broken file dropped the last good value")
+	}
+}

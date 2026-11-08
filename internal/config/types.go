@@ -352,6 +352,11 @@ type BackendConfig struct {
 	Port              *int              `toml:"port"               desc:"TCP port for the opencode serve subprocess (0 = auto-pick)"`
 	DefaultPermission *string           `toml:"default_permission" desc:"opencode permission mode applied at Start to the session's own ruleset: ask, allow, or deny"`
 	BatchModel        *string           `toml:"batch_model"        desc:"Model for foci's own small background jobs on this agent (foci_summary, the /prompts diff summary), passed to the backend as written (e.g. haiku for Claude Code). Unset = the agent's own model. Overrides the [cc_backend] / [opencode_backend] batch_model"`
+	// ClaudeAISkills (#2953): foci passes syncClaudeAiSkills=<this> in the
+	// --settings of every Claude Code launch, so the account's claude.ai
+	// ("anthropic-skills:*") skills are hidden on every host unless an agent
+	// opts in. Nil = false. Re-read from the config file at each CC launch.
+	ClaudeAISkills *bool `toml:"claude_ai_skills" hot:"session" desc:"Claude Code only: list the Anthropic skills synced from the claude.ai account (anthropic-skills:*, e.g. pdf, docx, xlsx) in the agent's skill listing. Default false: foci starts Claude Code with syncClaudeAiSkills=false, which hides them whatever ~/.claude/settings.json says. A false in any settings source wins, so true lists them only where ~/.claude/settings.json does not set false. Plugin skills (e.g. Cloudflare's) are not affected. Read at each Claude Code session launch, so a change reaches the next new or resumed session"`
 }
 
 // ToMap converts the struct to the map[string]any shape the delegator
