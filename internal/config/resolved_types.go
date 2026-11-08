@@ -69,8 +69,18 @@ type ResolvedVoice struct {
 	TTS             string
 	STT             string
 	TTSRate         float64
+	TTSOrder        []string
 	TTSReplacements map[string]string
 	STTReplacements map[string]string
+}
+
+// TTSPreference is the voices this agent tries before the [[tts]] priority
+// order (#2974): voice.tts, then voice.tts_order.
+func (v ResolvedVoice) TTSPreference() []string {
+	if v.TTS == "" {
+		return v.TTSOrder
+	}
+	return append([]string{v.TTS}, v.TTSOrder...)
 }
 
 func resolveVoice(m VoiceConfig) ResolvedVoice {
@@ -78,6 +88,7 @@ func resolveVoice(m VoiceConfig) ResolvedVoice {
 		TTS:             DerefStr(m.TTS),
 		STT:             DerefStr(m.STT),
 		TTSRate:         DerefFloat(m.TTSRate),
+		TTSOrder:        m.TTSOrder,
 		TTSReplacements: m.TTSReplacements,
 		STTReplacements: m.STTReplacements,
 	}

@@ -72,6 +72,51 @@ func validateTTSMaxChars(cfg *Config) error {
 	return nil
 }
 
+// ttsOrderWarnings lists the [[tts]] ordering config that does nothing, for a
+// load-time warning (#2974): a `fallback` key, which priority replaced, and a
+// voice.tts / voice.tts_order id that names no [[tts]] entry or the built-in
+// edge-tts. A `fallback` warning names the order the voices are now tried in,
+// so a config written for chains does not change order silently.
+func ttsOrderWarnings(cfg *Config) []string {
+	var out []string
+	ids := map[string]bool{"edge-tts": true}
+	builtin := true
+	for _, e := range cfg.TTS {
+		ids[e.ID] = true
+		if e.ID == "edge-tts" {
+			builtin = false
+		}
+	}
+	for _, e := range cfg.TTS {
+		if e.Fallback == nil {
+			continue
+		}
+		order := strings.Join(TTSOrder(cfg.TTS, nil), ", ")
+		if builtin {
+			order += ", then the built-in edge-tts"
+		}
+		out = append(out, fmt.Sprintf("[[tts]] id %q fallback = %q does nothing: voices are tried by priority, highest first, and the next one is tried on any skip or failure. The order is now: %s. Set priority to change it, and remove fallback", e.ID, *e.Fallback, order))
+	}
+	check := func(where string, v VoiceConfig) {
+		pref := v.TTSOrder
+		if v.TTS != nil && *v.TTS != "" {
+			pref = append([]string{*v.TTS}, pref...)
+		}
+		for _, id := range pref {
+			if !ids[id] {
+				out = append(out, fmt.Sprintf("%s: tts voice %q is not a [[tts]] id; it is ignored", where, id))
+			}
+		}
+	}
+	if len(cfg.TTS) > 0 {
+		check("[voice]", cfg.Voice)
+		for _, a := range cfg.Agents {
+			check(fmt.Sprintf("agent %q voice", a.ID), a.Voice)
+		}
+	}
+	return out
+}
+
 // validateTTSLocalSpeedControl rejects local_speed_control on a [[tts]] entry
 // foci cannot stretch: the stretch reads PCM16 WAV from an openai-format
 // response only (#2940). Silently ignored there, the voice would play at the
@@ -364,6 +409,9 @@ func (cfg *Config) Validate(knownBackends []string) error {
 	}
 	if err := validateTTSMaxChars(cfg); err != nil {
 		return err
+	}
+	for _, w := range ttsOrderWarnings(cfg) {
+		configLog.Warnf("%s", w)
 	}
 	if err := validateTTSLocalSpeedControl(cfg); err != nil {
 		return err

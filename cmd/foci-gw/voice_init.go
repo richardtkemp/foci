@@ -51,8 +51,9 @@ func initVoice(cfg *config.Config, store *secrets.Store) (*ttsRegistry, map[stri
 	return newTTSRegistry(cfg, store), initSTT(cfg, store)
 }
 
-// buildTTSProviders builds one provider per [[tts]] entry, keyed by entry ID;
-// the first entry is also keyed as "" (default).
+// buildTTSProviders builds one provider per [[tts]] entry, keyed by entry ID.
+// There is no default key: which voice goes first is the priority order
+// (resolveTTS, #2974).
 func buildTTSProviders(entries []config.TTSConfig, store *secrets.Store, httpOpts voice.HTTPOpts) map[string]voice.TTS {
 	ttsMap := make(map[string]voice.TTS)
 	for i, entry := range entries {
@@ -63,18 +64,14 @@ func buildTTSProviders(entries []config.TTSConfig, store *secrets.Store, httpOpt
 			continue
 		}
 		ttsMap[entry.ID] = t
-		if i == 0 {
-			ttsMap[""] = t // default
-		}
 		mainLog.Infof("TTS %q enabled (format=%s voice=%s)", entry.ID, entry.Format, entry.Voice)
 	}
 
-	// Register the built-in edge-tts provider so every configured entry has
-	// something to fall back to. It needs no key and no endpoint, so it cannot
-	// itself be rate-limited or lose credentials. Declaring a [[tts]] entry
-	// with this id replaces it (e.g. to pin a specific edge voice). It is
-	// never installed as the default provider (""): a deployment with no
-	// [[tts]] entries at all still degrades to text-only, unchanged.
+	// Register the built-in edge-tts provider so every chain ends at a voice
+	// that needs no key and no endpoint, so it cannot itself be rate-limited
+	// or lose credentials. Declaring a [[tts]] entry with this id replaces it
+	// (e.g. to pin a specific edge voice, or to give it a priority). A
+	// deployment with no [[tts]] entries at all still degrades to text-only.
 	if len(ttsMap) > 0 {
 		if _, ok := ttsMap[builtinFallbackTTSID]; !ok {
 			ttsMap[builtinFallbackTTSID] = &voice.EdgeTTS{}
@@ -106,37 +103,38 @@ func initSTT(cfg *config.Config, store *secrets.Store) map[string]voice.STT {
 }
 
 // builtinFallbackTTSID is the id of the free, key-less edge-tts provider foci
-// registers automatically, and the default fallback for every other [[tts]]
-// entry.
+// registers automatically. It is the last voice every chain tries, unless a
+// [[tts]] entry declares the id and so gives it a priority.
 const builtinFallbackTTSID = "edge-tts"
 
-// maxTTSChain bounds a fallback chain. The visited set below already breaks a
-// cycle; this bounds a pathological config that merely chains very deep.
-const maxTTSChain = 8
+// resolveTTS builds the chain of voices a speech request tries (#2974): the ids
+// in prefer first (the agent's voice.tts, then voice.tts_order), then every
+// other [[tts]] entry by priority, highest first (config.TTSOrder), then the
+// built-in edge-tts if no entry declares it. A voice whose provider did not
+// build is left out. Each link has its own entry rate and replacements,
+// combined with the caller's agent-level ones. A chain of one is returned bare.
+func resolveTTS(ttsMap map[string]voice.TTS, ttsEntries []config.TTSConfig, prefer []string, agentRate float64, replacements map[string]string) voice.TTS {
+	byID := make(map[string]*config.TTSConfig, len(ttsEntries))
+	for i := range ttsEntries {
+		if _, ok := byID[ttsEntries[i].ID]; !ok {
+			byID[ttsEntries[i].ID] = &ttsEntries[i]
+		}
+	}
+	ids := config.TTSOrder(ttsEntries, prefer)
+	if _, declared := byID[builtinFallbackTTSID]; !declared {
+		ids = append(ids, builtinFallbackTTSID)
+	}
 
-// resolveTTS builds the fallback chain starting at ttsID (empty → default
-// entry), applying each link's own rate and replacements combined with the
-// caller's agent-level ones. A chain of one is returned bare, so a provider
-// with no reachable fallback behaves exactly as it did before chains existed.
-func resolveTTS(ttsMap map[string]voice.TTS, ttsEntries []config.TTSConfig, ttsID string, agentRate float64, replacements map[string]string) voice.TTS {
 	var chainLinks []voice.ChainEntry
-	seen := map[string]bool{}
-	id := ttsID
-	for len(chainLinks) < maxTTSChain {
-		base, entry, key := lookupTTS(ttsMap, ttsEntries, id)
-		if base == nil || seen[key] {
-			break
+	for _, id := range ids {
+		base := ttsMap[id]
+		if base == nil {
+			continue
 		}
-		seen[key] = true
 		chainLinks = append(chainLinks, voice.ChainEntry{
-			ID:  key,
-			TTS: decorateTTS(base, entry, agentRate, replacements),
+			ID:  id,
+			TTS: decorateTTS(base, byID[id], agentRate, replacements),
 		})
-		next := ttsFallbackID(entry)
-		if next == "" {
-			break
-		}
-		id = next
 	}
 
 	switch len(chainLinks) {
@@ -147,47 +145,6 @@ func resolveTTS(ttsMap map[string]voice.TTS, ttsEntries []config.TTSConfig, ttsI
 	default:
 		return &voice.FallbackTTS{Chain: chainLinks}
 	}
-}
-
-// lookupTTS resolves a TTS id to its provider, its config entry (nil when the
-// id names no entry), and a stable key identifying the link for cycle
-// detection and logging. An unknown id resolves to the default provider — but
-// deliberately NOT to the default entry, preserving the pre-chain behaviour
-// where an unrecognised agent override got the default provider at no rate.
-func lookupTTS(ttsMap map[string]voice.TTS, ttsEntries []config.TTSConfig, id string) (voice.TTS, *config.TTSConfig, string) {
-	base, key := ttsMap[id], id
-	if base == nil {
-		base, key = ttsMap[""], ""
-	}
-	if base == nil {
-		return nil, nil, ""
-	}
-	if id == "" {
-		if len(ttsEntries) > 0 {
-			return base, &ttsEntries[0], key
-		}
-		return base, nil, key
-	}
-	for i := range ttsEntries {
-		if ttsEntries[i].ID == id {
-			return base, &ttsEntries[i], key
-		}
-	}
-	return base, nil, key
-}
-
-// ttsFallbackID returns the id to try when entry's provider fails: an explicit
-// fallback if configured (including "" to disable), otherwise the built-in
-// edge-tts provider — except for an entry that already IS edge-tts, which has
-// nowhere better to go.
-func ttsFallbackID(entry *config.TTSConfig) string {
-	if entry != nil && entry.Fallback != nil {
-		return *entry.Fallback
-	}
-	if entry != nil && (entry.ID == builtinFallbackTTSID || entry.Format == "edge-tts") {
-		return ""
-	}
-	return builtinFallbackTTSID
 }
 
 // decorateTTS applies a chain link's effective rate (entry.rate × agent rate,

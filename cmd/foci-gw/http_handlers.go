@@ -863,11 +863,11 @@ func buildVoiceConfig(d httpHandlerDeps) voice.HandlerConfig {
 		AgentTTS: func(agentID string) voice.TTS {
 			inst, ok := d.agents.Get(agentID)
 			if !ok {
-				return d.tts.Resolve("", 0, d.cfg.Voice.TTSReplacements)
+				return d.tts.Resolve(nil, 0, d.cfg.Voice.TTSReplacements)
 			}
 			vc := inst.LiveConfig().Voice
 			ttsRepls := voice.MergeReplacements(d.cfg.Voice.TTSReplacements, inst.agentCfg.Voice.TTSReplacements)
-			return d.tts.Resolve(vc.TTS, vc.TTSRate, ttsRepls)
+			return d.tts.Resolve(vc.TTSPreference(), vc.TTSRate, ttsRepls)
 		},
 		MaxFrameBytes:      int64(intPtrOr(d.cfg.Voice.MaxFrameBytes, config.DefaultVoiceMaxFrameBytes)),
 		MaxAudioBytes:      intPtrOr(d.cfg.Voice.MaxAudioBytes, config.DefaultVoiceMaxAudioBytes),

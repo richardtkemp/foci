@@ -91,14 +91,24 @@ func (c *speechCatalog) available(v *ttsVoices, entry config.TTSConfig) bool {
 	return c.hasKey(entry)
 }
 
-// Sources lists the voices in config order, the built-in last. It names them
-// only: no endpoint, model or key leaves this function.
+// Sources lists the voices in [[tts]] priority order, highest first, the
+// built-in last (#2974): the order the server's own chains use, so the app's
+// default ladder matches it. A per-agent voice.tts or tts_order does not apply
+// here: the list goes out once per connection, for every agent. It names the
+// voices only: no endpoint, model or key leaves this function.
 func (c *speechCatalog) Sources() []voice.SpeechSource {
 	var out []voice.SpeechSource
 	declaredBuiltin := false
 	v := c.build()
+	byID := make(map[string]config.TTSConfig, len(v.entries))
 	for _, entry := range v.entries {
 		declaredBuiltin = declaredBuiltin || entry.ID == builtinFallbackTTSID
+		if _, ok := byID[entry.ID]; !ok {
+			byID[entry.ID] = entry
+		}
+	}
+	for _, id := range config.TTSOrder(v.entries, nil) {
+		entry := byID[id]
 		if !c.available(v, entry) {
 			continue
 		}

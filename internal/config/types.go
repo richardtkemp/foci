@@ -632,9 +632,10 @@ const DefaultWebFetchMaxBytes int64 = 1 << 20 // 1 MiB
 // VoiceConfig holds TTS/STT settings.
 // Global: [voice], per-agent: [[agents]].voice.*
 type VoiceConfig struct {
-	TTS                  *string           `toml:"tts"      hot:"event" desc:"Which text-to-speech provider to use for voice replies"`
+	TTS                  *string           `toml:"tts"      hot:"event" desc:"Text-to-speech voice to try first for voice replies, by [[tts]] id. If it is skipped or fails, the others follow in priority order"`
 	STT                  *string           `toml:"stt"      hot:"event" desc:"Which speech-to-text provider to use for transcribing voice messages"`
 	TTSRate              *float64          `toml:"tts_rate"  hot:"event" desc:"Speeds up or slows down text-to-speech playback. 1.0 is normal speed, higher is faster, lower is slower. 0 is treated as 1.0"`
+	TTSOrder             []string          `toml:"tts_order" hot:"event" desc:"Text-to-speech voices to try first, by [[tts]] id, in this order. Voices not listed follow, highest priority first. A voice named by tts comes before all of them"`
 	TTSReplacements      map[string]string `toml:"tts_replacements"`
 	STTReplacements      map[string]string `toml:"stt_replacements"`
 	MaxFrameBytes        *int              `toml:"max_frame_bytes" default:"1048576"  scope:"global" desc:"Maximum size in bytes of a single incoming voice websocket message; larger frames are rejected (1 MiB)"`
@@ -1172,7 +1173,8 @@ type LoggingConfig struct {
 }
 
 // TTSConfig describes a text-to-speech provider entry.
-// Multiple entries are supported via [[tts]]; first entry is the default.
+// Multiple entries are supported via [[tts]]. A speech request tries them by
+// Priority, highest first (TTSOrder, #2974).
 type TTSConfig struct {
 	ID             string            `toml:"id"`              // lookup key for agent overrides
 	Format         string            `toml:"format"`          // "openai", "google" or "edge-tts"
@@ -1184,10 +1186,14 @@ type TTSConfig struct {
 	Command        string            `toml:"command"`         // binary for edge-tts (default: "edge-tts")
 	ResponseFormat string            `toml:"response_format"` // audio format: "mp3", "wav", etc. (default: "wav")
 	Replacements   map[string]string `toml:"replacements"`    // word replacements applied before synthesis (e.g. "foci" = "foki")
-	// Fallback names the [[tts]] entry to try when this provider fails, forming
-	// a chain. Unset means the built-in key-less edge-tts provider, so a
-	// rate-limited cloud voice degrades to a local one rather than to silence.
-	// Set it to "" to disable fallback for this entry.
+	// Priority orders the voices: a speech request tries the highest first, and
+	// on a skip or a failure goes straight to the next (#2974). Equal priorities
+	// keep config order. Unset is 0; a negative value is allowed.
+	Priority int `toml:"priority"`
+	// Fallback is no longer read (#2974): the voices are tried by Priority. The
+	// key is still accepted, so a config that sets it still loads (a removed
+	// key would fail check-config and abort a deploy); validateTTSFallback
+	// warns at load that it does nothing.
 	Fallback *string `toml:"fallback"`
 	// MaxChars is the longest text this voice takes, in characters, counted on the
 	// text it would receive. A longer text skips the voice with no provider call.

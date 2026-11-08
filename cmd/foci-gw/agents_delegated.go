@@ -1269,7 +1269,7 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, wakeC
 	resolvedLive := p.resolvedLive
 	agentTTS := func() voice.TTS {
 		vc := resolvedLive.Load().Voice
-		return p.tts.Resolve(vc.TTS, vc.TTSRate, ttsRepls)
+		return p.tts.Resolve(vc.TTSPreference(), vc.TTSRate, ttsRepls)
 	}
 
 	batchSummariser := newBatchSummariser(p, agLazy)

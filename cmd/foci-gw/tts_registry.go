@@ -15,15 +15,15 @@ import (
 // finishes with the voices it started with (#2942).
 type ttsVoices struct {
 	entries   []config.TTSConfig
-	providers map[string]voice.TTS // keyed by entry id; the first entry also as ""
+	providers map[string]voice.TTS // keyed by entry id, plus the built-in edge-tts
 }
 
 // resolve is resolveTTS over this build. A nil build resolves to nil.
-func (v *ttsVoices) resolve(ttsID string, agentRate float64, replacements map[string]string) voice.TTS {
+func (v *ttsVoices) resolve(prefer []string, agentRate float64, replacements map[string]string) voice.TTS {
 	if v == nil {
 		return nil
 	}
-	return resolveTTS(v.providers, v.entries, ttsID, agentRate, replacements)
+	return resolveTTS(v.providers, v.entries, prefer, agentRate, replacements)
 }
 
 // ttsRegistry holds the current [[tts]] build. Every path that speaks reads it
@@ -62,8 +62,8 @@ func (r *ttsRegistry) Voices() *ttsVoices {
 }
 
 // Resolve is resolveTTS over the current build.
-func (r *ttsRegistry) Resolve(ttsID string, agentRate float64, replacements map[string]string) voice.TTS {
-	return r.Voices().resolve(ttsID, agentRate, replacements)
+func (r *ttsRegistry) Resolve(prefer []string, agentRate float64, replacements map[string]string) voice.TTS {
+	return r.Voices().resolve(prefer, agentRate, replacements)
 }
 
 // liveApplyTTSAddrs is the [[tts]] object-list section. Like [[modelinfo]] it

@@ -264,7 +264,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	resolvedLive := p.resolvedLive
 	agentTTS := func() voice.TTS {
 		vc := resolvedLive.Load().Voice
-		return p.tts.Resolve(vc.TTS, vc.TTSRate, ttsRepls)
+		return p.tts.Resolve(vc.TTSPreference(), vc.TTSRate, ttsRepls)
 	}
 
 	// Register all tools from the single data-driven table (see tool_table.go),

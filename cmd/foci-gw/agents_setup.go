@@ -378,7 +378,7 @@ func setupPlatformConnections(
 	if p.tts != nil {
 		ttsParam = &lazyTTS{resolve: func() voice.TTS {
 			vc := p.resolvedLive.Load().Voice
-			return p.tts.Resolve(vc.TTS, vc.TTSRate, ttsRepls)
+			return p.tts.Resolve(vc.TTSPreference(), vc.TTSRate, ttsRepls)
 		}}
 	}
 	results := p.plat.SetupAgentConnection(platform.AgentConnectionParams{

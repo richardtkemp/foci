@@ -295,6 +295,9 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 		if e.Rate != 0 {
 			add(prefix, "rate", e.Rate)
 		}
+		if e.Priority != 0 {
+			add(prefix, "priority", e.Priority)
+		}
 		if e.Fallback != nil {
 			add(prefix, "fallback", *e.Fallback)
 		}
@@ -394,6 +397,9 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	}
 	if agent.Voice.TTS != nil {
 		add("tts", *agent.Voice.TTS)
+	}
+	if agent.Voice.TTSOrder != nil {
+		add("tts_order", strings.Join(agent.Voice.TTSOrder, ", "))
 	}
 	if agent.Voice.STT != nil {
 		add("stt", *agent.Voice.STT)

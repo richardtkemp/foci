@@ -438,11 +438,13 @@ Per-agent memory sources (`[[agents.memory.sources]]`) are documented in [Agent-
 
 ### `[[tts]]`
 
-Text-to-speech provider entries. Multiple entries are supported; the first is the default. Agents override by id via `tts = "id"` in their config.
+Text-to-speech voices. Each entry has a `priority`, and a speech request tries the voices **highest priority first** (#2974). Entries with the same priority (unset is `0`) keep their config order, so a config with no priorities tries its entries top to bottom. An agent can put voices ahead of that order with `voice.tts` and `voice.tts_order` (see [Voice](#voice)).
 
-Entries form a **fallback chain** via `fallback`. When a provider fails — a rate limit, a quota, a dead endpoint — the next one in the chain is tried immediately and the reply still arrives as audio. There is no retry or wait: a spoken reply is live, so a provider that asks for a delay is skipped, not waited out. If the whole chain fails, the reply is delivered as text only. A text longer than an entry's `max_chars` skips that entry in the same way, with no call to the provider.
+A voice whose conditions are not met is **skipped** with no call to the provider: a text longer than its `max_chars`, or over Google's 5,000-byte limit. A voice that **fails** (a rate limit, a quota, a dead endpoint, a missing key) is left at once for the next one, and foci logs a warning; a skip is not logged as a warning. There is no retry or wait: a spoken reply is live, so a provider that asks for a delay is passed over, not waited out. If every voice is skipped or fails, the reply is delivered as text only.
 
-foci auto-registers a built-in, key-less `edge-tts` provider under the id `edge-tts` whenever at least one `[[tts]]` entry is configured, and every entry falls back to it by default. Declare a `[[tts]]` entry with `id = "edge-tts"` to replace the built-in (e.g. to pin a voice), or set `fallback = ""` on an entry to opt it out.
+foci auto-registers a built-in, key-less `edge-tts` voice under the id `edge-tts` whenever at least one `[[tts]]` entry is configured, and tries it after every configured voice. Declare a `[[tts]]` entry with `id = "edge-tts"` to replace the built-in, for example to pin a voice or to give it a priority.
+
+**`fallback` is retired.** Before #2974 each entry named one `fallback` entry, forming a chain. The key is still accepted, so an old config loads, but it changes nothing: foci logs a warning at load that names the order now used. `fallback = ""` no longer stops a voice's chain. Set `priority` instead, and remove `fallback`.
 
 `[[tts]]` applies live when changed with `/config set` or `foci config set` (the whole array, `tts`, or one entry, `tts[<id>]`): adding, removing or reordering an entry, or changing any of its keys, reaches the next speech request with no restart. A speech request already in progress finishes with the voices it started with. The app reads the voice list for read-to-me when it connects, so it sees a change at its next connection. A hand edit to foci.toml still needs a restart.
 
@@ -458,7 +460,8 @@ foci auto-registers a built-in, key-less `edge-tts` provider under the id `edge-
 | `command` | string | `"edge-tts"` | Binary for edge-tts format. |
 | `response_format` | string | `"wav"` | Audio format for OpenAI-compatible APIs: `"mp3"`, `"wav"`, `"opus"`, `"aac"`, `"flac"`. Groq only supports `"wav"`. For google: `"mp3"` (the default there), `"wav"` or `"ogg"` (Opus); any other value is refused at load. |
 | `replacements` | map | `{}` | Word replacements applied to text before synthesis. Case-insensitive whole-word matching; preserves original case pattern. Example: `{ foci = "foki" }`. |
-| `fallback` | string | `"edge-tts"` | Id of the entry to try when this provider fails. Unset defaults to the built-in `edge-tts` provider (and to nothing for an entry that is already edge-tts). Set to `""` to disable fallback for this entry. |
+| `priority` | int | `0` | Order in which voices are tried: highest first. Equal priorities keep config order. Negative values are allowed. |
+| `fallback` | string | — | Retired (#2974): accepted but not read, with a warning at load. Use `priority`. |
 | `max_chars` | int | `0` | Longest text this voice takes, in characters (Unicode code points), counted on the text it would receive: after speech clean-up and word replacements. A longer text skips the voice with no provider call and goes to the next one. `0` means no limit. Applies to voice replies, voice notes and the app's Speak. Example: `200` on Groq Orpheus. |
 | `local_speed_control` | bool | `false` | For an endpoint that ignores the speed it is sent (Groq Orpheus): foci leaves `speed` out of the request and applies `rate` itself, time-stretching the returned clip with pitch kept. The stretch is ffmpeg's `atempo` filter when `ffmpeg` is on foci's PATH; without it (or if it fails) foci uses its built-in stretch, which needs no binary but sounds worse, and logs a warning at load and on each clip. `openai` format with a `wav` response only; anything else is refused at load. If the clip is not 16-bit PCM WAV it plays at its own rate, with a warning. |
 
@@ -1317,7 +1320,8 @@ All platform fields from `[[platforms]]` can be overridden per-agent via `[[agen
 | Key | Type | Default | Global location | Description |
 |-----|------|---------|-----------------|-------------|
 | `tts_rate` | float | `0` | `[voice]` | Per-agent TTS speech rate multiplier. Combined with entry rate: effective = entry.rate × agent.tts_rate (0 treated as 1.0). |
-| `tts` | string | `""` | `[voice]` | Override TTS entry by id (empty = default entry). |
+| `tts` | string | `""` | `[voice]` | TTS voice to try first, by `[[tts]]` id. Empty = the priority order alone. The other voices still follow if it is skipped or fails. An id that names no entry is ignored, with a warning at load. Applies live. |
+| `tts_order` | list | `[]` | `[voice]` | TTS voices to try next, by `[[tts]]` id, in this order (after `tts`). Voices not listed follow in priority order. A per-agent list replaces the global one. An id that names no entry is ignored, with a warning at load. Applies live. Example: `tts_order = ["neural2", "groq-playai"]`. |
 | `stt` | string | `""` | `[voice]` | Override STT entry by id (empty = default entry). |
 | `tts_replacements` | map | `{}` | `[voice]` | TTS word replacements (merged with `[[tts]]` entry replacements; per-agent wins). Case-insensitive whole-word matching. |
 | `stt_replacements` | map | `{}` | `[voice]` | STT word replacements (merged with `[[stt]]` entry replacements; per-agent wins). Case-insensitive whole-word matching. |

@@ -53,6 +53,8 @@ func TestSpeechCatalog_Sources(t *testing.T) {
 			[]voice.SpeechSource{{ID: "oai", Kind: "api"}}},
 		{"declared edge entry replaces the built-in", []config.TTSConfig{{ID: "edge-tts", Format: "edge-tts", Voice: "v"}}, nil, map[string]bool{"edge-tts": true},
 			[]voice.SpeechSource{{ID: "edge-tts", Kind: "edge"}}},
+		{"priority order, highest first (#2974)", []config.TTSConfig{api("low"), {ID: "high", Format: "openai", Priority: 2}}, map[string]bool{"low": true, "high": true}, map[string]bool{"edge-tts": true},
+			[]voice.SpeechSource{{ID: "high", Kind: "api"}, {ID: "low", Kind: "api"}, {ID: "edge-tts", Kind: "edge"}}},
 		{"edge entry whose binary is missing", []config.TTSConfig{{ID: "mine", Format: "edge-tts", Command: "my-edge"}}, nil, map[string]bool{"edge-tts": true},
 			[]voice.SpeechSource{{ID: "edge-tts", Kind: "edge"}}},
 	}
@@ -67,7 +69,7 @@ func TestSpeechCatalog_Sources(t *testing.T) {
 }
 
 // Req 6: one voice from start to end. The provider must not be a fallback chain,
-// even though every [[tts]] entry falls back to edge-tts in resolveTTS.
+// even though every chain resolveTTS builds ends at edge-tts.
 func TestSpeechCatalog_ProviderIsOneVoice(t *testing.T) {
 	c := testSpeechCatalog([]config.TTSConfig{{ID: "groq", Format: "openai"}}, map[string]bool{"groq": true}, map[string]bool{"edge-tts": true})
 	p := c.Provider("a", "groq")
@@ -163,13 +165,13 @@ func TestInitVoice_MaxCharsOnEveryPath(t *testing.T) {
 		assertTooLong(t, c.Provider("a", "groq"), "abc")
 	})
 	t.Run("a chain skips to the next voice", func(t *testing.T) {
-		data, err := resolveTTS(ttsMap, entries, "groq", 1.5, nil).Synthesize(t.Context(), "123456")
+		data, err := resolveTTS(ttsMap, entries, []string{"groq"}, 1.5, nil).Synthesize(t.Context(), "123456")
 		if err != nil || string(data) != "edge" {
 			t.Errorf("data=%q err=%v, want the next voice", data, err)
 		}
 	})
-	t.Run("an unknown agent override that gets the default provider", func(t *testing.T) {
-		data, err := resolveTTS(ttsMap, entries, "nonesuch", 0, nil).Synthesize(t.Context(), "123456")
+	t.Run("an unknown agent override, which is ignored", func(t *testing.T) {
+		data, err := resolveTTS(ttsMap, entries, []string{"nonesuch"}, 0, nil).Synthesize(t.Context(), "123456")
 		if err != nil || string(data) != "edge" {
 			t.Errorf("data=%q err=%v, want the next voice", data, err)
 		}

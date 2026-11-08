@@ -196,8 +196,8 @@ var (
 	// snapshot, so any field a consumer reaches this way goes hot by adding
 	// it here + a `hot` tag.
 	liveApplyResolvedAddrs = []string{
-		"voice.tts", "voice.tts_rate", "voice.stt",
-		"agent.voice.tts", "agent.voice.tts_rate", "agent.voice.stt",
+		"voice.tts", "voice.tts_order", "voice.tts_rate", "voice.stt",
+		"agent.voice.tts", "agent.voice.tts_order", "agent.voice.tts_rate", "agent.voice.stt",
 		"agent_loop.max_tool_loops", "agent.loop.max_tool_loops",
 		"agent_loop.streaming", "agent.loop.streaming",
 		"debug.cache_bust_detect", "agent.debug.cache_bust_detect",

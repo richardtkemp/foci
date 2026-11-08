@@ -100,20 +100,15 @@ func TestResolveVoiceAPIKey_NoEndpoint(t *testing.T) {
 	}
 }
 
-// TestResolveTTS_DefaultFallback verifies that resolveTTS falls back to
-// the default ("") entry when the requested ID is not found.
-func TestResolveTTS_DefaultFallback(t *testing.T) {
+// TestResolveTTS_UnknownPreferenceIgnored: a voice.tts that names no entry
+// does not stop the agent speaking; the priority order is used.
+func TestResolveTTS_UnknownPreferenceIgnored(t *testing.T) {
 	t.Parallel()
-	base := &voice.OpenAITTS{Model: "tts-1"}
-	ttsMap := map[string]voice.TTS{
-		"":     base,
-		"edge": &voice.EdgeTTS{Voice: "test"},
-	}
-	entries := []config.TTSConfig{{ID: "", Rate: 1.3}}
+	ttsMap := map[string]voice.TTS{"a": &voice.OpenAITTS{Model: "tts-1"}}
+	entries := []config.TTSConfig{{ID: "a", Rate: 1.3}}
 
-	result := resolveTTS(ttsMap, entries, "nonexistent", 0, nil)
-	if result == nil {
-		t.Fatal("expected non-nil TTS from default fallback")
+	if result := resolveTTS(ttsMap, entries, []string{"nonexistent"}, 0, nil); result == nil {
+		t.Fatal("expected the configured voice when the preference names no entry")
 	}
 }
 
@@ -128,7 +123,7 @@ func TestResolveTTS_RateComposition(t *testing.T) {
 	entries := []config.TTSConfig{{ID: "fast", Rate: 1.3}}
 
 	// entry=1.3, agent=1.5 → effective=1.95
-	result := resolveTTS(ttsMap, entries, "fast", 1.5, nil)
+	result := resolveTTS(ttsMap, entries, []string{"fast"}, 1.5, nil)
 	oai, ok := result.(*voice.OpenAITTS)
 	if !ok {
 		t.Fatalf("expected *OpenAITTS, got %T", result)
@@ -147,7 +142,7 @@ func TestResolveTTS_EntryRateOnly(t *testing.T) {
 	ttsMap := map[string]voice.TTS{"x": base}
 	entries := []config.TTSConfig{{ID: "x", Rate: 1.3}}
 
-	result := resolveTTS(ttsMap, entries, "x", 0, nil)
+	result := resolveTTS(ttsMap, entries, []string{"x"}, 0, nil)
 	oai, ok := result.(*voice.OpenAITTS)
 	if !ok {
 		t.Fatalf("expected *OpenAITTS, got %T", result)
@@ -161,7 +156,7 @@ func TestResolveTTS_EntryRateOnly(t *testing.T) {
 // an empty map.
 func TestResolveTTS_NilMap(t *testing.T) {
 	t.Parallel()
-	result := resolveTTS(nil, nil, "", 0, nil)
+	result := resolveTTS(nil, nil, nil, 0, nil)
 	if result != nil {
 		t.Errorf("expected nil, got %v", result)
 	}
@@ -239,8 +234,8 @@ func TestInitVoice_RegistersBuiltinFallback(t *testing.T) {
 	if _, ok := ttsMap[builtinFallbackTTSID]; !ok {
 		t.Fatalf("ttsMap has no %q provider; got keys %v", builtinFallbackTTSID, mapKeys(ttsMap))
 	}
-	if ttsMap[""] == ttsMap[builtinFallbackTTSID] {
-		t.Error("built-in fallback became the default provider; it must only ever be a fallback")
+	if _, ok := ttsMap[""]; ok {
+		t.Error(`ttsMap has a "" default key; the priority order picks the first voice (#2974)`)
 	}
 }
 
@@ -273,89 +268,112 @@ func TestInitVoice_ConfiguredEdgeEntryWins(t *testing.T) {
 }
 
 // TestResolveTTS_DefaultsToEdgeFallback is the behaviour Groq's daily token cap
-// motivated: an unconfigured cloud entry still ends up with a local backstop.
+// motivated: a cloud entry still ends up with a local backstop.
 func TestResolveTTS_DefaultsToEdgeFallback(t *testing.T) {
 	t.Parallel()
 	ttsMap := map[string]voice.TTS{
-		"":                   &voice.OpenAITTS{Model: "tts-1"},
 		"groq":               &voice.OpenAITTS{Model: "tts-1"},
 		builtinFallbackTTSID: &voice.EdgeTTS{},
 	}
 	entries := []config.TTSConfig{{ID: "groq", Format: "openai"}}
 
-	got := chainIDs(t, resolveTTS(ttsMap, entries, "groq", 0, nil))
+	got := chainIDs(t, resolveTTS(ttsMap, entries, nil, 0, nil))
 	want := []string{"groq", builtinFallbackTTSID}
 	if !equalStrings(got, want) {
 		t.Errorf("chain = %v, want %v", got, want)
 	}
 }
 
-// TestResolveTTS_ExplicitEmptyFallbackDisables: `fallback = ""` must opt out,
-// which is why the config field is a pointer rather than a plain string.
-func TestResolveTTS_ExplicitEmptyFallbackDisables(t *testing.T) {
-	t.Parallel()
-	ttsMap := map[string]voice.TTS{
-		"groq":               &voice.OpenAITTS{Model: "tts-1"},
+// ladderTTS is the provider map for the priority tests: three cloud voices and
+// the built-in.
+func ladderTTS() map[string]voice.TTS {
+	return map[string]voice.TTS{
+		"a":                  &voice.OpenAITTS{Model: "a"},
+		"b":                  &voice.OpenAITTS{Model: "b"},
+		"c":                  &voice.OpenAITTS{Model: "c"},
 		builtinFallbackTTSID: &voice.EdgeTTS{},
-	}
-	entries := []config.TTSConfig{{ID: "groq", Format: "openai", Fallback: ptr("")}}
-
-	if got := chainIDs(t, resolveTTS(ttsMap, entries, "groq", 0, nil)); !equalStrings(got, []string{"<bare>"}) {
-		t.Errorf("chain = %v, want an unchained provider", got)
 	}
 }
 
-// TestResolveTTS_ExplicitChain: fallback ids compose into a multi-hop chain.
-func TestResolveTTS_ExplicitChain(t *testing.T) {
+// TestResolveTTS_PriorityOrder (#2974): every voice is in the chain, highest
+// priority first, equal priorities in config order, the built-in last.
+func TestResolveTTS_PriorityOrder(t *testing.T) {
 	t.Parallel()
-	ttsMap := map[string]voice.TTS{
-		"groq":               &voice.OpenAITTS{Model: "a"},
-		"openrouter":         &voice.OpenAITTS{Model: "b"},
-		builtinFallbackTTSID: &voice.EdgeTTS{},
-	}
 	entries := []config.TTSConfig{
-		{ID: "groq", Format: "openai", Fallback: ptr("openrouter")},
-		{ID: "openrouter", Format: "openai"},
+		{ID: "a", Format: "openai", Priority: 1},
+		{ID: "b", Format: "openai", Priority: 5},
+		{ID: "c", Format: "openai", Priority: 1},
 	}
-
-	got := chainIDs(t, resolveTTS(ttsMap, entries, "groq", 0, nil))
-	want := []string{"groq", "openrouter", builtinFallbackTTSID}
+	got := chainIDs(t, resolveTTS(ladderTTS(), entries, nil, 0, nil))
+	want := []string{"b", "a", "c", builtinFallbackTTSID}
 	if !equalStrings(got, want) {
 		t.Errorf("chain = %v, want %v", got, want)
 	}
 }
 
-// TestResolveTTS_EdgeEntryDoesNotChainToItself: an edge-tts entry is already
-// the local backstop, so the default fallback must not point it at itself.
-func TestResolveTTS_EdgeEntryDoesNotChainToItself(t *testing.T) {
+// TestResolveTTS_NoPriorityIsConfigOrder: a config with no priorities keeps the
+// order it had when the first entry was the default.
+func TestResolveTTS_NoPriorityIsConfigOrder(t *testing.T) {
 	t.Parallel()
-	ttsMap := map[string]voice.TTS{
-		"local":              &voice.EdgeTTS{},
-		builtinFallbackTTSID: &voice.EdgeTTS{},
-	}
-	entries := []config.TTSConfig{{ID: "local", Format: "edge-tts"}}
-
-	if got := chainIDs(t, resolveTTS(ttsMap, entries, "local", 0, nil)); !equalStrings(got, []string{"<bare>"}) {
-		t.Errorf("chain = %v, want an unchained provider", got)
+	entries := []config.TTSConfig{{ID: "c", Format: "openai"}, {ID: "a", Format: "openai"}}
+	got := chainIDs(t, resolveTTS(ladderTTS(), entries, nil, 0, nil))
+	if want := []string{"c", "a", builtinFallbackTTSID}; !equalStrings(got, want) {
+		t.Errorf("chain = %v, want %v", got, want)
 	}
 }
 
-// TestResolveTTS_CycleTerminates: a config that points two entries at each
-// other must not loop, and must not repeat a provider in the chain.
-func TestResolveTTS_CycleTerminates(t *testing.T) {
+// TestResolveTTS_AgentPreferenceFirst: an agent's voice.tts, then its
+// tts_order, go before the priority order; the rest still follow.
+func TestResolveTTS_AgentPreferenceFirst(t *testing.T) {
 	t.Parallel()
-	ttsMap := map[string]voice.TTS{
-		"a": &voice.OpenAITTS{Model: "a"},
-		"b": &voice.OpenAITTS{Model: "b"},
-	}
 	entries := []config.TTSConfig{
-		{ID: "a", Format: "openai", Fallback: ptr("b")},
+		{ID: "a", Format: "openai", Priority: 3},
+		{ID: "b", Format: "openai", Priority: 2},
+		{ID: "c", Format: "openai", Priority: 1},
+	}
+	vc := config.ResolvedVoice{TTS: "c", TTSOrder: []string{"b", "c", "nope"}}
+	got := chainIDs(t, resolveTTS(ladderTTS(), entries, vc.TTSPreference(), 0, nil))
+	if want := []string{"c", "b", "a", builtinFallbackTTSID}; !equalStrings(got, want) {
+		t.Errorf("chain = %v, want %v", got, want)
+	}
+}
+
+// TestResolveTTS_DeclaredBuiltinTakesItsPriority: an entry with the built-in's
+// id is ordered by its priority like any other, and appears once.
+func TestResolveTTS_DeclaredBuiltinTakesItsPriority(t *testing.T) {
+	t.Parallel()
+	entries := []config.TTSConfig{
+		{ID: "a", Format: "openai"},
+		{ID: builtinFallbackTTSID, Format: "edge-tts", Priority: 9},
+	}
+	got := chainIDs(t, resolveTTS(ladderTTS(), entries, nil, 0, nil))
+	if want := []string{builtinFallbackTTSID, "a"}; !equalStrings(got, want) {
+		t.Errorf("chain = %v, want %v", got, want)
+	}
+}
+
+// TestResolveTTS_FallbackKeyIgnored: the retired fallback key changes nothing;
+// fallback = "" no longer cuts the chain short, and a cycle cannot form.
+func TestResolveTTS_FallbackKeyIgnored(t *testing.T) {
+	t.Parallel()
+	entries := []config.TTSConfig{
+		{ID: "a", Format: "openai", Fallback: ptr("")},
 		{ID: "b", Format: "openai", Fallback: ptr("a")},
 	}
+	got := chainIDs(t, resolveTTS(ladderTTS(), entries, nil, 0, nil))
+	if want := []string{"a", "b", builtinFallbackTTSID}; !equalStrings(got, want) {
+		t.Errorf("chain = %v, want %v", got, want)
+	}
+}
 
-	got := chainIDs(t, resolveTTS(ttsMap, entries, "a", 0, nil))
-	if !equalStrings(got, []string{"a", "b"}) {
-		t.Errorf("chain = %v, want [a b] — the cycle was not broken", got)
+// TestResolveTTS_UnbuiltVoiceLeftOut: an entry whose provider did not build
+// (no key, bad format) is not a link.
+func TestResolveTTS_UnbuiltVoiceLeftOut(t *testing.T) {
+	t.Parallel()
+	entries := []config.TTSConfig{{ID: "gone", Format: "openai", Priority: 9}, {ID: "a", Format: "openai"}}
+	got := chainIDs(t, resolveTTS(ladderTTS(), entries, nil, 0, nil))
+	if want := []string{"a", builtinFallbackTTSID}; !equalStrings(got, want) {
+		t.Errorf("chain = %v, want %v", got, want)
 	}
 }
 
@@ -372,7 +390,7 @@ func TestResolveTTS_ChainLinksKeepTheirOwnRate(t *testing.T) {
 		{ID: builtinFallbackTTSID, Format: "edge-tts", Rate: 1.1},
 	}
 
-	f, ok := resolveTTS(ttsMap, entries, "groq", 2.0, nil).(*voice.FallbackTTS)
+	f, ok := resolveTTS(ttsMap, entries, []string{"groq"}, 2.0, nil).(*voice.FallbackTTS)
 	if !ok {
 		t.Fatal("expected a *voice.FallbackTTS chain")
 	}

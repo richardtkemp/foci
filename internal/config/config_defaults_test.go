@@ -401,6 +401,9 @@ func TestExampleConfigKeysValid(t *testing.T) {
 		// Legacy [[agent]] (singular) has the same fields as [[agents]];
 		// the example documents only [[agents]].
 		"agent.": "legacy alias of [[agents]]",
+		// Accepted so an old config still loads, but no longer read: the
+		// example must not teach it (#2974, priority replaced it).
+		"tts.fallback": "retired [[tts]] key, warned about at load",
 	}
 
 	defined := map[string]bool{}

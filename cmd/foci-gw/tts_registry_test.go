@@ -93,8 +93,8 @@ local_speed_control = true
 	if !groq.LocalSpeed || groq.Voice != "new-voice" {
 		t.Errorf("after apply, groq = LocalSpeed %v voice %q; want true, new-voice", groq.LocalSpeed, groq.Voice)
 	}
-	if def := openaiVoice(t, now, ""); def.Voice != "alloy" {
-		t.Errorf("default voice = %q, want the new first entry's alloy", def.Voice)
+	if got := chainIDs(t, now.resolve(nil, 0, nil)); len(got) == 0 || got[0] != "oai" {
+		t.Errorf("chain = %v, want the new first entry oai first (equal priorities keep config order)", got)
 	}
 	if old := openaiVoice(t, inFlight, "groq"); old.LocalSpeed || old.Voice != "old-voice" {
 		t.Errorf("the build held before the edit changed: LocalSpeed %v voice %q", old.LocalSpeed, old.Voice)
@@ -134,7 +134,7 @@ func TestTTSRegistry_KeepsStartupHTTPOpts(t *testing.T) {
 // voice.Configured, and speaks once a live edit adds a voice.
 func TestTTSRegistry_PerRequestPathsFollowEdits(t *testing.T) {
 	reg := newTTSRegistry(&config.Config{}, newTestStore(t, nil))
-	lazy := &lazyTTS{resolve: func() voice.TTS { return reg.Resolve("", 0, nil) }}
+	lazy := &lazyTTS{resolve: func() voice.TTS { return reg.Resolve(nil, 0, nil) }}
 	if voice.Configured(lazy) {
 		t.Fatal("lazy adapter with no [[tts]] reports a voice")
 	}

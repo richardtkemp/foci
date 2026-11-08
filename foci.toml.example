@@ -94,7 +94,8 @@ model = "anthropic/claude-haiku-4-5-20251001"
 # prompt_suggestion_max_usage = 0         # plan usage % (highest window) at or above which no next-message suggestion runs; 0 = off (default), e.g. 90 turns them on (live)
 
 # [voice]
-# tts = ""                                 # TTS provider id (empty = default entry)
+# tts = ""                                 # TTS voice to try first, by [[tts]] id (empty = priority order)
+# tts_order = []                           # TTS voices to try next, in this order; the rest follow by priority
 # stt = ""                                 # STT provider id (empty = default entry)
 # tts_rate = 0.0                           # TTS speech rate multiplier
 # tts_replacements = {}                    # TTS word replacements (e.g. { foci = "foki" })
@@ -223,6 +224,7 @@ system_files = [
 
 # [agents.voice]
 # tts_rate = 0.0
+# tts_order = ["neural2", "groq-playai"]  # this agent's own voice order; the rest follow by priority
 
 # Per-agent session overrides (from [sessions]):
 # [agents.sessions]
@@ -628,7 +630,10 @@ bind = "127.0.0.1"
 # log_file_mode = "0600"                  # octal file permissions for log files
 
 # ─── TTS (text-to-speech) ─────────────────────────────────────────────
-# First entry is the default. Agents override by id via tts = "id".
+# Voices are tried by priority, highest first (equal priorities in config
+# order), then the built-in edge-tts. A voice that is skipped (text over
+# max_chars) or fails sends the request straight to the next one. Agents put
+# voices first with voice.tts = "id" and voice.tts_order = ["id", ...].
 #
 # [[tts]]
 # id = "groq-playai"
@@ -640,7 +645,7 @@ bind = "127.0.0.1"
 # secret = "groq.api_key"                 # secret name in secrets.toml
 # response_format = "wav"                 # audio format: "mp3", "wav", etc.
 # replacements = { foci = "foki" }        # word replacements applied before synthesis
-# fallback = "edge"                       # entry to try on failure (unset = built-in edge-tts, "" = none)
+# priority = 10                           # higher is tried first (default 0)
 # max_chars = 200                         # a longer text skips this voice, with no provider call (unset = no limit)
 # local_speed_control = true             # foci applies rate itself (endpoint ignores speed); openai + wav only
 #
