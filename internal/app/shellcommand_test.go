@@ -403,12 +403,15 @@ func TestShellCommand_App_CancelKillsTheCommand(t *testing.T) {
 }
 
 func TestShellCommand_App_TimeoutReported(t *testing.T) {
-	s := newShellHarness(t, 1000, 200*time.Millisecond)
+	// The timeout clock starts before the shell does, so it must cover shell
+	// start-up plus the first echo even on a loaded host (#2952: 200 ms was not
+	// enough under load). 2 s costs 2 s of test time.
+	s := newShellHarness(t, 1000, 2*time.Second)
 	_, final, env := s.runAndCollect(t, "!echo early; sleep 30; echo late")
 	if sc := shellOf(t, final); sc.State != usercmd.StateTimedOut || sc.ExitCode != nil {
 		t.Errorf("final = %+v", sc)
 	}
-	if !strings.Contains(env.Text, "timed out after 200ms") || !strings.Contains(env.Text, "\nearly\n") || strings.Contains(env.Text, "\nlate") {
+	if !strings.Contains(env.Text, "timed out after 2s") || !strings.Contains(env.Text, "\nearly\n") || strings.Contains(env.Text, "\nlate") {
 		t.Errorf("agent text = %q", env.Text)
 	}
 }
