@@ -1187,9 +1187,6 @@ func extractUserContent(env map[string]any) (string, []string) {
 	return "", nil
 }
 
-// recordInvocation appends one JSONL line tagged kind="invocation" to
-// CCSTUB_RECORDER (if set). Silent no-op if the env var is unset or the
-// file can't be opened — recorder failures must not break the stub.
 // argvErrorHint ends the stderr report of a rejected argv.
 const argvErrorHint = "a new foci flag must be declared in parseArgs (cmd/cc-stub/main.go)"
 
@@ -1272,6 +1269,9 @@ func recordArgvError(err error) {
 	})
 }
 
+// recordInvocation appends one JSONL line tagged kind="invocation" to
+// CCSTUB_RECORDER (if set). Silent no-op if the env var is unset or the
+// file can't be opened — recorder failures must not break the stub.
 func recordInvocation(resume, model string) {
 	wd, _ := os.Getwd()
 	writeRecorder(recorderEntry{
