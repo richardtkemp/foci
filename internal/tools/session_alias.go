@@ -30,7 +30,7 @@ type AliasSetter interface {
 func NewSetSessionAliasTool(idx AliasSetter, onChanged func(agentID, platform string, chatID int64)) *Tool {
 	return &Tool{
 		Name:        "set_session_alias",
-		Description: "Set a short descriptive name for this conversation (shown in the chat list). Call once after the first exchange to name what the conversation is about. Keep it under 5 words. A name the user set by hand is kept unless force is set; set it ONLY when the user explicitly asks you to rename this chat.",
+		Description: "Set a short descriptive name for this conversation (shown in the chat list). Keep it under 5 words. A name the user set by hand is kept unless force is set; set it ONLY when the user explicitly asks you to rename this chat.",
 		ExecExport:  true,
 		Parameters: json.RawMessage(`{
 			"type": "object",

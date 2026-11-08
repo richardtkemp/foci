@@ -45,6 +45,9 @@ const (
 	pinSummaryTimeout = 15 * time.Second
 	// pinSummaryMaxTokens is ample for ten words and stops a runaway answer.
 	pinSummaryMaxTokens = 40
+	// pinSummaryMaxWords is the limit the prompt states (Dick: "a strict ten
+	// word limit"); summaryWordsOK accepts up to 1.5 times it.
+	pinSummaryMaxWords = 10
 
 	openRouterChatURL = "https://openrouter.ai/api/v1/chat/completions"
 	pinSummarySecret  = "openrouter.api_key"
@@ -108,6 +111,47 @@ func (s *pinSummariser) configure(app *config.AppSpecific) {
 	s.mu.Lock()
 	s.model, s.providers = model, providers
 	s.mu.Unlock()
+}
+
+// usable reports whether a call can be made now: the model is not off and
+// the OpenRouter key is set. A feature that runs unasked (the automatic chat
+// name, #2962) checks it first, so it is on only when correctly configured.
+func (s *pinSummariser) usable() bool {
+	if s == nil {
+		return false
+	}
+	model, _ := s.settings()
+	if model == "" || strings.EqualFold(model, pinSummaryOff) {
+		return false
+	}
+	return s.hasKey()
+}
+
+func (s *pinSummariser) hasKey() bool {
+	if s.apiKey == nil {
+		return false
+	}
+	key, _ := s.apiKey()
+	return key != ""
+}
+
+// fastSummaryWarnOnce makes the startup warning about a misconfigured fast
+// summary path appear once per process, for all its users together (Dick,
+// 2026-11-08: "only once overall for the shared rapid summary path").
+var fastSummaryWarnOnce sync.Once
+
+// warnIfUnconfigured logs, once per process, that the fast summary path
+// cannot run because the OpenRouter key is missing. Nothing is logged when
+// the model is set to off: that is a choice, not a fault.
+func (s *pinSummariser) warnIfUnconfigured() {
+	model, _ := s.settings()
+	if model == "" || strings.EqualFold(model, pinSummaryOff) || s.hasKey() {
+		return
+	}
+	fastSummaryWarnOnce.Do(func() {
+		appLog.Warnf("fast summary: secret %s is not set, so the model calls of [platforms.app] pin_summary_model are off: "+
+			"pin label suggestions, Stop-view subagent summaries and automatic chat names", pinSummarySecret)
+	})
 }
 
 func (s *pinSummariser) settings() (string, []string) {
@@ -174,6 +218,38 @@ type openRouterChatResponse struct {
 // nil error means the feature is off. session and agentID name where the call
 // is booked in the cost ledger ("" = no session).
 func (s *pinSummariser) summarise(ctx context.Context, text, session, agentID string) (string, error) {
+	return s.ask(ctx, summaryAsk{what: "pin summary", system: pinSummaryPrompt, maxInputRunes: pinSummaryMaxInputRunes, maxTokens: pinSummaryMaxTokens, maxWords: pinSummaryMaxWords}, text, session, agentID)
+}
+
+// summaryAsk is one kind of short summary the fast model writes: the pin
+// label (#2956) or a subagent's current step (#2960).
+type summaryAsk struct {
+	what          string // names the call in the log
+	system        string // the system prompt
+	maxInputRunes int    // the text is cut to this many runes
+	maxTokens     int    // the answer's token cap
+	// maxWords is the word count the prompt asks for (0 = no check). An
+	// answer of more than 1.5 times this many words is not used: ask returns
+	// an error and logs a warning (Dick, 2026-11-08: "Accept return up to
+	// 1.5x requested length, if longer than that simply don't use the
+	// result, and log warning"). A shorter answer is used as written, never
+	// cut.
+	maxWords int
+}
+
+// summaryWordsOK reports whether summary is within 1.5 times maxWords words
+// (summaryAsk.maxWords). maxWords <= 0 accepts anything.
+func summaryWordsOK(summary string, maxWords int) bool {
+	if maxWords <= 0 {
+		return true
+	}
+	return 2*len(strings.Fields(summary)) <= 3*maxWords
+}
+
+// ask returns the model's cleaned answer to text under a's system prompt. A ""
+// answer with a nil error means the feature is off. session and agentID name
+// where the call is booked in the cost ledger ("" = no session).
+func (s *pinSummariser) ask(ctx context.Context, a summaryAsk, text, session, agentID string) (string, error) {
 	model, providers := s.settings()
 	if model == "" || strings.EqualFold(model, pinSummaryOff) {
 		return "", nil
@@ -193,10 +269,10 @@ func (s *pinSummariser) summarise(ctx context.Context, text, session, agentID st
 	body := openRouterChatRequest{
 		Model: model,
 		Messages: []openRouterChatMsg{
-			{Role: "system", Content: pinSummaryPrompt},
-			{Role: "user", Content: truncateRunes(text, pinSummaryMaxInputRunes)},
+			{Role: "system", Content: a.system},
+			{Role: "user", Content: truncateRunes(text, a.maxInputRunes)},
 		},
-		MaxTokens:   pinSummaryMaxTokens,
+		MaxTokens:   a.maxTokens,
 		Temperature: 0,
 	}
 	if len(providers) > 0 {
@@ -246,20 +322,25 @@ func (s *pinSummariser) summarise(ctx context.Context, text, session, agentID st
 	if out.Model != "" {
 		served = out.Model
 	}
-	appLog.Infof("pin summary: session=%s model=%s input=%d output=%d duration=%s",
-		session, served, out.Usage.PromptTokens, out.Usage.CompletionTokens, duration.Round(time.Millisecond))
-	bookPinSummary(out, served, session, agentID, start, duration)
+	appLog.Infof("%s: session=%s model=%s input=%d output=%d duration=%s",
+		a.what, session, served, out.Usage.PromptTokens, out.Usage.CompletionTokens, duration.Round(time.Millisecond))
+	bookSummary(a.what, out, served, session, agentID, start, duration)
 
 	summary := cleanPinSummary(out.Choices[0].Message.Content)
 	if summary == "" {
 		return "", fmt.Errorf("openrouter: empty summary")
 	}
+	if !summaryWordsOK(summary, a.maxWords) {
+		appLog.Warnf("%s: session=%s answer has %d words, more than 1.5x the %d asked for; not used: %q",
+			a.what, session, len(strings.Fields(summary)), a.maxWords, truncateRunes(summary, 200))
+		return "", fmt.Errorf("answer too long: %d words, limit %d", len(strings.Fields(summary)), a.maxWords)
+	}
 	return summary, nil
 }
 
-// bookPinSummary books the call in the cost ledger as a summary call, on a
-// system turn of its own in the pinned message's session.
-func bookPinSummary(out openRouterChatResponse, model, session, agentID string, start time.Time, duration time.Duration) {
+// bookSummary books the call in the cost ledger as a summary call, on a
+// system turn of its own in the session it was made for.
+func bookSummary(what string, out openRouterChatResponse, model, session, agentID string, start time.Time, duration time.Duration) {
 	turn := accounting.OwnTurn(
 		accounting.MintTurnID(session, accounting.KindSummary, start),
 		session, agentID, accounting.SourceSystem, start, start.Add(duration))
@@ -273,7 +354,7 @@ func bookPinSummary(out openRouterChatResponse, model, session, agentID string, 
 		Session: session, AgentID: agentID, TurnID: turn.TurnID,
 		Start: start, Duration: duration, Tokens: usage.Tokens(), StopReason: stop,
 	}.Call()); err != nil {
-		appLog.Warnf("pin summary: book call: %v", err)
+		appLog.Warnf("%s: book call: %v", what, err)
 	}
 }
 

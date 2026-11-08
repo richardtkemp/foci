@@ -31,7 +31,7 @@ Per-tool reference for the Claude Code (shell) backend. How `foci_*` shell funct
 - Refused in a depth leaf (open or reported): the leaf's chat belongs to the tree. Finish with `foci_depth_report`; the user or the root chat closes it.
 
 ### `foci_set_session_alias` — name this conversation
-- `--alias TEXT` (required). Sets a short descriptive name for the current chat session, shown in the chat list. Call once after the first exchange to name what the conversation is about; keep it under 5 words.
+- `--alias TEXT` (required). Sets a short descriptive name for the current chat session, shown in the chat list; keep it under 5 words. You do not need to name chats: foci names unnamed open app chats from the conversation itself (#2962). A name set with this tool stops that automatic naming for the chat.
 - **Chat sessions only** — errors on a branch/independent session key.
 - **Won't clobber a manual rename:** if the chat already has an alias that wasn't set by this tool, it replies with that name and does not overwrite it.
 - `--force` overrides that guard. Use it **only when the user explicitly asks you to rename the chat**. The new name then counts as the user's own, so a later plain call skips it too.

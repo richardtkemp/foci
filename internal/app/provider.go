@@ -127,6 +127,7 @@ func (p *appProvider) DefaultPlatformConfig() config.PlatformConfig {
 	maxBlobMB := defaultMaxBlobMB
 	checkboxReplayDocs := defaultCheckboxReplayDocs
 	checkboxMaxDocs := defaultCheckboxDocCap
+	autoNameOn, autoNameFirst, autoNameEvery, autoNameWords := true, defaultAutoNameFirst, defaultAutoNameEvery, defaultAutoNameWords
 	return config.PlatformConfig{
 		ID:     "app",
 		Notify: config.NotifyConfig{StartupNotify: &startupNotify},
@@ -153,6 +154,10 @@ func (p *appProvider) DefaultPlatformConfig() config.PlatformConfig {
 			MermaidCmd:         mermaid.DefaultCmd,
 			PinSummaryModel:    defaultPinSummaryModel,
 			PinSummaryProvider: defaultPinSummaryProvider,
+			AutoName:           &autoNameOn,
+			AutoNameFirst:      &autoNameFirst,
+			AutoNameEvery:      &autoNameEvery,
+			AutoNameWords:      &autoNameWords,
 		},
 	}
 }

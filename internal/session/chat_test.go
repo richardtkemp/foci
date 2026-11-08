@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"testing"
 
 	"foci/internal/provider"
@@ -253,5 +254,51 @@ func TestSetChatAliasUnique(t *testing.T) {
 	}
 	if got, err := idx.ResolveChatAlias("clutch", "ocn: A/B"); err != nil || got != "clutch/c3" {
 		t.Fatalf("resolve alias with '/' and ':' = %q, %v; want clutch/c3", got, err)
+	}
+}
+
+// TestSetChatAliasIfUnchanged (#2962): the alias and the extra keys are
+// written only while the stored alias still equals the expected one, and a
+// name another chat holds is refused.
+func TestSetChatAliasIfUnchanged(t *testing.T) {
+	idx, err := NewSessionIndex(t.TempDir() + "/index.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close() //nolint:errcheck
+	get := func(chat int64, key string) string {
+		v, err := idx.GetChatMetadata("a", "app", chat, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+
+	if err := idx.SetChatAliasIfUnchanged("a", "app", 1, "", "First", map[string]string{"alias_summary": "First"}); err != nil {
+		t.Fatalf("unset alias, expect empty: %v", err)
+	}
+	if get(1, "alias") != "First" || get(1, "alias_summary") != "First" {
+		t.Errorf("alias = %q, alias_summary = %q", get(1, "alias"), get(1, "alias_summary"))
+	}
+
+	if err := idx.SetChatAliasUnique("a", "app", 1, "User name"); err != nil {
+		t.Fatal(err)
+	}
+	err = idx.SetChatAliasIfUnchanged("a", "app", 1, "First", "Second", map[string]string{"alias_summary": "Second"})
+	if !errors.Is(err, ErrAliasChanged) {
+		t.Errorf("moved alias: err = %v, want ErrAliasChanged", err)
+	}
+	if get(1, "alias") != "User name" || get(1, "alias_summary") != "First" {
+		t.Errorf("a refused write changed state: alias = %q, alias_summary = %q", get(1, "alias"), get(1, "alias_summary"))
+	}
+
+	if err := idx.SetChatAliasUnique("a", "app", 2, "Taken"); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.SetChatAliasIfUnchanged("a", "app", 1, "User name", "taken", nil); !errors.Is(err, ErrAliasTaken) {
+		t.Errorf("held name: err = %v, want ErrAliasTaken", err)
+	}
+	if get(1, "alias") != "User name" {
+		t.Errorf("alias = %q after a refused write", get(1, "alias"))
 	}
 }

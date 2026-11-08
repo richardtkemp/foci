@@ -805,3 +805,90 @@ func InitReplayStore(path string) error {
 	s.Close()
 	return nil
 }
+
+// chatMessageWhere selects the stored frames that are chat messages for the
+// automatic chat name (#2962): a whole message row from the user or the agent,
+// or the end of a streamed agent reply. System notices, media, notifications
+// and every streaming or control frame are left out. It must select the same
+// frames autoNameCounts accepts on the live path.
+const chatMessageWhere = `conv_id = ? AND seq > ? AND visible = 1
+	AND json_extract(wire, '$.t') IN ('` + fap.TypeMessage + `', '` + fap.TypeTextEnd + `')
+	AND coalesce(json_extract(wire, '$.d.role'), '') <> 'system'`
+
+// CountMessagesAfter returns how many chat messages (chatMessageWhere) convID
+// holds with seq > afterSeq, counting no further than limit. A nil store or a
+// read error gives 0.
+func (s *frameStore) CountMessagesAfter(convID string, afterSeq int64, limit int) int {
+	if s == nil || limit <= 0 {
+		return 0
+	}
+	var n int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM (SELECT 1 FROM app_frames WHERE `+chatMessageWhere+` ORDER BY seq ASC LIMIT ?)`,
+		convID, afterSeq, limit,
+	).Scan(&n)
+	if err != nil {
+		appLog.Warnf("frame store: count messages %s: %v", convID, err)
+		return 0
+	}
+	return n
+}
+
+// chatMessage is one chat message read back for the automatic chat name.
+type chatMessage struct {
+	seq  int64
+	user bool // false = the agent
+	text string
+}
+
+// LastMessagesAfter returns the newest limit chat messages (chatMessageWhere)
+// of convID with seq > afterSeq, oldest first. A nil store or a read error
+// gives nil.
+func (s *frameStore) LastMessagesAfter(convID string, afterSeq int64, limit int) []chatMessage {
+	if s == nil || limit <= 0 {
+		return nil
+	}
+	rows, err := s.db.Query(
+		`SELECT seq, wire FROM app_frames WHERE `+chatMessageWhere+` ORDER BY seq DESC LIMIT ?`,
+		convID, afterSeq, limit,
+	)
+	if err != nil {
+		appLog.Warnf("frame store: read messages %s: %v", convID, err)
+		return nil
+	}
+	defer rows.Close() //nolint:errcheck
+	var out []chatMessage
+	for rows.Next() {
+		var seq int64
+		var wire string
+		if err := rows.Scan(&seq, &wire); err != nil {
+			appLog.Warnf("frame store: read messages %s: scan: %v", convID, err)
+			return nil
+		}
+		var env fap.Envelope
+		if json.Unmarshal([]byte(wire), &env) != nil {
+			continue
+		}
+		var d struct {
+			Role      string  `json:"role"`
+			Text      string  `json:"text"`
+			FinalText *string `json:"finalText"`
+		}
+		if json.Unmarshal(env.D, &d) != nil {
+			continue
+		}
+		m := chatMessage{seq: seq, user: env.T == fap.TypeMessage && d.Role == "user", text: d.Text}
+		if env.T == fap.TypeTextEnd && d.FinalText != nil {
+			m.text = *d.FinalText
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		appLog.Warnf("frame store: read messages %s: %v", convID, err)
+		return nil
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}

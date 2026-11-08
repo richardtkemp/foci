@@ -1377,6 +1377,56 @@ func (idx *SessionIndex) SetChatAliasUnique(agentID, platform string, chatID int
 	}
 }
 
+// ErrAliasChanged is returned by SetChatAliasIfUnchanged when the chat's
+// alias is no longer the one the caller expected.
+var ErrAliasChanged = errors.New("chat alias changed")
+
+// SetChatAliasIfUnchanged sets chatID's alias to alias, and each of meta's
+// keys to its value, in one transaction, but only while the stored alias
+// (trimmed) still equals expect: a compare-and-set, so a name another writer
+// (the user's rename, an agent's set_session_alias) stored after the caller
+// read it is never overwritten. It returns ErrAliasChanged when the alias
+// moved and ErrAliasTaken when another chat of the agent on the platform
+// holds alias (case-insensitive), like SetChatAliasUnique. Used by the app's
+// automatic chat name (#2962).
+func (idx *SessionIndex) SetChatAliasIfUnchanged(agentID, platform string, chatID int64, expect, alias string, meta map[string]string) error {
+	trimmed := strings.TrimSpace(alias)
+	if trimmed == "" {
+		return errors.New("empty alias")
+	}
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	var current string
+	err := idx.db.QueryRow(chatMetaTable.selectSQL, agentID, platform, chatID, "alias").Scan(&current)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if strings.TrimSpace(current) != strings.TrimSpace(expect) {
+		return ErrAliasChanged
+	}
+	holders, err := idx.chatsHoldingAliasLocked(agentID, platform, aliasNorm(trimmed), chatID)
+	if err != nil {
+		return err
+	}
+	if len(holders) > 0 {
+		return ErrAliasTaken
+	}
+	tx, err := idx.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	if _, err := tx.Exec(chatMetaTable.upsertSQL, agentID, platform, chatID, "alias", trimmed); err != nil {
+		return err
+	}
+	for k, v := range meta {
+		if _, err := tx.Exec(chatMetaTable.upsertSQL, agentID, platform, chatID, k, v); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // ChatsHoldingAlias returns the chats, other than exceptChatID, whose alias
 // matches alias (case-insensitive, trimmed) under the same agent and platform,
 // each mapped to the alias as that chat stores it.

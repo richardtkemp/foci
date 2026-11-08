@@ -84,6 +84,9 @@ type Hub struct {
 
 	// pinSum answers pin.summarize with a model-written pin label (#2956).
 	pinSum *pinSummariser
+	// autoName names open chats that have no name set on purpose, from the
+	// conversation, with pinSum's model (#2962).
+	autoName *autoNamer
 
 	// helloMu guards helloByDevice/helloWarns only — deliberately not h.mu,
 	// which is held across conversation fan-out; a disconnect must never queue
@@ -315,6 +318,7 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		checkboxes:    checkboxes,
 		deps:          deps,
 		pinSum:        newPinSummariser(appCfg, secretGetter(deps, pinSummarySecret)),
+		autoName:      newAutoNamer(appCfg),
 		pairKeys:      newPairKeyStore(),
 		blobs:         blobs,
 		mermaid:       mermaidR,
@@ -332,6 +336,7 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		wizards:       make(map[string]*wizardSession),
 		wizardByScope: make(map[string]string),
 	}
+	h.pinSum.warnIfUnconfigured()
 	if appCfg != nil {
 		h.host = appCfg.Host
 		if appCfg.ReplayBuffer != nil && *appCfg.ReplayBuffer > 0 {
@@ -1631,7 +1636,7 @@ func (h *Hub) ensureBinding(client *wsClient, agentID, convID string) *convBindi
 		existing.attach(client)
 		return existing
 	}
-	b = &convBinding{convID: convID, chatID: chatID, replayDepth: h.replayDepth, replayTTL: h.replayTTL, store: h.frames, seq: h.frames.MaxSeq(convID), seen: make(map[string]struct{}), notifyOffline: h.pushNotify}
+	b = &convBinding{convID: convID, chatID: chatID, replayDepth: h.replayDepth, replayTTL: h.replayTTL, store: h.frames, seq: h.frames.MaxSeq(convID), seen: make(map[string]struct{}), notifyOffline: h.pushNotify, onMessageStored: h.autoNameCheck}
 	b.setIdent(agentID, sk)
 	if preview, sentMs, ok := h.frames.LastVisible(convID); ok {
 		b.lastPreview = preview
@@ -2547,6 +2552,10 @@ type convBinding struct {
 	store       *frameStore   // durable replay backstop (nil = in-memory only)
 
 	notifyOffline func(p pushPayload) // fires a wake push for offline visible frames; nil = no push
+	// onMessageStored runs after a chat message frame (autoNameCounts) is in
+	// the durable store, on a goroutine of its own; nil = none. The hub's
+	// automatic chat name (#2962) counts messages from there.
+	onMessageStored func(b *convBinding)
 
 	mu           sync.Mutex
 	clients      map[*wsClient]struct{}     // live sockets currently bound (≥1 when online); multi-device: a phone and tablet can both be attached
@@ -3153,6 +3162,16 @@ func (b *convBinding) sendThen(frame fap.ServerFrame, onRecorded func()) {
 	store := b.store
 	sessionKey := b.key()
 	b.mu.Unlock()
+
+	if hook := b.onMessageStored; hook != nil && store != nil && autoNameCounts(frame) {
+		inner := onRecorded
+		onRecorded = func() {
+			if inner != nil {
+				inner()
+			}
+			go hook(b)
+		}
+	}
 
 	// Persist the canonical (ack=0) wire to the durable backstop (async; survives
 	// restart + the in-memory depth/TTL bound, so a long-offline phone can backfill

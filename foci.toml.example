@@ -533,6 +533,10 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # mermaid_browser = ""                 # Chrome/Chromium for mmdc (default: chromium etc. on PATH)
 # pin_summary_model = "meta-llama/llama-3.1-8b-instruct"  # OpenRouter model that suggests a pin label; "off" disables
 # pin_summary_provider = "groq"        # OpenRouter provider(s) tried first, comma-separated; "any" = OpenRouter picks
+# auto_name = true                     # name open chats with no user/agent-set name from the conversation (needs the pin_summary_model path)
+# auto_name_first = 10                 # messages before a chat's first automatic name
+# auto_name_every = 50                 # new messages before the name is checked again (also the most messages read)
+# auto_name_words = 6                  # words asked for; an answer over 1.5x this is not used
 # allowed_devices = []                 # device IDs allowed to pair (empty = any)
 
 # ─── Sessions ─────────────────────────────────────────────────────────

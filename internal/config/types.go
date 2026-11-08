@@ -959,6 +959,13 @@ type AppSpecific struct {
 	// calls OpenRouter with the openrouter.api_key secret.
 	PinSummaryModel    string `toml:"pin_summary_model"    hot:"event" desc:"OpenRouter model that writes the suggested label when a message is pinned in the app (default meta-llama/llama-3.1-8b-instruct; set to off to disable)"`
 	PinSummaryProvider string `toml:"pin_summary_provider" hot:"event" desc:"OpenRouter provider(s) the pin label summary is sent to first, comma-separated, falling back to others if they fail (default groq; set to any to let OpenRouter choose)"`
+	// Automatic chat name (#2962): an open app chat without a name set by the
+	// user or an agent is named from its conversation by the pin summary's
+	// model (pin_summary_model / pin_summary_provider, openrouter.api_key).
+	AutoName      *bool `toml:"auto_name"       hot:"event" desc:"Name open app chats that have no name set by the user or an agent, from the conversation, with the pin_summary_model model; the name is checked again as the chat goes on and changed only when it no longer fits. Runs only when that model can be called (not off, openrouter.api_key set) (default true)"`
+	AutoNameFirst *int  `toml:"auto_name_first" hot:"event" min:"1" desc:"How many messages a chat has before its first automatic name (default 10)"`
+	AutoNameEvery *int  `toml:"auto_name_every" hot:"event" min:"1" desc:"How many new messages after the last automatic name until the name is checked again; also the most messages the model reads (default 50)"`
+	AutoNameWords *int  `toml:"auto_name_words" hot:"event" min:"1" desc:"The most words the model is asked to use for an automatic chat name; an answer longer than 1.5 times this is not used (default 6)"`
 	// AllowedDevices: if non-empty, only these device IDs may pair (empty allows
 	// any). A slice → set in the TOML file, not via /config set, so no desc tag
 	// (mirrors AccessConfig.AllowedUsers).
@@ -1057,6 +1064,18 @@ func (p *PlatformConfig) ApplyDefaults(defaults PlatformConfig) {
 		}
 		if p.App.PinSummaryProvider == "" {
 			p.App.PinSummaryProvider = defaults.App.PinSummaryProvider
+		}
+		if p.App.AutoName == nil {
+			p.App.AutoName = defaults.App.AutoName
+		}
+		if p.App.AutoNameFirst == nil {
+			p.App.AutoNameFirst = defaults.App.AutoNameFirst
+		}
+		if p.App.AutoNameEvery == nil {
+			p.App.AutoNameEvery = defaults.App.AutoNameEvery
+		}
+		if p.App.AutoNameWords == nil {
+			p.App.AutoNameWords = defaults.App.AutoNameWords
 		}
 		if p.App.AllowedDevices == nil {
 			p.App.AllowedDevices = defaults.App.AllowedDevices

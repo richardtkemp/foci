@@ -142,6 +142,10 @@ var (
 	// the app hub's summariser (a derived handle).
 	liveApplyPinSummaryAddrs = []string{"platforms.app.pin_summary_model", "platforms.app.pin_summary_provider"}
 
+	// #2962: the automatic chat name's switch, counts and word limit, pushed
+	// into the app hub's autoNamer (a derived handle).
+	liveApplyAutoNameAddrs = []string{"platforms.app.auto_name", "platforms.app.auto_name_first", "platforms.app.auto_name_every", "platforms.app.auto_name_words"}
+
 	// Global rows only: the agent./platforms. debug override rows are dead
 	// (nothing reads them — tracker #1199), so their struct tags carry the
 	// ",global" scope marker and no applier exists for them.
@@ -420,6 +424,15 @@ func registerLiveAppliers(la *liveApply, agents *agentRegistry) {
 			appCfg = p.App
 		}
 		app.ConfigurePinSummary(appCfg)
+		return nil
+	})
+
+	la.register(liveApplyAutoNameAddrs, func(fresh *config.Config) error {
+		var appCfg *config.AppSpecific
+		if p := fresh.Platform("app"); p != nil {
+			appCfg = p.App
+		}
+		app.ConfigureAutoName(appCfg)
 		return nil
 	})
 
