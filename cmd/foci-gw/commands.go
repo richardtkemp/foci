@@ -182,6 +182,11 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 			return resolved.Developer + "/" + resolved.ModelID
 		},
 		AvailableBackends: delegator.SupportedNames(),
+		// The same load + Validate the next start runs (main.go), so the
+		// wizard never writes a block that start would refuse (#2976).
+		CheckConfig: func(content string) error {
+			return config.CheckFileContent(content, p.configPath, delegator.RegisteredNames())
+		},
 	}
 
 	// Construct the CommandContext

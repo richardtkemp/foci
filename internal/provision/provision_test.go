@@ -43,4 +43,4 @@ package provision
 // - TestStaggerCrontabLine: Minute staggering with wrapping
 // - TestTitleCase: Hyphen-separated to title case conversion
 // - TestToSlug: Display name normalization
-// - TestAppendCrontab: Crontab command execution
+// (crontab read/append/install: internal/usercrontab)

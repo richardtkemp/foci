@@ -30,9 +30,9 @@ func liveStartWizard(t *testing.T, start func(string) ([]string, error)) (w *age
 		t.Fatal(err)
 	}
 	writes := 0
-	orig := provision.RunCrontabCmd
-	t.Cleanup(func() { provision.RunCrontabCmd = orig })
-	provision.RunCrontabCmd = func(string) error { writes++; return nil }
+	orig := provision.AppendCrontab
+	t.Cleanup(func() { provision.AppendCrontab = orig })
+	provision.AppendCrontab = func([]string) error { writes++; return nil }
 
 	w = &agentWizard{
 		deps: AgentNewDeps{

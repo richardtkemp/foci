@@ -188,55 +188,6 @@ func TestSeedDefaultsEmbedFS(t *testing.T) {
 	}
 }
 
-func TestRunCrontabCmdDefault(t *testing.T) {
-	// Call the real default with a harmless no-op command
-	err := RunCrontabCmd("true")
-	if err != nil {
-		t.Errorf("RunCrontabCmd(true): %v", err)
-	}
-}
-
-func TestAppendCrontab(t *testing.T) {
-	// Test successful append
-	orig := RunCrontabCmd
-	defer func() { RunCrontabCmd = orig }()
-
-	called := false
-	RunCrontabCmd = func(cmd string) error {
-		called = true
-		// Verify the command contains our lines
-		if len(cmd) == 0 {
-			t.Errorf("expected crontab command")
-		}
-		return nil
-	}
-
-	lines := []string{"0 4 * * * foci branch", "*/30 * * * * foci send"}
-	err := AppendCrontab(lines)
-	if err != nil {
-		t.Errorf("AppendCrontab: %v", err)
-	}
-	if !called {
-		t.Error("RunCrontabCmd was not called")
-	}
-}
-
-func TestAppendCrontabError(t *testing.T) {
-	// Proves that AppendCrontab propagates errors from the underlying crontab
-	// command by injecting a mock that returns an error and verifying it surfaces to the caller.
-	orig := RunCrontabCmd
-	defer func() { RunCrontabCmd = orig }()
-
-	RunCrontabCmd = func(cmd string) error {
-		return os.ErrPermission
-	}
-
-	err := AppendCrontab([]string{"0 4 * * * foci branch"})
-	if err == nil {
-		t.Error("expected error from crontab command")
-	}
-}
-
 func TestProvisionDefaultsTemplateError(t *testing.T) {
 	// Proves that Provision in defaults mode surfaces a "template SOUL.md"
 	// error when templating fails, by pre-creating SOUL.md as a directory to trigger EISDIR on ReadFile.

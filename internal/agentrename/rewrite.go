@@ -1,15 +1,11 @@
 package agentrename
 
 import (
-	"bytes"
 	"context"
-	"errors"
-	"fmt"
-	"os/exec"
 	"regexp"
 	"strings"
 
-	"foci/internal/procx"
+	"foci/internal/usercrontab"
 )
 
 // CrontabIO reads and installs the crontab the rename edits: the gateway
@@ -20,35 +16,18 @@ type CrontabIO interface {
 	Install(content string) error
 }
 
-// SystemCrontab is the production CrontabIO: `crontab -l` and `crontab -`.
+// SystemCrontab is the production CrontabIO: `crontab -l` and `crontab -`
+// through usercrontab, each time-limited (#2976).
 type SystemCrontab struct{}
 
 // Read implements CrontabIO.
 func (SystemCrontab) Read() (string, error) {
-	cmd := procx.Spawn(context.Background(), procx.Operator, "crontab", "-l")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) && strings.Contains(strings.ToLower(stderr.String()), "no crontab") {
-			return "", nil
-		}
-		return "", fmt.Errorf("crontab -l: %w: %s", err, strings.TrimSpace(stderr.String()))
-	}
-	return string(out), nil
+	return usercrontab.Read(context.Background())
 }
 
 // Install implements CrontabIO.
 func (SystemCrontab) Install(content string) error {
-	cmd := procx.Spawn(context.Background(), procx.Operator, "crontab", "-")
-	cmd.Stdin = strings.NewReader(content)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("crontab -: %w: %s", err, strings.TrimSpace(stderr.String()))
-	}
-	return nil
+	return usercrontab.Install(context.Background(), content)
 }
 
 // rewriteSecrets returns secrets.toml content with every exact reference to

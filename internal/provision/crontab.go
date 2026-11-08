@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"foci/internal/procx"
+	"foci/internal/usercrontab"
 )
 
 // GenerateCrontab reads a crontab template, replaces placeholders, strips comments,
@@ -63,16 +63,10 @@ func StaggerCrontabLine(line string, offset int) string {
 	return line
 }
 
-// AppendCrontab appends entries to the user's crontab.
-func AppendCrontab(lines []string) error {
-	newEntries := strings.Join(lines, "\n")
-	cmd := fmt.Sprintf("(crontab -l 2>/dev/null; echo %q) | crontab -", "\n"+newEntries+"\n")
-	return RunCrontabCmd(cmd)
-}
-
-// RunCrontabCmd is the function used to append crontab entries.
-// Overridden in tests to avoid real exec.
-var RunCrontabCmd = func(shellCmd string) error {
-	// Trusted: foci editing the service user's crontab — its own machinery.
-	return procx.Spawn(context.Background(), procx.Trusted, "sh", "-c", shellCmd).Run()
+// AppendCrontab appends entries to the service user's crontab: it reads the
+// current crontab and installs it with the lines added, through usercrontab
+// (stdin, no shell; each command time-limited, #2976). A variable so tests
+// can replace it and never touch the real crontab.
+var AppendCrontab = func(lines []string) error {
+	return usercrontab.Append(context.Background(), lines)
 }

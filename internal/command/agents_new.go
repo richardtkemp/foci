@@ -32,6 +32,12 @@ type AgentNewDeps struct {
 	// start. nil = no live start available (unit tests, first-run setup):
 	// the wizard then tells the user to /restart.
 	StartAgent func(agentID string) (hints []string, err error)
+	// CheckConfig runs the load + Validate pipeline the next start runs on
+	// candidate foci.toml content (config.CheckFileContent). The wizard runs
+	// it on the config WITH the new [[agents]] block before writing anything,
+	// so it never leaves a foci.toml the next start refuses (#2976). nil = no
+	// check (unit tests, first-run setup).
+	CheckConfig func(content string) error
 }
 
 // Wizard step indices. The flow is name → backend → model → character mode.
@@ -150,6 +156,9 @@ func (w *agentWizard) handleModel(text string) (string, bool) {
 	}
 	w.model = resolve(text)
 
+	if err := w.configProblem(); err != nil {
+		return fmt.Sprintf("This agent cannot be added: with it, foci.toml would fail to load at the next start (%s). Fix foci.toml first, or type another model:", err), false
+	}
 	w.step = stepCharMode
 	return charModePrompt, false
 }
@@ -209,6 +218,9 @@ func (w *agentWizard) handleBackend(text string) (string, bool) {
 	// per-agent model field, and provision discards backend_config.model for api
 	// backends. Skip the (dead) model question and go straight to character files.
 	if w.backend == apiBackend {
+		if err := w.configProblem(); err != nil {
+			return fmt.Sprintf("An `api` agent cannot be added: with it, foci.toml would fail to load at the next start (%s). Fix foci.toml first, or pick another backend:", err), false
+		}
 		w.step = stepCharMode
 		return charModePrompt, false
 	}
@@ -345,14 +357,9 @@ func (w *agentWizard) handleCharMode(text string) (string, bool) {
 	return result, true
 }
 
-// createAgent is the default creation function: it sets up the workspace,
-// appends the [[agents]] block to foci.toml, adds the crontab entries, and
-// then starts the agent live through deps.StartAgent, with no restart (#963).
-// A failed start keeps the config block (it is not rolled back) and the
-// reply names the reason and says to /restart. Only a NEW agent starts live:
-// edits to existing [[agents]] blocks still need a restart.
-func createAgent(w *agentWizard) (string, error) {
-	spec := provision.AgentSpec{
+// spec is the provisioning spec for the values collected so far.
+func (w *agentWizard) spec() provision.AgentSpec {
+	return provision.AgentSpec{
 		ID:          w.id,
 		DisplayName: w.display,
 		HomeDir:     w.deps.HomeDir,
@@ -362,6 +369,44 @@ func createAgent(w *agentWizard) (string, error) {
 		FileMode:    w.deps.FileMode,
 		Backend:     w.backend,
 		Model:       w.modelRaw,
+	}
+}
+
+// configProblem reports why foci.toml with this agent's [[agents]] block
+// appended would fail the next start's load (deps.CheckConfig), or nil when
+// it would load. The block does not depend on the character-file choice, so
+// this can run as soon as backend and model are known. A foci.toml that
+// ALREADY fails the check is not blamed on the new agent (nil), as the config
+// editor does: the wizard did not break it.
+func (w *agentWizard) configProblem() error {
+	check := w.deps.CheckConfig
+	if check == nil {
+		return nil
+	}
+	data, err := os.ReadFile(w.deps.ConfigPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", w.deps.ConfigPath, err)
+	}
+	cur := string(data)
+	if check(cur) != nil {
+		return nil
+	}
+	return check(cur + provision.GenerateAgentBlock(w.spec()))
+}
+
+// createAgent is the default creation function: it sets up the workspace,
+// appends the [[agents]] block to foci.toml, adds the crontab entries, and
+// then starts the agent live through deps.StartAgent, with no restart (#963).
+// A failed start keeps the config block (it is not rolled back) and the
+// reply names the reason and says to /restart. Only a NEW agent starts live:
+// edits to existing [[agents]] blocks still need a restart.
+func createAgent(w *agentWizard) (string, error) {
+	spec := w.spec()
+
+	// Re-check right before writing: foci.toml may have changed since the
+	// backend/model step. Nothing has been written yet.
+	if err := w.configProblem(); err != nil {
+		return "", fmt.Errorf("nothing was written: with this agent, foci.toml would fail to load at the next start: %w", err)
 	}
 
 	// Count existing agents for crontab staggering
@@ -411,7 +456,7 @@ func createAgent(w *agentWizard) (string, error) {
 	// Crontab entries
 	if len(result.CrontabLines) > 0 {
 		if err := provision.AppendCrontab(result.CrontabLines); err != nil {
-			sb.WriteString("⚠️  Crontab: could not update automatically. Add these entries manually:\n")
+			fmt.Fprintf(&sb, "⚠️  Crontab: could not update automatically (%s). Add these entries manually:\n", err)
 			for _, line := range result.CrontabLines {
 				fmt.Fprintf(&sb, "   %s\n", line)
 			}

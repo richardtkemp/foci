@@ -1863,7 +1863,7 @@ func TestL2_Cron_RemindToolUnavailableWithoutWakeFn(t *testing.T) {
 // + shared/crontab.template, GenerateCrontab returns one line per
 // non-comment template entry with AGENT_NAME / HOMEDIR / WORKSPACE
 // substituted. L2 drives this via the foci CLI subcommand (no real
-// crontab is touched — RunCrontabCmd is overridden in tests).
+// crontab is touched — AppendCrontab is overridden in tests).
 // Asserts the rendered lines contain the agent id and the agent's
 // resolved workspace path.
 func TestL2_Cron_GenerateCrontabRendersAgentPlaceholders(t *testing.T) {

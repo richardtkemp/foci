@@ -397,9 +397,9 @@ func TestCreateWorkspace(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "foci.toml")
 	os.WriteFile(configPath, []byte("# existing config\n"), 0644)
 
-	origCrontab := provision.RunCrontabCmd
-	defer func() { provision.RunCrontabCmd = origCrontab }()
-	provision.RunCrontabCmd = func(cmd string) error { return nil }
+	origCrontab := provision.AppendCrontab
+	defer func() { provision.AppendCrontab = origCrontab }()
+	provision.AppendCrontab = func([]string) error { return nil }
 
 	deps := AgentNewDeps{
 		ConfigPath:  configPath,
@@ -479,9 +479,9 @@ func TestCreateWorkspaceBlank(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "foci.toml")
 	os.WriteFile(configPath, []byte("# config\n"), 0644)
 
-	origCrontab := provision.RunCrontabCmd
-	defer func() { provision.RunCrontabCmd = origCrontab }()
-	provision.RunCrontabCmd = func(cmd string) error { return nil }
+	origCrontab := provision.AppendCrontab
+	defer func() { provision.AppendCrontab = origCrontab }()
+	provision.AppendCrontab = func([]string) error { return nil }
 
 	deps := AgentNewDeps{
 		ConfigPath:  configPath,
