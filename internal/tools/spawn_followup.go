@@ -340,7 +340,7 @@ func (s *Spawner) stop(caller, id string) (ToolResult, error) {
 	if _, stopped := tr.stopOne(parent, snap.ID); !stopped {
 		return TextResult(fmt.Sprintf("Spawn %s is not running (%s).", snap.ID, spawnState(snap, time.Now()))), nil
 	}
-	if snap.Direct {
+	if snap.Direct && snap.Resumes == 0 {
 		return TextResult(fmt.Sprintf("Stopping spawn %s: its call returns as stopped.", snap.ID)), nil
 	}
 	return TextResult(fmt.Sprintf("Stopping spawn %s: its [SPAWN RESULT] will say it was stopped.", snap.ID)), nil

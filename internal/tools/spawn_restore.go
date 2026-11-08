@@ -95,10 +95,17 @@ func (s *Spawner) RestoreSpawns() {
 		// cross-agent spawn (#2662).
 		host := s.hostOf(recInfo(rec))
 		var agent SpawnAgent
-		if host != nil {
-			agent = host.agentFn()
+		var reason string
+		if rec.OneShot != nil {
+			// An API one-shot (#2979) runs on the host's loop, not an agent's turn.
+			reason = cannotResumeOneShot(host, rec)
+		} else {
+			if host != nil {
+				agent = host.agentFn()
+			}
+			reason = s.cannotResume(host, agent, rec)
 		}
-		if reason := s.cannotResume(host, agent, rec); reason != "" {
+		if reason != "" {
 			tr.adopt(rec, false, "lost", func() {})
 			spawnLog.Warnf("spawn=%s branch=%s cannot be resumed after restart: %s", rec.ID, rec.BranchKey, reason)
 			if rec.Result != "" {
@@ -118,6 +125,10 @@ func (s *Spawner) RestoreSpawns() {
 			s.deliver(rec.Parent, rec.ID, rec.Result)
 		}
 		report(rec.Parent).resumed = append(report(rec.Parent).resumed, label)
+		if rec.OneShot != nil {
+			resumes = append(resumes, pendingResume{rec: rec, host: host, base: base, stop: stop})
+			continue
+		}
 		texts := []string{host.withSteerNotice(spawnRestartNotice(rec.Prompt))}
 		if host.deps.TakeUndelivered != nil {
 			texts = append(texts, host.deps.TakeUndelivered(rec.BranchKey)...)
@@ -134,6 +145,11 @@ func (s *Spawner) RestoreSpawns() {
 	}
 	go func() {
 		for _, r := range resumes {
+			if r.rec.OneShot != nil {
+				// Not in a slot: a direct spawn never took one.
+				go s.resumeOneShotAfterRestart(r.host, r.rec, r.base, r.stop)
+				continue
+			}
 			s.resumeAfterRestart(r.host, r.agent, r.rec, r.base, r.stop, r.texts)
 		}
 	}()
@@ -208,10 +224,17 @@ func recInfo(rec spawnRecord) RunningSpawn {
 	if rec.Character {
 		mode = spawnModeCharacter
 	}
+	if rec.OneShot != nil {
+		// Still a one-shot (#2979): it takes no spawn_send and has no
+		// branch to resume on, though its result now comes as a
+		// [SPAWN RESULT].
+		mode = rec.OneShot.Mode
+	}
 	return RunningSpawn{
 		ID: rec.ID, BranchKey: rec.BranchKey, Name: rec.Name, Description: rec.Description,
 		Model: rec.Model, Started: rec.Started,
 		Character: rec.Character, SpawnModel: rec.SpawnModel,
 		Mode: mode, Agent: rec.Agent, SpawnerUnattended: rec.SpawnerUnattended,
+		Direct: rec.OneShot != nil,
 	}
 }

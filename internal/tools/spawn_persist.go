@@ -56,6 +56,10 @@ type spawnRecord struct {
 	// (send_to_spawner, #2662), in the order sent. A resumed run's result
 	// still carries them (#2677).
 	Kept []keptRecord `json:"kept,omitempty"`
+	// OneShot: an API agent's direct one-shot (#2979), resumed from its
+	// saved conversation (spawnConvPrefix) rather than a branch; it has no
+	// BranchKey. nil for every other spawn.
+	OneShot *oneShotRecord `json:"one_shot,omitempty"`
 }
 
 // keptRecord is the persisted form of one kept message to the spawner.
@@ -157,7 +161,7 @@ func (s *trackedSpawn) record(parent string) *spawnRecord {
 		Resumes: s.resumes, Running: s.running, Result: s.result,
 		Character: s.info.Character, SpawnModel: s.info.SpawnModel,
 		Agent: s.info.Agent, SpawnerUnattended: s.info.SpawnerUnattended,
-		Kept: keptRecords(s.kept),
+		Kept: keptRecords(s.kept), OneShot: s.oneShot,
 	}
 }
 
@@ -173,8 +177,9 @@ func (t *SpawnTracker) persist(parent, id string) {
 	store := t.store
 	var rec *spawnRecord
 	if s := t.spawns[parent][id]; s != nil {
-		if s.info.Direct {
-			// A direct spawn's caller waits for it in this process only.
+		if s.info.Direct && s.oneShot == nil {
+			// A direct spawn's caller waits for it in this process only;
+			// an API one-shot is the exception (#2979).
 			t.mu.Unlock()
 			return
 		}
@@ -254,7 +259,7 @@ func (t *SpawnTracker) loadRecords(agentID string) []spawnRecord {
 	var out []spawnRecord
 	for key, val := range rows {
 		var rec spawnRecord
-		if err := json.Unmarshal([]byte(val), &rec); err != nil || rec.ID == "" || rec.Parent == "" || rec.BranchKey == "" {
+		if err := json.Unmarshal([]byte(val), &rec); err != nil || rec.ID == "" || rec.Parent == "" || (rec.BranchKey == "" && rec.OneShot == nil) {
 			spawnLog.Errorf("agent=%s persisted spawn %s unreadable (%v) — dropping it: %.200q", agentID, key, err, val)
 			_ = store.DeleteAgentMetadata(agentID, key)
 			continue
@@ -282,7 +287,7 @@ func (t *SpawnTracker) adopt(rec spawnRecord, running bool, outcome string, canc
 		info:   recInfo(rec),
 		cancel: cancel, running: running,
 		prompt: rec.Prompt, resumes: rec.Resumes, result: rec.Result,
-		kept: keptEntries(rec.Kept),
+		kept: keptEntries(rec.Kept), oneShot: rec.OneShot,
 	}
 	if running {
 		s.resumes++

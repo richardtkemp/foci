@@ -899,11 +899,14 @@ func (s *Spawner) directModel(mode, model, owner string) string {
 
 // runAPIOneShot runs an API agent's raw, character or explore spawn through
 // foci's own one-shot tool loop (spawnOneShot), on the model its group
-// resolves to.
+// resolves to. Run as a direct spawn (runDirect), it is persisted so a
+// restart resumes it (#2979): character and explore from their saved
+// conversation; raw is reported lost, its sandbox being gone.
 func (s *Spawner) runAPIOneShot(ctx context.Context, mode, prompt, modelGroup string) (ToolResult, error) {
 	deps := s.deps
 	switch mode {
 	case spawnModeRaw:
+		trackOneShot(ctx, &oneShotRecord{Mode: spawnModeRaw, Group: modelGroup}, nil)
 		client, model, format := s.resolveAPISpawn(spawnModeRaw, modelGroup)
 		return inSpawnTempDir(func(tempDir string) (string, error) {
 			toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnRawBlacklist, deps.Store, tempDir, deps.FileMode)
@@ -923,56 +926,20 @@ func (s *Spawner) runAPIOneShot(ctx context.Context, mode, prompt, modelGroup st
 			})
 		})
 
-	case spawnModeCharacter:
-		client, model, format := s.resolveAPISpawn(spawnModeCharacter, modelGroup)
-		// Its own identity, minted as a delegated batch's key is (#2676).
-		self, _ := session.NewBatchKey(SessionKeyFromContext(ctx), deps.AgentID)
-		var system []provider.SystemBlock
-		if deps.SystemPrompt != nil {
-			system = deps.SystemPrompt(self)
+	case spawnModeCharacter, spawnModeExplore:
+		rec := &oneShotRecord{Mode: mode, Group: modelGroup}
+		if mode == spawnModeCharacter {
+			// Its own identity, minted as a delegated batch's key is (#2676).
+			rec.Self, _ = session.NewBatchKey(SessionKeyFromContext(ctx), deps.AgentID)
+		} else {
+			rec.Group = "" // an explore spawn takes no group
 		}
-		toolDefs, tools := spawnToolSet(deps.Registry, spawnCharacterBlacklist)
-		result, err := spawnOneShot(withSpawnSelf(WithSpawnCharacter(ctx), self, model), oneShotParams{
-			client:         client,
-			model:          model,
-			format:         format,
-			system:         system,
-			prompt:         prompt,
-			toolDefs:       toolDefs,
-			tools:          tools,
-			sessions:       deps.Sessions,
-			maxResultChars: spawnMaxResultChars,
-			maxLoops:       deps.maxToolLoops(),
-			fallbackFn:     deps.FallbackFunc,
-			clientProvider: deps.ClientProvider,
-			routingFor:     deps.ProviderRoutingFor,
-		})
+		runCtx, p, err := s.apiOneShotRun(ctx, rec, prompt)
 		if err != nil {
 			return ToolResult{}, err
 		}
-		return TextResult(result), nil
-
-	case spawnModeExplore:
-		client, model, format := s.resolveAPISpawn(spawnModeExplore, modelGroup)
-		system := []provider.SystemBlock{
-			{Type: "text", Text: exploreSystemPrompt},
-		}
-		toolDefs, tools := spawnExploreToolSet(deps.Registry)
-		result, err := spawnOneShot(ctx, oneShotParams{
-			client:         client,
-			model:          model,
-			format:         format,
-			system:         system,
-			prompt:         prompt,
-			toolDefs:       toolDefs,
-			tools:          tools,
-			sessions:       deps.Sessions,
-			maxResultChars: spawnExploreMaxResultChars,
-			maxLoops:       deps.exploreMaxDepth(),
-			fallbackFn:     deps.FallbackFunc,
-			clientProvider: deps.ClientProvider,
-			routingFor:     deps.ProviderRoutingFor,
-		})
+		trackOneShot(ctx, rec, &p)
+		result, err := spawnOneShot(runCtx, p)
 		if err != nil {
 			return ToolResult{}, err
 		}
@@ -1177,6 +1144,14 @@ type oneShotParams struct {
 	fallbackFn     provider.FallbackFunc
 	clientProvider provider.ClientProvider
 	routingFor     func(model string) *provider.ProviderRouting
+	// history, when set, is the conversation to go on from instead of
+	// prompt (a one-shot resumed after a restart, #2979), and startLoop the
+	// loop rounds it has already used.
+	history   []provider.Message
+	startLoop int
+	// checkpoint, when set, is given the conversation after each round of
+	// tool calls, and the rounds used, so a restart can resume it (#2979).
+	checkpoint func(msgs []provider.Message, loops int)
 }
 
 // spawnOneShot makes API calls with optional tool access (raw/character/explore modes).
@@ -1209,6 +1184,9 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (answer string, runErr e
 	messages := []provider.Message{
 		{Role: "user", Content: provider.TextContent(p.prompt)},
 	}
+	if len(p.history) > 0 {
+		messages = p.history
+	}
 	spawnStart := time.Now()
 	agentID := session.AgentIDFromKey(sessionKey)
 	turnID := accounting.MintTurnID(sessionKey, accounting.KindSpawn, spawnStart)
@@ -1224,7 +1202,7 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (answer string, runErr e
 	}
 	primary := provider.ModelTuple{Model: p.model, Format: p.format}
 
-	for i := 0; i < p.maxLoops; i++ {
+	for i := p.startLoop; i < p.maxLoops; i++ {
 		req := &provider.MessageRequest{
 			Model:           p.model,
 			MaxTokens:       16384,
@@ -1332,6 +1310,9 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (answer string, runErr e
 			Role:    "user",
 			Content: toolResults,
 		})
+		if p.checkpoint != nil {
+			p.checkpoint(messages, i+1)
+		}
 	}
 
 	return "Max tool call depth reached.", nil
@@ -1628,6 +1609,10 @@ func spawnBackgroundID(running RunningSpawn) string {
 // spawnResultHead opens every [SPAWN RESULT]: the spawn's name (label), its
 // branch and its id.
 func spawnResultHead(label, branchKey, id string) string {
+	if branchKey == "" {
+		// A one-shot resumed after a restart (#2979) has no branch.
+		return fmt.Sprintf("[SPAWN RESULT] %s (spawn %s)", label, id)
+	}
 	return fmt.Sprintf("[SPAWN RESULT] %s — Branch %s (spawn %s)", label, branchKey, id)
 }
 

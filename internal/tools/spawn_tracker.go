@@ -147,8 +147,11 @@ type trackedSpawn struct {
 	// could not go at once: its spawner's call is waiting on it, or a depth
 	// fan-in holds its owner. They head its result. Persisted with the
 	// spawn (#2677). A direct spawn is never persisted, nor are its kept
-	// messages.
+	// messages, except an API one-shot (oneShot, #2979).
 	kept []SpawnLogEntry
+	// oneShot is set on an API agent's direct one-shot (#2979): a direct
+	// spawn that is persisted, so a restart resumes it.
+	oneShot *oneShotRecord
 }
 
 // SpawnLogEntry is one step of a spawn's activity, kept for spawn_status
@@ -598,7 +601,7 @@ func (s *trackedSpawn) appendLog(kind, text string) {
 }
 
 // addDirect registers a direct spawn while its tool call waits for it
-// (#2656). Not persisted.
+// (#2656). Not persisted, unless setOneShot marks it an API one-shot (#2979).
 func (t *SpawnTracker) addDirect(parent string, s RunningSpawn, cancel context.CancelFunc, prompt string) {
 	if t == nil {
 		return
@@ -619,16 +622,31 @@ func (t *SpawnTracker) addDirect(parent string, s RunningSpawn, cancel context.C
 // and returns who stopped it ("" = nobody) and the messages it kept for its
 // caller (send_to_spawner), taken in the same step that ends it so none can
 // arrive in between and be lost.
+//
+// An API one-shot's persisted record and saved conversation (#2979) are
+// forgotten here, unless foci is shutting down and the run did not complete:
+// then they stay, for the next process to resume it.
 func (t *SpawnTracker) endDirect(parent, id, outcome, detail string) (stoppedBy string, kept []SpawnLogEntry) {
 	if t == nil {
 		return "", nil
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	s := t.spawns[parent][id]
 	if s == nil {
+		t.mu.Unlock()
 		return "", nil
 	}
+	if s.oneShot != nil {
+		cut := outcome != "completed" && !s.stopped &&
+			(t.shuttingDown || t.stopping[session.AgentIDFromAnyKey(parent)])
+		if !cut {
+			defer func() {
+				t.persist(parent, id)
+				t.dropConversation(parent, id)
+			}()
+		}
+	}
+	defer t.mu.Unlock()
 	s.running = false
 	kept, s.kept = s.kept, nil
 	s.ended = time.Now()
