@@ -64,7 +64,7 @@ func (f *FallbackTTS) Synthesize(ctx context.Context, text string) ([]byte, erro
 			break
 		}
 		if i+1 < len(f.Chain) {
-			voiceLog.Infof("tts %q failed (%v) — falling back to %q", e.ID, err, f.Chain[i+1].ID)
+			voiceLog.Warnf("tts %q failed (%v) — falling back to %q", e.ID, err, f.Chain[i+1].ID)
 		}
 	}
 	if skipped == len(errs) {
