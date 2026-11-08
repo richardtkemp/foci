@@ -325,8 +325,6 @@ func TestIdleKeyed_PreAnswerSendFailure(t *testing.T) {
 	}
 }
 
-// TestIdleKeyed_WaitForTurnUnblocksAtIdle proves WaitForTurn tracks the new
-// boundary: it stays blocked across a result and returns once idle completes
 // TestAutonomousTurnBlocksSystemInject: an autonomous turn (CC runs with no foci
 // turn open — e.g. a background-agent completion) marks the session busy, so a
 // SourceSystem inject (reflection/keepalive) defers instead of stealing the run
@@ -391,6 +389,8 @@ func TestAutonomousInjectGrace(t *testing.T) {
 	}
 }
 
+// TestIdleKeyed_WaitForTurnUnblocksAtIdle proves WaitForTurn tracks the new
+// boundary: it stays blocked across a result and returns once idle completes
 // the turn.
 func TestIdleKeyed_WaitForTurnUnblocksAtIdle(t *testing.T) {
 	t.Parallel()

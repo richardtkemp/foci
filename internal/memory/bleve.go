@@ -182,9 +182,6 @@ func NewBleveIndex(indexPath string, sources map[string]SourceConfig, debounce t
 	}, nil
 }
 
-// SetTemporalDecay overrides the recency-boost settings from [memory] config
-// (#352). evergreen may be nil to keep the default patterns. Safe to call once
-// right after construction, before the index is used.
 // SetSearchLimit overrides how many results Search returns ([memory] search_limit);
 // n <= 0 keeps the default. Call once after construction.
 func (b *BleveIndex) SetSearchLimit(n int) {
@@ -203,6 +200,9 @@ func (b *BleveIndex) searchLimitLocked() int {
 	return memorySearchReturn
 }
 
+// SetTemporalDecay overrides the recency-boost settings from [memory] config
+// (#352). evergreen may be nil to keep the default patterns. Safe to call once
+// right after construction, before the index is used.
 func (b *BleveIndex) SetTemporalDecay(enabled bool, halfLifeDays, boost float64, evergreen []string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()

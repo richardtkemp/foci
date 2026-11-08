@@ -33,7 +33,7 @@ func mkWire(t *testing.T, convID string, seq int64) string {
 	return w
 }
 
-// insert synchronously (bypassing the async writer) for deterministic content tests.
+// seed inserts synchronously (bypassing the async writer) for deterministic content tests.
 func seed(s *frameStore, convID string, seq int64, sentMs int64) {
 	s.insert(frameWrite{convID: convID, seq: seq, wire: "wire-" + convID, sentMs: sentMs, visible: true})
 }

@@ -166,9 +166,6 @@ func (idx *SessionIndex) RecordBackendResume(sessionKey, resumeID string) {
 	}
 }
 
-// BackendResumeAt returns the CC resume ID that was live for a session at moment
-// `at`: the newest observation at or before it. ok=false means no CC session
-// had been observed by then.
 // UnsweptResumes returns the backend session IDs recorded for sessionKey whose
 // transcripts have NOT yet been swept (newest first). This is what the daily
 // ephemeral cleanup iterates.
@@ -226,6 +223,9 @@ func (idx *SessionIndex) MarkResumeSwept(sessionKey, resumeID string) {
 	}
 }
 
+// BackendResumeAt returns the CC resume ID that was live for a session at moment
+// `at`: the newest observation at or before it. ok=false means no CC session
+// had been observed by then.
 func (idx *SessionIndex) BackendResumeAt(sessionKey string, at time.Time) (resumeID string, observedAt time.Time, ok bool) {
 	return idx.timelineLookup(
 		`SELECT resume_id, observed_at FROM backend_resume_history

@@ -322,7 +322,6 @@ func newDepthID(prefix string) string {
 
 // --- persistence ---
 
-// persist writes the given nodes' records (snapshots taken under m.mu).
 // registerLeaf binds node key's leaf conversation through the surface (a
 // first registration mints it) and records the conversation id on the node.
 // A node from before #2611 has none, so its first restore mints one: its
@@ -355,6 +354,7 @@ func (m *DepthManager) registerLeaf(key string) {
 	m.persist(rec...)
 }
 
+// persist writes the given nodes' records (snapshots taken under m.mu).
 func (m *DepthManager) persist(recs ...depthNode) {
 	if m.deps.Store == nil {
 		return

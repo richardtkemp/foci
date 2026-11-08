@@ -418,12 +418,6 @@ func defaultSessionKey(d httpHandlerDeps, agentID string) string {
 	return res.SessionKey
 }
 
-// asyncDispatch handles async fire-and-forget requests: queues the agent
-// message on the session's inbox worker, writes a 202 response, and
-// delivers the result via platform. Queueing (rather than a detached
-// goroutine) means the turn serialises with the session's platform turns and
-// waits behind any in-flight turn — system input never steers running work.
-//
 // deliverBufferedQueued queues a turn on the session's inbox and streams its
 // output to the resolved connection AS THE TURN RUNS — the same
 // turnSinkForConn selection deliverToSessionChat (agents_notify.go) uses for
@@ -579,7 +573,10 @@ func writeAccepted(w http.ResponseWriter, rcpt route.Receipt, held string) {
 
 // asyncDispatch handles async fire-and-forget requests: queues the agent
 // message on the session's inbox worker, writes a 202 response, and
-// delivers the result via platform. Returns whether the request was queued —
+// delivers the result via platform. Queueing (rather than a detached
+// goroutine) means the turn serialises with the session's platform turns and
+// waits behind any in-flight turn — system input never steers running work.
+// Returns whether the request was queued —
 // false means the session inbox was full, a 503 has been written, and the
 // caller must not treat the request as dispatched (the #1130 human receipt
 // stamps only on true).

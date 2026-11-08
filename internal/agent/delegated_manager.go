@@ -1228,9 +1228,6 @@ func (m *DelegatedManager) IsPermissionPending(sessionKey string) bool {
 	return mb.permPending
 }
 
-// WaitForTurn blocks until the delegated backend for the given session key
-// reports turn completion. Returns an error if no backend exists.
-// Respects context cancellation/deadline.
 // SessionFilePath returns the coding agent's session JSONL path for the
 // given session key. Empty if the backend hasn't discovered its session yet.
 func (m *DelegatedManager) SessionFilePath(sessionKey string) string {
@@ -1241,6 +1238,9 @@ func (m *DelegatedManager) SessionFilePath(sessionKey string) string {
 	return mb.be.SessionFilePath()
 }
 
+// WaitForTurn blocks until the delegated backend for the given session key
+// reports turn completion. Returns an error if no backend exists.
+// Respects context cancellation/deadline.
 func (m *DelegatedManager) WaitForTurn(ctx context.Context, sessionKey string) error {
 	mb, ok := m.getManaged(sessionKey)
 	if !ok {

@@ -113,12 +113,6 @@ func LoadDirs(d Dirs) *Registry {
 	return m.r
 }
 
-// scanDir reads a single directory and returns the skills parsed from each
-// subdirectory's SKILL.md, in directory order. A missing or unreadable
-// directory yields nil (logged at debug, not an error). Per-skill parse
-// failures are logged and skipped. scanDir performs no loaded/override
-// logging — that belongs to merger.add, which alone holds the cross-directory
-// dedup state needed to tell a fresh load from an override.
 // resolveSkillDir reports whether entry names a skill directory, and returns
 // the path it was FOUND AT — for a symlink that is the link, not its target.
 // That path is the skill's identity: it is the map key, what messages print,
@@ -152,6 +146,12 @@ func resolveSkillDir(parent string, entry os.DirEntry) (string, bool) {
 	return path, true
 }
 
+// scanDir reads a single directory and returns the skills parsed from each
+// subdirectory's SKILL.md, in directory order. A missing or unreadable
+// directory yields nil (logged at debug, not an error). Per-skill parse
+// failures are logged and skipped. scanDir performs no loaded/override
+// logging — that belongs to merger.add, which alone holds the cross-directory
+// dedup state needed to tell a fresh load from an override.
 func scanDir(dir string) []Skill {
 	if dir == "" {
 		return nil

@@ -177,9 +177,9 @@ heavy_enter = $(if $(call heavy_lazy,$(1)),echo ">>> heavy lock: left to the cal
 heavy_reap = $(if $(call heavy_lazy,$(1)),,$(REAP_GRADLE))
 heavy_held = $(if $(FGW_HEAVY_LOCK),$(if $(1),,HEAVY_LOCK_HELD=$(HEAVY_LOCK_PATH) ))
 
-.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals find-metadata-key-registry-drift llbox local-test test-linux-compile local-test-one integration coverage coverage-report coverage-html coverage-check local-vet local-lint lint-unlocked lint-fix lint-dupl lint-static-config verify-persistence check bench-test-build land clean setup-hooks
+.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals find-metadata-key-registry-drift find-misplaced-doc-comments llbox local-test test-linux-compile local-test-one integration coverage coverage-report coverage-html coverage-check local-vet local-lint lint-unlocked lint-fix lint-dupl lint-static-config verify-persistence check bench-test-build land clean setup-hooks
 
-all: $(SIMPLE_BINS) nosgid find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals find-metadata-key-registry-drift llbox
+all: $(SIMPLE_BINS) nosgid find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals find-metadata-key-registry-drift find-misplaced-doc-comments llbox
 
 BUILDVCS := $(shell git rev-parse --git-dir >/dev/null 2>&1 && echo true || echo false)
 
@@ -275,6 +275,16 @@ find-metadata-key-literals:
 find-metadata-key-registry-drift:
 	@mkdir -p bin
 	go build -o bin/find-metadata-key-registry-drift ./scripts/find-metadata-key-registry-drift
+
+# find-misplaced-doc-comments flags a top-level doc comment whose first word
+# names a DIFFERENT symbol of the same package: the sign that a new func/const
+# was inserted between a doc and its declaration, gluing the doc onto the new
+# symbol (#2915). gofmt, vet and golangci-lint all pass that. Walks _test.go
+# files too (golangci runs with tests: false). Stdlib-only, so it lives in the
+# main module.
+find-misplaced-doc-comments:
+	@mkdir -p bin
+	go build -o bin/find-misplaced-doc-comments ./scripts/find-misplaced-doc-comments
 
 # llbox — Landlock write-whitelist sealer, promoted from a throwaway POC
 # (foci_todo #1517) into a proper repo tool for #1523. `make test`/`make
@@ -666,7 +676,7 @@ local-lint:
 	@[ -e $(HEAVY_LOCK_PATH) ] || : > $(HEAVY_LOCK_PATH)
 	@( echo ">>> waiting for heavy lock ($(HEAVY_LOCK_PATH); another build may be running) ... [$$(date +%T)]" >&2; flock 9; echo ">>> acquired heavy lock [$$(date +%T)]" >&2; $(REAP_GRADLE) $(MAKE) --no-print-directory lint-unlocked 9<&- || exit $$? ) 9<$(HEAVY_LOCK_PATH)
 
-lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals find-metadata-key-registry-drift
+lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals find-metadata-key-registry-drift find-misplaced-doc-comments
 	@echo "=== gofmt (every Go file, _test.go included; #2297) ==="
 	@# Here, not in .golangci.yml: that config sets tests: false, so a golangci
 	@# formatter would never see _test.go files (most of the drift). The pre-commit
@@ -698,6 +708,8 @@ lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-cap
 	@$(LINT_ENV) ./bin/find-metadata-key-literals
 	@echo "=== find-metadata-key-registry-drift (MetaKey* constants vs SessionMetadataKeys) ==="
 	@$(LINT_ENV) ./bin/find-metadata-key-registry-drift
+	@echo "=== find-misplaced-doc-comments (a doc comment glued onto the wrong declaration; _test.go included) ==="
+	@$(LINT_ENV) ./bin/find-misplaced-doc-comments
 	@echo "=== deadcode (whole-program reachability, app code only) ==="
 	@# internal/testharness and internal/testtemp are test-only scaffolding:
 	# reachable solely from -tags=integration tests and _test.go files, which

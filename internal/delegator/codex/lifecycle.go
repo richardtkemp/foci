@@ -593,10 +593,6 @@ func (b *Backend) modelFromOpts() string {
 	return b.requestedModelFromOpts()
 }
 
-// prepareConfiguredModel resolves backend_config.model (or a per-session
-// ModelFunc override) after model/list has populated the catalogue. Resumed
-// threads receive it on their next turn/start because thread/resume has no
-// model field; fresh threads receive it directly in thread/start.
 // applyModelAndEffort performs the per-session setup that must happen before a
 // thread exists: resolve the requested model against the catalogue, and record
 // the requested reasoning effort for the first turn to apply.
@@ -619,6 +615,10 @@ func (b *Backend) applyModelAndEffort(ctx context.Context, opts delegator.StartO
 	return nil
 }
 
+// prepareConfiguredModel resolves backend_config.model (or a per-session
+// ModelFunc override) after model/list has populated the catalogue. Resumed
+// threads receive it on their next turn/start because thread/resume has no
+// model field; fresh threads receive it directly in thread/start.
 func (b *Backend) prepareConfiguredModel(ctx context.Context, resumed bool) error {
 	requested := b.requestedModelFromOpts()
 	if requested == "" {

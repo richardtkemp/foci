@@ -96,15 +96,6 @@ var CommonReadonlyRules = []string{
 	ReadonlyGitRule,
 }
 
-// FociShellRulesFor returns auto-approve rules for foci shell functions
-// (foci_todo, foci_send_to_chat, foci_remind, etc.) derived from the tools
-// registry's ExportedNames. These are always auto-approved — they're foci's
-// own wrappers around platform/storage primitives, executed in-process with
-// constrained schemas, and have the same risk profile across the set.
-//
-// Source-of-truth is the registry: any tool registered with ExecExport:true
-// gets a rule automatically, and removing one removes its rule. No hand-list
-// to drift.
 // Compile parses rule strings into compiled Rules.
 func Compile(rules []string) []Rule { return parseAutoApproveRules(rules) }
 
@@ -119,6 +110,15 @@ func MatchWithEnv(rules []Rule, toolName string, input json.RawMessage, env map[
 	return matchAutoApproveWithEnv(rules, toolName, input, env)
 }
 
+// FociShellRulesFor returns auto-approve rules for foci shell functions
+// (foci_todo, foci_send_to_chat, foci_remind, etc.) derived from the tools
+// registry's ExportedNames. These are always auto-approved — they're foci's
+// own wrappers around platform/storage primitives, executed in-process with
+// constrained schemas, and have the same risk profile across the set.
+//
+// Source-of-truth is the registry: any tool registered with ExecExport:true
+// gets a rule automatically, and removing one removes its rule. No hand-list
+// to drift.
 func FociShellRulesFor(execNames []string) []string {
 	rules := make([]string, 0, len(execNames))
 	for _, name := range execNames {
@@ -927,9 +927,6 @@ func litUnescaped(s string) string {
 
 // ---------- Variable resolution context ----------
 
-// varCtx holds statically known shell variables at one precise point in a
-// script. Variables not assigned in the command fall through to the process
-// environment (os.LookupEnv), which the gateway and delegated shell share.
 // vetoNote records the FIRST substitutability veto of an evaluation, so the
 // caller can explain a denial instead of returning a bare false. It is held
 // behind a pointer and shared by clone() ON PURPOSE: clones are made for
@@ -942,6 +939,9 @@ type vetoNote struct {
 	reason  string
 }
 
+// varCtx holds statically known shell variables at one precise point in a
+// script. Variables not assigned in the command fall through to the process
+// environment (os.LookupEnv), which the gateway and delegated shell share.
 type varCtx struct {
 	symbolTable map[string]string // known literal assignments: name → value
 	unknown     map[string]bool   // assignments whose value/scope is not modelled

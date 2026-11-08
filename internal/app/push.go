@@ -607,10 +607,6 @@ func (p *fcmPusher) sendOnce(url, token string, tok *oauth2.Token, body []byte) 
 	return resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError
 }
 
-// pushPreview classifies a server frame for offline push. It returns a short
-// preview hint and true for user-visible frames (those a human should be woken
-// for), or ("", false) for control/streaming frames that carry no notification
-// value on their own.
 // isOwnMessage reports whether a frame is a message the user themselves sent
 // (role "user"), echoed back to their devices. Such frames must NOT fire a wake
 // push — see convBinding.send. Only ServerMessage carries a role; every other
@@ -637,6 +633,10 @@ func readableMessageID(frame fap.ServerFrame) string {
 	return ""
 }
 
+// pushPreview classifies a server frame for offline push. It returns a short
+// preview hint and true for user-visible frames (those a human should be woken
+// for), or ("", false) for control/streaming frames that carry no notification
+// value on their own.
 func pushPreview(frame fap.ServerFrame) (string, bool) {
 	switch f := frame.(type) {
 	case fap.ServerMessage:

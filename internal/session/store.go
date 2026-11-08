@@ -61,7 +61,7 @@ func (s *Store) openFileAppend(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, s.fileMode)
 }
 
-// SessionWriter restricts all session write operations to a single session,
+// sessionWriter restricts all session write operations to a single session,
 // enforcing the ownership model: a session file can only be modified by its own
 // HandleMessage execution. Any attempt to write to a different session is rejected
 // with a clear error. This is the only way to safely write to sessions.

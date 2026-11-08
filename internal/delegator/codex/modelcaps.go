@@ -67,7 +67,6 @@ func (b *Backend) listModelCatalogue() (modelCatalogue, error) {
 	}
 }
 
-// refreshModelCaps fetches and delivers one complete catalogue snapshot.
 // catalogue returns a copy of the live model catalogue for this backend's
 // app-server. It reads through process(), so a facade always sees the OWNER's
 // current catalogue rather than a snapshot taken when it attached.
@@ -94,6 +93,7 @@ func publishModelCaps(entries map[string]modelcaps.Caps) {
 	modelcaps.Publish(modelcaps.BackendCodex, entries)
 }
 
+// refreshModelCaps fetches and delivers one complete catalogue snapshot.
 func (b *Backend) refreshModelCaps() error {
 	catalogue, err := b.listModelCatalogue()
 	if err != nil {

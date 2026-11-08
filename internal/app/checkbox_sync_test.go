@@ -44,13 +44,13 @@ func checkboxSyncs(t *testing.T, c *wsClient) map[string][]int {
 	return out
 }
 
-// checkboxSyncsOrdered is checkboxSyncs preserving arrival order (the replay's
-// most-recently-updated-first contract needs it).
 type checkboxSyncFrame struct {
 	key   string
 	lines []int
 }
 
+// checkboxSyncsOrdered is checkboxSyncs preserving arrival order (the replay's
+// most-recently-updated-first contract needs it).
 func checkboxSyncsOrdered(t *testing.T, c *wsClient) []checkboxSyncFrame {
 	t.Helper()
 	var out []checkboxSyncFrame

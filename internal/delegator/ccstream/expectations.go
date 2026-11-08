@@ -19,7 +19,7 @@ const expectBackend = "claude-code"
 
 // Invariant names. They are the rate-limit keys, so keep them stable.
 const (
-	// ModelUsage counters never go DOWN within one CC process (#1674). The
+	// invModelUsageMonotonic: ModelUsage counters never go DOWN within one CC process (#1674). The
 	// adapter's remainder is modelUsage less the process's baseline and its
 	// booked calls; a drop means CC is no longer reporting a per-process
 	// running sum, and the remainder is then wrong.

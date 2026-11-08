@@ -211,10 +211,6 @@ type HarnessOptions struct {
 	BeforeSpawn func(*TelegramStub)
 }
 
-// Harness drives one foci-gw subprocess against a Telegram stub. Tests
-// access the stub via TelegramStub() and the cc-stub recorder file via
-// RecorderPath(); they push synthetic updates and assert on what foci
-// did to the recorder.
 // MaxIntegTestNameLen is the sun_path budget for integration test names:
 // under `make integration`, t.TempDir() is
 // /tmp/foci/integration-<unix10>/<TestName><rand10>/001, and that path must
@@ -225,6 +221,10 @@ type HarnessOptions struct {
 // TestIntegrationTestNamesFitSunPath.
 const MaxIntegTestNameLen = 107 - len("/tmp/foci/integration-1234567890/") - 10 - len("/001")
 
+// Harness drives one foci-gw subprocess against a Telegram stub. Tests
+// access the stub via TelegramStub() and the cc-stub recorder file via
+// RecorderPath(); they push synthetic updates and assert on what foci
+// did to the recorder.
 type Harness struct {
 	t            *testing.T
 	tempDir      string

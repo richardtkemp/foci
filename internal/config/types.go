@@ -1426,9 +1426,6 @@ type BackgroundConfig struct {
 	ForceInSession   *bool   `toml:"force_in_session"         hot:"event" desc:"Force background work to run in an independent session instead of a real backend fork, even on a backend that can branch. Backends that can't fork already behave this way; this opts a fork-capable backend into the same behaviour for background work only"`
 }
 
-// DebugConfig holds developer/debugging knobs that can be configured at
-// any scope level. Resolution follows the 5-level cascade via Merge.
-// All fields are nillable so nil means "not set, inherit from wider scope."
 // UsageHoldConfig is the account-wide usage hold (#2491, internal/usagehold).
 // Global only: it is a top-level section with no per-agent twin, because the
 // hold is per account, not per agent.
@@ -1436,6 +1433,9 @@ type UsageHoldConfig struct {
 	Threshold *int `toml:"threshold" default:"98" hot:"event" scope:"global" desc:"Usage percentage of a Claude Code or Codex usage window at which foci pauses all work on that account except keepalives and reminders, so the rest of the allowance keeps conversations warm. Applies to the next usage report. 1 to 100"`
 }
 
+// DebugConfig holds developer/debugging knobs that can be configured at
+// any scope level. Resolution follows the 5-level cascade via Merge.
+// All fields are nillable so nil means "not set, inherit from wider scope."
 type DebugConfig struct {
 	LogAPIKeySuffix *bool `toml:"log_api_key_suffix"      hot:"immediate" scope:"global" desc:"Log the last 4 characters of the API key on every model provider request, useful for confirming which key was used"`                                    // log last 4 chars of API keys on each provider call (default false)
 	MessagesInLog   *bool `toml:"messages_in_log"         hot:"immediate" scope:"global,agent" desc:"Include the full text of user messages in the event log. Off by default to avoid writing personal conversation content to logs"`                  // log user message content to event log (default false for privacy)

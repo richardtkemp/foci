@@ -2,16 +2,6 @@ package config
 
 import "reflect"
 
-// Merge resolves a struct by picking the first non-nil value for each field
-// across the provided configs (most-specific first).
-// Every field of T must be a nillable type (pointer, slice, or map).
-//
-// This is the generic building block for the 5-level config cascade:
-//
-//	per-platform per-agent → per-agent → per-platform global → global config → code default
-//
-// Code defaults are not handled here — use accessor methods on the returned
-// struct (e.g. NotifyConfig.StartupNotifyEnabled()) for that final tier.
 // DerefStr returns the string a *string points to, or "" if nil.
 func DerefStr(p *string) string {
 	if p == nil {
@@ -162,6 +152,16 @@ func MergeMaps[V any](base, overlay map[string]V) map[string]V {
 	return result
 }
 
+// Merge resolves a struct by picking the first non-nil value for each field
+// across the provided configs (most-specific first).
+// Every field of T must be a nillable type (pointer, slice, or map).
+//
+// This is the generic building block for the 5-level config cascade:
+//
+//	per-platform per-agent → per-agent → per-platform global → global config → code default
+//
+// Code defaults are not handled here — use accessor methods on the returned
+// struct (e.g. NotifyConfig.StartupNotifyEnabled()) for that final tier.
 func Merge[T any](configs ...T) T {
 	var result T
 	rv := reflect.ValueOf(&result).Elem()

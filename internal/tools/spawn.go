@@ -170,11 +170,11 @@ const exploreMissingToolPrompt = `If a tool you needed is missing and you believ
 const exploreAPIToolsPrompt = `Use grep for searching file contents. Use find for locating files. Use read for examining files. Use git for commit history, diffs, and blame. Use todo to read the todo list (list, search and get).
 Use stat, file, wc, head, tail, tree, du for filesystem inspection. Use jq/yq/mdq for structured data queries. Use sqlite for read-only database queries. Use docker, systemctl, crontab, id for system inspection. Not all tools are available in every environment.`
 
-// exploreSystemPrompt is the system prompt for an API explore spawn.
 // spawnRawUserMessage is a delegated raw spawn's user message: its task is
 // the system prompt (#2643), so the turn needs only a go-ahead.
 const spawnRawUserMessage = "Go."
 
+// exploreSystemPrompt is the system prompt for an API explore spawn.
 const exploreSystemPrompt = exploreRolePrompt + "\n\n" + exploreAPIToolsPrompt + "\n\n" + exploreMissingToolPrompt
 
 // delegatedExplorePrompt is a delegated explore batch's system prompt: the
@@ -850,9 +850,6 @@ func (s *Spawner) runBatchOneShot(ctx context.Context, mode, prompt, model strin
 	return TextResult(text), nil
 }
 
-// runAPIOneShot runs an API agent's raw, character or explore spawn through
-// foci's own one-shot tool loop (spawnOneShot), on the model its group
-// resolves to.
 // resolveAPISpawn resolves the client, model and format an API one-shot of
 // mode runs on: the named model group, else the mode's call site, else the
 // agent's own model. An explore spawn takes no group.
@@ -891,6 +888,9 @@ func (s *Spawner) directModel(mode, model, owner string) string {
 	return m
 }
 
+// runAPIOneShot runs an API agent's raw, character or explore spawn through
+// foci's own one-shot tool loop (spawnOneShot), on the model its group
+// resolves to.
 func (s *Spawner) runAPIOneShot(ctx context.Context, mode, prompt, modelGroup string) (ToolResult, error) {
 	deps := s.deps
 	switch mode {

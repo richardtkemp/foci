@@ -1029,16 +1029,6 @@ func attachmentChatID(conn platform.Connection, kind backendPromptKind, sessionK
 	return chatID
 }
 
-// buildDelegatedSystemPrompt concatenates workspace bootstrap blocks and the
-// extra system blocks (Available Skills) into the single SystemPrompt string
-// that delegator.StartOptions takes. Skills come after workspace files so the
-// agent's identity/character is established first and skills land as reference
-// material below it. API agents inject extraSystemBlocks via
-// ag.ExtraSystemBlocks (separate provider block); delegated agents have to
-// concatenate because the CC subprocess takes a single string at start.
-//
-// Empty inputs are handled cleanly — no leading or trailing separator if
-// either side is empty.
 // firstLine returns the first line of s, for compact single-line logging of a
 // multi-line error detail.
 func firstLine(s string) string {
@@ -1128,6 +1118,16 @@ func deliverModelFallbackNotice(connMgr platform.ConnectionManager, agentID, ses
 	conn.SendNotification(notice)
 }
 
+// buildDelegatedSystemPrompt concatenates workspace bootstrap blocks and the
+// extra system blocks (Available Skills) into the single SystemPrompt string
+// that delegator.StartOptions takes. Skills come after workspace files so the
+// agent's identity/character is established first and skills land as reference
+// material below it. API agents inject extraSystemBlocks via
+// ag.ExtraSystemBlocks (separate provider block); delegated agents have to
+// concatenate because the CC subprocess takes a single string at start.
+//
+// Empty inputs are handled cleanly — no leading or trailing separator if
+// either side is empty.
 func buildDelegatedSystemPrompt(workspaceBlocks, extraBlocks []provider.SystemBlock) string {
 	var b strings.Builder
 	write := func(blocks []provider.SystemBlock) {

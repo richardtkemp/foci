@@ -87,9 +87,6 @@ func TestGet_RootChatLaunchesWithPromptSuggestions(t *testing.T) {
 	}
 }
 
-// wantsPromptSuggestion pins requirement 1 and the first half of 2 of #2922: only
-// a user's input on a session with somewhere to show it asks for a prediction, and
-// the surface is read each time, so a session that moves to the app needs nothing.
 // suggestionsEnabled gives a with a live config whose
 // behavior.prompt_suggestion_max_usage is 90: suggestions are off by default
 // (#2951), so a test of the per-turn decision turns them on first.
@@ -109,6 +106,9 @@ func TestWantsPromptSuggestion_OffByDefault(t *testing.T) {
 	}
 }
 
+// TestWantsPromptSuggestion pins requirement 1 and the first half of 2 of #2922: only
+// a user's input on a session with somewhere to show it asks for a prediction, and
+// the surface is read each time, so a session that moves to the app needs nothing.
 func TestWantsPromptSuggestion(t *testing.T) {
 	a := suggestionsEnabled(&Agent{})
 	if a.wantsPromptSuggestion(true, "a/c1") {

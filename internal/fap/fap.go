@@ -41,10 +41,10 @@ const (
 	TypeMedia           = "media"
 	TypeInteractive     = "interactive"
 	TypeInteractiveEdit = "interactive.edit"
-	// InteractiveProgressEdit syncs a batched ask's accumulated answers to the
+	// TypeInteractiveProgressEdit syncs a batched ask's accumulated answers to the
 	// other attached clients (Done=true when resolved, so they close the form).
 	TypeInteractiveProgressEdit = "interactive.progressEdit"
-	// InteractiveRemove deletes a prompt from the app outright — an ask that
+	// TypeInteractiveRemove deletes a prompt from the app outright — an ask that
 	// expired or is no longer registered disappears rather than rendering an
 	// "expired" state (#2080/#1868).
 	TypeInteractiveRemove = "interactive.remove"

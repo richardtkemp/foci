@@ -29,15 +29,6 @@ import (
 // grey out stale buttons.
 const defaultPromptTTL = 24 * time.Hour
 
-// appConn is the per-agent platform.Connection for the app provider. One
-// instance per agent; it routes session-scoped sends to the right physical
-// socket via the hub's binding map, and acts as the agent.Driver that builds
-// the per-turn streaming sink.
-//
-// It implements platform.ButtonSender (slice 2): foci's permission / ask / plan
-// machinery renders native buttons via `interactive` frames and routes taps back
-// through platform.HandleInteractiveCallback — see dispatch.go and the
-// SendTextWithButtons/EditMessage* methods below.
 // agentCore is the slice of *agent.Agent the app provider drives. Narrowing it
 // to an interface keeps the inbound dispatch path (routeUserTurn) and the meta
 // status chips testable with a fake, without constructing a full Agent.
@@ -59,6 +50,15 @@ type interactiveHeaderState struct {
 	pending map[string]string
 }
 
+// appConn is the per-agent platform.Connection for the app provider. One
+// instance per agent; it routes session-scoped sends to the right physical
+// socket via the hub's binding map, and acts as the agent.Driver that builds
+// the per-turn streaming sink.
+//
+// It implements platform.ButtonSender (slice 2): foci's permission / ask / plan
+// machinery renders native buttons via `interactive` frames and routes taps back
+// through platform.HandleInteractiveCallback — see dispatch.go and the
+// SendTextWithButtons/EditMessage* methods below.
 type appConn struct {
 	hub      *Hub
 	agentID  string

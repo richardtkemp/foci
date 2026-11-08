@@ -27,21 +27,6 @@ func (a *Agent) reloadAfterMutation() {
 	a.InvalidateSystemCaches()
 }
 
-// ResetSession clears session history with memory formation. The session key
-// is a stable identity — the history is archived in place and per-session
-// state cleared, but the key (and everything that holds it) is unchanged.
-//
-// Sequence, unified across API and delegated transports:
-//
-//  1. Prepare the reflection branch against the still-live history. For
-//     delegated agents this also remaps the live backend (and its resume ID)
-//     to the branch, so the main key is clean for a fresh backend.
-//  2. Archive the session file in place (Store.Reset).
-//  3. Clear per-session state (model/effort overrides, cc_resume_id,
-//     no_compact, …) so the reset session starts from a clean slate.
-//  4. Run reflection on the branch in the background — the caller is not
-//     blocked on it.
-//
 // ResetMemoryOutcome reports what happened to the previous session's memories on
 // a soft reset, so the caller can tell the user accurately.
 type ResetMemoryOutcome int
@@ -57,6 +42,20 @@ const (
 	ResetMemoryAlreadySaved
 )
 
+// ResetSession clears session history with memory formation. The session key
+// is a stable identity — the history is archived in place and per-session
+// state cleared, but the key (and everything that holds it) is unchanged.
+//
+// Sequence, unified across API and delegated transports:
+//
+//  1. Prepare the reflection branch against the still-live history. For
+//     delegated agents this also remaps the live backend (and its resume ID)
+//     to the branch, so the main key is clean for a fresh backend.
+//  2. Archive the session file in place (Store.Reset).
+//  3. Clear per-session state (model/effort overrides, cc_resume_id,
+//     no_compact, …) so the reset session starts from a clean slate.
+//  4. Run reflection on the branch in the background — the caller is not
+//     blocked on it.
 func (a *Agent) ResetSession(ctx context.Context, sessionKey string) (ResetMemoryOutcome, error) {
 	if a.IsTurnInFlight(sessionKey) {
 		return ResetMemoryNone, fmt.Errorf("session is processing — send stop first, then reset")

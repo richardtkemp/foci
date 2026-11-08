@@ -132,10 +132,6 @@ func (m *Renderer) cachePath(src, theme, background string) string {
 	return filepath.Join(m.dir, hex.EncodeToString(sum[:])+".png")
 }
 
-// Render returns the path of a PNG of src in theme ("default" or "dark") on
-// background (Transparent or White), rendering it if it is not already
-// cached. The file belongs to the cache: read or copy it, never modify it;
-// it may be pruned by a later render.
 // Available reports whether a render can run now: the command is not "off"
 // and resolves on the daemon's trusted PATH, the same lookup run uses. It does
 // not start mmdc, so a broken browser still fails at render time.
@@ -147,6 +143,10 @@ func (m *Renderer) Available() bool {
 	return err == nil
 }
 
+// Render returns the path of a PNG of src in theme ("default" or "dark") on
+// background (Transparent or White), rendering it if it is not already
+// cached. The file belongs to the cache: read or copy it, never modify it;
+// it may be pruned by a later render.
 func (m *Renderer) Render(ctx context.Context, src, theme, background string) (string, error) {
 	if m.cmd == DisabledCmd {
 		return "", ErrUnavailable

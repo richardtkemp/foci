@@ -2503,12 +2503,6 @@ type bufferedFrame struct {
 	sent time.Time
 }
 
-// convBinding is the durable state for one conversation (⇔ one session key). It
-// is keyed by conversationId in the hub and survives socket reconnects: the
-// wire protocol scopes seq per conversation (§3), so the outbound seq counter
-// and replay buffer must persist across the sockets a phone churns through.
-// `client` is the currently-attached socket, nil when the device is offline
-// (sends still buffer for later replay / push).
 // clientState is one attached socket's reliability high-water pair. Devices
 // number their client→server streams independently, so seqHW (what we've
 // received FROM this client, stamped as the ack on frames sent TO it) and ackHW
@@ -2526,6 +2520,12 @@ type bindingIdent struct {
 	agentID, sessionKey string
 }
 
+// convBinding is the durable state for one conversation (⇔ one session key). It
+// is keyed by conversationId in the hub and survives socket reconnects: the
+// wire protocol scopes seq per conversation (§3), so the outbound seq counter
+// and replay buffer must persist across the sockets a phone churns through.
+// `client` is the currently-attached socket, nil when the device is offline
+// (sends still buffer for later replay / push).
 type convBinding struct {
 	convID string
 	// ident holds the owning agent and session key. Read it through agent(),
@@ -2616,18 +2616,6 @@ type convBinding struct {
 	leaf *leafView
 }
 
-// attach points the durable state at a (re)connected socket and registers it in
-// the socket's per-conversation map so inbound frames resolve back to it.
-//
-// Multi-device: a conversation may have MANY live sockets simultaneously — a
-// phone and a tablet both looking at the same chat. Each attached socket
-// receives every outbound frame (fan-out in [send]); per-client ack state
-// ([clientAcks]) drives replay-buffer trimming. The previous single-client
-// model silently shadowed the displaced socket, leaving it deaf; this design
-// keeps both live.
-//
-// attach(nil) is the socketless restore path (startup binding reconstruction):
-// it clears the live set without touching the durable buffer.
 // agent returns the binding's owning agent id ("" when unset).
 func (b *convBinding) agent() string {
 	if id := b.ident.Load(); id != nil {
@@ -2657,6 +2645,18 @@ func (b *convBinding) setIdent(agentID, sessionKey string) {
 	b.ident.Store(&bindingIdent{agentID: agentID, sessionKey: sessionKey})
 }
 
+// attach points the durable state at a (re)connected socket and registers it in
+// the socket's per-conversation map so inbound frames resolve back to it.
+//
+// Multi-device: a conversation may have MANY live sockets simultaneously — a
+// phone and a tablet both looking at the same chat. Each attached socket
+// receives every outbound frame (fan-out in [send]); per-client ack state
+// ([clientAcks]) drives replay-buffer trimming. The previous single-client
+// model silently shadowed the displaced socket, leaving it deaf; this design
+// keeps both live.
+//
+// attach(nil) is the socketless restore path (startup binding reconstruction):
+// it clears the live set without touching the durable buffer.
 func (b *convBinding) attach(client *wsClient) {
 	b.mu.Lock()
 	if b.clients == nil {
@@ -2768,7 +2768,6 @@ func (b *convBinding) currentSeq() int64 {
 	return b.seq
 }
 
-// info snapshots the conversation for the roster.
 // depthRootOf returns the tree root's conversation id when convID is a
 // depth-mode leaf's conversation, else "".
 func (h *Hub) depthRootOf(convID string) string {
@@ -2790,6 +2789,7 @@ func (b *convBinding) isDepthLeaf() bool {
 	return b.depthRoot != ""
 }
 
+// info snapshots the conversation for the roster.
 func (b *convBinding) info() fap.ConversationInfo {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -3060,10 +3060,6 @@ func activityEqual(x, y fap.Activity) bool {
 		slices.Equal(x.Subagents, y.Subagents)
 }
 
-// send encodes a server frame with the next per-conversation seq and the
-// current inbound ack, retains it in the replay buffer, and enqueues it on the
-// attached socket (if any). Offline (no socket) it buffers only — reconnect
-// replay (and push, a later slice) heal the gap.
 // lastActivity returns the last visible frame's send time (unix ms) under
 // the binding's lock, for recency comparisons.
 func (b *convBinding) lastActivity() int64 {
@@ -3087,6 +3083,10 @@ func stampAck(wire string, ack int64) string {
 	return out
 }
 
+// send encodes a server frame with the next per-conversation seq and the
+// current inbound ack, retains it in the replay buffer, and enqueues it on the
+// attached socket (if any). Offline (no socket) it buffers only — reconnect
+// replay (and push, a later slice) heal the gap.
 func (b *convBinding) send(frame fap.ServerFrame) { b.sendThen(frame, nil) }
 
 // sendThen is send plus onRecorded, run once the frame is part of the history a

@@ -575,8 +575,6 @@ func (idx *SessionIndex) SessionsNeedingReflection(agentID string) ([]string, er
 	)
 }
 
-// querySessionKeysLocked runs a query whose result is a single session_key
-// column and collects the values. Caller must hold idx.mu.
 // EphemeralCleanupTypes are the session_type values the daily GC reclaims:
 // pure system / ephemeral agent work whose backend transcripts are throwaway.
 // Conversational types (chat/facet/independent) and legacy 'unknown' are never
@@ -628,6 +626,8 @@ func (idx *SessionIndex) EphemeralSessionsOlderThan(agentID string, cutoff time.
 		args...)
 }
 
+// querySessionKeysLocked runs a query whose result is a single session_key
+// column and collects the values. Caller must hold idx.mu.
 func (idx *SessionIndex) querySessionKeysLocked(query string, args ...interface{}) ([]string, error) {
 	rows, err := idx.db.Query(query, args...)
 	if err != nil {

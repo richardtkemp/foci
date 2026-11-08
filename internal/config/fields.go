@@ -655,6 +655,8 @@ func MapObjectFieldSpecFor(section string) (MapObjectFieldSpec, bool) {
 // blocks — use a [models.*] alias there instead, or edit the file directly.
 var bareTOMLKeyRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
+const agentMapPrefix = "agent."
+
 // matchMapField finds the longest-prefix MapFieldSpec matching lowerSectionKey
 // (already-lowercased "section.key...") and returns the synthesized field plus
 // the matched spec's Section. ok is false if no spec's section is a prefix, if
@@ -676,8 +678,6 @@ var bareTOMLKeyRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 // "groups.calls.summarize-file"), which SetInFile's agent-block writer then
 // routes to [agents.<matched-global-section>] (setInAgentBlock's dotted-key
 // "upgrade" — see its doc).
-const agentMapPrefix = "agent."
-
 func matchMapField(lowerSectionKey string) (spec MapFieldSpec, key string, ok bool) {
 	target := lowerSectionKey
 	agentScoped := false

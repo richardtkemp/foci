@@ -210,14 +210,14 @@ func (b *Bot) logger() *log.ComponentLogger {
 	return defaultLogger
 }
 
-// NewBot creates a new Discord bot.
-// agentID is used for per-chat session key derivation (agent:ID:chat:CHATID).
-// For secondary (facet) bots, pass agentID="" -- their session key is set dynamically via SetSessionKey.
 // SetAllowedUsersOnly overrides the access.allowed_users_only enforcement mode
 // (default true): true = only listed users may message (empty list blocks all);
 // false = an empty list allows anyone, a non-empty list still filters.
 func (b *Bot) SetAllowedUsersOnly(v bool) { b.allowedUsersOnly = v }
 
+// NewBot creates a new Discord bot.
+// agentID is used for per-chat session key derivation (agent:ID:chat:CHATID).
+// For secondary (facet) bots, pass agentID="" -- their session key is set dynamically via SetSessionKey.
 func NewBot(dg *discordgo.Session, allowedUsers []string, handler platform.MessageHandler, cmds *command.Registry, lastMsgStore *command.LastMessageStore, agentID string) *Bot {
 	allowed := make(map[string]bool, len(allowedUsers))
 	for _, u := range allowedUsers {

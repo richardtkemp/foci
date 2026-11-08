@@ -571,7 +571,7 @@ func (s *countedSum) add(o *countedSum) {
 	s.unpriced = s.unpriced || o.unpriced
 }
 
-// settle bounds: how long a result waits for the main-transcript lines of the
+// ccLineBound is the settle bound: how long a result waits for the main-transcript lines of the
 // calls the stream named (P0-b measured them landing at most ~2ms after the
 // result; 250ms is over 100x that), and for the subagent tails of a quiet
 // point to come to rest (subagentTailSettle). Both bound when a line can land
@@ -1490,7 +1490,7 @@ func windowCost(mu, base map[string]ModelUsage) float64 {
 // (#2160, #2175).
 const ccBugMissingFinalRecord = "https://github.com/anthropics/claude-code/issues/84223"
 
-// overheadCause is why an over-bound overhead is there, and whether that
+// overheadReason is why an over-bound overhead is there, and whether that
 // cause is known (a WARN) or not (an ERROR). Output tokens only is CC bug
 // #84223 (Dick, 2026-10-05 on #2160). A Haiku remainder of input and output
 // alone in a window where a web tool ran is CC's WebFetch/WebSearch side calls,

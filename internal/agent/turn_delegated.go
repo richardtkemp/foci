@@ -246,6 +246,17 @@ func promptAnswerRefusedNotice(refused error) string {
 
 // --- Phase 3: Core execution ---
 
+// backendFor returns the session's backend for this turn. A turn whose trigger
+// is interactive (a platform message or voice) is a user turn: if its backend
+// has to be created while a live-session cap is full and nothing is idle, it
+// waits for a place (#2280). Every other turn's creation goes ahead.
+func (t *DelegatedTransport) backendFor(ts *TurnState) (delegator.Delegator, error) {
+	if isInteractiveTrigger(ts.Trigger) {
+		return t.agent.DelegatedManager.GetForUserTurn(ts.Ctx, ts.SessionKey)
+	}
+	return t.agent.DelegatedManager.Get(ts.Ctx, ts.SessionKey)
+}
+
 // RunInference sends the composed prompt to the backend with a per-turn
 // completion handler that closes CompletionChan and captures results.
 //
@@ -266,17 +277,6 @@ func promptAnswerRefusedNotice(refused error) string {
 // They dispatch as Inject(SourceSystem), and when the backend reports a turn
 // in flight they wait gracefully for it to complete before beginning a
 // fresh, fully-tracked turn of their own.
-// backendFor returns the session's backend for this turn. A turn whose trigger
-// is interactive (a platform message or voice) is a user turn: if its backend
-// has to be created while a live-session cap is full and nothing is idle, it
-// waits for a place (#2280). Every other turn's creation goes ahead.
-func (t *DelegatedTransport) backendFor(ts *TurnState) (delegator.Delegator, error) {
-	if isInteractiveTrigger(ts.Trigger) {
-		return t.agent.DelegatedManager.GetForUserTurn(ts.Ctx, ts.SessionKey)
-	}
-	return t.agent.DelegatedManager.Get(ts.Ctx, ts.SessionKey)
-}
-
 func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	a := t.agent
 	// answersPrompts = may this turn's text be consumed as the answer to a

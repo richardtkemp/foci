@@ -223,8 +223,6 @@ func parseRecorderEntries(b []byte) ([]recorderEntry, error) {
 	return out, nil
 }
 
-// invocationsByWorkdir filters to invocation entries whose workdir
-// contains the given substring. Order-preserving.
 // isBatchInvocation reports whether a recorded cc-stub spawn is a batch
 // session (nudge extraction, consolidation, foci_summary): since #1962 a batch
 // is an ordinary stream-json session, and what marks it apart is that it
@@ -239,6 +237,8 @@ func isBatchInvocation(inv recorderEntry) bool {
 	return false
 }
 
+// invocationsByWorkdir filters to invocation entries whose workdir
+// contains the given substring. Order-preserving.
 func invocationsByWorkdir(entries []recorderEntry, workdirSubstr string) []recorderEntry {
 	var out []recorderEntry
 	for _, e := range entries {

@@ -418,8 +418,6 @@ func (g *gzipReadCloser) Close() error {
 	return g.f.Close()
 }
 
-// parseTimeArg parses a time argument as either an RFC3339 timestamp or a
-// relative duration like "1h", "30m", "2h30m" (interpreted as that duration ago).
 // cmdDebugAt answers "where is session <key>'s history at time <t>": prints
 // the JSONL file covering that moment (live file, or the earliest archive
 // rotated at-or-after it — provenance table first, filename stamps as
@@ -489,6 +487,8 @@ func cmdDebugAt(args []string, configPath string) error {
 	return nil
 }
 
+// parseTimeArg parses a time argument as either an RFC3339 timestamp or a
+// relative duration like "1h", "30m", "2h30m" (interpreted as that duration ago).
 func parseTimeArg(s string) (time.Time, error) {
 	// Try RFC3339 first
 	if t, err := time.Parse(time.RFC3339, s); err == nil {

@@ -13,11 +13,6 @@ import (
 	"foci/internal/secrets"
 )
 
-// wiringFixture builds the minimal setupParams + a temp workspace needed to
-// drive the real configureDelegated end-to-end. The workspace holds a single
-// character file so the bootstrap produces a non-empty workspace block (lets us
-// assert env-precedes-workspace ordering). Environment is enabled so the env
-// block is built.
 // charFileMarkers are the per-file sentinels seeded into the fixture workspace,
 // one per default character file. Each must survive into both prompt paths so a
 // regression that drops any character file (not just CRAFT) is caught.
@@ -29,6 +24,11 @@ var charFileMarkers = map[string]string{
 	"character/MEMORY.md":    "MARKER-MEMORY",
 }
 
+// wiringFixture builds the minimal setupParams + a temp workspace needed to
+// drive the real configureDelegated end-to-end. The workspace holds a single
+// character file so the bootstrap produces a non-empty workspace block (lets us
+// assert env-precedes-workspace ordering). Environment is enabled so the env
+// block is built.
 func wiringFixture(t *testing.T) (setupParams, *sharedAgentSetup) {
 	t.Helper()
 	ws := t.TempDir()
