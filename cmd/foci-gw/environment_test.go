@@ -526,7 +526,8 @@ func TestWriteBackend_CodexSpawnGuidance(t *testing.T) {
 
 // TestEnvironment_SpawnReplyRouting (#2986): a spawn's environment block says
 // its final reply goes to the agent that started it; a main session's says it
-// goes to its own chat. Both builders, every backend family.
+// goes to its own chat; its Session Structure line names that agent as its
+// reader, not the human (Q43). Both builders, every backend family.
 func TestEnvironment_SpawnReplyRouting(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{Logging: config.LoggingConfig{EventFile: "/tmp/foci.log"}}
@@ -545,6 +546,13 @@ func TestEnvironment_SpawnReplyRouting(t *testing.T) {
 		}
 		if !strings.Contains(spawn, "you are a spawn") || !strings.Contains(spawn, "your spawner") || strings.Contains(spawn, "delivered to your own chat") {
 			t.Errorf("backend %q spawn block: wrong reply routing:\n%s", backend, spawn)
+		}
+		// Q43: the Session Structure line names the spawn's real reader.
+		if !strings.Contains(main, mainReader) || strings.Contains(main, spawnReader) {
+			t.Errorf("backend %q main block: wrong reader line:\n%s", backend, main)
+		}
+		if !strings.Contains(spawn, spawnReader) || strings.Contains(spawn, "The human only sees") {
+			t.Errorf("backend %q spawn block: wrong reader line:\n%s", backend, spawn)
 		}
 	}
 }

@@ -87,6 +87,14 @@ const mainReplyRouting = "- **Reply routing** — your normal turn reply is deli
 // to the agent that started it; no human reads it as a chat message.
 const spawnReplyRouting = "- **Reply routing** — you are a spawn: another agent's session started you for one task. Your final reply is returned to that agent (your spawner) as the spawn's result, not delivered to a human, so write it for that agent. To reach your spawner while you still work, use `send_to_spawner`.\n"
 
+// mainReader is the Session Structure line on who reads a main session's
+// replies: the human, who sees only the conversation.
+const mainReader = "The human only sees the conversation — they cannot see your system prompt, character files, or this environment block. Do not assume shared context when referencing system prompt content. If you need the human to understand something from your instructions, explain it in your own words.\n"
+
+// spawnReader is the same line for a spawn (#2986, Dick 2026-11-08 Q43): its
+// reader is the agent that started it, which sees only its reply.
+const spawnReader = "The agent that started you only sees your reply — it cannot see your system prompt, character files, or this environment block. Do not assume shared context when referencing system prompt content. If that agent needs to understand something from your instructions, explain it in your own words.\n"
+
 // writeEnvironmentCore writes the shared environment sections common to both
 // API and delegated agents: identity, workspace, paths, message metadata,
 // session structure, and visibility. spawn marks a spawn's session (a
@@ -140,8 +148,11 @@ func writeEnvironmentCore(b *strings.Builder, acfg config.AgentConfig, configPat
 	b.WriteString("Character files (in order, relative to workspace): ")
 	b.WriteString(strings.Join(sysFiles, ", "))
 	b.WriteString("\n")
-	b.WriteString("The human only sees the conversation — they cannot see your system prompt, character files, or this environment block. ")
-	b.WriteString("Do not assume shared context when referencing system prompt content. If you need the human to understand something from your instructions, explain it in your own words.\n")
+	if spawn {
+		b.WriteString(spawnReader)
+	} else {
+		b.WriteString(mainReader)
+	}
 
 	fmt.Fprintf(b, "- You may schedule recurring tasks using crontab. You have %d jobs scheduled.\n", crontabCount)
 }

@@ -211,6 +211,9 @@ func TestConfigureDelegated_SpawnSessionGetsSpawnReplyRouting(t *testing.T) {
 	if !strings.Contains(main, mainReplyRouting) || strings.Contains(main, spawnReplyRouting) {
 		t.Errorf("main session prompt lacks the own-chat reply routing or has the spawn one:\n%s", main)
 	}
+	if !strings.Contains(spawn, spawnReader) || !strings.Contains(main, mainReader) {
+		t.Error("spawn/main session prompt has the wrong Session Structure reader line (Q43)")
+	}
 	if !strings.Contains(spawn, spawnReplyRouting) || strings.Contains(spawn, mainReplyRouting) {
 		t.Errorf("spawn session prompt lacks the spawn reply routing or has the own-chat one:\n%s", spawn)
 	}
