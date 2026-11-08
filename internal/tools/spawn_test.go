@@ -16,13 +16,10 @@ import (
 	"foci/internal/turnevent"
 )
 
-// mockBootstrap implements SystemBlocksProvider for tests.
-type mockBootstrap struct {
-	blocks []provider.SystemBlock
-}
-
-func (m *mockBootstrap) SystemBlocks() []provider.SystemBlock {
-	return m.blocks
+// fixedSystemPrompt is a SpawnDeps.SystemPrompt that returns blocks for
+// any session key.
+func fixedSystemPrompt(blocks []provider.SystemBlock) func(string) []provider.SystemBlock {
+	return func(string) []provider.SystemBlock { return blocks }
 }
 
 // mockModelServer returns a test server that captures requests and returns canned responses.

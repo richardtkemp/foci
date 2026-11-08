@@ -38,9 +38,9 @@ func TestSpawnContextRaw(t *testing.T) {
 	}, nil, true)
 	deps := SpawnDeps{
 		Client: client,
-		Bootstrap: &mockBootstrap{blocks: []provider.SystemBlock{
+		SystemPrompt: fixedSystemPrompt([]provider.SystemBlock{
 			{Type: "text", Text: "I am a character file."},
-		}},
+		}),
 		GroupResolver:  gr,
 		FallbackModel:  "anthropic/claude-haiku-4-5",
 		FallbackFormat: "anthropic",
@@ -101,10 +101,10 @@ func TestSpawnContextCharacter(t *testing.T) {
 	}, nil, true)
 	deps := SpawnDeps{
 		Client: client,
-		Bootstrap: &mockBootstrap{blocks: []provider.SystemBlock{
+		SystemPrompt: fixedSystemPrompt([]provider.SystemBlock{
 			{Type: "text", Text: "I am the identity file."},
 			{Type: "text", Text: "I am the soul file."},
-		}},
+		}),
 		GroupResolver:  gr,
 		FallbackModel:  "anthropic/claude-haiku-4-5",
 		FallbackFormat: "anthropic",

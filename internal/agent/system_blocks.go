@@ -147,11 +147,11 @@ func (a *Agent) statusScratchpad(sessionKey string) string {
 	return fmt.Sprintf("scratchpad: %d entries", len(entries))
 }
 
-// buildSystemBlocks assembles the system prompt blocks from bootstrap,
-// environment, and extra blocks. Cache markers are applied later by the
-// Anthropic translate layer — blocks returned here are clean.
-// Results are cached per-session so that a compaction on one session
-// (which calls Bootstrap.Reload) does not bust the cache for other sessions.
+// buildSystemBlocks returns the session's system prompt blocks
+// (composeSystemBlocks). Cache markers are applied later by the Anthropic
+// translate layer — blocks returned here are clean. Results are cached
+// per-session so that a compaction on one session (which calls
+// Bootstrap.Reload) does not bust the cache for other sessions.
 func (a *Agent) buildSystemBlocks(sessionKey string) []provider.SystemBlock {
 	sm := a.getSessionMeta(sessionKey)
 	a.metaMu.Lock()
@@ -160,7 +160,26 @@ func (a *Agent) buildSystemBlocks(sessionKey string) []provider.SystemBlock {
 	if cached != nil {
 		return cached
 	}
+	result := a.composeSystemBlocks(sessionKey)
+	a.metaMu.Lock()
+	sm.systemBlocks = result
+	a.metaMu.Unlock()
+	return result
+}
 
+// SystemBlocksFor returns the system prompt a new session on sessionKey
+// starts with, exactly as a main session's is composed, without caching it
+// (no session state is created for the key). An API agent's character spawn
+// runs on it, keyed on the spawn's own batch session, as a delegated agent's
+// character batch runs on the agent's composed prompt (#2981).
+func (a *Agent) SystemBlocksFor(sessionKey string) []provider.SystemBlock {
+	return a.composeSystemBlocks(sessionKey)
+}
+
+// composeSystemBlocks assembles the system prompt blocks from the
+// environment block, the bootstrap (character files), the extra blocks
+// (skills) and the daily-memory digest.
+func (a *Agent) composeSystemBlocks(sessionKey string) []provider.SystemBlock {
 	system := a.Bootstrap.SystemBlocks()
 	envText := a.EnvironmentBlock
 	if a.EnvironmentBlockFunc != nil {
@@ -192,10 +211,6 @@ func (a *Agent) buildSystemBlocks(sessionKey string) []provider.SystemBlock {
 			result = append(append([]provider.SystemBlock{}, result...), provider.SystemBlock{Type: "text", Text: d})
 		}
 	}
-
-	a.metaMu.Lock()
-	sm.systemBlocks = result
-	a.metaMu.Unlock()
 	return result
 }
 

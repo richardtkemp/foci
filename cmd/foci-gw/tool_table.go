@@ -719,7 +719,20 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 	} else {
 		spawnDeps.Client = d.client
 		spawnDeps.ClientProvider = d.p.clientProvider
-		spawnDeps.Bootstrap = d.bootstrap
+		// #2981: a character spawn runs on the agent's main-session prompt
+		// (environment, character files, skills), composed for its own
+		// session. The bare character files only before the agent exists.
+		spawnDeps.SystemPrompt = func(sessionKey string) []provider.SystemBlock {
+			if d.agLazy != nil {
+				if ag := d.agLazy(); ag != nil {
+					return ag.SystemBlocksFor(sessionKey)
+				}
+			}
+			if d.bootstrap != nil {
+				return d.bootstrap.SystemBlocks()
+			}
+			return nil
+		}
 		spawnDeps.GroupResolver = d.groupResolver
 		spawnDeps.FallbackFunc = d.fallbackFn
 		spawnDeps.FallbackModel = d.resolvedModel

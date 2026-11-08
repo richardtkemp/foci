@@ -83,3 +83,51 @@ func TestBuildSystemBlocks_DailyDigestLastAndFrozen(t *testing.T) {
 		t.Errorf("empty digest must add no block, got last %q", other[len(other)-1].Text)
 	}
 }
+
+// TestSystemBlocksFor_EqualsMainSession (#2981): the prompt an API character
+// spawn runs on is the main-session composition for the same key —
+// environment, character files, skills and digest — and reading it leaves no
+// session state behind for the key.
+func TestSystemBlocksFor_EqualsMainSession(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("character A"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{
+		Bootstrap:            workspace.NewBootstrap(dir, []string{"a.md"}),
+		EnvironmentBlockFunc: func(k string) string { return "ENV " + k },
+		ExtraSystemBlocks:    []provider.SystemBlock{{Type: "text", Text: "SKILLS"}},
+		DailyDigestFunc:      func(k string) string { return "DIGEST " + k },
+	}
+	const spawnKey, mainKey = "test/c1/b42", "test/c1"
+	got := a.SystemBlocksFor(spawnKey)
+	a.metaMu.Lock()
+	_, made := a.meta[spawnKey]
+	a.metaMu.Unlock()
+	if made {
+		t.Error("SystemBlocksFor created session state for the spawn key")
+	}
+	want := a.buildSystemBlocks(spawnKey)
+	if len(got) != len(want) {
+		t.Fatalf("SystemBlocksFor = %d blocks, main-session build = %d", len(got), len(want))
+	}
+	for i := range got {
+		if got[i].Text != want[i].Text {
+			t.Errorf("block %d = %q, main-session build %q", i, got[i].Text, want[i].Text)
+		}
+	}
+	texts := []string{"ENV " + spawnKey, "character A", "SKILLS", "DIGEST " + spawnKey}
+	if len(got) != len(texts) {
+		t.Fatalf("blocks = %+v, want %v", got, texts)
+	}
+	for i, w := range texts {
+		if got[i].Text != w {
+			t.Errorf("block %d = %q, want %q", i, got[i].Text, w)
+		}
+	}
+	// The main session itself is unchanged by the refactor.
+	if m := a.buildSystemBlocks(mainKey); len(m) != 4 || m[0].Text != "ENV "+mainKey {
+		t.Errorf("main session blocks = %+v", m)
+	}
+}

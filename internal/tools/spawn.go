@@ -24,11 +24,6 @@ import (
 	"foci/internal/turnevent"
 )
 
-// SystemBlocksProvider returns the system prompt blocks (for full context mode).
-type SystemBlocksProvider interface {
-	SystemBlocks() []provider.SystemBlock
-}
-
 // BranchOptions configures optional behavior for a new branch session (tools-side mirror).
 // BranchOptions configures a new branch session.
 type BranchOptions struct {
@@ -200,7 +195,11 @@ var spawnExploreAllowed = map[string]bool{
 type SpawnDeps struct {
 	Client         provider.Client
 	ClientProvider provider.ClientProvider // provides access to clients for different endpoint:format pairs
-	Bootstrap      SystemBlocksProvider
+	// SystemPrompt returns the system prompt an API agent's character
+	// spawn runs on, for the spawn's own session key: the agent's
+	// main-session prompt (environment block, character files, skills),
+	// as a delegated agent's character batch gets (#2981). Nil = none.
+	SystemPrompt   func(sessionKey string) []provider.SystemBlock
 	Registry       *Registry // tool registry for one-shot tool access
 	Sessions       SessionBrancher
 	AgentID        string
@@ -316,8 +315,8 @@ func (d SpawnDeps) apiOneShotField() string {
 		return "FallbackModel/FallbackFormat"
 	case d.ProviderRoutingFor != nil:
 		return "ProviderRoutingFor"
-	case d.Bootstrap != nil:
-		return "Bootstrap"
+	case d.SystemPrompt != nil:
+		return "SystemPrompt"
 	case d.MaxToolLoops != nil || d.ExploreMaxDepth != nil:
 		return "MaxToolLoops/ExploreMaxDepth"
 	}
@@ -926,13 +925,13 @@ func (s *Spawner) runAPIOneShot(ctx context.Context, mode, prompt, modelGroup st
 
 	case spawnModeCharacter:
 		client, model, format := s.resolveAPISpawn(spawnModeCharacter, modelGroup)
-		var system []provider.SystemBlock
-		if deps.Bootstrap != nil {
-			system = deps.Bootstrap.SystemBlocks()
-		}
-		toolDefs, tools := spawnToolSet(deps.Registry, spawnCharacterBlacklist)
 		// Its own identity, minted as a delegated batch's key is (#2676).
 		self, _ := session.NewBatchKey(SessionKeyFromContext(ctx), deps.AgentID)
+		var system []provider.SystemBlock
+		if deps.SystemPrompt != nil {
+			system = deps.SystemPrompt(self)
+		}
+		toolDefs, tools := spawnToolSet(deps.Registry, spawnCharacterBlacklist)
 		result, err := spawnOneShot(withSpawnSelf(WithSpawnCharacter(ctx), self, model), oneShotParams{
 			client:         client,
 			model:          model,
