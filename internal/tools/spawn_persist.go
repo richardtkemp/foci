@@ -57,8 +57,8 @@ type spawnRecord struct {
 	// still carries them (#2677).
 	Kept []keptRecord `json:"kept,omitempty"`
 	// OneShot: an API agent's direct one-shot (#2979), resumed from its
-	// saved conversation (spawnConvPrefix) rather than a branch; it has no
-	// BranchKey. nil for every other spawn.
+	// saved conversation (oneShotRecord.Conversation, #2984), not by a turn
+	// on a branch; it has no BranchKey. nil for every other spawn.
 	OneShot *oneShotRecord `json:"one_shot,omitempty"`
 }
 

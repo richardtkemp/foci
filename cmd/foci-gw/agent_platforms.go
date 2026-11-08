@@ -11,6 +11,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/platform"
+	"foci/internal/provider"
 	"foci/internal/route"
 	"foci/internal/session"
 	"foci/internal/tempdir"
@@ -266,4 +267,26 @@ func (a *sessionBranchAdapter) ForkSession(ctx context.Context, parentKey string
 
 func (a *sessionBranchAdapter) SessionPath(key string) (string, error) {
 	return a.store.SessionPath(key)
+}
+
+// NewSpawnConversation implements tools.SpawnConversations (#2984): an API
+// one-shot's conversation file is a fresh "spawn" branch of its parent, so it
+// is an ordinary append-only session file.
+func (a *sessionBranchAdapter) NewSpawnConversation(parent string) (string, error) {
+	return a.store.CreateBranchWithOptions(parent, session.BranchOptions{
+		NoResetHook: true,
+		BranchType:  "spawn",
+		Fresh:       true,
+	})
+}
+
+// AppendSpawnConversation implements tools.SpawnConversations.
+func (a *sessionBranchAdapter) AppendSpawnConversation(key string, msgs []provider.Message) error {
+	return a.store.For(key).AppendAll(key, msgs)
+}
+
+// LoadSpawnConversation implements tools.SpawnConversations. The branch is
+// fresh (branch point 0), so its own file is its whole conversation.
+func (a *sessionBranchAdapter) LoadSpawnConversation(key string) ([]provider.Message, error) {
+	return a.store.Load(key)
 }

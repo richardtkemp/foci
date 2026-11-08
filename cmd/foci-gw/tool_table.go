@@ -591,9 +591,11 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 	tc := d.p.resolved.Tools // static-cfg:ignore: the initial slot limit; live edits flow through the OnChange below (#2722)
 	live := d.p.resolvedLive
 	orientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, d.p.cfg.Sessions.BranchOrientationHeadlessPrompt))
+	sessionAdapter := &sessionBranchAdapter{store: d.p.sessions, ag: d.agLazy}
 	spawnDeps := tools.SpawnDeps{
 		Registry:            d.registry,
-		Sessions:            &sessionBranchAdapter{store: d.p.sessions, ag: d.agLazy},
+		Sessions:            sessionAdapter,
+		Conversations:       sessionAdapter,
 		AgentID:             acfg.ID,
 		MaxInherit:          tc.MaxConcurrentSpawns,
 		Notifier:            d.notifier,

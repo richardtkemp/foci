@@ -90,6 +90,9 @@ type persistHarness struct {
 	deliveries chan delivery
 	notices    chan string
 	ctx        context.Context
+	// convs keeps API one-shots' conversations (newOneShotHarness); nil
+	// otherwise.
+	convs *storeConversations
 }
 
 func newPersistHarness(agent SpawnAgent, deps func(*SpawnDeps)) *persistHarness {

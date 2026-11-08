@@ -623,9 +623,9 @@ func (t *SpawnTracker) addDirect(parent string, s RunningSpawn, cancel context.C
 // caller (send_to_spawner), taken in the same step that ends it so none can
 // arrive in between and be lost.
 //
-// An API one-shot's persisted record and saved conversation (#2979) are
-// forgotten here, unless foci is shutting down and the run did not complete:
-// then they stay, for the next process to resume it.
+// An API one-shot's persisted record (#2979) is forgotten here, unless foci
+// is shutting down and the run did not complete: then it stays, for the next
+// process to resume it. Its conversation file stays either way (#2984).
 func (t *SpawnTracker) endDirect(parent, id, outcome, detail string) (stoppedBy string, kept []SpawnLogEntry) {
 	if t == nil {
 		return "", nil
@@ -640,10 +640,7 @@ func (t *SpawnTracker) endDirect(parent, id, outcome, detail string) (stoppedBy 
 		cut := outcome != "completed" && !s.stopped &&
 			(t.shuttingDown || t.stopping[session.AgentIDFromAnyKey(parent)])
 		if !cut {
-			defer func() {
-				t.persist(parent, id)
-				t.dropConversation(parent, id)
-			}()
+			defer t.persist(parent, id)
 		}
 	}
 	defer t.mu.Unlock()

@@ -199,9 +199,13 @@ type SpawnDeps struct {
 	// spawn runs on, for the spawn's own session key: the agent's
 	// main-session prompt (environment block, character files, skills),
 	// as a delegated agent's character batch gets (#2981). Nil = none.
-	SystemPrompt   func(sessionKey string) []provider.SystemBlock
-	Registry       *Registry // tool registry for one-shot tool access
-	Sessions       SessionBrancher
+	SystemPrompt func(sessionKey string) []provider.SystemBlock
+	Registry     *Registry // tool registry for one-shot tool access
+	Sessions     SessionBrancher
+	// Conversations keeps an API one-shot's conversation in the session
+	// store's append-only JSONL files (#2984), so a restart resumes it from
+	// there (#2979). Nil = not kept: a restart resumes it from its task.
+	Conversations  SpawnConversations
 	AgentID        string
 	GroupResolver  *config.GroupResolver // resolves model groups for spawn modes
 	FallbackFunc   provider.FallbackFunc // nil disables automatic model fallback on transient errors
@@ -1149,9 +1153,11 @@ type oneShotParams struct {
 	// loop rounds it has already used.
 	history   []provider.Message
 	startLoop int
-	// checkpoint, when set, is given the conversation after each round of
-	// tool calls, and the rounds used, so a restart can resume it (#2979).
-	checkpoint func(msgs []provider.Message, loops int)
+	// checkpoint, when set, is given the conversation so far after each
+	// round of tool calls, so a restart can resume it (#2979), and once more
+	// with the final answer at its end. Its saver writes only the messages
+	// it has not written yet (#2984).
+	checkpoint func(msgs []provider.Message)
 }
 
 // spawnOneShot makes API calls with optional tool access (raw/character/explore modes).
@@ -1252,8 +1258,12 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (answer string, runErr e
 			spawnLog.Errorf("session=%s book spawn call: %v", sessionKey, err)
 		}
 
-		// If no tool use, return text.
+		// If no tool use, return text. The answer is the conversation's
+		// last message, so its saver writes it too (#2984).
 		if resp.StopReason != "tool_use" {
+			if p.checkpoint != nil {
+				p.checkpoint(append(messages, provider.Message{Role: "assistant", Content: resp.Content}))
+			}
 			text := provider.TextOf(resp.Content)
 			if text == "" {
 				return "(empty response)", nil
@@ -1311,7 +1321,7 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (answer string, runErr e
 			Content: toolResults,
 		})
 		if p.checkpoint != nil {
-			p.checkpoint(messages, i+1)
+			p.checkpoint(messages)
 		}
 	}
 
