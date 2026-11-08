@@ -2456,6 +2456,8 @@ func TestPushPreview_Classification(t *testing.T) {
 		// #1061: a named file previews with its filename, plus caption when present.
 		{fap.Media{MIME: "application/pdf", Name: "report.pdf"}, true, "report.pdf"},
 		{fap.Media{MIME: "application/pdf", Name: "report.pdf", Caption: "here you go"}, true, "report.pdf — here you go"},
+		// #2975: a voice-mode clip is a presentation of the text before it, not a visible frame.
+		{fap.Media{MIME: "audio/mpeg", Name: "voice-mode.mp3", VoiceMode: true}, false, ""},
 		// #2161: a user echo carrying files previews from its first attachment.
 		{fap.ServerMessage{Role: "user", Attachments: []fap.AttachmentRef{{MIME: "application/pdf", Name: "report.pdf"}}}, true, "report.pdf"},
 		{fap.ServerMessage{Role: "user", Text: "see these", Attachments: []fap.AttachmentRef{
@@ -2503,6 +2505,60 @@ func TestOfflineSend_FiresPushForVisibleFramesOnly(t *testing.T) {
 	b.send(fap.Activity{ConversationID: "conv-1", Kind: "typing"}) // control frame → no push
 	if len(got) != 1 || got[0] != "hello there" {
 		t.Fatalf("offline previews = %v, want [hello there]", got)
+	}
+}
+
+// TestSend_VoiceModeClipIsAPresentation (#2975): a voice-mode clip is the
+// spoken copy of the text frame just before it, a second presentation of that
+// message and not a message of its own. So it never becomes the roster preview
+// (live or stored), the activity time, the auto-close sweep's newest message,
+// or a wake push, while it is still stored for replay and a read through the
+// latest message still covers it.
+func TestSend_VoiceModeClipIsAPresentation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "frames.db")
+	store, err := newFrameStore(path, 30*24*time.Hour)
+	if err != nil {
+		t.Fatalf("newFrameStore: %v", err)
+	}
+	var pushes []string
+	b := &convBinding{
+		convID:        "conv-1",
+		seen:          make(map[string]struct{}),
+		store:         store,
+		notifyOffline: func(p pushPayload) { pushes = append(pushes, p.Preview) },
+	}
+	final := "the spoken reply"
+	b.send(fap.TextEnd{ConversationID: "conv-1", MessageID: "01M6XZQX9A0000000000000000", FinalText: &final})
+	actMs := b.lastActMs
+	b.send(fap.Media{ConversationID: "conv-1", MessageID: "01M6XZQX9B0000000000000000", MIME: "audio/mpeg", Name: "voice-mode.mp3", VoiceMode: true})
+	if b.lastPreview != final {
+		t.Errorf("lastPreview = %q, want %q", b.lastPreview, final)
+	}
+	if b.lastActMs != actMs {
+		t.Errorf("lastActMs moved for the clip: %d -> %d", actMs, b.lastActMs)
+	}
+	if b.lastMsgID != "01M6XZQX9B0000000000000000" {
+		t.Errorf("lastMsgID = %q, want the clip (a read through latest must cover its row)", b.lastMsgID)
+	}
+	if len(pushes) != 1 || pushes[0] != final {
+		t.Errorf("pushes = %q, want only the text's", pushes)
+	}
+
+	// The stored history agrees once the async writer has flushed.
+	store.Close()
+	reopened, err := newFrameStore(path, 30*24*time.Hour)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close()
+	if p, _, ok := reopened.LastVisible("conv-1"); !ok || p != final {
+		t.Errorf("stored LastVisible = (%q, %v), want %q", p, ok, final)
+	}
+	if id, ok, err := reopened.LastVisibleMessageID("conv-1"); err != nil || !ok || id != "01M6XZQX9A0000000000000000" {
+		t.Errorf("stored LastVisibleMessageID = (%q, %v, %v), want the text's id", id, ok, err)
+	}
+	if n := reopened.MaxSeq("conv-1"); n != 2 {
+		t.Errorf("MaxSeq = %d, want 2 (the clip is stored for replay)", n)
 	}
 }
 

@@ -633,6 +633,16 @@ func readableMessageID(frame fap.ServerFrame) string {
 	return ""
 }
 
+// isVoicePresentation reports whether a Media frame is a voice-mode clip
+// (#1439): the TTS reading of the text frame sent just before it. It is a
+// second presentation of that message, not a message of its own (Dick,
+// 2026-11-08, #2975), so it is not "visible" in pushPreview's sense: it never
+// becomes the roster preview, the activity time, the newest-message id the
+// auto-close sweep judges read against, or a wake push. It is still stored
+// and replayed like every frame, and it still advances lastMsgID, so a
+// read-through-latest covers it for a device that shows it as a row.
+func isVoicePresentation(m fap.Media) bool { return m.VoiceMode }
+
 // pushPreview classifies a server frame for offline push. It returns a short
 // preview hint and true for user-visible frames (those a human should be woken
 // for), or ("", false) for control/streaming frames that carry no notification
@@ -658,6 +668,9 @@ func pushPreview(frame fap.ServerFrame) (string, bool) {
 		}
 		return "New message", true
 	case fap.Media:
+		if isVoicePresentation(f) {
+			return "", false
+		}
 		// #1061: prefer the real filename over a generic "Sent a file", and fold in any
 		// caption ("report.pdf — here you go"). Mirrors the android live-frame preview
 		// (MediaPreview.mediaListLabel) so the reconnect/hello seed matches what the app

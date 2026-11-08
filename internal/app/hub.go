@@ -3145,6 +3145,11 @@ func (b *convBinding) sendThen(frame fap.ServerFrame, onRecorded func()) {
 			b.lastMsgID = id
 		}
 	}
+	if m, ok := frame.(fap.Media); ok && isVoicePresentation(m) {
+		// Not a visible frame, but the bubble a device draws for it can hold a
+		// read watermark: a read through the latest message must cover it.
+		b.lastMsgID = m.MessageID
+	}
 	b.buffer = append(b.buffer, bufferedFrame{seq: seq, wire: wire, sent: now})
 	b.trimBufferLocked()
 	// Snapshot the live socket set + each client's ack (its own inbound seqHW)

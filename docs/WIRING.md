@@ -3238,7 +3238,9 @@ registers its FCM token in `ClientHello` (or out-of-band via
 → `pushTokens` (in-memory deviceId→token, repopulated each connect). When
 `convBinding.send` runs with no attached socket, it buffers the frame and — for
 user-visible frames only (`pushPreview` classifies; control/streaming frames are
-skipped) — fires `notifyOffline` (`Hub.pushNotify`, which first drops the wake
+skipped; a `voiceMode` Media clip, `isVoicePresentation`, is a second presentation of the
+text it reads aloud, not a message: not visible, so no preview, activity, push or
+auto-close newest-message, but stored, replayed and still `lastMsgID`, #2975) — fires `notifyOffline` (`Hub.pushNotify`, which first drops the wake
 when any live socket is VIEWING that conversation, `isViewed`, #2202) →
 `pusher.notify`, which coalesces (≤1 push per
 conversation PER DEVICE per `push_coalesce` window, default 15s; keyed
