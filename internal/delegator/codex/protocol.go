@@ -409,6 +409,8 @@ type itemEnvelope struct {
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 	// webSearch fields
 	Query string `json:"query,omitempty"`
+	// sleep fields (SleepThreadItem, emitted by the clock.sleep tool)
+	DurationMs int64 `json:"durationMs,omitempty"`
 	// agentMessage fields. Phase distinguishes mid-turn narration from the
 	// terminal answer (live-verified against codex app-server 0.144.5's
 	// generate-json-schema output AND a live turn: "commentary" precedes a

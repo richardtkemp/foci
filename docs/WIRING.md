@@ -1431,6 +1431,8 @@ A Read of a skill file renders its compact line â€” the entry's `CompactText` â€
 
 Ccstream plumbs the id via the CC hook integration described above, feeding `handler.OnToolEnd(id, name, output, isError)` which the StreamingSink forwards to the tracker.
 
+Codex maps each `item/started`/`item/completed` item to `OnToolStart`/`OnToolEnd` by its `type` (`codex/handlers.go`). A `sleep` item (the `clock.sleep` tool; `{"type":"Extension","kind":"clock.sleep"}` in the rollout file) shows as `clock.sleep` with its duration as the detail. Every type without its own case and not in `nonToolItemTypes` (messages, reasoning, plans, review-mode markers, subagent items) shows as a tool named by its type, so a tool codex adds later is never shown as "thinking" (#2955). Each such type is logged once at info. An unmapped item that arrives only on `item/completed` shows nothing.
+
 **Ordering with deferred replies:** When intermediate text fires between tool loops, `OnReply` resets `toolMsgID` to 0. This forces the next tool call to create a fresh message below the text, preserving chronological order in chat.
 
 **Flow (multi-loop turn, preview/full):**

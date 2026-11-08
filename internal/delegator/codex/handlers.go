@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -180,6 +181,63 @@ func (b *Backend) onItemStarted(params *itemStartedParams) {
 		if se != nil && se.OnToolStart != nil {
 			se.OnToolStart(item.ID, delegator.CompactionToolName, "")
 		}
+	case "sleep":
+		if se != nil && se.OnToolStart != nil {
+			se.OnToolStart(item.ID, sleepToolName, sleepDetail(item.DurationMs))
+		}
+	default:
+		if nonToolItemTypes[item.Type] {
+			return
+		}
+		b.noteUnmappedItemType(item.Type)
+		if se != nil && se.OnToolStart != nil {
+			se.OnToolStart(item.ID, item.Type, "")
+		}
+	}
+}
+
+// sleepToolName is the name foci shows for codex's "sleep" item: the tool
+// the model called (clock.sleep), which is also the item's kind in the
+// rollout file ({"type":"Extension","kind":"clock.sleep"}). On the
+// app-server wire the same item arrives as {"type":"sleep","durationMs":N}
+// on both item/started and item/completed (live probe, codex 0.167.0, #2955).
+const sleepToolName = "clock.sleep"
+
+// sleepDetail renders a sleep item's duration as the tool's detail ("45s").
+func sleepDetail(ms int64) string {
+	if ms <= 0 {
+		return ""
+	}
+	return (time.Duration(ms) * time.Millisecond).String()
+}
+
+// nonToolItemTypes are the codex ThreadItem types that are not tool calls
+// (conversation content, markers, or subagent activity foci has disabled).
+// Every other type without its own case shows as a tool named by its type,
+// so a tool codex adds later is visible instead of reading as "thinking"
+// (#2955). Taken from the codex 0.166.0 generated schema (ThreadItem oneOf).
+var nonToolItemTypes = map[string]bool{
+	"userMessage":         true,
+	"agentMessage":        true,
+	"reasoning":           true,
+	"plan":                true,
+	"hookPrompt":          true,
+	"functionCallOutput":  true,
+	"subAgentActivity":    true,
+	"collabAgentToolCall": true,
+	"enteredReviewMode":   true,
+	"exitedReviewMode":    true,
+}
+
+// loggedItemTypes holds the unmapped item types already logged, so each new
+// type is logged once per process rather than once per item.
+var loggedItemTypes sync.Map
+
+// noteUnmappedItemType logs, once per type, that an item type with no
+// mapping was shown as a generic tool.
+func (b *Backend) noteUnmappedItemType(typ string) {
+	if _, seen := loggedItemTypes.LoadOrStore(typ, true); !seen {
+		b.logInfof("unmapped item type %q shown as a tool by its type name", typ)
 	}
 }
 
@@ -193,7 +251,8 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 	// Mark the cached entry finished, so inFlightCall never answers a call
 	// that already has its result (#2617).
 	b.itemMu.Lock()
-	if c, ok := b.itemCache[item.ID]; ok {
+	c, started := b.itemCache[item.ID]
+	if started {
 		c.Status = "completed"
 		b.itemCache[item.ID] = c
 	}
@@ -276,6 +335,22 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 		b.compactMu.Unlock()
 		if se != nil && se.OnToolEnd != nil {
 			se.OnToolEnd(item.ID, delegator.CompactionToolName, "", false)
+		}
+
+	case "sleep":
+		if se != nil && se.OnToolEnd != nil {
+			se.OnToolEnd(item.ID, sleepToolName, "", item.Status == "failed")
+		}
+
+	default:
+		// Ends only a generic tool onItemStarted showed: an unmapped item
+		// that arrives on item/completed alone had no running period, and an
+		// end with no start would be a stray event.
+		if !started || nonToolItemTypes[item.Type] {
+			return
+		}
+		if se != nil && se.OnToolEnd != nil {
+			se.OnToolEnd(item.ID, item.Type, "", item.Status == "failed")
 		}
 	}
 }
