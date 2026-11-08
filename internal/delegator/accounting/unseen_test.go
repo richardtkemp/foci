@@ -90,3 +90,42 @@ func TestAlarmUnseenOncePerKey(t *testing.T) {
 	var nilLedger *Ledger
 	nilLedger.AlarmUnseen(BackendAPI, "", "x", "y", k1)
 }
+
+// TestUnseenUsageKeysZeroCountsNothing (#2982): an unknown key whose value
+// counts nothing — the number 0, or an object of such values — leaves nothing
+// unpriced, so it is not reported; the same key with a count is, and so is a
+// non-numeric value (a tier string, null).
+func TestUnseenUsageKeysZeroCountsNothing(t *testing.T) {
+	raw := `{"input":1,"cache":{"read":2,"image":0,"video":0.0},"zero":0,"zobj":{"a":0,"b":{"c":0}},"empty":{},` +
+		`"some":{"a":0,"b":3},"n":5,"tier":"fast","nul":null,"f":false}`
+	got := UnseenUsageKeys([]byte(raw), testUsageKeys)
+	want := []UnseenKey{
+		{Path: "f", Value: "false"},
+		{Path: "n", Value: "5"},
+		{Path: "nul", Value: "null"},
+		{Path: "some", Value: `{"a":0,"b":3}`},
+		{Path: "tier", Value: `"fast"`},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+// TestAlarmUnseenZeroThenCount (#2982): a key first seen at 0 is not marked
+// seen, so the first call that carries a count for it still alarms.
+func TestAlarmUnseenZeroThenCount(t *testing.T) {
+	var alarms []Alarm
+	l, _, err := Open(filepath.Join(t.TempDir(), "api.db"), Options{OnAlarm: func(a Alarm) { alarms = append(alarms, a) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = l.Close() }()
+	l.AlarmUnseen(BackendAPI, "", "openai", "r1", UnseenUsageKeys([]byte(`{"input":1,"image_tokens":0}`), testUsageKeys))
+	if len(alarms) != 0 {
+		t.Fatalf("zero-valued key alarmed: %+v", alarms)
+	}
+	l.AlarmUnseen(BackendAPI, "", "openai", "r2", UnseenUsageKeys([]byte(`{"input":1,"image_tokens":12}`), testUsageKeys))
+	if len(alarms) != 1 || !strings.Contains(alarms[0].Detail, "image_tokens=12") {
+		t.Errorf("alarms = %+v, want one naming image_tokens=12", alarms)
+	}
+}

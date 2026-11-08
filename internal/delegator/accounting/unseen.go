@@ -57,7 +57,8 @@ func (k UnseenKey) dedupeKey() string {
 }
 
 // UnseenUsageKeys returns every key of the usage object raw that known does
-// not list, sorted by path. raw that is empty, null or not an object holds
+// not list, sorted by path, except one whose value counts nothing
+// (countsNothing: a zero count is not a booking left short). raw that is empty, null or not an object holds
 // no keys.
 func UnseenUsageKeys(raw []byte, known UsageKeys) []UnseenKey {
 	var out []UnseenKey
@@ -75,6 +76,9 @@ func unseenIn(raw []byte, known UsageKeys, prefix string, out *[]UnseenKey) {
 		sub, ok := known[k]
 		switch {
 		case !ok:
+			if countsNothing(obj[k]) {
+				continue
+			}
 			*out = append(*out, UnseenKey{Path: prefix + k, Value: compactJSON(obj[k])})
 		case sub == nil:
 		case isAny(sub):
@@ -82,6 +86,30 @@ func unseenIn(raw []byte, known UsageKeys, prefix string, out *[]UnseenKey) {
 			unseenIn(obj[k], sub, prefix+k+".", out)
 		}
 	}
+}
+
+// countsNothing reports whether an unknown key's value leaves nothing
+// unpriced (#2982): the number 0, or an object whose every value counts
+// nothing (an empty object included). Such a key is not reported, and so not
+// marked seen either: the first call that carries a count for it still alarms.
+// Any other value — a non-zero count, a string such as a tier, null, a bool,
+// an array — is reported.
+func countsNothing(raw json.RawMessage) bool {
+	var n json.Number
+	if json.Unmarshal(raw, &n) == nil {
+		f, err := n.Float64()
+		return err == nil && f == 0
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(raw, &obj) != nil || obj == nil {
+		return false
+	}
+	for _, v := range obj {
+		if !countsNothing(v) {
+			return false
+		}
+	}
+	return true
 }
 
 func isAny(k UsageKeys) bool {

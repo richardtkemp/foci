@@ -109,3 +109,28 @@ func TestResponseFromOpenAI_UnseenUsageKey(t *testing.T) {
 		t.Errorf("invUnseenField = %+v, want one naming openai and prompt_tokens_details.video_tokens=7", got)
 	}
 }
+
+// TestResponseFromOpenAI_ZeroImageVideoTokens (#2982): the live OpenRouter
+// deepseek-v4-pro shape carries completion_tokens_details.image_tokens=0 and
+// prompt_tokens_details.video_tokens=0. A zero count leaves nothing unpriced,
+// so it raises no invUnseenField; a non-zero image_tokens still does.
+func TestResponseFromOpenAI_ZeroImageVideoTokens(t *testing.T) {
+	alarms := liveLedger(t)
+	live := `{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105,"cost":0.0012,"is_byok":false,` +
+		`"prompt_tokens_details":{"cached_tokens":50,"cache_write_tokens":0,"audio_tokens":0,"video_tokens":0},` +
+		`"completion_tokens_details":{"reasoning_tokens":2,"image_tokens":0,"audio_tokens":0}}`
+	if _, err := responseFromOpenAI(completion(t, live), "openrouter/deepseek/deepseek-v4-pro:floor"); err != nil {
+		t.Fatal(err)
+	}
+	if got := alarmsOf(*alarms, accounting.InvUnseenField); len(got) != 0 {
+		t.Fatalf("invUnseenField on zero-valued keys: %+v", got)
+	}
+	withImages := strings.Replace(live, `"image_tokens":0`, `"image_tokens":9`, 1)
+	if _, err := responseFromOpenAI(completion(t, withImages), "m"); err != nil {
+		t.Fatal(err)
+	}
+	got := alarmsOf(*alarms, accounting.InvUnseenField)
+	if len(got) != 1 || !strings.Contains(got[0].Detail, "completion_tokens_details.image_tokens=9") || strings.Contains(got[0].Detail, "video_tokens") {
+		t.Errorf("invUnseenField = %+v, want one naming only completion_tokens_details.image_tokens=9", got)
+	}
+}

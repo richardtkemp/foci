@@ -1870,6 +1870,9 @@ included); gemini, whose SDK drops unknown keys, reflects over genai's usage str
 non-zero count field it does not map (`gemini.unmappedCounts`). In Anthropic usage (CC
 transcript and direct) a `speed` or `service_tier` other than `standard` (absent/null is
 standard) is reported too (`accounting.StandardTierOnly`): foci has standard rates only.
+An unknown key whose value counts nothing (the number 0, or an object of such values;
+`countsNothing`, #2982) is not reported and not marked seen, so OpenRouter's zero
+`image_tokens`/`video_tokens` stay quiet and the first non-zero sighting still alarms.
 `Ledger.AlarmUnseen` raises `invUnseenField` naming the adapter, call, key path and value,
 once per key per ledger (process), and the call is booked as usual.
 A live-applied `[[modelinfo]]` change re-renders `token_rates` (`Ledger.RenderRates`, from
