@@ -24,7 +24,7 @@ func voiceSink(t *testing.T, tts *mockVoiceTTS) (*appSink, *wsClient) {
 	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
 	s := newAppSink(b)
 	s.tts = tts
-	s.attachVoice = func([]byte) error { return nil }
+	s.attachVoice = func([]byte, string) error { return nil }
 	return s, c
 }
 
@@ -81,7 +81,7 @@ func TestAppSink_VoiceUnavailable_OnlyFailedBlockMarked(t *testing.T) {
 	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
 	s := newAppSink(b)
 	s.tts = tts
-	s.attachVoice = func([]byte) error { return nil }
+	s.attachVoice = func([]byte, string) error { return nil }
 	ctx := agent.WithTrigger(context.Background(), "voice")
 
 	s.Emit(ctx, turnevent.TextBlock{Text: "first", Phase: turnevent.PhaseIntermediate})

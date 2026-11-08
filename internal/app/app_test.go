@@ -720,7 +720,7 @@ func TestAppSink_VoiceTriggerBundlesTTSAttachment(t *testing.T) {
 	tts := &mockVoiceTTS{data: []byte("fake-mp3-bytes")}
 	s.tts = tts
 	var attached [][]byte
-	s.attachVoice = func(audio []byte) error {
+	s.attachVoice = func(audio []byte, _ string) error {
 		attached = append(attached, audio)
 		return nil
 	}
@@ -749,7 +749,7 @@ func TestAppSink_TypedTriggerNoVoiceAttachment(t *testing.T) {
 	tts := &mockVoiceTTS{data: []byte("fake-mp3-bytes")}
 	s.tts = tts
 	attachCalled := false
-	s.attachVoice = func(audio []byte) error {
+	s.attachVoice = func(audio []byte, _ string) error {
 		attachCalled = true
 		return nil
 	}
@@ -772,7 +772,7 @@ func TestAppSink_VoiceTriggerNoTTSConfiguredIsGraceful(t *testing.T) {
 	s := newAppSink(b)
 	// s.tts left nil — no TTS provider configured.
 	attachCalled := false
-	s.attachVoice = func(audio []byte) error {
+	s.attachVoice = func(audio []byte, _ string) error {
 		attachCalled = true
 		return nil
 	}
@@ -798,7 +798,7 @@ func TestAppSink_VoiceTriggerSilentReplyNotSynthesized(t *testing.T) {
 	tts := &mockVoiceTTS{data: []byte("fake-mp3-bytes")}
 	s.tts = tts
 	attachCalled := false
-	s.attachVoice = func(audio []byte) error {
+	s.attachVoice = func(audio []byte, _ string) error {
 		attachCalled = true
 		return nil
 	}
@@ -822,7 +822,7 @@ func TestAppSink_VoiceTriggerSynthesisErrorIsGraceful(t *testing.T) {
 	s := newAppSink(b)
 	s.tts = &mockVoiceTTS{err: errors.New("synth boom")}
 	attachCalled := false
-	s.attachVoice = func(audio []byte) error {
+	s.attachVoice = func(audio []byte, _ string) error {
 		attachCalled = true
 		return nil
 	}
@@ -855,7 +855,7 @@ func TestAppSink_VoiceTriggerMultiBlockTurnSynthesizesPerBlock(t *testing.T) {
 	tts := &mockVoiceTTS{data: []byte("clip")}
 	s.tts = tts
 	var attached [][]byte
-	s.attachVoice = func(audio []byte) error {
+	s.attachVoice = func(audio []byte, _ string) error {
 		attached = append(attached, audio)
 		return nil
 	}

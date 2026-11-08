@@ -790,14 +790,21 @@ type Media struct {
 	// VoiceMode marks this attachment as the server-synthesized TTS reading of
 	// the SAME turn's reply text (#1439) — sent for a trigger=="voice" turn
 	// (the user spoke rather than typed) when a TTS provider is configured. It
-	// shares MessageID/ConversationID with the just-delivered text frame
-	// (fap.Message or fap.TextEnd), arriving immediately after it. Contract for
+	// has its own MessageID and arrives immediately after the text frame it
+	// reads aloud (fap.Message or fap.TextEnd), whose messageId it carries in
+	// TextMessageID. Contract for
 	// the client (P3, #1440): VoiceMode==true identifies audio the client should
 	// auto-play (voice-in → voice-out), as opposed to any other voice/audio
 	// attachment (e.g. an explicit send_to_chat send_as="voice" note, or a
 	// user-sent voice message) which is NOT tagged and plays only on tap.
 	// Omitted (false) for every other Media frame.
 	VoiceMode bool `json:"voiceMode,omitempty"`
+	// TextMessageID is, on a VoiceMode clip, the messageId of the text message
+	// it reads aloud (#2985): the client draws the clip inside that message's
+	// bubble instead of as a message of its own. Empty when the clip has no
+	// delivered text message to belong to (and on every other Media frame);
+	// a client then draws it as its own row, as before.
+	TextMessageID string `json:"textMessageId,omitempty"`
 }
 
 func (Media) Type() string { return TypeMedia }

@@ -34,6 +34,12 @@ type appBackend struct {
 	// segment; Deliver consumes it onto the frame. Same goroutine as Emit, so
 	// no lock.
 	voiceUnavailable string
+
+	// lastMsgID is the messageId of the last segment Deliver sent. appSink
+	// clears it before it forwards a text event and reads it after, so a
+	// voice-mode clip can name the text message it reads aloud (#2985). Same
+	// goroutine as Emit, so no lock.
+	lastMsgID string
 }
 
 func newAppBackend(b *convBinding) *appBackend {
@@ -58,6 +64,7 @@ func (p *appBackend) OpenStream() turn.StreamSink {
 // the authoritative final text; otherwise it sends a fresh fap.ServerMessage.
 func (p *appBackend) Deliver(pl turn.Payload, stream turn.StreamSink) (turn.DeliveryResult, error) {
 	msgID := fap.NewULID()
+	p.lastMsgID = msgID
 	voiceUnavailable := p.voiceUnavailable
 	p.voiceUnavailable = ""
 	if ss, ok := stream.(*appStreamSink); ok && ss.surfaced() {

@@ -547,8 +547,9 @@ func (c *appConn) emitMedia(b *convBinding, meta *blobMeta, caption string) {
 // as a fap.Media frame tagged VoiceMode=true on the turn's own binding b — the
 // same binding the reply text was just delivered to, so no sessionKey lookup
 // (unlike sendMediaBytes, which is the tool-invoked send_to_chat voice-note
-// path and resolves its own binding).
-func (c *appConn) sendVoiceModeAttachment(b *convBinding, audio []byte) error {
+// path and resolves its own binding). textMessageID names the text message
+// the clip reads aloud (#2985); "" sends an unlinked clip.
+func (c *appConn) sendVoiceModeAttachment(b *convBinding, audio []byte, textMessageID string) error {
 	meta, err := c.hub.blobs.putBytes(audio, fap.MediaVoice, "voice-mode.mp3", "audio/mpeg")
 	if err != nil {
 		return err
@@ -561,6 +562,7 @@ func (c *appConn) sendVoiceModeAttachment(b *convBinding, audio []byte) error {
 		Name:           meta.name,
 		Size:           meta.size,
 		VoiceMode:      true,
+		TextMessageID:  textMessageID,
 	})
 	return nil
 }
@@ -841,7 +843,9 @@ func (c *appConn) NewTurnSink(env agent.Envelope) (turnevent.Sink, func()) {
 	// a live resolver that resolves to none: voice.Configured), appSink
 	// degrades to text-only — no error.
 	sink.tts = c.tts
-	sink.attachVoice = func(audio []byte) error { return c.sendVoiceModeAttachment(b, audio) }
+	sink.attachVoice = func(audio []byte, textMessageID string) error {
+		return c.sendVoiceModeAttachment(b, audio, textMessageID)
+	}
 	sink.afterTurn = func() { c.hub.finishTurnRead(b) }
 	if mode := c.toolCallMode(env.SessionKey); mode != "" {
 		sink.toolCalls = newToolCallEmitter(b, mode, c.redact)

@@ -69,11 +69,12 @@ type appSink struct {
 	tts voice.TTS
 
 	// attachVoice uploads synthesized reply audio and emits it as a
-	// VoiceMode-tagged fap.Media frame on this turn's binding. Set by
-	// appConn.NewTurnSink (which alone holds the hub's blob store); nil-safe
-	// (checked before use) so a sink built directly in a test without it still
-	// behaves like "no TTS".
-	attachVoice func(audio []byte) error
+	// VoiceMode-tagged fap.Media frame on this turn's binding, naming the
+	// text message it reads aloud (textMessageID, #2985; "" = none was
+	// delivered). Set by appConn.NewTurnSink (which alone holds the hub's
+	// blob store); nil-safe (checked before use) so a sink built directly in
+	// a test without it still behaves like "no TTS".
+	attachVoice func(audio []byte, textMessageID string) error
 
 	// voiceBlockDelivered is set once a voice clip has been synthesized for a
 	// delivered intermediate TextBlock this turn (#1444). It gates the
@@ -177,18 +178,22 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 
 	case turnevent.TextDelta, turnevent.TextBlock:
 		s.b.setTurnActivity(fap.ActivityKindTyping)
+		var audio []byte
 		if tb, ok := ev.(turnevent.TextBlock); ok && tb.Phase == turnevent.PhaseIntermediate {
 			// Voice-mode per-block synthesis (#1444): speak THIS block before
 			// forwarding it — same "synthesize before delivery" ordering as
 			// TurnComplete below — so the resulting clip covers exactly the
 			// bubble this block is about to render as (renderer.OnReply), one
 			// clip per delivered app bubble rather than one clip per turn.
-			s.synthesizeVoiceModeBlock(ctx, tb.Text)
+			audio = s.synthesizeVoiceModeBlock(ctx, tb.Text)
 		}
+		s.backend.lastMsgID = ""
 		s.inner.Emit(ctx, ev)
 		// A note the renderer did not deliver (silent block) must not leak
 		// onto a later, unrelated bubble.
 		s.backend.voiceUnavailable = ""
+		// The clip follows the bubble it reads, naming it (#2985).
+		s.attachVoiceClip(audio)
 
 	case turnevent.BackendRetry:
 		// Claude Code is waiting to retry the main thread's API call (#2260):
@@ -203,13 +208,10 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		audio := s.synthesizeVoiceMode(ctx, e)
 		// Forward first so the final text is delivered (TextEnd / ServerMessage),
 		// then close out the turn-scoped activity (→ idle) and emit the meta frame.
+		s.backend.lastMsgID = ""
 		s.inner.Emit(ctx, ev)
 		s.backend.voiceUnavailable = ""
-		if len(audio) > 0 && s.attachVoice != nil {
-			if err := s.attachVoice(audio); err != nil {
-				appLog.Warnf("voice-mode: attach synthesized audio (conv=%s): %v", s.b.convID, err)
-			}
-		}
+		s.attachVoiceClip(audio)
 		s.b.setTurnActivity(fap.ActivityKindIdle)
 		s.emitMeta(e)
 		if s.cacheExpiryFn != nil {
@@ -289,8 +291,21 @@ func (s *appSink) synthesizeVoiceMode(ctx context.Context, e turnevent.TurnCompl
 	return audio
 }
 
-// synthesizeVoiceModeBlock synthesizes and attaches a voice clip for ONE
-// delivered intermediate text block (#1444) — the per-bubble counterpart to
+// attachVoiceClip sends synthesized audio (nil = nothing to send) as the
+// voice-mode clip of the text segment the event just forwarded delivered:
+// backend.lastMsgID, which the caller cleared before forwarding (#2985). When
+// that event delivered nothing the clip goes out unlinked, as before #2985.
+func (s *appSink) attachVoiceClip(audio []byte) {
+	if len(audio) == 0 || s.attachVoice == nil {
+		return
+	}
+	if err := s.attachVoice(audio, s.backend.lastMsgID); err != nil {
+		appLog.Warnf("voice-mode: attach synthesized audio (conv=%s): %v", s.b.convID, err)
+	}
+}
+
+// synthesizeVoiceModeBlock synthesizes the voice clip for ONE intermediate
+// text block about to be delivered (#1444) — the per-bubble counterpart to
 // synthesizeVoiceMode. Same gating as synthesizeVoiceMode (TTS configured,
 // trigger=="voice", non-silent after stripping), minus the e.Err check (a
 // mid-turn TextBlock never carries a turn error). Marks voiceBlockDelivered
@@ -298,26 +313,23 @@ func (s *appSink) synthesizeVoiceMode(ctx context.Context, e turnevent.TurnCompl
 // accumulation this block is part of. Text is run through
 // voice.NormalizeForSpeech (#1444) before synthesis, same as
 // synthesizeVoiceMode. A synthesis error is logged and swallowed, matching
-// synthesizeVoiceMode's graceful degrade.
-func (s *appSink) synthesizeVoiceModeBlock(ctx context.Context, rawText string) {
+// synthesizeVoiceMode's graceful degrade. The caller attaches the returned
+// audio after the block is delivered, so the clip can name its bubble (#2985).
+func (s *appSink) synthesizeVoiceModeBlock(ctx context.Context, rawText string) []byte {
 	if !voice.Configured(s.tts) || agent.TriggerFromContext(ctx) != "voice" {
-		return
+		return nil
 	}
 	text := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(rawText))
 	if text == "" {
-		return
+		return nil
 	}
 	s.voiceBlockDelivered = true
 	audio, err := s.tts.Synthesize(ctx, voice.NormalizeForSpeech(text))
 	if err != nil {
 		s.ttsFailed(err)
-		return
+		return nil
 	}
-	if len(audio) > 0 && s.attachVoice != nil {
-		if err := s.attachVoice(audio); err != nil {
-			appLog.Warnf("voice-mode: attach synthesized audio (conv=%s): %v", s.b.convID, err)
-		}
-	}
+	return audio
 }
 
 // emitMeta sends the user-facing status chips (model, cost, tokens) the app
