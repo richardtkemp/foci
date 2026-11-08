@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	"foci/internal/app"
 	"foci/internal/config"
 	"foci/internal/delegator"
 	"foci/internal/delegator/accounting"
@@ -136,6 +137,10 @@ var (
 	// has no per-field registry rows. The bare section address is what
 	// Apply(section, "") looks up — the app editor's object-list edit path.
 	liveApplyModelInfoAddrs = []string{"modelinfo"}
+
+	// #2956: the pin label summary's model and provider order, pushed into
+	// the app hub's summariser (a derived handle).
+	liveApplyPinSummaryAddrs = []string{"platforms.app.pin_summary_model", "platforms.app.pin_summary_provider"}
 
 	// Global rows only: the agent./platforms. debug override rows are dead
 	// (nothing reads them — tracker #1199), so their struct tags carry the
@@ -406,6 +411,15 @@ func registerLiveAppliers(la *liveApply, agents *agentRegistry) {
 				inst.ag.GroupResolver.Update(resolved.Groups, fresh.Models, fresh.HasAPIAgent())
 			}
 		}
+		return nil
+	})
+
+	la.register(liveApplyPinSummaryAddrs, func(fresh *config.Config) error {
+		var appCfg *config.AppSpecific
+		if p := fresh.Platform("app"); p != nil {
+			appCfg = p.App
+		}
+		app.ConfigurePinSummary(appCfg)
 		return nil
 	})
 

@@ -151,6 +151,8 @@ func (p *appProvider) DefaultPlatformConfig() config.PlatformConfig {
 			CheckboxRetention:  defaultCheckboxRetention.String(),
 			CheckboxMaxDocs:    &checkboxMaxDocs,
 			MermaidCmd:         mermaid.DefaultCmd,
+			PinSummaryModel:    defaultPinSummaryModel,
+			PinSummaryProvider: defaultPinSummaryProvider,
 		},
 	}
 }

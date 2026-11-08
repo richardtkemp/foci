@@ -426,6 +426,8 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		PinSync{ConversationID: "c", MessageIDs: []string{"m1", "m2"}},
 		PinSync{ConversationID: "c", MessageIDs: []string{"m1"}, Labels: map[string]string{"m1": "L"}},
 		PinsAll{Conversations: []PinGroup{{ConversationID: "c", AgentID: "a", Title: "t", Pins: []PinnedMessage{{MessageID: "m", Label: "L", Snippet: "s", SentMs: 1}}}}},
+		PinSummary{RequestID: "r", MessageID: "m", Summary: "flight times for Athens"},
+		PinSummary{RequestID: "r", MessageID: "m"},
 		ScrollSync{ConversationID: "c", MessageID: "m", Following: false},
 		ConvPinSync{ConversationID: "c", Pinned: true},
 		CheckboxSync{DocumentID: "b", Lines: []int{1}},
@@ -606,6 +608,43 @@ func TestDecode_PinPut_Label(t *testing.T) {
 	}
 	if f := in.Frame.(PinPut); f.Label != "" {
 		t.Errorf("old-app frame label = %q, want empty", f.Label)
+	}
+}
+
+// TestDecode_PinSummarize pins the app->server half of the pin-label summary
+// (#2956): the Kotlin encoder's field names, checked on this side too.
+func TestDecode_PinSummarize(t *testing.T) {
+	in, err := Decode(`{"t":"pin.summarize","id":"i1","d":{"requestId":"r1","conversationId":"c1","messageId":"m7","text":"hello there"}}`)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	f, ok := in.Frame.(PinSummarize)
+	if !ok {
+		t.Fatalf("frame = %T, want PinSummarize", in.Frame)
+	}
+	want := PinSummarize{RequestID: "r1", ConversationID: "c1", MessageID: "m7", Text: "hello there"}
+	if f != want {
+		t.Errorf("decoded = %+v, want %+v", f, want)
+	}
+}
+
+// TestEncode_PinSummary pins the server->app answer's field names, and that a
+// failed summary leaves the summary field off the wire.
+func TestEncode_PinSummary(t *testing.T) {
+	wire, err := Encode(PinSummary{RequestID: "r1", MessageID: "m7", Summary: "s"}, 0, 0, "", "")
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if !strings.Contains(wire, `"t":"pin.summary"`) || !strings.Contains(wire, `"requestId":"r1"`) ||
+		!strings.Contains(wire, `"messageId":"m7"`) || !strings.Contains(wire, `"summary":"s"`) {
+		t.Errorf("wire = %s", wire)
+	}
+	wire, err = Encode(PinSummary{RequestID: "r1", MessageID: "m7"}, 0, 0, "", "")
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if strings.Contains(wire, `"summary"`) {
+		t.Errorf("empty summary on the wire: %s", wire)
 	}
 }
 

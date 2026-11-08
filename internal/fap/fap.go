@@ -161,6 +161,13 @@ const (
 	// own stores, so the list covers chats this device never synced.
 	TypePinsList = "pins.list"
 	TypePinsAll  = "pins.all"
+	// TypePinSummarize (app->server) asks for a short summary of one message,
+	// to prefill the pin label dialog (#2956); TypePinSummary (server->app) is
+	// the answer, sent to the asking socket only. Socket-level, not
+	// conversation-reliability-scoped: a lost request just leaves the dialog
+	// as it was without the feature.
+	TypePinSummarize = "pin.summarize"
+	TypePinSummary   = "pin.summary"
 	// TypeScrollPut (app->server) mirrors where the user left a conversation
 	// (#2144); TypeScrollSync (server->app) fans it to the user's other devices
 	// and is replayed after a hello, exactly like the draft pair.
@@ -1361,6 +1368,31 @@ type PinsAll struct {
 }
 
 func (PinsAll) Type() string { return TypePinsAll }
+
+// PinSummarize asks the server for a short summary of one message, made by a
+// small fast model (app->server, #2956). The app sends it when the pin label
+// dialog opens and fills the label field with the answer. Text is the
+// message's own text, sent by the app so the server need not find it; the
+// server truncates it before the model call. RequestID is the app's own id
+// for this ask and comes back on the answer. Socket-level and
+// fire-and-forget: the server answers the asking socket with one PinSummary.
+type PinSummarize struct {
+	RequestID      string `json:"requestId"`
+	ConversationID string `json:"conversationId"`
+	MessageID      string `json:"messageId"`
+	Text           string `json:"text"`
+}
+
+// PinSummary answers a PinSummarize (server->client, #2956). Summary is the
+// model's summary, cleaned to one line; it is empty when the feature is off or
+// the model call failed, so the app stops waiting and keeps its default.
+type PinSummary struct {
+	RequestID string `json:"requestId"`
+	MessageID string `json:"messageId"`
+	Summary   string `json:"summary,omitempty"`
+}
+
+func (PinSummary) Type() string { return TypePinSummary }
 
 // ScrollPut mirrors where the user left a conversation's scroll view to the
 // server (app->server, #2144). Sent on the same "leave" event as DraftPut, and

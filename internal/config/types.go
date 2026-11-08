@@ -954,6 +954,11 @@ type AppSpecific struct {
 	CheckboxMaxDocs    *int   `toml:"checkbox_max_docs"    desc:"Maximum number of checkbox documents stored on the server; a document already stored can always be updated (default 10000)"`
 	MermaidCmd         string `toml:"mermaid_cmd"      desc:"Command that renders mermaid diagrams, for the app and for the image send_to_chat sends with a .mmd/.mermaid file: mermaid-cli's mmdc, by name or path (default mmdc; set to off to disable). Without it the app shows the diagram's source and send_to_chat sends the source alone"`
 	MermaidBrowser     string `toml:"mermaid_browser"  desc:"Path to the Chrome or Chromium that renders mermaid diagrams (default: the first of chromium, chromium-browser, google-chrome-stable, google-chrome on PATH, else puppeteer's own download)"`
+	// Pin label summary (#2956): when the user pins a message, the app asks
+	// the server for a short summary to prefill the label field. The server
+	// calls OpenRouter with the openrouter.api_key secret.
+	PinSummaryModel    string `toml:"pin_summary_model"    hot:"event" desc:"OpenRouter model that writes the suggested label when a message is pinned in the app (default meta-llama/llama-3.1-8b-instruct; set to off to disable)"`
+	PinSummaryProvider string `toml:"pin_summary_provider" hot:"event" desc:"OpenRouter provider(s) the pin label summary is sent to first, comma-separated, falling back to others if they fail (default groq; set to any to let OpenRouter choose)"`
 	// AllowedDevices: if non-empty, only these device IDs may pair (empty allows
 	// any). A slice → set in the TOML file, not via /config set, so no desc tag
 	// (mirrors AccessConfig.AllowedUsers).
@@ -1046,6 +1051,12 @@ func (p *PlatformConfig) ApplyDefaults(defaults PlatformConfig) {
 		}
 		if p.App.MermaidBrowser == "" {
 			p.App.MermaidBrowser = defaults.App.MermaidBrowser
+		}
+		if p.App.PinSummaryModel == "" {
+			p.App.PinSummaryModel = defaults.App.PinSummaryModel
+		}
+		if p.App.PinSummaryProvider == "" {
+			p.App.PinSummaryProvider = defaults.App.PinSummaryProvider
 		}
 		if p.App.AllowedDevices == nil {
 			p.App.AllowedDevices = defaults.App.AllowedDevices

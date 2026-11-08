@@ -82,6 +82,9 @@ type Hub struct {
 	// askgw holds the pending ask-gateway prompts, shown app-wide (#2707).
 	askgw askgwPromptSet
 
+	// pinSum answers pin.summarize with a model-written pin label (#2956).
+	pinSum *pinSummariser
+
 	// helloMu guards helloByDevice/helloWarns only — deliberately not h.mu,
 	// which is held across conversation fan-out; a disconnect must never queue
 	// behind that.
@@ -311,6 +314,7 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		frames:        frames,
 		checkboxes:    checkboxes,
 		deps:          deps,
+		pinSum:        newPinSummariser(appCfg, secretGetter(deps, pinSummarySecret)),
 		pairKeys:      newPairKeyStore(),
 		blobs:         blobs,
 		mermaid:       mermaidR,
