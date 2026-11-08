@@ -1140,7 +1140,7 @@ type LoggingConfig struct {
 // Multiple entries are supported via [[tts]]; first entry is the default.
 type TTSConfig struct {
 	ID             string            `toml:"id"`              // lookup key for agent overrides
-	Format         string            `toml:"format"`          // "openai" or "edge-tts"
+	Format         string            `toml:"format"`          // "openai", "google" or "edge-tts"
 	Endpoint       string            `toml:"endpoint"`        // API URL (ignored for edge-tts)
 	Model          string            `toml:"model"`           // model name (ignored for edge-tts)
 	Voice          string            `toml:"voice"`           // voice name (format-specific)
@@ -1164,6 +1164,19 @@ type TTSConfig struct {
 	// keeping pitch. Unset: the endpoint gets the speed, the rule (#2940).
 	// openai format with a wav response only.
 	LocalSpeedControl bool `toml:"local_speed_control"`
+}
+
+// GoogleTTSEncodings maps a google-format [[tts]] response_format to Google
+// Text-to-Speech's audioEncoding (#2921). "" is MP3: about a tenth the size of
+// LINEAR16, which matters for a long clip. LINEAR16 comes back as a WAV file.
+var GoogleTTSEncodings = map[string]string{
+	"":         "MP3",
+	"mp3":      "MP3",
+	"wav":      "LINEAR16",
+	"linear16": "LINEAR16",
+	"ogg":      "OGG_OPUS",
+	"opus":     "OGG_OPUS",
+	"ogg_opus": "OGG_OPUS",
 }
 
 // STTConfig describes a speech-to-text provider entry.

@@ -9,13 +9,21 @@ import (
 // TextTooLongError says a voice refused a text over its [[tts]] max_chars
 // (#2919). No provider was called. It is a skip, not a fault, so callers report
 // it apart from a provider failure.
+//
+// A provider with its own hard input limit (Google's 5,000 bytes, #2921) also
+// returns it, with Unit "bytes", so that limit is a skip too.
 type TextTooLongError struct {
-	Chars int // characters in the text the voice would have received
-	Max   int // the voice's maximum
+	Chars int    // size of the text the voice would have received, in Unit
+	Max   int    // the voice's maximum, in Unit
+	Unit  string // "" means characters (Unicode code points)
 }
 
 func (e *TextTooLongError) Error() string {
-	return fmt.Sprintf("text of %d characters is over this voice's maximum of %d", e.Chars, e.Max)
+	unit := e.Unit
+	if unit == "" {
+		unit = "characters"
+	}
+	return fmt.Sprintf("text of %d %s is over this voice's maximum of %d", e.Chars, unit, e.Max)
 }
 
 // maxCharsTTS refuses a text over max, before the provider sees it.

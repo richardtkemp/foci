@@ -1052,3 +1052,31 @@ func TestValidateTTSLocalSpeedControl(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateTTSGoogle(t *testing.T) {
+	// #2921: a google-format voice takes only a response_format Google can
+	// encode; the other formats are not checked here.
+	for _, e := range []TTSConfig{
+		{ID: "g", Format: "google"},
+		{ID: "g", Format: "google", ResponseFormat: "mp3"},
+		{ID: "g", Format: "google", ResponseFormat: "WAV"},
+		{ID: "g", Format: "google", ResponseFormat: "ogg"},
+		{ID: "o", Format: "openai", ResponseFormat: "aac"},
+	} {
+		if err := validateTTSGoogle(&Config{TTS: []TTSConfig{e}}); err != nil {
+			t.Errorf("%+v refused: %v", e, err)
+		}
+	}
+	err := validateTTSGoogle(&Config{TTS: []TTSConfig{{ID: "g", Format: "google", ResponseFormat: "aac"}}})
+	if err == nil || !strings.Contains(err.Error(), `"g"`) || !strings.Contains(err.Error(), "aac") {
+		t.Errorf("err = %v, want aac refused for id g", err)
+	}
+	// Validate runs the check, and the existing local_speed_control rule
+	// refuses it on a google voice (Google takes the rate itself).
+	if err := (&Config{TTS: []TTSConfig{{ID: "g", Format: "google", ResponseFormat: "aac"}}}).Validate(nil); err == nil || !strings.Contains(err.Error(), "aac") {
+		t.Errorf("Validate: err = %v, want the google response_format refused", err)
+	}
+	if err := validateTTSLocalSpeedControl(&Config{TTS: []TTSConfig{{ID: "g", Format: "google", LocalSpeedControl: true}}}); err == nil {
+		t.Error("local_speed_control accepted on a google voice")
+	}
+}

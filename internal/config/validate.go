@@ -91,6 +91,20 @@ func validateTTSLocalSpeedControl(cfg *Config) error {
 	return nil
 }
 
+// validateTTSGoogle rejects a google-format [[tts]] response_format that has no
+// Google audioEncoding (#2921). Accepted at load, it would fail every clip.
+func validateTTSGoogle(cfg *Config) error {
+	for _, e := range cfg.TTS {
+		if e.Format != "google" {
+			continue
+		}
+		if _, ok := GoogleTTSEncodings[strings.ToLower(e.ResponseFormat)]; !ok {
+			return fmt.Errorf("[[tts]] id %q response_format = %q: format \"google\" takes \"mp3\", \"wav\" or \"ogg\"", e.ID, e.ResponseFormat)
+		}
+	}
+	return nil
+}
+
 // validateWebFetchMaxBytes rejects a negative tools.web_fetch_max_bytes at the
 // global and each agent level (#2770). Zero is allowed and means the default.
 func validateWebFetchMaxBytes(cfg *Config) error {
@@ -352,6 +366,9 @@ func (cfg *Config) Validate(knownBackends []string) error {
 		return err
 	}
 	if err := validateTTSLocalSpeedControl(cfg); err != nil {
+		return err
+	}
+	if err := validateTTSGoogle(cfg); err != nil {
 		return err
 	}
 	if err := validateWebFetchMaxBytes(cfg); err != nil {

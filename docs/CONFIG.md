@@ -449,18 +449,29 @@ foci auto-registers a built-in, key-less `edge-tts` provider under the id `edge-
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `id` | string | `""` | Lookup key for agent overrides. |
-| `format` | string | `""` | Provider format: `"openai"` or `"edge-tts"`. |
-| `endpoint` | string | `""` | API endpoint URL (ignored for edge-tts). |
-| `model` | string | `""` | Model name (ignored for edge-tts). |
-| `voice` | string | `""` | Voice name (format-specific). `""` defaults to `"alloy"` for OpenAI. |
+| `format` | string | `""` | Provider format: `"openai"`, `"google"` (Google Cloud Text-to-Speech) or `"edge-tts"`. |
+| `endpoint` | string | `""` | API endpoint URL (ignored for edge-tts). For google, `""` means `https://texttospeech.googleapis.com/v1/text:synthesize`. |
+| `model` | string | `""` | Model name (ignored for edge-tts and google: a Google voice name picks its type). |
+| `voice` | string | `""` | Voice name (format-specific). `""` defaults to `"alloy"` for OpenAI and `"en-GB-Neural2-B"` for google. A google voice name such as `"en-GB-Neural2-D"` also gives the language (`en-GB`). |
 | `rate` | float | `0` | Speed multiplier: `1.3` = 30% faster, `0.8` = 20% slower. `0` means omit/default. Sent to the endpoint (`speed` for openai, `--rate` for edge-tts) unless `local_speed_control` is set. |
-| `secret` | string | `""` | Secret name in secrets.toml (e.g. `"groq.api_key"`). If empty, auto-detected from endpoint hostname. |
+| `secret` | string | `""` | Secret name in secrets.toml (e.g. `"groq.api_key"`). If empty, auto-detected from endpoint hostname. Set it for google: a Google Cloud API key with the Text-to-Speech API enabled. |
 | `command` | string | `"edge-tts"` | Binary for edge-tts format. |
-| `response_format` | string | `"wav"` | Audio format for OpenAI-compatible APIs: `"mp3"`, `"wav"`, `"opus"`, `"aac"`, `"flac"`. Groq only supports `"wav"`. |
+| `response_format` | string | `"wav"` | Audio format for OpenAI-compatible APIs: `"mp3"`, `"wav"`, `"opus"`, `"aac"`, `"flac"`. Groq only supports `"wav"`. For google: `"mp3"` (the default there), `"wav"` or `"ogg"` (Opus); any other value is refused at load. |
 | `replacements` | map | `{}` | Word replacements applied to text before synthesis. Case-insensitive whole-word matching; preserves original case pattern. Example: `{ foci = "foki" }`. |
 | `fallback` | string | `"edge-tts"` | Id of the entry to try when this provider fails. Unset defaults to the built-in `edge-tts` provider (and to nothing for an entry that is already edge-tts). Set to `""` to disable fallback for this entry. |
 | `max_chars` | int | `0` | Longest text this voice takes, in characters (Unicode code points), counted on the text it would receive: after speech clean-up and word replacements. A longer text skips the voice with no provider call and goes to the next one. `0` means no limit. Applies to voice replies, voice notes and the app's Speak. Example: `200` on Groq Orpheus. |
 | `local_speed_control` | bool | `false` | For an endpoint that ignores the speed it is sent (Groq Orpheus): foci leaves `speed` out of the request and applies `rate` itself, time-stretching the returned clip with pitch kept. The stretch is ffmpeg's `atempo` filter when `ffmpeg` is on foci's PATH; without it (or if it fails) foci uses its built-in stretch, which needs no binary but sounds worse, and logs a warning at load and on each clip. `openai` format with a `wav` response only; anything else is refused at load. If the clip is not 16-bit PCM WAV it plays at its own rate, with a warning. |
+
+**Google Cloud Text-to-Speech** (`format = "google"`). Neural2, WaveNet, Standard and Chirp 3 HD voices all go through this format; the voice name picks the type. The rate is sent to Google, which takes 0.25 to 2.0: foci clamps a rate outside that range, with a warning. Google takes at most 5,000 bytes of text per request; a longer text skips the voice with no call, like `max_chars`. Example:
+
+```toml
+[[tts]]
+id = "neural2"
+format = "google"
+voice = "en-GB-Neural2-B"
+secret = "google_cloud.api_key"
+max_chars = 4500
+```
 
 ### `[[stt]]`
 

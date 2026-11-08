@@ -93,6 +93,10 @@ func WithRate(t TTS, rate float64) TTS {
 		cp := *p
 		cp.Speed = rate
 		return &cp
+	case *GoogleTTS:
+		cp := *p
+		cp.Speed = rate
+		return &cp
 	case *maxCharsTTS:
 		cp := *p
 		cp.inner = WithRate(p.inner, rate)
@@ -124,8 +128,16 @@ func NewTTS(cfg config.TTSConfig, apiKey string, http HTTPOpts) (TTS, error) {
 			LocalSpeed:     cfg.LocalSpeedControl,
 			HTTP:           http,
 		}, cfg.MaxChars), nil
+	case "google":
+		return WithMaxChars(&GoogleTTS{
+			Endpoint:       cfg.Endpoint,
+			APIKey:         apiKey,
+			Voice:          cfg.Voice,
+			ResponseFormat: cfg.ResponseFormat,
+			HTTP:           http,
+		}, cfg.MaxChars), nil
 	default:
-		return nil, fmt.Errorf("unknown TTS format %q (must be \"openai\" or \"edge-tts\")", cfg.Format)
+		return nil, fmt.Errorf("unknown TTS format %q (must be \"openai\", \"google\" or \"edge-tts\")", cfg.Format)
 	}
 }
 
