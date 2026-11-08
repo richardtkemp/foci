@@ -208,9 +208,10 @@ func (h *Hub) checkFileEdit(cur, next string) error {
 // value with key "<entry>" (create or merge); an unset with key "<entry>"
 // deletes the whole entry including its sub-tables, key "<entry>.<sub>"
 // removes that one sub-field. Global scope only — there is no per-agent
-// models/endpoints override surface. Like object lists, edits apply on
-// restart: applyLive logs the uniform takes-effect-on-restart line (no
-// applier is registered for these sections).
+// models/endpoints override surface. Like object lists, every edit goes
+// through applyLive at the bare section address: a Live section
+// ([endpoints], #2980) applies there; the others log the uniform
+// takes-effect-on-restart line.
 func (h *Hub) applyMapObjectEdit(scope string, spec config.MapObjectFieldSpec, key string, value *string) error {
 	if scope != "" {
 		return fmt.Errorf("mapObject section %q has no per-agent scope", spec.Section)
@@ -414,7 +415,7 @@ func (h *Hub) buildConfigSchema(errMsg string) fap.ConfigSchema {
 			Key:          "",
 			ValueType:    "mapObject",
 			Description:  mo.Description,
-			NeedsRestart: true,
+			NeedsRestart: !mo.Live,
 			Fields:       sub,
 		})
 	}

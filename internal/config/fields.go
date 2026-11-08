@@ -596,6 +596,10 @@ type MapObjectFieldSpec struct {
 	// when an entry is CREATED ("" = none). [models.*] is meaningless
 	// without its model ID; validateModelKeys is the load-time backstop.
 	Required string
+	// Live marks a section with a live applier registered at its bare section
+	// address (cmd/foci-gw liveapply.go): an edit applies with no restart, and
+	// the schema reports NeedsRestart=false (TestLiveApplyCoversLiveMapObjectSections).
+	Live bool
 }
 
 // mapObjectFieldSpecs is the registry of map[string]Struct config sections
@@ -613,7 +617,7 @@ var mapObjectFieldSpecs = []MapObjectFieldSpec{
 		{Key: "cache_ttl", Type: FieldDuration, Description: "Cache TTL (Go duration, empty = auto-detect)"},
 		{Key: "cache_strategy", Type: FieldString, Description: "Cache marker strategy: auto or explicit"},
 	}},
-	{Section: "endpoints", Description: "Named API endpoint definitions", Fields: []ObjectSubField{
+	{Section: "endpoints", Description: "Named API endpoint definitions", Live: true, Fields: []ObjectSubField{
 		{Key: "format", Type: FieldString, Description: "Wire format: anthropic, openai, or gemini"},
 		{Key: "url", Type: FieldString, Description: "Base URL (empty = SDK default)"},
 		{Key: "anthropic_url", Type: FieldString, Description: "Anthropic-format URL override"},
@@ -628,6 +632,11 @@ var mapObjectFieldSpecs = []MapObjectFieldSpec{
 func MapObjectFields() []MapObjectFieldSpec {
 	out := make([]MapObjectFieldSpec, len(mapObjectFieldSpecs))
 	copy(out, mapObjectFieldSpecs)
+	for i := range out {
+		if out[i].Live {
+			out[i].Description = withLiveEditNote(out[i].Description)
+		}
+	}
 	return out
 }
 

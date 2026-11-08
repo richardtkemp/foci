@@ -42,6 +42,11 @@ type selfRetryingClient interface {
 //   - 529 overload: up to ~2h (configurable via OverloadMaxDuration)
 //   - 5xx server errors: up to ~5min (configurable via ServerErrorMaxDuration)
 func sendWithRetry(ctx context.Context, client Client, req *MessageRequest, handler *StreamHandler) (*MessageResponse, error) {
+	// Pin a registry handle to its current client for the whole call (#2980):
+	// every retry below uses one concrete client, and the optional-interface
+	// checks see it rather than the wrapper.
+	client = Pin(client)
+
 	// Check if client handles its own retries (e.g., Gemini SDK has built-in retry)
 	if src, ok := client.(selfRetryingClient); ok && src.HandlesOwnRetries() {
 		// Let the client's SDK handle retries

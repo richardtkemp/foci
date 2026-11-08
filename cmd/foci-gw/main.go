@@ -313,6 +313,7 @@ Subcommands:
 	}
 
 	clients := newClientRegistry(cfg, sec.store, ctx)
+	gwClients = clients
 
 	// ========== Sessions & State ==========
 	si := initSessions(cfg)

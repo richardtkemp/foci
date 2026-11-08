@@ -774,6 +774,8 @@ Then use it: `model = "local/my-fine-tuned-model"`.
 
 Clients are lazy-initialized on first use — endpoints that are never referenced don't create connections.
 
+Endpoint changes apply live (no restart) when made with `foci config set` or the app config editor: the next API call to a changed endpoint uses its new `url`, `api_key` or `http_timeout`. Calls already running finish on the old settings. An edit that leaves an endpoint unable to build a client (e.g. `api_key` names a missing secret) keeps the old client and logs an error. Removing an endpoint does not stop clients already built for it until a restart. A hand edit to foci.toml still needs a restart.
+
 ### `[tools]`
 
 Tool behavior settings (global-only fields). Fields that can be overridden per-agent are in [Global-or-Agent: Tool Behavior](#tool-behavior).

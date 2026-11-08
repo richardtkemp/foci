@@ -114,8 +114,11 @@ procx.PassOpenFileLimitToChildren()                       ← internal/procx, ri
   → returns secretsResult{store, bwStore, httpAPIKey, cleanup}
 
 → newClientRegistry(cfg, store, ctx)                    ← clients.go
-  → Lazy client registry: clients created on first use per endpoint:format pair (sync.Once)
-  →   GetClient(endpoint, format) — lazy-init, returns provider.Client
+  → Lazy client registry: clients created on first use per endpoint:format pair (per-entry mutex)
+  →   GetClient(endpoint, format) — lazy-init, returns the pair's ONE provider.SwappableClient handle
+  →   Reconfigure(fresh) — [endpoints] live applier (liveapply.go, #2980): rebuilds each changed
+       endpoint's client and Swaps it behind the handle; provider.Send/sendWithRetry Pin the
+       handle at entry, so an in-flight call keeps its client
   →   PeekClient(endpoint, format) — no-init check, returns nil if not yet created
   →   ResolveEndpointClient(endpoint, format) — validates format against endpoint support, calls GetClient
 

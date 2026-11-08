@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"foci/internal/app"
@@ -94,6 +95,15 @@ func (la *liveApply) Apply(section, key string) (bool, error) {
 	if fn == nil {
 		fn = la.mapSectionAppliers[section]
 	}
+	if fn == nil {
+		// A mapObject section ([endpoints.*]) edited by key path: section
+		// "endpoints.<name>" (or "endpoints" with key "<name>") goes to the
+		// applier at the bare section address.
+		head, _, _ := strings.Cut(section, ".")
+		if spec, ok := config.MapObjectFieldSpecFor(head); ok && spec.Live {
+			fn = la.appliers[spec.Section]
+		}
+	}
 	la.mu.RUnlock()
 	if fn == nil {
 		configLog.Warnf("%s written but not live-appliable: takes effect on restart", addr)
@@ -137,6 +147,13 @@ var (
 	// has no per-field registry rows. The bare section address is what
 	// Apply(section, "") looks up — the app editor's object-list edit path.
 	liveApplyModelInfoAddrs = []string{"modelinfo"}
+
+	// [endpoints.*] (#2980) is a mapObject section: no per-field registry
+	// rows. The app editor applies it at the bare section address; a CLI
+	// path (endpoints.<name>.<sub>) reaches the same applier through
+	// Apply's mapObject fallback. The client registry swaps each changed
+	// endpoint's client behind the handle callers hold.
+	liveApplyEndpointsAddrs = []string{"endpoints"}
 
 	// #2956: the pin label summary's model and provider order, pushed into
 	// the app hub's summariser (a derived handle).
@@ -433,6 +450,13 @@ func registerLiveAppliers(la *liveApply, agents *agentRegistry) {
 			appCfg = p.App
 		}
 		app.ConfigureAutoName(appCfg)
+		return nil
+	})
+
+	la.register(liveApplyEndpointsAddrs, func(fresh *config.Config) error {
+		if gwClients != nil {
+			gwClients.Reconfigure(fresh)
+		}
 		return nil
 	})
 

@@ -246,8 +246,8 @@ frames (FAP wire §13), split into "set in foci.toml" vs defaults, per scope
 (global / per-agent `[[agents]]` overrides). Named model definitions
 (`[models.*]`) and endpoints (`[endpoints.*]`) are editable there too: the page
 lists every entry, and can add one, change an entry's sub-fields, or delete an
-entry. Edits use the same comment-preserving file writer as `/config set` and
-take effect on restart. An edit whose result would stop the server from
+entry. Edits use the same comment-preserving file writer as `/config set`;
+endpoint edits apply live, model edits take effect on restart. An edit whose result would stop the server from
 starting (e.g. deleting a model one of your groups still uses) is refused with
 the reason. The one exception: when foci.toml already fails to load (e.g. a
 hand edit broke it), edits are written unchecked so the file can be repaired

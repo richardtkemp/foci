@@ -1525,7 +1525,7 @@ type Config struct {
 	Groups             GroupsConfig              `toml:"groups"`     // model group assignments and fallbacks
 	Models             map[string]ModelConfig    `toml:"models"`     // named model definitions with per-model settings
 	ModelInfo          []ModelInfoEntry          `toml:"modelinfo"`  // user-supplied model registry overrides (pricing, capabilities, context window)
-	Endpoints          map[string]EndpointConfig `toml:"endpoints"`  // named API endpoints (built-in: anthropic, gemini, openai, openrouter)
+	Endpoints          map[string]EndpointConfig `toml:"endpoints"`  // named API endpoints (built-in: anthropic, gemini, openai, openrouter); live via the [endpoints] mapObject applier (#2980)
 	Agents             []AgentConfig             `toml:"agents"`     // multi-agent: array of agents
 	Anthropic          AnthropicConfig           `toml:"anthropic"`
 	Platforms          []PlatformConfig          `toml:"platforms"`

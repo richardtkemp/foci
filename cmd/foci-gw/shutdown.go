@@ -12,6 +12,7 @@ import (
 	"foci/internal/delegator"
 	"foci/internal/gemini"
 	"foci/internal/platform"
+	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/startup"
 	"foci/internal/tools"
@@ -93,7 +94,7 @@ func runShutdown(
 
 	// Clean up Gemini cache (delete server-side cached content)
 	if gc := clients.PeekClient("gemini", "gemini"); gc != nil {
-		if gcTyped, ok := gc.(*gemini.Client); ok {
+		if gcTyped, ok := provider.Pin(gc).(*gemini.Client); ok {
 			gcTyped.Close(cfg.ctx)
 		}
 	}

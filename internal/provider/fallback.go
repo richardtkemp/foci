@@ -187,6 +187,9 @@ func Send(
 	clientProvider ClientProvider,
 	logf func(string, ...any),
 ) (*MessageResponse, error) {
+	// Pin once so the 400-strip retry and a fallback hop that reuses the
+	// caller's client run on the client this call started with (#2980).
+	client = Pin(client)
 	resp, err := sendWithRetry(ctx, client, req, handler)
 	if err == nil {
 		return resp, nil
