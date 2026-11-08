@@ -30,13 +30,21 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	return tables
 }
 
+// intOverridden reports whether an agent sets its own value for an int key and
+// that value differs from the global one. An agent that leaves the key unset
+// inherits the global value, so it does not override it (with a tag default
+// such as max_tool_loops = 100, unset would otherwise read as 0 != 100).
+func intOverridden(agent, global *int) bool {
+	return agent != nil && *agent != DerefInt(global)
+}
+
 // annotateGlobalRows adds (overridden) and (default) annotations to rows.
 // Only defaults/provider fields that can be overridden per-agent get the
 // (overridden) tag; all fields get (default) if they weren't explicitly set.
 func annotateGlobalRows(rows []configRow, cfg *Config, agent AgentConfig) {
 	overrides := map[string]bool{
-		"agent_loop.max_tool_loops":    DerefInt(agent.Loop.MaxToolLoops) != DerefInt(cfg.AgentLoop.MaxToolLoops),
-		"agent_loop.max_output_tokens": DerefInt(agent.Loop.MaxOutputTokens) != DerefInt(cfg.AgentLoop.MaxOutputTokens),
+		"agent_loop.max_tool_loops":    intOverridden(agent.Loop.MaxToolLoops, cfg.AgentLoop.MaxToolLoops),
+		"agent_loop.max_output_tokens": intOverridden(agent.Loop.MaxOutputTokens, cfg.AgentLoop.MaxOutputTokens),
 	}
 	for i := range rows {
 		path := rows[i].Section + "." + rows[i].Key

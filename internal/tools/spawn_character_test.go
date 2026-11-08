@@ -10,6 +10,7 @@ import (
 
 	"foci/internal/delegator"
 	"foci/internal/platform"
+	"foci/internal/provider"
 )
 
 // ctxSpawnAgent records each run's session key and whether its context was
@@ -114,7 +115,17 @@ func TestSpawnContextCharacterDefault(t *testing.T) {
 	t.Parallel()
 	mockAgent := &mockSpawnAgent{response: "Done."}
 	mockSessions := &mockSessionBrancher{}
+	// The one-shot makes its model call (#2977: an unset budget is the
+	// default, no longer zero loops), so it needs a model to answer.
+	server := mockModelServer(func(*provider.MessageRequest) *provider.MessageResponse {
+		return &provider.MessageResponse{
+			ID: "msg_test", Type: "message", Role: "assistant",
+			Content: provider.TextContent("Done."), StopReason: "end_turn",
+		}
+	})
+	defer server.Close()
 	tool := NewSpawner(SpawnDeps{
+		Client:         newTestAnthropicClient(server.URL, "test-token"),
 		Sessions:       mockSessions,
 		AgentID:        "test",
 		FallbackModel:  "anthropic/claude-haiku-4-5",

@@ -268,7 +268,7 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 
 	maxLoops := a.maxToolLoops()
 	if maxLoops <= 0 {
-		maxLoops = 100
+		maxLoops = config.DefaultMaxToolLoops
 	}
 	maxOutput := a.maxOutputTokens()
 	if maxOutput <= 0 {

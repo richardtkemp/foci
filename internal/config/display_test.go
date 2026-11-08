@@ -312,6 +312,13 @@ func TestFormatConfigGroupedAnnotations(t *testing.T) {
 	if strings.Contains(global, "25 (overridden)") || strings.Contains(global, "25 (default)") {
 		t.Errorf("max_tool_loops should have no annotation:\n%s", global)
 	}
+	// An agent that leaves max_tool_loops unset inherits the global value, so
+	// the global row is not "(overridden)" (#2977: the key now has a tag
+	// default, and unset used to compare as 0).
+	inheriting := AgentConfig{ID: "inherits", Workspace: "/home/user/workspace"}
+	if g := FormatConfigGrouped(cfg, inheriting)[0]; strings.Contains(g, "25 (overridden)") {
+		t.Errorf("max_tool_loops is inherited, not overridden:\n%s", g)
+	}
 }
 
 func TestFormatTableBySection(t *testing.T) {

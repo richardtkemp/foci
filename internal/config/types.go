@@ -649,7 +649,7 @@ type VoiceConfig struct {
 // Global: [agent_loop], per-agent: [[agents]].loop.*
 type AgentLoopConfig struct {
 	MaxOutputTokens               *int    `toml:"max_output_tokens"                hot:"turn" desc:"Maximum number of tokens the model may generate in a single reply. Higher allows longer replies but costs more and takes longer. Default 16384"`
-	MaxToolLoops                  *int    `toml:"max_tool_loops"                   hot:"turn" desc:"Maximum tool calls allowed in a single turn; once reached, further tool calls are refused and the turn is forced to end. Default 100"`
+	MaxToolLoops                  *int    `toml:"max_tool_loops"                   default:"100" hot:"turn" desc:"Maximum tool calls allowed in a single turn; once reached, further tool calls are refused and the turn is forced to end. Default 100"`
 	DuplicateMessages             *bool   `toml:"duplicate_messages"               hot:"turn" desc:"Repeats your message text twice in the prompt sent to the model, a technique that can improve instruction-following on some models. Off by default"`
 	BatchPartialAssistantMessages *bool   `toml:"batch_partial_assistant_messages"  hot:"turn" desc:"When the agent sends text between tool calls, combine it all into one message at the end of the turn instead of sending each piece right away. Off by default"`
 	BatchPartialJoiner            *string `toml:"batch_partial_joiner"             hot:"turn" desc:"Text inserted between chunks when batch_partial_assistant_messages combines them into one message. Empty joins them with nothing in between"`

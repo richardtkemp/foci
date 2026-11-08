@@ -324,21 +324,31 @@ func (d SpawnDeps) apiOneShotField() string {
 	return ""
 }
 
-// maxToolLoops calls d.MaxToolLoops(), or returns 0 if unset (tests that
-// don't exercise the tool-loop budget).
+// maxToolLoops is the tool-loop budget of a raw or character one-shot:
+// d.MaxToolLoops(), or config.DefaultMaxToolLoops when that is unset or not
+// positive, as the API turn loop reads it. A 0 here ran the loop no times and
+// the spawn answered "Max tool call depth reached." with no model call
+// (#2977).
 func (d SpawnDeps) maxToolLoops() int {
 	if d.MaxToolLoops == nil {
-		return 0
+		return config.DefaultMaxToolLoops
 	}
-	return d.MaxToolLoops()
+	if n := d.MaxToolLoops(); n > 0 {
+		return n
+	}
+	return config.DefaultMaxToolLoops
 }
 
-// exploreMaxDepth calls d.ExploreMaxDepth(), or returns 0 if unset.
+// exploreMaxDepth is an explore one-shot's budget: d.ExploreMaxDepth(), or
+// config.DefaultExploreMaxDepth when that is unset or not positive (#2977).
 func (d SpawnDeps) exploreMaxDepth() int {
 	if d.ExploreMaxDepth == nil {
-		return 0
+		return config.DefaultExploreMaxDepth
 	}
-	return d.ExploreMaxDepth()
+	if n := d.ExploreMaxDepth(); n > 0 {
+		return n
+	}
+	return config.DefaultExploreMaxDepth
 }
 
 // Spawner owns what the spawn tools share: the dependencies, the lazy agent

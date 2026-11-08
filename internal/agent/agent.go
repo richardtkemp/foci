@@ -159,7 +159,7 @@ type Agent struct {
 	MessageTransforms             []CompiledTransform                     // compiled regex rules for inbound message transformation
 	CompactionHandoffMsg          string                                  // inline handoff message; empty resolves from search dirs or embedded default
 	PromptSearchDirs              []string                                // directories to search for prompt files (agent workspace, shared)
-	MaxToolLoops                  int                                     // max tool iterations per turn (default 25)
+	MaxToolLoops                  int                                     // max tool iterations per turn (default config.DefaultMaxToolLoops)
 	MaxOutputTokens               int                                     // max tokens in model response (default 16384)
 	Nudger                        *nudge.Scheduler                        // nil disables nudge reminders; pre-answer gate/min-tools live in its settings
 	NudgeReloadFunc               func()                                  // called after bootstrap reload to refresh nudge rules; nil disables

@@ -13,10 +13,29 @@ type ResolvedLoop struct {
 	Streaming                     bool
 }
 
+// DefaultMaxToolLoops is agent_loop.max_tool_loops's documented default and
+// DefaultExploreMaxDepth is tools.explore_max_depth's. Resolve applies them
+// itself, so the budget is right for a config built without Load too (#2977:
+// an unset max_tool_loops resolved to 0, and an API one-shot spawn then ran no
+// model call at all).
+const (
+	DefaultMaxToolLoops    = 100
+	DefaultExploreMaxDepth = 100
+)
+
+// positiveOr returns *p when it is set and above zero, else def. A tool-loop
+// budget of 0 or less has always meant the default in the API turn loop.
+func positiveOr(p *int, def int) int {
+	if p == nil || *p <= 0 {
+		return def
+	}
+	return *p
+}
+
 func resolveLoop(m AgentLoopConfig) ResolvedLoop {
 	return ResolvedLoop{
 		MaxOutputTokens:               DerefInt(m.MaxOutputTokens),
-		MaxToolLoops:                  DerefInt(m.MaxToolLoops),
+		MaxToolLoops:                  positiveOr(m.MaxToolLoops, DefaultMaxToolLoops),
 		DuplicateMessages:             DerefBool(m.DuplicateMessages),
 		BatchPartialAssistantMessages: DerefBool(m.BatchPartialAssistantMessages),
 		BatchPartialJoiner:            DerefStr(m.BatchPartialJoiner),
@@ -163,7 +182,7 @@ func resolveTool(m ToolConfig) ResolvedTool {
 	r := ResolvedTool{
 		ExecAutoBackground:  DerefInt(m.ExecAutoBackground),
 		MaxConcurrentSpawns: DerefInt(m.MaxConcurrentSpawns),
-		ExploreMaxDepth:     DerefInt(m.ExploreMaxDepth),
+		ExploreMaxDepth:     positiveOr(m.ExploreMaxDepth, DefaultExploreMaxDepth),
 		MaxUploadFileSize:   DerefInt64(m.MaxUploadFileSize),
 		MaxFileReadBytes:    DerefInt64(m.MaxFileReadBytes),
 		HTTPMaxSpillBytes:   DerefInt64(m.HTTPMaxSpillBytes),
