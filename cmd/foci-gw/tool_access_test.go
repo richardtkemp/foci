@@ -286,7 +286,7 @@ func TestToolAccess_DelegatedDenyAbsentEverywhere(t *testing.T) {
 	}
 	rules := buildAutoApproveRules(p, names)
 	env := buildEnvironmentDelegated(p.acfg, filepath.Join(t.TempDir(), "foci.toml"), p.cfg, p.resolved,
-		p.resolved.Permissions, 0, nil, registry.ExportedTools(), nil, "")
+		p.resolved.Permissions, 0, nil, registry.ExportedTools(), nil, "", false)
 	if !strings.Contains(env, "foci_todo") {
 		t.Fatalf("fixture broken: env block lacks foci_todo:\n%s", env)
 	}

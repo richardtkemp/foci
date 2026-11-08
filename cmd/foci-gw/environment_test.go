@@ -16,7 +16,7 @@ func TestBuildEnvironmentDelegated_SkipPermissionsOmitsApproval(t *testing.T) {
 	cfg := &config.Config{Logging: config.LoggingConfig{EventFile: "/tmp/foci.log"}}
 
 	rc := config.Resolve(cfg, base)
-	normal := buildEnvironmentDelegated(base, "/tmp/foci.toml", cfg, rc, rc.Permissions, 0, nil, nil, nil, "")
+	normal := buildEnvironmentDelegated(base, "/tmp/foci.toml", cfg, rc, rc.Permissions, 0, nil, nil, nil, "", false)
 	if !strings.Contains(normal, "## Command Approval") {
 		t.Fatal("expected Command Approval section for a normal claude-code agent")
 	}
@@ -25,7 +25,7 @@ func TestBuildEnvironmentDelegated_SkipPermissionsOmitsApproval(t *testing.T) {
 	skipPerm := true
 	skip.BackendConfig = config.BackendConfig{SkipPermissions: &skipPerm}
 	skipRC := config.Resolve(cfg, skip)
-	skipped := buildEnvironmentDelegated(skip, "/tmp/foci.toml", cfg, skipRC, skipRC.Permissions, 0, nil, nil, nil, "")
+	skipped := buildEnvironmentDelegated(skip, "/tmp/foci.toml", cfg, skipRC, skipRC.Permissions, 0, nil, nil, nil, "", false)
 	if strings.Contains(skipped, "## Command Approval") {
 		t.Error("skip_permissions should omit the Command Approval section (everything is permitted)")
 	}
@@ -48,7 +48,7 @@ func TestBuildEnvironmentDelegated_ApprovalFollowsSpec(t *testing.T) {
 	} {
 		acfg := config.AgentConfig{ID: "x", Workspace: "/tmp/x", Backend: tc.backend}
 		rc := config.Resolve(cfg, acfg)
-		out := buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, rc.Permissions, 0, nil, nil, nil, "")
+		out := buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, rc.Permissions, 0, nil, nil, nil, "", false)
 		if !strings.Contains(out, "## Command Approval") {
 			t.Errorf("%s: no Command Approval section", tc.backend)
 		}
@@ -58,7 +58,7 @@ func TestBuildEnvironmentDelegated_ApprovalFollowsSpec(t *testing.T) {
 	}
 	acfg := config.AgentConfig{ID: "x", Workspace: "/tmp/x", Backend: "some-future-backend"}
 	rc := config.Resolve(cfg, acfg)
-	if out := buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, rc.Permissions, 0, nil, nil, nil, ""); strings.Contains(out, "## Command Approval") {
+	if out := buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, rc.Permissions, 0, nil, nil, nil, "", false); strings.Contains(out, "## Command Approval") {
 		t.Error("an unregistered backend claims an approval regime it may not enforce")
 	}
 }
@@ -75,7 +75,7 @@ func TestWriteEnvironmentCore_ViaVoiceExplainsTTSReply(t *testing.T) {
 	rc := config.Resolve(cfg, base)
 
 	var b strings.Builder
-	writeEnvironmentCore(&b, base, "/tmp/foci.toml", cfg, rc, nil, 0)
+	writeEnvironmentCore(&b, base, "/tmp/foci.toml", cfg, rc, nil, 0, false)
 	out := b.String()
 
 	for _, want := range []string{
@@ -433,9 +433,9 @@ func TestBuildEnvironment_MathLineFollowsSessionPlatform(t *testing.T) {
 		rc := config.Resolve(cfg, acfg)
 		build := func(platform string) string {
 			if backend == "api" {
-				return buildEnvironmentAPI(acfg, "/tmp/foci.toml", cfg, rc, 0, []string{"app", "telegram"}, nil, platform)
+				return buildEnvironmentAPI(acfg, "/tmp/foci.toml", cfg, rc, 0, []string{"app", "telegram"}, nil, platform, false)
 			}
-			return buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, rc.Permissions, 0, []string{"app", "telegram"}, nil, nil, platform)
+			return buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, rc.Permissions, 0, []string{"app", "telegram"}, nil, nil, platform, false)
 		}
 		if out := build("app"); !strings.Contains(out, "**Math renders.**") {
 			t.Errorf("%s: app session lacks the math line", backend)
@@ -518,8 +518,33 @@ func TestWriteBackend_CodexSpawnGuidance(t *testing.T) {
 	cfg := &config.Config{Logging: config.LoggingConfig{EventFile: "/tmp/foci.log"}}
 	acfg := config.AgentConfig{ID: "x", Workspace: "/tmp/x", Backend: "codex"}
 	rc := config.Resolve(cfg, acfg)
-	out := buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, rc.Permissions, 0, nil, nil, nil, "")
+	out := buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, rc.Permissions, 0, nil, nil, nil, "", false)
 	if !strings.Contains(out, "foci_spawn") {
 		t.Errorf("a codex agent's environment block lacks the foci_spawn line:\n%s", out)
+	}
+}
+
+// TestEnvironment_SpawnReplyRouting (#2986): a spawn's environment block says
+// its final reply goes to the agent that started it; a main session's says it
+// goes to its own chat. Both builders, every backend family.
+func TestEnvironment_SpawnReplyRouting(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{Logging: config.LoggingConfig{EventFile: "/tmp/foci.log"}}
+	for _, backend := range []string{"", "claude-code", "codex", "opencode"} {
+		acfg := config.AgentConfig{ID: "x", Workspace: "/tmp/x", Backend: backend}
+		rc := config.Resolve(cfg, acfg)
+		build := func(spawn bool) string {
+			if backend == "" {
+				return buildEnvironmentAPI(acfg, "/tmp/foci.toml", cfg, rc, 0, nil, nil, "app", spawn)
+			}
+			return buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, rc.Permissions, 0, nil, nil, nil, "app", spawn)
+		}
+		main, spawn := build(false), build(true)
+		if !strings.Contains(main, "delivered to your own chat (your human)") || strings.Contains(main, "you are a spawn") {
+			t.Errorf("backend %q main block: wrong reply routing:\n%s", backend, main)
+		}
+		if !strings.Contains(spawn, "you are a spawn") || !strings.Contains(spawn, "your spawner") || strings.Contains(spawn, "delivered to your own chat") {
+			t.Errorf("backend %q spawn block: wrong reply routing:\n%s", backend, spawn)
+		}
 	}
 }

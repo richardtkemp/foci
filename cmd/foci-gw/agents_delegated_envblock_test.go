@@ -105,9 +105,9 @@ func TestNewDelegatedSystemPromptFunc_RetainsEnvBlock(t *testing.T) {
 			[]provider.SystemBlock{{Type: "text", Text: "Available Skills: foo"}}
 	}
 
-	buildEnv := func(string) string { return env }
+	buildEnv := func(string, bool) string { return env }
 	platformFor := func(string) string { return "" }
-	fn := newDelegatedSystemPromptFunc(buildEnv, platformFor, reload, nil)
+	fn := newDelegatedSystemPromptFunc(buildEnv, platformFor, nil, reload, nil)
 	got := fn("test/c1")
 
 	for _, want := range []string{"## Backend", "## Foci Shell Tools", "foci_todo", "CRAFT content", "Available Skills"} {
@@ -188,5 +188,33 @@ func TestConfigureDelegated_BothPromptPathsAgree(t *testing.T) {
 	}
 	if got := so.SystemPromptFunc("test/c1"); got != so.SystemPrompt {
 		t.Errorf("static SystemPrompt and rebuilt SystemPromptFunc() diverge with unchanged disk:\n--- static ---\n%s\n--- rebuilt ---\n%s", so.SystemPrompt, got)
+	}
+}
+
+// TestConfigureDelegated_SpawnSessionGetsSpawnReplyRouting (#2986): through
+// the real configureDelegated wiring, a spawn's session (here a background
+// character spawn's branch) launches with the spawn reply-routing line, and a
+// main session with the own-chat line. RunBatch marks a direct spawn's batch
+// the same way (batchSpec.spawn; agent.TestIsSpawnSession).
+func TestConfigureDelegated_SpawnSessionGetsSpawnReplyRouting(t *testing.T) {
+	t.Parallel()
+	p, shared := wiringFixture(t)
+	ag := &agent.Agent{}
+	if _, ok := configureDelegated(ag, p, shared, "claude-code", config.BackendConfig{}); !ok {
+		t.Fatal("configureDelegated returned ok=false")
+	}
+	fn := ag.DelegatedManager.StartOpts.SystemPromptFunc
+	const spawnKey = "test/c1/b1700000000"
+	ag.DelegatedManager.SetCharacterSpawnBranch(spawnKey, "")
+
+	main, spawn := fn("test/c1"), fn(spawnKey)
+	if !strings.Contains(main, mainReplyRouting) || strings.Contains(main, spawnReplyRouting) {
+		t.Errorf("main session prompt lacks the own-chat reply routing or has the spawn one:\n%s", main)
+	}
+	if !strings.Contains(spawn, spawnReplyRouting) || strings.Contains(spawn, mainReplyRouting) {
+		t.Errorf("spawn session prompt lacks the spawn reply routing or has the own-chat one:\n%s", spawn)
+	}
+	if static := ag.DelegatedManager.StartOpts.SystemPrompt; strings.Contains(static, spawnReplyRouting) {
+		t.Error("static launch prompt carries the spawn reply routing")
 	}
 }

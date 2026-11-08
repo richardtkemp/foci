@@ -121,7 +121,7 @@ type Agent struct {
 	Log             *log.ComponentLogger    // structured logger for this agent
 
 	EnvironmentBlock              string                                  // static environment block (fallback; tests). Prod uses EnvironmentBlockFunc.
-	EnvironmentBlockFunc          func(sessionKey string) string          // per-session environment block (platform-aware); preferred over EnvironmentBlock
+	EnvironmentBlockFunc          EnvBlockFunc                            // per-session environment block (platform-aware); preferred over EnvironmentBlock
 	DailyDigestFunc               func(sessionKey string) string          // per-session daily-memory digest (#2827), appended last; nil or "" = none
 	ExtraSystemBlocks             []provider.SystemBlock                  // additional system blocks (e.g. skills list), injected before cache marker
 	CacheStrategy                 string                                  // "auto" (top-level) or "explicit" (manual breakpoints) — from primary model config

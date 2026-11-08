@@ -721,11 +721,12 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 		spawnDeps.ClientProvider = d.p.clientProvider
 		// #2981: a character spawn runs on the agent's main-session prompt
 		// (environment, character files, skills), composed for its own
-		// session. The bare character files only before the agent exists.
+		// session, with a spawn's reply-routing line (#2986). The bare
+		// character files only before the agent exists.
 		spawnDeps.SystemPrompt = func(sessionKey string) []provider.SystemBlock {
 			if d.agLazy != nil {
 				if ag := d.agLazy(); ag != nil {
-					return ag.SystemBlocksFor(sessionKey)
+					return ag.SpawnSystemBlocksFor(sessionKey)
 				}
 			}
 			if d.bootstrap != nil {

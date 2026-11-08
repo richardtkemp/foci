@@ -318,13 +318,13 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	}
 	envSessionIdx := p.sessionIndex
 	envAgentID := acfg.ID
-	envBlockFunc := func(sessionKey string) string {
+	envBlockFunc := func(sessionKey string, spawn bool) string {
 		rc := resolvedLive.Load()
 		if !rc.Environment.Enabled {
 			return ""
 		}
 		sessionPlatform := platformForSession(envSessionIdx, envAgentID, sessionKey)
-		return buildEnvironmentAPI(acfg, p.configPath, p.cfg, rc, crontabCount, p.plat.ActivePlatformNames(), shared.promptSearchDirs, sessionPlatform)
+		return buildEnvironmentAPI(acfg, p.configPath, p.cfg, rc, crontabCount, p.plat.ActivePlatformNames(), shared.promptSearchDirs, sessionPlatform, spawn)
 	}
 
 	// API-specific agent fields. Some of these (MaxToolLoops, MaxResultChars,

@@ -5,7 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"foci/internal/delegator"
 	"foci/internal/provider"
+	"foci/internal/session"
 	"foci/internal/workspace"
 )
 
@@ -84,40 +86,37 @@ func TestBuildSystemBlocks_DailyDigestLastAndFrozen(t *testing.T) {
 	}
 }
 
-// TestSystemBlocksFor_EqualsMainSession (#2981): the prompt an API character
-// spawn runs on is the main-session composition for the same key —
-// environment, character files, skills and digest — and reading it leaves no
-// session state behind for the key.
-func TestSystemBlocksFor_EqualsMainSession(t *testing.T) {
+// TestSpawnSystemBlocksFor_MainSessionWithSpawnEnv (#2981, #2986): the
+// prompt an API character spawn runs on is the main-session composition for
+// the same key (environment, character files, skills, digest), with the
+// environment block built for a spawn; reading it leaves no session state
+// behind for the key.
+func TestSpawnSystemBlocksFor_MainSessionWithSpawnEnv(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("character A"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	a := &Agent{
-		Bootstrap:            workspace.NewBootstrap(dir, []string{"a.md"}),
-		EnvironmentBlockFunc: func(k string) string { return "ENV " + k },
-		ExtraSystemBlocks:    []provider.SystemBlock{{Type: "text", Text: "SKILLS"}},
-		DailyDigestFunc:      func(k string) string { return "DIGEST " + k },
+		Bootstrap: workspace.NewBootstrap(dir, []string{"a.md"}),
+		EnvironmentBlockFunc: func(k string, spawn bool) string {
+			if spawn {
+				return "SPAWN ENV " + k
+			}
+			return "ENV " + k
+		},
+		ExtraSystemBlocks: []provider.SystemBlock{{Type: "text", Text: "SKILLS"}},
+		DailyDigestFunc:   func(k string) string { return "DIGEST " + k },
 	}
 	const spawnKey, mainKey = "test/c1/b42", "test/c1"
-	got := a.SystemBlocksFor(spawnKey)
+	got := a.SpawnSystemBlocksFor(spawnKey)
 	a.metaMu.Lock()
 	_, made := a.meta[spawnKey]
 	a.metaMu.Unlock()
 	if made {
-		t.Error("SystemBlocksFor created session state for the spawn key")
+		t.Error("SpawnSystemBlocksFor created session state for the spawn key")
 	}
-	want := a.buildSystemBlocks(spawnKey)
-	if len(got) != len(want) {
-		t.Fatalf("SystemBlocksFor = %d blocks, main-session build = %d", len(got), len(want))
-	}
-	for i := range got {
-		if got[i].Text != want[i].Text {
-			t.Errorf("block %d = %q, main-session build %q", i, got[i].Text, want[i].Text)
-		}
-	}
-	texts := []string{"ENV " + spawnKey, "character A", "SKILLS", "DIGEST " + spawnKey}
+	texts := []string{"SPAWN ENV " + spawnKey, "character A", "SKILLS", "DIGEST " + spawnKey}
 	if len(got) != len(texts) {
 		t.Fatalf("blocks = %+v, want %v", got, texts)
 	}
@@ -126,8 +125,62 @@ func TestSystemBlocksFor_EqualsMainSession(t *testing.T) {
 			t.Errorf("block %d = %q, want %q", i, got[i].Text, w)
 		}
 	}
-	// The main session itself is unchanged by the refactor.
+	// A main session gets the main-session environment block.
 	if m := a.buildSystemBlocks(mainKey); len(m) != 4 || m[0].Text != "ENV "+mainKey {
 		t.Errorf("main session blocks = %+v", m)
+	}
+}
+
+// TestBuildSystemBlocks_SpawnBranchGetsSpawnEnv (#2986): an API agent's
+// background character spawn runs on a branch of type "spawn" through the
+// normal session path; its environment block is built for a spawn. Other
+// branches (a fork) and the root chat are not spawns.
+func TestBuildSystemBlocks_SpawnBranchGetsSpawnEnv(t *testing.T) {
+	t.Parallel()
+	store := session.NewStore(t.TempDir())
+	a := &Agent{
+		Sessions:  store,
+		Bootstrap: workspace.NewBootstrap(t.TempDir(), nil),
+		EnvironmentBlockFunc: func(_ string, spawn bool) string {
+			if spawn {
+				return "SPAWN ENV"
+			}
+			return "MAIN ENV"
+		},
+	}
+	const root = "test/c1"
+	spawnKey, err := store.CreateBranchWithOptions(root, session.BranchOptions{NoResetHook: true, BranchType: "spawn", Fresh: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	forkKey, err := store.CreateBranchWithOptions(root, session.BranchOptions{BranchType: "fork", Fresh: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{spawnKey: "SPAWN ENV", forkKey: "MAIN ENV", root: "MAIN ENV"} {
+		got := a.buildSystemBlocks(key)
+		if len(got) == 0 || got[0].Text != want {
+			t.Errorf("buildSystemBlocks(%s) env = %+v, want %q", key, got, want)
+		}
+	}
+}
+
+// TestIsSpawnSession (#2986): a delegated agent's spawn sessions (a direct
+// spawn's batch, a background character spawn's branch) are spawns; foci's
+// own batches and unknown sessions are not.
+func TestIsSpawnSession(t *testing.T) {
+	t.Parallel()
+	m := &DelegatedManager{}
+	m.setBatchSpec("a/c1/b1", batchSpec{agentPrompt: true, spawn: isSpawnPurpose(delegator.BatchPurposeSpawnCharacter)})
+	m.setBatchSpec("a/c1/b2", batchSpec{systemPrompt: "x", spawn: isSpawnPurpose(delegator.BatchPurposeConsolidation)})
+	m.SetCharacterSpawnBranch("a/c1/b3", "")
+	for key, want := range map[string]bool{"a/c1/b1": true, "a/c1/b2": false, "a/c1/b3": true, "a/c1": false} {
+		if got := m.IsSpawnSession(key); got != want {
+			t.Errorf("IsSpawnSession(%s) = %v, want %v", key, got, want)
+		}
+	}
+	var nilM *DelegatedManager
+	if nilM.IsSpawnSession("a/c1/b1") {
+		t.Error("nil manager reports a spawn session")
 	}
 }

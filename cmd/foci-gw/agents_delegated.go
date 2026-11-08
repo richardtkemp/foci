@@ -96,14 +96,14 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	if p.resolved.Environment.Enabled { // static-cfg:ignore: startup-only gate for an expensive subprocess spawn
 		crontabCount = countCrontabJobs()
 	}
-	buildEnv := func(sessionPlatform string) string {
+	buildEnv := func(sessionPlatform string, spawn bool) string {
 		rc := p.resolvedLive.Load()
 		if !rc.Environment.Enabled {
 			return ""
 		}
-		return buildEnvironmentDelegated(p.acfg, p.configPath, p.cfg, rc, bakedPerms, crontabCount, p.plat.ActivePlatformNames(), registry.ExportedTools(), shared.promptSearchDirs, sessionPlatform)
+		return buildEnvironmentDelegated(p.acfg, p.configPath, p.cfg, rc, bakedPerms, crontabCount, p.plat.ActivePlatformNames(), registry.ExportedTools(), shared.promptSearchDirs, sessionPlatform, spawn)
 	}
-	systemPrompt := delegatedSystemPrompt(buildEnv(""), bs.SystemBlocks(), br.extraSystemBlocks)
+	systemPrompt := delegatedSystemPrompt(buildEnv("", false), bs.SystemBlocks(), br.extraSystemBlocks)
 
 	ag.Model = model
 
@@ -317,7 +317,12 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			// but this closure only runs at runtime session-start, by when it's set.
 			// The env block is re-prepended via newDelegatedSystemPromptFunc so it
 			// survives this rebuild (the #828/#706 rebuild used to drop it).
-			SystemPromptFunc: newDelegatedSystemPromptFunc(buildEnv, platformFor, func() (ws, extra []provider.SystemBlock) {
+			// A spawn's session (a direct spawn's batch, a background
+			// spawn's branch) gets a spawn's reply-routing line (#2986).
+			// ag.DelegatedManager is set by the time a session starts.
+			SystemPromptFunc: newDelegatedSystemPromptFunc(buildEnv, platformFor, func(sessionKey string) bool {
+				return ag.DelegatedManager.IsSpawnSession(sessionKey)
+			}, func() (ws, extra []provider.SystemBlock) {
 				// Re-read character files from disk so this fresh session reflects
 				// edits since setup, independent of whether the caller reloaded
 				// (the compaction-bounce path #828 does not). bs is shared
@@ -1176,15 +1181,16 @@ func delegatedSystemPrompt(envBlock string, workspaceBlocks, extraBlocks []provi
 // MUST be re-applied here and not only baked into the static prompt.
 // newDelegatedSystemPromptFunc returns the per-session prompt generator. buildEnv
 // rebuilds the environment block for a given session platform (so the ## Platform
-// block matches the session's messaging platform); platformFor resolves that
-// platform from the session key.
+// block matches the session's messaging platform) and for a spawn's session or
+// not; platformFor resolves that platform from the session key, and isSpawn
+// (nil = never) whether the session is a spawn's (#2986).
 //
 // digest (nil = none) returns the session's daily-memory digest (#2827), ""
 // for a session that gets none; it goes LAST so everything before it stays a
 // prefix shared across sessions.
-func newDelegatedSystemPromptFunc(buildEnv func(sessionPlatform string) string, platformFor func(sessionKey string) string, reload func() (workspaceBlocks, extraBlocks []provider.SystemBlock), digest func(sessionKey string) string) func(sessionKey string) string {
+func newDelegatedSystemPromptFunc(buildEnv func(sessionPlatform string, spawn bool) string, platformFor func(sessionKey string) string, isSpawn func(sessionKey string) bool, reload func() (workspaceBlocks, extraBlocks []provider.SystemBlock), digest func(sessionKey string) string) func(sessionKey string) string {
 	return func(sessionKey string) string {
-		envBlock := buildEnv(platformFor(sessionKey))
+		envBlock := buildEnv(platformFor(sessionKey), isSpawn != nil && isSpawn(sessionKey))
 		ws, extra := reload()
 		p := delegatedSystemPrompt(envBlock, ws, extra)
 		if digest != nil {

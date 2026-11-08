@@ -56,13 +56,15 @@ func TestAPICharacterSpawnGetsMainSessionPrompt(t *testing.T) {
 	bs := workspace.NewBootstrap(ws, nil)
 
 	var envKeys []string
+	var envSpawn []bool
 	var envMu sync.Mutex
 	ag := &agent.Agent{
 		AgentID:   "spawnprompt",
 		Bootstrap: bs,
-		EnvironmentBlockFunc: func(sessionKey string) string {
+		EnvironmentBlockFunc: func(sessionKey string, spawn bool) string {
 			envMu.Lock()
 			envKeys = append(envKeys, sessionKey)
+			envSpawn = append(envSpawn, spawn)
 			envMu.Unlock()
 			return "# Environment for the test agent"
 		},
@@ -132,5 +134,9 @@ func TestAPICharacterSpawnGetsMainSessionPrompt(t *testing.T) {
 	defer envMu.Unlock()
 	if len(envKeys) == 0 || !strings.HasPrefix(envKeys[len(envKeys)-1], "spawnprompt/c1/b") {
 		t.Errorf("environment block built for %v, want the spawn's batch key under spawnprompt/c1", envKeys)
+	}
+	// #2986: and it is built as a spawn's, whose reply goes to its spawner.
+	if len(envSpawn) == 0 || !envSpawn[len(envSpawn)-1] {
+		t.Errorf("environment block built with spawn=%v, want a spawn's", envSpawn)
 	}
 }

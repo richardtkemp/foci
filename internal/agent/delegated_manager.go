@@ -2107,6 +2107,18 @@ func (m *DelegatedManager) isUnattendedSession(sessionKey string) bool {
 	return ok && !m.askSpawner(sessionKey, spec)
 }
 
+// IsSpawnSession reports whether sessionKey is a spawn's session: a direct
+// spawn's batch (purpose spawn_*) or a background character spawn's branch,
+// while it runs. Its environment block then says its reply goes to its
+// spawner (#2986). Nil-safe.
+func (m *DelegatedManager) IsSpawnSession(sessionKey string) bool {
+	if m == nil {
+		return false
+	}
+	spec, ok := m.batchSpecFor(sessionKey)
+	return ok && spec.spawn
+}
+
 // isSpawnPurpose reports whether a batch purpose is a spawn's.
 func isSpawnPurpose(purpose string) bool {
 	switch purpose {

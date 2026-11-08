@@ -147,6 +147,11 @@ func (a *Agent) statusScratchpad(sessionKey string) string {
 	return fmt.Sprintf("scratchpad: %d entries", len(entries))
 }
 
+// EnvBlockFunc builds a session's environment block. spawn marks a spawn's
+// session (a character spawn, direct or background), whose block says its
+// final reply goes to the agent that started it, not to a human (#2986).
+type EnvBlockFunc func(sessionKey string, spawn bool) string
+
 // buildSystemBlocks returns the session's system prompt blocks
 // (composeSystemBlocks). Cache markers are applied later by the Anthropic
 // translate layer — blocks returned here are clean. Results are cached
@@ -160,30 +165,43 @@ func (a *Agent) buildSystemBlocks(sessionKey string) []provider.SystemBlock {
 	if cached != nil {
 		return cached
 	}
-	result := a.composeSystemBlocks(sessionKey)
+	result := a.composeSystemBlocks(sessionKey, a.isSpawnBranch(sessionKey))
 	a.metaMu.Lock()
 	sm.systemBlocks = result
 	a.metaMu.Unlock()
 	return result
 }
 
-// SystemBlocksFor returns the system prompt a new session on sessionKey
-// starts with, exactly as a main session's is composed, without caching it
-// (no session state is created for the key). An API agent's character spawn
-// runs on it, keyed on the spawn's own batch session, as a delegated agent's
-// character batch runs on the agent's composed prompt (#2981).
-func (a *Agent) SystemBlocksFor(sessionKey string) []provider.SystemBlock {
-	return a.composeSystemBlocks(sessionKey)
+// SpawnSystemBlocksFor returns the system prompt an API agent's direct
+// character spawn runs on, keyed on the spawn's own batch session: a main
+// session's prompt (#2981) with a spawn's environment block (#2986), without
+// caching it (no session state is created for the key). A delegated agent's
+// character batch runs on the agent's composed prompt the same way.
+func (a *Agent) SpawnSystemBlocksFor(sessionKey string) []provider.SystemBlock {
+	return a.composeSystemBlocks(sessionKey, true)
+}
+
+// isSpawnBranch reports whether sessionKey is a background spawn's branch
+// (branch_type "spawn", durable in the branch file, so a restart-resumed
+// spawn still reads as one). An API agent's background character spawn runs
+// its turns on such a branch through the normal session path.
+func (a *Agent) isSpawnBranch(sessionKey string) bool {
+	if a.Sessions == nil {
+		return false
+	}
+	meta, err := a.Sessions.GetBranchMeta(sessionKey)
+	return err == nil && meta != nil && meta.BranchType == "spawn"
 }
 
 // composeSystemBlocks assembles the system prompt blocks from the
 // environment block, the bootstrap (character files), the extra blocks
-// (skills) and the daily-memory digest.
-func (a *Agent) composeSystemBlocks(sessionKey string) []provider.SystemBlock {
+// (skills) and the daily-memory digest. spawn marks a spawn's session, whose
+// environment block says its reply goes to its spawner (#2986).
+func (a *Agent) composeSystemBlocks(sessionKey string, spawn bool) []provider.SystemBlock {
 	system := a.Bootstrap.SystemBlocks()
 	envText := a.EnvironmentBlock
 	if a.EnvironmentBlockFunc != nil {
-		envText = a.EnvironmentBlockFunc(sessionKey)
+		envText = a.EnvironmentBlockFunc(sessionKey, spawn)
 	}
 	if envText != "" {
 		envBlock := provider.SystemBlock{Type: "text", Text: envText}
