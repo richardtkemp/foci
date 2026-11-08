@@ -1180,9 +1180,28 @@ type oneShotParams struct {
 }
 
 // spawnOneShot makes API calls with optional tool access (raw/character/explore modes).
-func spawnOneShot(ctx context.Context, p oneShotParams) (string, error) {
+//
+// Its progress goes to the tee on ctx (turnevent.WithTee), as a batch turn's
+// does (#2978): the model each response came from, the text between tool
+// calls, each tool call, and at the end its answer (TurnComplete). A direct
+// spawn's tee (runDirect) shows them in the app, in spawn_status and in the
+// Stop view's summary, as it does a Claude Code spawn's. Its tool calls run
+// without the tee, so a nested run does not report into it.
+func spawnOneShot(ctx context.Context, p oneShotParams) (answer string, runErr error) {
 	// Model clients enforce the normal per-request/stream-idle limits.
 	// Do not put a deadline around the whole multi-request spawn loop.
+
+	tee := turnevent.TeeFromContext(ctx)
+	emit := func(ev turnevent.Event) {
+		if tee != nil {
+			tee.Emit(ctx, ev)
+		}
+	}
+	lastModel := p.model
+	defer func() {
+		emit(turnevent.TurnComplete{FinalText: answer, Model: lastModel, Err: runErr})
+	}()
+	toolCtx := turnevent.WithoutTee(ctx)
 
 	sessionKey := SessionKeyFromContext(ctx)
 	spawnLog.Infof("session=%s one-shot model=%s system_blocks=%d tools=%d prompt=%d chars", sessionKey, p.model, len(p.system), len(p.toolDefs), len(p.prompt))
@@ -1228,6 +1247,8 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (string, error) {
 
 		duration := time.Since(start)
 		served := provider.ServedTuple(primary, resp)
+		lastModel = served.Model
+		emit(turnevent.ModelKnown{Model: served.Model})
 		cost, _ := modelinfo.CostAsOf(served.Model, time.Now(), resp.Usage.Tokens())
 
 		spawnLog.Infof("session=%s model=%s input=%d output=%d cost=$%.4f stop=%s",
@@ -1262,6 +1283,13 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (string, error) {
 			return text, nil
 		}
 
+		// The text it wrote before its tool calls.
+		for _, block := range resp.Content {
+			if block.Type == "text" && strings.TrimSpace(block.Text) != "" {
+				emit(turnevent.TextBlock{Text: block.Text, Phase: turnevent.PhaseIntermediate})
+			}
+		}
+
 		// Append assistant response.
 		messages = append(messages, provider.Message{
 			Role:    "assistant",
@@ -1277,6 +1305,7 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (string, error) {
 			if ctx.Err() != nil {
 				return "", ctx.Err()
 			}
+			emit(turnevent.ToolCall{Name: block.Name, ID: block.ID, Args: block.Input})
 			tool, ok := p.tools[block.Name]
 			if !ok {
 				toolResults = append(toolResults, provider.ToolResultBlock(
@@ -1285,7 +1314,7 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (string, error) {
 				continue
 			}
 			spawnLog.Debugf("session=%s tool_use: %s", sessionKey, block.Name)
-			result, err := tool.Call(ctx, block.Input)
+			result, err := tool.Call(toolCtx, block.Input)
 			if err != nil {
 				toolResults = append(toolResults, provider.ToolResultBlock(
 					block.ID, fmt.Sprintf("Error: %s", err), true,
