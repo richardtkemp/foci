@@ -278,6 +278,8 @@ type stubScript struct {
 //	  results, secret-template resolved values) without depending on
 //	  foci's tool_result re-injection (which is CC-internal and not
 //	  observable in foci's stdout).
+//	Kind="argv_error" — the stub rejected its argv (an undeclared flag or an
+//	  unexpected argument, #2925) and exited 1; captures flags + error.
 //
 // Tests read the JSONL file, group by kind, and assert structurally.
 type recorderEntry struct {
@@ -295,6 +297,8 @@ type recorderEntry struct {
 	// spawn that landed at the global path from one that landed at the
 	// per-agent override path. Empty in older recordings.
 	Binary string `json:"binary,omitempty"`
+	// argv_error only — why parseArgs rejected Flags.
+	Error string `json:"error,omitempty"`
 
 	// user_message-only
 	SessionID  string `json:"session_id,omitempty"`
@@ -341,57 +345,31 @@ type recorderEntry struct {
 }
 
 func main() {
-	// Parse the flag surface foci passes. We ignore most values — the
-	// stub doesn't care about content, only that flags are accepted.
-	var (
-		printMode       bool
-		inputFormat     string
-		outputFormat    string
-		permTool        string
-		includePartial  bool
-		includeHook     bool
-		verbose         bool
-		model           string
-		resume          string
-		allowedTools    string
-		settings        string
-		appendSysPrompt string
-		skipPermissions bool
-		permissionMode  string
-		helpFlag        bool
-	)
-	fs := flag.NewFlagSet("cc-stub", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	fs.BoolVar(&printMode, "print", false, "output-only mode (matches CC)")
-	fs.StringVar(&inputFormat, "input-format", "", "stream-json | text")
-	fs.StringVar(&outputFormat, "output-format", "", "stream-json | text")
-	fs.StringVar(&permTool, "permission-prompt-tool", "", "stdio")
-	fs.BoolVar(&includePartial, "include-partial-messages", false, "")
-	fs.BoolVar(&includeHook, "include-hook-events", false, "")
-	fs.BoolVar(&verbose, "verbose", false, "")
-	fs.StringVar(&model, "model", "", "model identifier")
-	fs.StringVar(&resume, "resume", "", "resume session id (empty = fresh)")
-	fs.StringVar(&allowedTools, "allowedTools", "", "permission rules")
-	fs.StringVar(&settings, "settings", "", "hook settings JSON")
-	fs.StringVar(&appendSysPrompt, "append-system-prompt", "", "")
-	fs.BoolVar(&skipPermissions, "dangerously-skip-permissions", false, "")
-	fs.StringVar(&permissionMode, "permission-mode", "", "CC permission mode (foci batch sessions: auto)")
-	// Ignored, but it must be declared: Parse stops at the first flag it does not
-	// know, and every flag after it (--resume, --settings) would be lost.
-	fs.String("prompt-suggestions", "", "ignored")
-	fs.String("disallowedTools", "", "ignored (foci: Agent,Task in every session, #2934)")
-	fs.BoolVar(&helpFlag, "h", false, "show usage")
-	fs.BoolVar(&helpFlag, "help", false, "show usage")
-	if err := fs.Parse(os.Args[1:]); err != nil {
-		// CC ignores unknown flags by default; mimic that by warning to stderr
-		// rather than failing. Some future foci flag we don't model shouldn't
-		// blow up tests.
-		fmt.Fprintln(os.Stderr, "cc-stub: flag parse warning:", err)
+	a, err := parseArgs(os.Args[1:])
+	if err != nil {
+		// Real CC rejects an argument it does not know ("error: unknown option
+		// '--x'", exit 1; probed on CC 2.1.314, #2925), and so does the stub.
+		// Go's flag package stops at the first unknown flag, so warning and
+		// carrying on (the old behaviour) silently dropped every flag after
+		// it: a44c628aa put --prompt-suggestions before --resume and
+		// --settings, and L2 failed as session and nudge bugs. Record the
+		// error too, so a test's recorder tail names the cause.
+		fmt.Fprintf(os.Stderr, "cc-stub: %v\ncc-stub: argv: %q\ncc-stub: %s\n", err, os.Args[1:], argvErrorHint)
+		recordArgvError(err)
+		os.Exit(1)
 	}
-	if helpFlag {
+	if a.help {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(0)
 	}
+	if a.authStatus {
+		// `claude auth status` — foci's startup readiness probe
+		// (ccstream/readiness.go). The stub is always signed in.
+		fmt.Println(authStatusJSON)
+		os.Exit(0)
+	}
+	resume, model, settings := a.resume, a.model, a.settings
+	skipPermissions, permissionMode := a.skipPermissions, a.permissionMode
 
 	// Failure modes — checked before any work so lifecycle tests can
 	// observe a clean exit-without-output.
@@ -1212,6 +1190,88 @@ func extractUserContent(env map[string]any) (string, []string) {
 // recordInvocation appends one JSONL line tagged kind="invocation" to
 // CCSTUB_RECORDER (if set). Silent no-op if the env var is unset or the
 // file can't be opened — recorder failures must not break the stub.
+// argvErrorHint ends the stderr report of a rejected argv.
+const argvErrorHint = "a new foci flag must be declared in parseArgs (cmd/cc-stub/main.go)"
+
+// authStatusJSON is the stub's answer to `claude auth status`.
+const authStatusJSON = `{"loggedIn":true,"authMethod":"stub"}`
+
+// stubArgs is the part of foci's argv the stub acts on.
+type stubArgs struct {
+	help            bool
+	authStatus      bool // `claude auth status`: the readiness probe
+	resume          string
+	model           string
+	settings        string
+	skipPermissions bool
+	permissionMode  string
+}
+
+// parseArgs parses the argv foci passes to claude. Every flag ccstream can
+// pass must be declared here, even the ones the stub ignores: an undeclared
+// flag, or an argument the stub does not model, is an error (as in real CC),
+// never a warning. With Go's flag package a warning would be worse than
+// nothing, because Parse stops at the first unknown flag and every flag after
+// it (--resume, --settings) is silently lost (#2925). A value given to a
+// boolean flag (`--verbose true`) is caught the same way: the value becomes a
+// positional argument, which is an error too.
+//
+// The only positional form accepted is `auth status`, foci's startup
+// readiness probe.
+func parseArgs(args []string) (stubArgs, error) {
+	if len(args) == 2 && args[0] == "auth" && args[1] == "status" {
+		return stubArgs{authStatus: true}, nil
+	}
+	var a stubArgs
+	fs := flag.NewFlagSet("cc-stub", flag.ContinueOnError)
+	fs.SetOutput(io.Discard) // main reports the error, once
+	fs.Bool("print", false, "output-only mode (matches CC)")
+	fs.String("input-format", "", "stream-json | text")
+	fs.String("output-format", "", "stream-json | text")
+	fs.String("permission-prompt-tool", "", "stdio")
+	fs.Bool("include-partial-messages", false, "")
+	fs.Bool("include-hook-events", false, "")
+	fs.Bool("verbose", false, "")
+	fs.StringVar(&a.model, "model", "", "model identifier")
+	fs.StringVar(&a.resume, "resume", "", "resume session id (empty = fresh)")
+	fs.String("allowedTools", "", "permission rules")
+	fs.StringVar(&a.settings, "settings", "", "hook settings JSON")
+	fs.String("append-system-prompt", "", "")
+	fs.BoolVar(&a.skipPermissions, "dangerously-skip-permissions", false, "")
+	fs.StringVar(&a.permissionMode, "permission-mode", "", "CC permission mode (foci batch sessions: auto)")
+	fs.String("prompt-suggestions", "", "ignored")
+	fs.String("disallowedTools", "", "ignored (foci: Agent,Task in every session, #2934)")
+	fs.String("effort", "", "ignored (launch effort level, #840)")
+	// A restricted batch (ccstream restrictedBatchArgs, #2702).
+	fs.Bool("restricted", false, "ignored")
+	fs.String("tools", "", "ignored")
+	fs.Bool("strict-mcp-config", false, "ignored")
+	fs.BoolVar(&a.help, "h", false, "show usage")
+	fs.BoolVar(&a.help, "help", false, "show usage")
+	if err := fs.Parse(args); err != nil {
+		return stubArgs{}, err
+	}
+	if rest := fs.Args(); len(rest) > 0 {
+		return stubArgs{}, fmt.Errorf("unexpected argument %q (a value given to a boolean flag, or a flag after a positional?)", rest[0])
+	}
+	return a, nil
+}
+
+// recordArgvError appends a kind="argv_error" line when parseArgs rejects
+// the argv, so the failure shows in the recorder tail L2 tests print.
+func recordArgvError(err error) {
+	wd, _ := os.Getwd()
+	writeRecorder(recorderEntry{
+		Kind:      "argv_error",
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Workdir:   wd,
+		Flags:     os.Args[1:],
+		Error:     err.Error(),
+		PID:       os.Getpid(),
+		Binary:    os.Args[0],
+	})
+}
+
 func recordInvocation(resume, model string) {
 	wd, _ := os.Getwd()
 	writeRecorder(recorderEntry{
@@ -1649,7 +1709,12 @@ Flags accepted (most ignored — stub only cares about --resume, --model):
   --include-partial-messages --include-hook-events --verbose
   --model --resume --allowedTools --settings --append-system-prompt
   --dangerously-skip-permissions --permission-mode (either marks a batch run)
+  --prompt-suggestions --disallowedTools --effort
+  --restricted --tools --strict-mcp-config
   -h / --help
+Any other flag or argument exits 1, as in real CC (an undeclared flag
+would otherwise drop every flag after it). "auth status" prints a
+logged-in status and exits 0.
 
 Foci points at this binary by setting [cc_backend].claude_binary in
 foci.toml. See cmd/cc-stub/main.go for the full protocol.`
