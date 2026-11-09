@@ -21,7 +21,7 @@ import "testing"
 // Code traffic is 100% 1h-TTL cache writes (measured: zero 5m writes in a month),
 // so for these ids the 5m fallback is never the right answer — it is the bug.
 func TestOneHourRate_PresentForModelsWeRun(t *testing.T) {
-	for _, id := range []string{"claude-opus-5", "claude-sonnet-5", "claude-fable-5", "claude-fable-5-1"} {
+	for _, id := range []string{"claude-opus-5", "claude-sonnet-5", "claude-fable-5", "claude-fable-5-1", "claude-fable-5-2"} {
 		m, ok := Lookup("claude", id)
 		if !ok {
 			t.Errorf("%s: not in the registry at all", id)

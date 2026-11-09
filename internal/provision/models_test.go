@@ -10,12 +10,12 @@ import "testing"
 // member lands, which is the point: the test is where the staleness now shows.
 func TestResolveModelAlias_TracksNewestInFamily(t *testing.T) {
 	for _, tc := range []struct{ alias, want string }{
-		{"fable", "anthropic/claude-fable-5-1"},
+		{"fable", "anthropic/claude-fable-5-2"},
 		{"opus", "anthropic/claude-opus-5-5"},
 		{"sonnet", "anthropic/claude-sonnet-5-5"},
 		{"haiku", "anthropic/claude-haiku-5-5"},
 		{"", "anthropic/claude-sonnet-5-5"},     // empty defaults to sonnet
-		{"FABLE", "anthropic/claude-fable-5-1"}, // case-insensitive
+		{"FABLE", "anthropic/claude-fable-5-2"}, // case-insensitive
 		{" opus ", "anthropic/claude-opus-5-5"}, // trimmed
 	} {
 		if got := ResolveModelAlias(tc.alias); got != tc.want {

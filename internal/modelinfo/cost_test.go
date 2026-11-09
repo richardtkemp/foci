@@ -42,7 +42,7 @@ func TestUnpricedModelWarnsOnce(t *testing.T) {
 }
 
 // #1833: a model version with no exact registry row that inherits its
-// family's rates (e.g. a brand-new "claude-fable-5-2") must warn once via
+// family's rates (e.g. a brand-new "claude-fable-9-9") must warn once via
 // FamilyPricedModelHook — distinct from UnpricedModelHook, which only fires
 // when there's no family match either. An exact registry hit must NOT warn.
 func TestFamilyPricedModelWarnsOnceAndOnlyOnFamilyFallback(t *testing.T) {
@@ -60,12 +60,12 @@ func TestFamilyPricedModelWarnsOnceAndOnlyOnFamilyFallback(t *testing.T) {
 		unpricedMu.Unlock()
 	})
 
-	flatCost("claude-fable-5-2", 100, 0, 0, 0) // no exact row → family fallback → warn
-	flatCost("claude-fable-5-2", 200, 0, 0, 0) // same model again → no repeat warn
+	flatCost("claude-fable-9-9", 100, 0, 0, 0) // no exact row → family fallback → warn
+	flatCost("claude-fable-9-9", 200, 0, 0, 0) // same model again → no repeat warn
 	flatCost("claude-haiku-4-5", 100, 0, 0, 0) // exact registry hit → no warn at all
 	flatCost("mystery-model-x", 100, 0, 0, 0)  // no family match → unpriced, not family
 
-	wantFamily := []string{"claude-fable-5-2"}
+	wantFamily := []string{"claude-fable-9-9"}
 	if len(familyWarned) != len(wantFamily) || familyWarned[0] != wantFamily[0] {
 		t.Fatalf("family-priced warnings = %v, want %v", familyWarned, wantFamily)
 	}
