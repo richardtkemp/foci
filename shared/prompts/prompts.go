@@ -59,8 +59,10 @@ func BranchOrientationFacet() string { return read("branch-orientation-facet.md"
 
 // BranchOrientationDepth returns the default orientation for depth-mode leaf
 // branches (#2588). Template vars: {branch_key}, {parent_key}, {branch_type},
-// and {report_rule}, which the depth manager fills with the leaf's own
-// orientation text (the report format and focus its fan-out asked for).
+// {report_rule}, which the depth manager fills with the leaf's own
+// orientation text (the report format and focus its fan-out asked for), and
+// {opening_rule}, how the leaf opened: its question to the user, or a task to
+// it (#2998).
 func BranchOrientationDepth() string { return read("branch-orientation-depth.md") }
 
 // ResolveDepthOrientationTemplate resolves the depth-mode leaf orientation

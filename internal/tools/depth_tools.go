@@ -41,9 +41,11 @@ func (m *DepthManager) fanoutTool() *Tool {
 	return &Tool{
 		Name:       "depth_fanout",
 		ExecExport: true,
-		Description: "Send the user several points as separate leaves instead of one message: use it when a reply would carry several independent points (findings, issues, options) that the user may answer or act on one by one. Each leaf's question is exactly the message you would otherwise have sent the user for that point, written to the USER (not to the leaf agent): instead of sending the user A, B and C in one message, fan out into leaves A, B and C. " +
-			"Each question appears as its leaf's first message, from you, and the user replies to it there, one leaf at a time inside this chat. ONE point per leaf, never a list of questions in one leaf. Use it whenever a user's request opens several discussion threads. " +
-			"Each leaf is a fork of your context and runs nothing until the user answers it. " +
+		Description: "Send the user several points as separate leaves instead of one message: use it when a reply would carry several independent points (findings, issues, options) that the user may answer or act on one by one. ONE point per leaf, never a list of questions in one leaf. Use it whenever a user's request opens several discussion threads. " +
+			"Each leaf opens in one of two ways; choose per leaf. " +
+			"QUESTION (the default): use it when the user's input is needed first. The question is exactly the message you would otherwise have sent the user for that point, written to the USER (not to the leaf agent): instead of sending the user A, B and C in one message, fan out into leaves A, B and C. It appears as its leaf's first message, from you, and the leaf runs nothing until the user answers it there. " +
+			"TASK: use it when the leaf has work to do before the user sees it (e.g. \"investigate X and report what you find\"). The task is written to the LEAF AGENT; the leaf starts work on it at once, and the user sees the task and then the leaf's result in that leaf. " +
+			"The user takes the leaves one at a time inside this chat. Each leaf is a fork of your context. " +
 			"You then end your turn and get ONE [DEPTH RESULTS] message when every leaf has reported. In the meantime the user can keep talking to you in this chat, so answer as normal; nothing said here reaches the leaves. You cannot fan out again until the results arrive. Only from an app conversation (or from a leaf). " +
 			"Each leaf costs a copy of your current context, so prefer fanning out while the context is small.",
 		Parameters: json.RawMessage(`{
@@ -51,15 +53,16 @@ func (m *DepthManager) fanoutTool() *Tool {
 			"properties": {
 				"leaves": {
 					"type": "array",
-					"description": "The leaves, as a JSON array: [{\"title\": \"short point name\", \"question\": \"the message you would have sent the user about this ONE point\", \"orientation\": \"optional: report format / focus for this leaf\"}, ...]. Each question goes to the user, as that leaf's opening message.",
+					"description": "The leaves, as a JSON array: [{\"title\": \"short point name\", \"question\": \"the message you would have sent the user about this ONE point\"}, {\"title\": \"...\", \"task\": \"the work this leaf does first, written to the leaf agent\"}, ...]. Give each leaf a question OR a task, not both; \"orientation\" (optional) sets its report format / focus.",
 					"items": {
 						"type": "object",
 						"properties": {
 							"title": {"type": "string"},
-							"question": {"type": "string", "description": "Exactly what you would otherwise have sent the user for this point, written for the user; it is shown as the leaf's first message and the user answers it. (\"prompt\" is accepted as an older name.)"},
+							"question": {"type": "string", "description": "Opens the leaf with a message TO THE USER (use when their input is needed first): exactly what you would otherwise have sent the user for this point. It is shown as the leaf's first message and the leaf waits for the user's answer. (\"prompt\" is accepted as an older name.)"},
+							"task": {"type": "string", "description": "Opens the leaf with a task TO THE LEAF AGENT (use when the leaf has work to do before the user sees it). The leaf starts on it at once; the user sees the task, then the leaf's result."},
 							"orientation": {"type": "string"}
 						},
-						"required": ["title", "question"]
+						"required": ["title"]
 					}
 				},
 				"orientation": {
@@ -106,7 +109,7 @@ func parseDepthLeaves(raw json.RawMessage) ([]depthLeafSpec, error) {
 			return leaves, nil
 		}
 	}
-	return nil, fmt.Errorf(`depth_fanout: leaves must be a JSON array like [{"title": "...", "question": "..."}]`)
+	return nil, fmt.Errorf(`depth_fanout: leaves must be a JSON array like [{"title": "...", "question": "..."}, {"title": "...", "task": "..."}]`)
 }
 
 func (m *DepthManager) reportTool() *Tool {

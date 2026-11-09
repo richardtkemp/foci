@@ -82,6 +82,20 @@ func (d *toolDeps) getDepth() *tools.DepthManager {
 		},
 		RunTurn:  newDepthRunTurn(ag, d.p.ctx, d.connMgr, agentID),
 		Notifier: d.notifier,
+		// #2998: task leaves run their task turns within the spawn limit.
+		MaxConcurrent: func() int {
+			if live == nil {
+				return d.p.resolved.Tools.MaxConcurrentSpawns // static-cfg:ignore: fallback only when there is no live snapshot
+			}
+			return live.Load().Tools.MaxConcurrentSpawns
+		},
+		// #2998: a resumed task turn carries what its backend never consumed.
+		TakeUndelivered: func(bk string) []string {
+			if a := ag(); a != nil && a.DelegatedManager != nil {
+				return a.DelegatedManager.TakeUndelivered(bk)
+			}
+			return nil
+		},
 		CancelAsk: func(sk string) {
 			r := d.out.askRouter
 			if r == nil || r.PendingForSession == nil || r.HandleResponse == nil {
@@ -159,7 +173,7 @@ func (d *toolDeps) getDepth() *tools.DepthManager {
 	return d.depth
 }
 
-// newDepthRunTurn runs a depth-mode turn (a leaf's first turn, the feed's Ack,
+// newDepthRunTurn runs a depth-mode turn (a task leaf's task, the feed's Ack,
 // an approval answer) as an injection on the session's inbox, its output
 // rendered to the session's own app binding: for a leaf, its feed item.
 func newDepthRunTurn(ag func() *agent.Agent, ctx context.Context, connMgr platform.ConnectionManager, agentID string) func(sk, text, trigger string, started func(), done func(bool)) {

@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	"foci/internal/fap"
+	"foci/internal/session"
 	"foci/internal/tools"
 )
 
@@ -431,6 +432,18 @@ func (DepthSurface) ShowQuestion(branchKey, text string) {
 	if b := h.bindingForSession(branchKey); b != nil {
 		b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: fap.NewULID(), Role: "agent", Text: text})
 	}
+}
+
+// ShowTask opens a task leaf's conversation with its task (#2998): the
+// message fromSession (the fanning node) gave the leaf agent, as a durable
+// incoming-prompt row from that session, the frame send_to_session uses
+// (DeliverAgentMessage). The leaf's first turn runs on the same text.
+func (DepthSurface) ShowTask(branchKey, text, fromSession string) {
+	agentID := ""
+	if k, err := session.ParseSessionKey(fromSession); err == nil {
+		agentID = k.AgentID
+	}
+	deliverBoundPrompt(branchKey, fap.ExternalPrompt{Text: text, FromAgent: agentID, FromSession: fromSession})
 }
 
 // LeafBusy reports whether the leaf on branchKey has a turn running.

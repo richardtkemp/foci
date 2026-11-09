@@ -80,6 +80,10 @@ type DepthSurface interface {
 	// ShowQuestion opens a leaf's conversation with its question to the user,
 	// shown as the leaf agent's first message (#2617).
 	ShowQuestion(branchKey, text string)
+	// ShowTask opens a task leaf's conversation with its task (#2998): the
+	// message fromSession (the fanning node) gave the leaf agent, shown as an
+	// incoming prompt from that session.
+	ShowTask(branchKey, text, fromSession string)
 	// LeafBusy reports whether the leaf on branchKey has a turn running.
 	LeafBusy(branchKey string) bool
 }
@@ -105,9 +109,19 @@ type DepthDeps struct {
 	// RunTurn queues text as an injected turn on sessionKey whose output goes
 	// to that session's app binding (a leaf's goes to its item). started runs
 	// when the turn begins; done(true) once it ran, done(false) when the inbox
-	// refused it (shutdown, full inbox). A leaf never gets one at creation
-	// (#2617): its first turn is the user's reply to its question.
+	// refused it (shutdown, full inbox). A question leaf never gets one at
+	// creation (#2617): its first turn is the user's reply to its question. A
+	// task leaf's first turn is its task (#2998). Nil = task leaves refused.
 	RunTurn func(sessionKey, text, trigger string, started func(), done func(ran bool))
+	// TakeUndelivered returns, and forgets, the inputs written to a leaf's
+	// backend that it never consumed, so a resumed task turn carries them
+	// (as Spawner deps). Nil = none.
+	TakeUndelivered func(branchKey string) []string
+	// MaxConcurrent bounds how many task leaves run their task turn at once
+	// (the live max_concurrent_spawns), so a wide fan-out does not start every
+	// backend in the same second; the rest wait their turn, shown as working.
+	// Nil or <= 0 = no bound.
+	MaxConcurrent func() int
 	// Notifier delivers the [DEPTH RESULTS] fan-in durably (InjectToAgentThen).
 	Notifier *AsyncNotifier
 	// CancelAsk cancels the session's pending foci_ask, if any (Ack).
@@ -133,23 +147,45 @@ type DepthDeps struct {
 	OnHandover func()
 }
 
-// depthLeafSpec is one leaf a fan-out asks for. Prompt is the leaf's question:
-// the message the caller would otherwise have sent the user for that point,
-// shown as the leaf's first agent message (#2617). The tool takes it as
-// "question" ("prompt" is still read, and is the stored name).
+// depthLeafSpec is one leaf a fan-out asks for. Prompt is the leaf's opening
+// text, Opening how it opens (#2998):
+//   - a question (Opening ""): the message the caller would otherwise have
+//     sent the user for that point, shown as the leaf's first agent message
+//     (#2617); the leaf runs no turn until the user answers. The tool takes it
+//     as "question" ("prompt" is still read, and is the stored name).
+//   - a task (Opening "task"): a message TO the leaf agent, which runs its
+//     first turn on it at once; the user sees the task, then the leaf's
+//     result. The tool takes it as "task".
 type depthLeafSpec struct {
 	Title       string `json:"title"`
 	Prompt      string `json:"prompt"`
 	Question    string `json:"question,omitempty"`
+	Task        string `json:"task,omitempty"`
+	Opening     string `json:"opening,omitempty"`
 	Orientation string `json:"orientation,omitempty"`
 }
 
-// normalize folds Question into Prompt.
-func (l *depthLeafSpec) normalize() {
-	if strings.TrimSpace(l.Question) != "" {
-		l.Prompt = l.Question
+// depthOpenTask is depthNode.Opening (and depthLeafSpec.Opening) of a leaf
+// that opens with a task to the leaf agent (#2998); "" is a question to the
+// user, the default.
+const depthOpenTask = "task"
+
+// normalize folds Question or Task into Prompt and sets Opening. A leaf that
+// gives both is refused: the caller must choose who speaks first.
+func (l *depthLeafSpec) normalize() error {
+	q, t := strings.TrimSpace(l.Question) != "", strings.TrimSpace(l.Task) != ""
+	switch {
+	case q && t:
+		return fmt.Errorf("give a question (to the user) or a task (to the leaf), not both")
+	case t:
+		l.Prompt, l.Opening = l.Task, depthOpenTask
+	case q:
+		l.Prompt, l.Opening = l.Question, ""
+	case l.Opening != depthOpenTask:
+		l.Opening = "" // the older "prompt" alone is a question
 	}
-	l.Question = ""
+	l.Question, l.Task = "", ""
+	return nil
 }
 
 // depthCallMarker names the fan-out call in a parent's transcript: the API and
@@ -157,10 +193,37 @@ func (l *depthLeafSpec) normalize() {
 // contain it.
 const depthCallMarker = "depth_fanout"
 
+// depthOpeningRuleVar is the leaf orientation's placeholder for how this leaf
+// opened (#2998), filled per leaf by openingRule.
+const depthOpeningRuleVar = "{opening_rule}"
+
+// openingRule tells a leaf how it opened: with its own question to the user,
+// or with a task to it.
+func openingRule(opening string) string {
+	if opening == depthOpenTask {
+		return "- This leaf opened with a TASK for you: the message after this orientation, which the user also sees. Do that work now, then give the user your result here as one message that stands on its own. Then discuss ONLY that point with them. Other leaves have the others."
+	}
+	return "- This leaf opened with your own message to the user (the last agent message above, or the opening below); what follows this orientation is their reply. Discuss ONLY that point. Other leaves have the others."
+}
+
+// depthTaskReady is a task leaf's opening agent text (#2998): the fork keeps
+// the user/agent alternation (the API transport repairs two user messages in a
+// row) and the task follows as the next user message.
+const depthTaskReady = "Ready for this leaf's task."
+
 // leafOpening is how leaf c's fork ends (#2617): the parent's fan-out call
 // answered, then c's question as the leaf agent's own message. Fallback carries
 // the question on the user's first reply where the backend cannot write that.
+// A task leaf (#2998) ends on a short ready line instead, and needs no
+// fallback: its task is its first user message.
 func leafOpening(c *depthNode, leaves int) *session.BranchOpening {
+	if c.Opening == depthOpenTask {
+		return &session.BranchOpening{
+			CallMarker: depthCallMarker,
+			ToolResult: fmt.Sprintf("Fanned out into %d leaves. This conversation is the leaf %q. Its task follows as the next message.", leaves, c.Title),
+			AgentText:  depthTaskReady,
+		}
+	}
 	return &session.BranchOpening{
 		CallMarker: depthCallMarker,
 		ToolResult: fmt.Sprintf("Fanned out into %d leaves. This conversation is the leaf %q.", leaves, c.Title),
@@ -197,11 +260,14 @@ type depthNode struct {
 	// which only the root's current one (the root's own TreeID) is live.
 	// Nested fan-outs inherit their parent's. "" = a record from before
 	// #2614 (restore splits those, legacySplitLocked).
-	TreeID      string    `json:"tree_id,omitempty"`
-	Parent      string    `json:"parent,omitempty"` // the parent node's session key
-	Level       int       `json:"level"`
-	Title       string    `json:"title,omitempty"`
-	Prompt      string    `json:"prompt,omitempty"`
+	TreeID string `json:"tree_id,omitempty"`
+	Parent string `json:"parent,omitempty"` // the parent node's session key
+	Level  int    `json:"level"`
+	Title  string `json:"title,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
+	// Opening is how the leaf opened (#2998): depthOpenTask, or "" for a
+	// question to the user.
+	Opening     string    `json:"opening,omitempty"`
 	Orientation string    `json:"orientation,omitempty"`
 	State       string    `json:"state"`
 	Report      string    `json:"report,omitempty"`
@@ -211,6 +277,16 @@ type depthNode struct {
 	// Reason says why a node is lost or dropped.
 	Reason string `json:"reason,omitempty"`
 
+	// TaskStarted: a task leaf's task turn began running (#2998). A restart
+	// runs a task whose turn never started (it never reached the backend); one
+	// that started and is not TaskDone is resumed, not run again as a fresh
+	// task.
+	TaskStarted bool `json:"task_started,omitempty"`
+	// TaskDone: the task turn (or its resume after a restart) ran to its end.
+	// A restart that finds it started and not done resumes it (#2998).
+	TaskDone bool `json:"task_done,omitempty"`
+	// TaskResumes counts the restarts that resumed the task turn.
+	TaskResumes int `json:"task_resumes,omitempty"`
 	// AckPending: the user acknowledged; the report has not landed yet.
 	AckPending      bool      `json:"ack_pending,omitempty"`
 	AckAt           time.Time `json:"ack_at,omitempty"`
@@ -246,6 +322,10 @@ type DepthManager struct {
 	nodes  map[string]*depthNode // session key → node
 	queued map[string]int        // session key → turns queued by the manager, not yet ended
 	costs  map[string]depthCost  // session key → cached spend
+	// tasksRunning counts task turns running under MaxConcurrent;
+	// tasksWaiting holds, in order, the task leaves waiting for a slot.
+	tasksRunning int
+	tasksWaiting []string
 	// fanning marks a parent whose fan-in is being built (between its state
 	// leaving fanned and its Results being set), so SpawnRoute holds its
 	// children's spawns through that gap too.
@@ -561,11 +641,20 @@ func (m *DepthManager) fanout(ctx context.Context, caller string, leaves []depth
 	if len(leaves) == 0 {
 		return "", fmt.Errorf("depth_fanout: give at least one leaf")
 	}
+	tasks := 0
 	for i := range leaves {
-		leaves[i].normalize()
-		if strings.TrimSpace(leaves[i].Title) == "" || strings.TrimSpace(leaves[i].Prompt) == "" {
-			return "", fmt.Errorf("depth_fanout: leaf %d needs a title and a question", i+1)
+		if err := leaves[i].normalize(); err != nil {
+			return "", fmt.Errorf("depth_fanout: leaf %d: %w", i+1, err)
 		}
+		if strings.TrimSpace(leaves[i].Title) == "" || strings.TrimSpace(leaves[i].Prompt) == "" {
+			return "", fmt.Errorf("depth_fanout: leaf %d needs a title and a question or a task", i+1)
+		}
+		if leaves[i].Opening == depthOpenTask {
+			tasks++
+		}
+	}
+	if tasks > 0 && m.deps.RunTurn == nil {
+		return "", fmt.Errorf("depth_fanout: this agent cannot start a leaf's turn from a task here, so no leaf was made; give those leaves a question to the user instead")
 	}
 	if m.deps.CanBranch != nil && !m.deps.CanBranch() {
 		return "", fmt.Errorf("depth_fanout: this agent's backend cannot fork a conversation, which depth mode needs")
@@ -701,11 +790,12 @@ func (m *DepthManager) doFanout(ctx context.Context, caller string, leaves []dep
 			orient = orientation
 		}
 		tmpl := strings.ReplaceAll(m.deps.OrientationTemplate, session.ReportRuleVar, orient)
+		tmpl = strings.ReplaceAll(tmpl, depthOpeningRuleVar, openingRule(l.Opening))
 		bk, ok, err := m.deps.Sessions.ForkSession(ctx, caller, BranchOptions{
 			NoResetHook:         true,
 			BranchType:          "depth",
 			OrientationTemplate: tmpl,
-			Opening:             leafOpening(&depthNode{Title: strings.TrimSpace(l.Title), Prompt: l.Prompt}, len(leaves)),
+			Opening:             leafOpening(&depthNode{Title: strings.TrimSpace(l.Title), Prompt: l.Prompt, Opening: l.Opening}, len(leaves)),
 		})
 		if err != nil {
 			return "", fmt.Errorf("depth_fanout: fork for %q: %w", l.Title, err)
@@ -745,7 +835,7 @@ func (m *DepthManager) doFanout(ctx context.Context, caller string, leaves []dep
 		c := &depthNode{
 			Key: f.key, LeafID: newDepthID("leaf-"), Tree: tree, TreeID: parent.TreeID, Parent: caller,
 			Level: parent.Level + 1, Title: strings.TrimSpace(f.spec.Title), Prompt: f.spec.Prompt,
-			Orientation: f.spec.Orientation, State: depthActive,
+			Opening: f.spec.Opening, Orientation: f.spec.Orientation, State: depthActive,
 			// Distinct creation stamps keep the feed in the order asked for.
 			Created: now.Add(time.Duration(i) * time.Microsecond), Updated: now,
 		}
@@ -766,24 +856,46 @@ func (m *DepthManager) doFanout(ctx context.Context, caller string, leaves []dep
 	m.mu.Unlock()
 	m.persist(recs...)
 
+	var tasks []string
 	for _, c := range children {
 		if m.deps.SetNoCompact != nil {
 			m.deps.SetNoCompact(c.Key, true)
 		}
 		if m.deps.Surface != nil {
 			m.registerLeaf(c.Key)
-			m.deps.Surface.ShowQuestion(c.Key, c.Prompt)
+			if c.Opening == depthOpenTask {
+				m.deps.Surface.ShowTask(c.Key, c.Prompt, caller)
+			} else {
+				m.deps.Surface.ShowQuestion(c.Key, c.Prompt)
+			}
+		}
+		if c.Opening == depthOpenTask {
+			tasks = append(tasks, c.Key)
 		}
 	}
-	// No leaf turn runs now (#2617): each leaf's fork ends on its question,
-	// and its first turn is the user's reply.
+	// A question leaf runs no turn now (#2617): its fork ends on its
+	// question, and its first turn is the user's reply. A task leaf (#2998)
+	// runs its task at once; it is counted as running before the feed goes
+	// out, so the app never shows it waiting for the user.
+	m.mu.Lock()
+	for _, k := range tasks {
+		m.queued[k]++
+	}
+	m.mu.Unlock()
 	m.pushFeed(tree)
-	depthLog.Infof("fan-out %s → %d leaves (tree %s, level %d)", caller, len(children), tree, children[0].Level)
+	for _, k := range tasks {
+		m.startTask(k, "", true)
+	}
+	depthLog.Infof("fan-out %s → %d leaves, %d with a task (tree %s, level %d)", caller, len(children), len(tasks), tree, children[0].Level)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Each question went to the user as its leaf's opening message. You are now waiting on %d leaves; end your turn. You will get one [DEPTH RESULTS] message when all have reported.\n", len(children))
+	fmt.Fprintf(&b, "You are now waiting on %d leaves; end your turn. You will get one [DEPTH RESULTS] message when all have reported.\n", len(children))
 	for _, c := range children {
-		fmt.Fprintf(&b, "- %s (%s)\n", c.Title, c.LeafID)
+		how := "question: shown to the user as the leaf's opening message; the leaf waits for their answer"
+		if c.Opening == depthOpenTask {
+			how = "task: the leaf is working on it now; the user sees the task, then its result"
+		}
+		fmt.Fprintf(&b, "- %s (%s) — %s\n", c.Title, c.LeafID, how)
 	}
 	if parent.LeafID == "" {
 		b.WriteString("The user can keep talking to you in this chat while the leaves are open: answer as normal. Nothing said here reaches the leaves, and they reach you only through that message, which may arrive after the chat has moved on.\n")
@@ -793,6 +905,110 @@ func (m *DepthManager) doFanout(ctx context.Context, caller string, leaves []dep
 	}
 	return strings.TrimRight(b.String(), "\n"), nil
 }
+
+// startTask runs task leaf key's task turn (#2998), or, with resume set, the
+// turn that carries it on after a restart cut it off (text is then that turn's
+// input). Under MaxConcurrent it waits for a slot, still shown as working.
+// counted says the caller already counted it in m.queued.
+func (m *DepthManager) startTask(key, resume string, counted bool) {
+	m.mu.Lock()
+	if !counted {
+		m.queued[key]++
+	}
+	if limit := m.maxConcurrent(); limit > 0 && m.tasksRunning >= limit {
+		m.tasksWaiting = append(m.tasksWaiting, key+"\x00"+resume)
+		m.mu.Unlock()
+		return
+	}
+	m.tasksRunning++
+	m.mu.Unlock()
+	m.runTask(key, resume)
+}
+
+func (m *DepthManager) maxConcurrent() int {
+	if m.deps.MaxConcurrent == nil {
+		return 0
+	}
+	return m.deps.MaxConcurrent()
+}
+
+// runTask runs one task turn in a slot startTask took. A leaf closed while it
+// waited (cancelled, dropped by a reset) runs nothing.
+func (m *DepthManager) runTask(key, resume string) {
+	m.mu.Lock()
+	n := m.nodes[key]
+	var text string
+	if n != nil && n.State == depthActive && !n.AckPending {
+		text = n.Prompt
+		if resume != "" {
+			text = resume
+		}
+	}
+	m.mu.Unlock()
+	if text == "" || m.deps.RunTurn == nil {
+		m.taskEnded(key)
+		return
+	}
+	m.deps.RunTurn(key, text, "depth_task", func() {
+		m.mu.Lock()
+		var rec []depthNode
+		if n := m.nodes[key]; n != nil {
+			n.TaskStarted = true
+			n.TaskDone = false
+			rec = snap(n)
+		}
+		m.mu.Unlock()
+		m.persist(rec...)
+	}, func(ran bool) {
+		if ran {
+			m.mu.Lock()
+			var rec []depthNode
+			if n := m.nodes[key]; n != nil {
+				n.TaskDone = true
+				rec = snap(n)
+			}
+			m.mu.Unlock()
+			m.persist(rec...)
+		}
+		m.taskEnded(key)
+	})
+}
+
+// taskEnded frees the task's slot, starts the next waiting task, and ends the
+// task's count in m.queued.
+func (m *DepthManager) taskEnded(key string) {
+	m.mu.Lock()
+	if m.tasksRunning > 0 {
+		m.tasksRunning--
+	}
+	var next string
+	if len(m.tasksWaiting) > 0 && (m.maxConcurrent() <= 0 || m.tasksRunning < m.maxConcurrent()) {
+		next = m.tasksWaiting[0]
+		m.tasksWaiting = m.tasksWaiting[1:]
+		m.tasksRunning++
+	}
+	m.mu.Unlock()
+	m.turnEnded(key)
+	if next != "" {
+		k, resume, _ := strings.Cut(next, "\x00")
+		go m.runTask(k, resume)
+	}
+}
+
+// depthTaskRestartNotice is the turn that carries a task leaf on after a
+// restart cut its task turn off (#2998): the leaf's conversation is kept, and
+// its task is quoted in case the backend lost that turn (the API transport
+// saves a turn only when it ends). The user does not see the task again.
+func depthTaskRestartNotice(task string) string {
+	return "[SYSTEM: FOCI RESTARTED] foci restarted while you were working on this leaf's task, so your last turn was cut off. " +
+		"Carry on from where you left off; check what you already did before redoing any of it. Then give the user your result here, as before.\n\n" +
+		"Your task, for reference:\n\n" + task
+}
+
+// maxDepthTaskResumes is how many restarts in a row may resume one task
+// leaf's turn (maxSpawnRestartResumes for spawns): a task that crashes foci
+// cannot crash it forever. Past it the leaf just waits for the user.
+const maxDepthTaskResumes = maxSpawnRestartResumes
 
 // runTurn queues a manager-originated turn on key (trigger "depth"), counted
 // as running for the feed until it ends.
@@ -1265,6 +1481,8 @@ func (m *DepthManager) restore() {
 	expired := m.expireLocked(trees)
 	var (
 		register     []*depthNode
+		tasks        []string
+		taskResumes  []string
 		acks         []string
 		approvals    []string
 		results      []string
@@ -1286,6 +1504,21 @@ func (m *DepthManager) restore() {
 		}
 		if n.LeafID != "" && n.State == depthActive && n.AckPending {
 			acks = append(acks, n.Key)
+		}
+		// A task leaf (#2998) whose task never started runs it now; one whose
+		// task turn a restart cut off is resumed, its conversation kept and
+		// its task not shown again. An acknowledged leaf runs its ack instead.
+		if n.LeafID != "" && n.State == depthActive && !n.AckPending && n.Opening == depthOpenTask && !n.TaskDone {
+			switch {
+			case !n.TaskStarted:
+				tasks = append(tasks, n.Key)
+			case n.TaskResumes >= maxDepthTaskResumes:
+				depthLog.Warnf("task leaf %s: restarts already interrupted its task %d times; not resumed, it waits for the user", n.Key, n.TaskResumes)
+			default:
+				n.TaskResumes++
+				recs = append(recs, n)
+				taskResumes = append(taskResumes, n.Key)
+			}
 		}
 		if n.Approval != nil && live {
 			approvals = append(approvals, n.Key)
@@ -1312,6 +1545,25 @@ func (m *DepthManager) restore() {
 		for _, n := range register {
 			m.registerLeaf(n.Key)
 		}
+	}
+	for _, k := range tasks {
+		m.startTask(k, "", false)
+	}
+	for _, k := range taskResumes {
+		m.mu.Lock()
+		task := ""
+		if n := m.nodes[k]; n != nil {
+			task = n.Prompt
+		}
+		m.mu.Unlock()
+		texts := []string{depthTaskRestartNotice(task)}
+		if m.deps.TakeUndelivered != nil {
+			// What the backend never consumed rides on the resume turn, as
+			// a spawn's does (RestoreSpawns), instead of a redelivery of its own.
+			texts = append(texts, m.deps.TakeUndelivered(k)...)
+		}
+		depthLog.Infof("task leaf %s: resuming its task turn after a restart", k)
+		m.startTask(k, strings.Join(texts, "\n\n"), false)
 	}
 	for _, k := range acks {
 		m.mu.Lock()
