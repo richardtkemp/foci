@@ -920,24 +920,25 @@ func (s *Spawner) runAPIOneShot(ctx context.Context, mode, prompt, modelGroup st
 	deps := s.deps
 	switch mode {
 	case spawnModeRaw:
-		trackOneShot(ctx, &oneShotRecord{Mode: spawnModeRaw, Group: modelGroup}, nil)
 		client, model, format := s.resolveAPISpawn(spawnModeRaw, modelGroup)
+		p := oneShotParams{
+			client:         client,
+			model:          model,
+			format:         format,
+			prompt:         prompt,
+			sessions:       deps.Sessions,
+			maxResultChars: spawnMaxResultChars,
+			maxLoops:       deps.maxToolLoops(),
+			fallbackFn:     deps.FallbackFunc,
+			clientProvider: deps.ClientProvider,
+			routingFor:     deps.ProviderRoutingFor,
+		}
+		// Its own session, as every API one-shot's (#2988); a restart
+		// still reports it lost (its sandbox is gone).
+		trackOneShot(ctx, &oneShotRecord{Mode: spawnModeRaw, Group: modelGroup}, &p)
 		return inSpawnTempDir(func(tempDir string) (string, error) {
-			toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnRawBlacklist, deps.Store, tempDir, deps.FileMode)
-			return spawnOneShot(ctx, oneShotParams{
-				client:         client,
-				model:          model,
-				format:         format,
-				prompt:         prompt,
-				toolDefs:       toolDefs,
-				tools:          tools,
-				sessions:       deps.Sessions,
-				maxResultChars: spawnMaxResultChars,
-				maxLoops:       deps.maxToolLoops(),
-				fallbackFn:     deps.FallbackFunc,
-				clientProvider: deps.ClientProvider,
-				routingFor:     deps.ProviderRoutingFor,
-			})
+			p.toolDefs, p.tools = spawnIsolatedToolSet(deps.Registry, spawnRawBlacklist, deps.Store, tempDir, deps.FileMode)
+			return spawnOneShot(ctx, p)
 		})
 
 	case spawnModeCharacter, spawnModeExplore:
@@ -1168,6 +1169,13 @@ type oneShotParams struct {
 	// with the final answer at its end. Its saver writes only the messages
 	// it has not written yet (#2984).
 	checkpoint func(msgs []provider.Message)
+	// ownSession, when set, is the spawn's own session (its conversation
+	// file, #2984): every call is booked on it, on a turn of its own started
+	// at ownTurnStart (zero: at this run's start), whatever turn invoked it
+	// (#2988). Unset: booked on the invoking turn, else on a turn of its own
+	// on the session ctx names.
+	ownSession   string
+	ownTurnStart time.Time
 }
 
 // spawnOneShot makes API calls with optional tool access (raw/character/explore modes).
@@ -1204,8 +1212,18 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (answer string, runErr e
 		messages = p.history
 	}
 	spawnStart := time.Now()
+	// The agent whose spend it is: the one ctx's session belongs to (a
+	// cross-agent spawn's target), even when its own session is a branch of
+	// the caller's (#2988).
 	agentID := session.AgentIDFromKey(sessionKey)
-	turnID := accounting.MintTurnID(sessionKey, accounting.KindSpawn, spawnStart)
+	bookKey, turnStart := sessionKey, spawnStart
+	if p.ownSession != "" {
+		bookKey = p.ownSession
+		if !p.ownTurnStart.IsZero() {
+			turnStart = p.ownTurnStart
+		}
+	}
+	turnID := accounting.MintTurnID(bookKey, accounting.KindSpawn, turnStart)
 
 	// The spawn model is loop-invariant, so resolve its [models.*.provider]
 	// routing once; every loop request carries it, plus the lookup so any
@@ -1227,7 +1245,7 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (answer string, runErr e
 			Tools:           p.toolDefs,
 			ProviderRouting: routing,
 			RoutingFor:      p.routingFor,
-			SessionKey:      sessionKey,
+			SessionKey:      bookKey,
 		}
 
 		start := time.Now()
@@ -1249,26 +1267,31 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (answer string, runErr e
 			sessionKey, served.Model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, resp.StopReason)
 		var sessionFile string
 		if p.sessions != nil {
-			if path, err := p.sessions.SessionPath(sessionKey); err == nil {
+			if path, err := p.sessions.SessionPath(bookKey); err == nil {
 				sessionFile = path
 			}
 		}
-		// Each loop is one direct-API call, booked on the turn whose tool call
-		// spawned it — or, spawned by no turn, all on one system turn of the
-		// spawn's own.
-		turn := accounting.TurnFor(ctx, accounting.OwnTurn(
-			turnID, sessionKey, agentID, accounting.SourceSystem, spawnStart, time.Now()))
-		// Where a recorded spawn's spend goes (#2992): the turn that spawned
-		// it, or this turn of its own.
-		if _, invoked := accounting.InvokingTurn(ctx); invoked {
-			noteSpawnBooking(ctx, "", "", true)
-		} else {
-			noteSpawnBooking(ctx, "", turn.TurnID, false)
+		// Each loop is one direct-API call. With a session of its own, all
+		// are booked on one system turn of the spawn's own on it; the spawn
+		// link names that session (trackOneShot, #2988). Without one, on the
+		// turn whose tool call spawned it, or, spawned by no turn, all on one
+		// system turn of the spawn's own.
+		own := accounting.OwnTurn(turnID, bookKey, agentID, accounting.SourceSystem, turnStart, time.Now())
+		turn := own
+		if p.ownSession == "" {
+			turn = accounting.TurnFor(ctx, own)
+			// Where a recorded spawn's spend goes (#2992): the turn that
+			// spawned it, or this turn of its own.
+			if _, invoked := accounting.InvokingTurn(ctx); invoked {
+				noteSpawnBooking(ctx, "", "", true)
+			} else {
+				noteSpawnBooking(ctx, "", turn.TurnID, false)
+			}
 		}
 		if err := accounting.Record(turn,
 			accounting.APIResponse{
 				ID: resp.ID, Kind: accounting.KindSpawn, Provider: served.Format, Model: served.Model,
-				Session: sessionKey, AgentID: agentID, TurnID: turn.TurnID,
+				Session: bookKey, AgentID: agentID, TurnID: turn.TurnID,
 				Start: start, Duration: duration, Tokens: resp.Usage.Tokens(), StopReason: resp.StopReason,
 				SessionFile: sessionFile,
 			}.Call()); err != nil {

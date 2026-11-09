@@ -56,6 +56,10 @@ func (c *storeConversations) LoadSpawnConversation(key string) ([]provider.Messa
 	return c.store.Load(key)
 }
 
+func (c *storeConversations) ResetSpawnConversation(key string) error {
+	return c.store.For(key).Replace(key, nil)
+}
+
 // fileBytes is the raw content of the session file key.
 func (c *storeConversations) fileBytes(t *testing.T, key string) []byte {
 	t.Helper()
@@ -375,8 +379,10 @@ func TestAPIOneShot_ConversationAppendOnly50Rounds(t *testing.T) {
 	defer mu.Unlock()
 	final := h.convs.fileBytes(t, key)
 	snaps = append(snaps, final)
-	if len(snaps) != rounds { // rounds 2..50 saw the file, plus the end
-		t.Fatalf("saw the file %d times, want %d", len(snaps), rounds)
+	// Every round saw the file (made before the first model call, #2988),
+	// plus the end.
+	if len(snaps) != rounds+1 {
+		t.Fatalf("saw the file %d times, want %d", len(snaps), rounds+1)
 	}
 	// Append-only: each state of the file is a prefix of the next.
 	var deltas []int

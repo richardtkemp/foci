@@ -23,10 +23,15 @@ import (
 //     (a delegated agent's batch) still are not;
 //   - its loop appends what each round of tool calls added to its
 //     conversation (oneShotSaver) to a session JSONL file of its own: a fresh
-//     "spawn" branch of its parent, made at its first round, whose key the
-//     record carries (oneShotRecord.Conversation). Append-only, as every
-//     session's history is (#2984): a round writes its own two messages,
-//     never the earlier ones again;
+//     "spawn" branch of its parent, made before its first model call, whose
+//     key the record carries (oneShotRecord.Conversation). Append-only, as
+//     every session's history is (#2984): a round writes its own two
+//     messages, never the earlier ones again;
+//   - its model calls are booked on that session, on a turn of its own whose
+//     start the record carries too (oneShotRecord.Started), so a resumed run
+//     books on the same session and turn; the spawn link (#2992) names the
+//     session, which is how Message info lists it under its parent turn
+//     (#2988, Dick 2026-11-09);
 //   - endDirect forgets the record, unless foci is shutting down and the run
 //     was cut short: then it stays, for RestoreSpawns to resume
 //     (resumeOneShotAfterRestart). The conversation file stays either way,
@@ -44,8 +49,16 @@ type oneShotRecord struct {
 	Group string `json:"group,omitempty"`
 	Self  string `json:"self,omitempty"`
 	// Conversation is the session key of the JSONL file its conversation is
-	// appended to (#2984); "" until its first round of tools ends.
+	// appended to (#2984), and the session its model calls are booked on
+	// (#2988); made before its first model call. "" only when that failed
+	// (the saver tries again at its first round) or for a record an older
+	// process wrote.
 	Conversation string `json:"conversation,omitempty"`
+	// Started is the start of the ledger turn of its own its calls are booked
+	// on (the turn id is minted from it and Conversation), so a resumed run
+	// books on the same turn (#2988). Zero for a record an older process
+	// wrote: a resumed run then books on a new turn of the same session.
+	Started time.Time `json:"started,omitzero"`
 }
 
 // SpawnConversations is where an API one-shot's conversation is kept: the
@@ -59,6 +72,10 @@ type SpawnConversations interface {
 	AppendSpawnConversation(key string, msgs []provider.Message) error
 	// LoadSpawnConversation reads all its messages back.
 	LoadSpawnConversation(key string) ([]provider.Message, error)
+	// ResetSpawnConversation sets aside the file key (kept as an archive)
+	// for an empty one under the same key, so a spawn whose file cannot be
+	// read keeps its session (#2988).
+	ResetSpawnConversation(key string) error
 }
 
 // spawnRawLostReason is why a raw one-shot is not resumed: its sandbox
@@ -155,23 +172,23 @@ func (w *oneShotSaver) save(msgs []provider.Message) {
 
 // loadOneShotConversation is a one-shot's saved conversation, and the rounds
 // of its loop it used (one per assistant message: maxLoops counts across a
-// resume); ok is false when it has none (it was stopped before its first
-// round of tools ended) or it cannot be read.
-func loadOneShotConversation(convs SpawnConversations, id, key string) (msgs []provider.Message, loops int, ok bool) {
+// resume). No messages and no error: it has none yet (stopped before it saved
+// any). unreadable: the file exists but cannot be read.
+func loadOneShotConversation(convs SpawnConversations, id, key string) (msgs []provider.Message, loops int, unreadable bool) {
 	if convs == nil || key == "" {
 		return nil, 0, false
 	}
 	msgs, err := convs.LoadSpawnConversation(key)
-	if err != nil || len(msgs) == 0 {
-		spawnLog.Errorf("spawn=%s saved conversation %s unreadable (%d messages, %v)", id, key, len(msgs), err)
-		return nil, 0, false
+	if err != nil {
+		spawnLog.Errorf("spawn=%s saved conversation %s unreadable: %v", id, key, err)
+		return nil, 0, true
 	}
 	for _, m := range msgs {
 		if m.Role == "assistant" {
 			loops++
 		}
 	}
-	return msgs, loops, true
+	return msgs, loops, false
 }
 
 // finishOneShot ends a resumed one-shot's run. cut: its ctx ended before it
@@ -203,19 +220,30 @@ func (t *SpawnTracker) finishOneShot(parent, id string, cut bool) (stopped, inte
 
 // trackOneShot registers the API one-shot ctx runs as with its direct spawn's
 // tracker entry (the spawnLink runDirect put on ctx) and has p append its
-// conversation to a session file (oneShotSaver). A one-shot run outside a
-// tracked direct spawn (no parent session) is not persisted.
+// conversation to a session file (oneShotSaver). The file is made here,
+// before the first model call, and p books every call on it, on a turn of its
+// own (#2988); the spawn's link records it as where its spend is. A one-shot
+// run outside a tracked direct spawn (no parent session), or with no
+// conversation store, is not given one and books as before: on the invoking
+// turn, else on a turn of its own on the session ctx names.
 func trackOneShot(ctx context.Context, rec *oneShotRecord, p *oneShotParams) {
 	link, ok := spawnLinkFrom(ctx)
 	if !ok || link.s == nil {
 		return
 	}
-	tr := link.s.deps.Tracker
-	tr.setOneShot(link.parent, link.id, rec)
-	if p != nil {
-		w := &oneShotSaver{convs: link.s.deps.Conversations, tr: tr, parent: link.parent, id: link.id}
-		p.checkpoint = w.save
+	tr, convs := link.s.deps.Tracker, link.s.deps.Conversations
+	if convs != nil {
+		if key, err := convs.NewSpawnConversation(link.parent); err != nil {
+			spawnLog.Warnf("spawn=%s create conversation file: %v (its calls book on %s)", link.id, err, SessionKeyFromContext(ctx))
+		} else {
+			rec.Conversation, rec.Started = key, time.Now()
+			p.ownSession, p.ownTurnStart = key, rec.Started
+			noteSpawnBooking(ctx, key, "", false)
+		}
 	}
+	tr.setOneShot(link.parent, link.id, rec)
+	w := &oneShotSaver{convs: convs, tr: tr, parent: link.parent, id: link.id}
+	p.checkpoint = w.save
 }
 
 // apiOneShotRun is the ctx and parameters an API character or explore
@@ -320,18 +348,31 @@ func (s *Spawner) resumeOneShotAfterRestart(host *Spawner, rec spawnRecord, base
 	var answer string
 	if err == nil {
 		w := &oneShotSaver{convs: s.deps.Conversations, tr: tr, parent: parent, id: id}
-		saved, loops, ok := loadOneShotConversation(w.convs, id, rec.OneShot.Conversation)
-		if ok {
+		key := rec.OneShot.Conversation
+		saved, loops, unreadable := loadOneShotConversation(w.convs, id, key)
+		switch {
+		case len(saved) > 0:
 			// The file holds saved; the notice goes on in memory only, and
 			// the next round appends after it.
 			p.history, p.startLoop = withRestartNotice(saved), loops
 			w.written = len(saved)
-		} else {
+		default:
 			p.prompt = spawnRestartNotice(rec.Prompt)
-			if rec.OneShot.Conversation != "" {
-				// Unreadable: start a new file rather than append to it.
-				tr.setConversation(parent, id, "")
+			if unreadable {
+				// Set the file aside for an empty one under the same key,
+				// rather than append to it: its session stays the spawn's
+				// (#2988). Failing that, the next round starts a new file.
+				if err := w.convs.ResetSpawnConversation(key); err != nil {
+					spawnLog.Errorf("spawn=%s reset unreadable conversation %s: %v", id, key, err)
+					tr.setConversation(parent, id, "")
+					key = ""
+				}
 			}
+		}
+		if key != "" && w.convs != nil {
+			// Its calls book on the session and turn they booked on before
+			// the restart (#2988).
+			p.ownSession, p.ownTurnStart = key, rec.OneShot.Started
 		}
 		p.checkpoint = w.save
 		spawnLog.Infof("resume one-shot spawn=%s mode=%s parent=%s after restart (resume %d) saved_messages=%d",

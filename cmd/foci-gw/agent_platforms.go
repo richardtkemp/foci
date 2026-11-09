@@ -300,3 +300,11 @@ func (a *sessionBranchAdapter) AppendSpawnConversation(key string, msgs []provid
 func (a *sessionBranchAdapter) LoadSpawnConversation(key string) ([]provider.Message, error) {
 	return a.store.Load(key)
 }
+
+// ResetSpawnConversation implements tools.SpawnConversations (#2988): the
+// unreadable file is rotated to an archive beside it and an empty one, with
+// the same branch_meta (its first line, written at creation), takes its
+// place under the same key.
+func (a *sessionBranchAdapter) ResetSpawnConversation(key string) error {
+	return a.store.For(key).Replace(key, nil)
+}
