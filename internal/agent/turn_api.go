@@ -65,6 +65,9 @@ func (t *APITransport) RegisterTurn(ts *TurnState) func() {
 	}
 	ts.TurnDetail = td
 	ts.TurnID = t.agent.registerTurn(td)
+	// After the session lock: this turn runs now, on this input (#2992).
+	t.agent.setLiveTurn(ts.SessionKey, ts.RowID())
+	t.agent.reportDelivery(ts.SessionKey, InputRefsFromContext(ts.Ctx), DeliveryStarted, ts.RowID())
 	return func() { t.agent.unregisterTurn(ts.TurnID) }
 }
 

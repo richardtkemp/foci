@@ -295,6 +295,11 @@ type SpawnDeps struct {
 	// to resume, and leaves a backend with work still in progress alone. Nil
 	// on an API agent.
 	CloseBranch func(branchKey string)
+
+	// LiveTurn returns the ledger id of the turn running on a session
+	// (Agent.LiveTurnID), read when a spawn starts: the spawn is recorded
+	// against it (#2992). Nil or "" = the spawn is recorded under no turn.
+	LiveTurn func(sessionKey string) string
 }
 
 // turnUnattended calls d.TurnUnattended, false when unset.
@@ -651,6 +656,8 @@ func (s *Spawner) SpawnTool() *Tool {
 			if err != nil {
 				return ToolResult{}, err
 			}
+			// Recorded against the caller's running turn (#2992).
+			ctx = s.recordSpawnLink(ctx, SessionKeyFromContext(ctx), name, p.Context)
 			var res ToolResult
 			switch {
 			case p.Context == spawnModeClone:
@@ -804,6 +811,8 @@ func (s *Spawner) runBatchOneShot(ctx context.Context, mode, prompt, model strin
 	}
 	caller := crossAgentCallerFrom(ctx)
 	link, linked := spawnLinkFrom(ctx)
+	// The batch runs on a session of its own: its spend's home (#2992).
+	req.OnSession = func(k string) { noteSpawnBooking(ctx, k, "", false) }
 	if caller != "" || linked {
 		// The batch's tool calls come back over the exec bridge with only
 		// its session key (#2662): map it, while it runs, to the caller
@@ -811,6 +820,7 @@ func (s *Spawner) runBatchOneShot(ctx context.Context, mode, prompt, model strin
 		// send_to_spawner.
 		var batchKey string
 		req.OnSession = func(k string) {
+			noteSpawnBooking(ctx, k, "", false)
 			batchKey = k
 			if caller != "" {
 				crossAgentBatches.Store(k, caller)
@@ -1248,6 +1258,13 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (answer string, runErr e
 		// spawn's own.
 		turn := accounting.TurnFor(ctx, accounting.OwnTurn(
 			turnID, sessionKey, agentID, accounting.SourceSystem, spawnStart, time.Now()))
+		// Where a recorded spawn's spend goes (#2992): the turn that spawned
+		// it, or this turn of its own.
+		if _, invoked := accounting.InvokingTurn(ctx); invoked {
+			noteSpawnBooking(ctx, "", "", true)
+		} else {
+			noteSpawnBooking(ctx, "", turn.TurnID, false)
+		}
 		if err := accounting.Record(turn,
 			accounting.APIResponse{
 				ID: resp.ID, Kind: accounting.KindSpawn, Provider: served.Format, Model: served.Model,
@@ -1409,6 +1426,7 @@ func (s *Spawner) launchBackground(ctx context.Context, agent SpawnAgent, parent
 	// Registered before the goroutine starts, so a /stop that lands at
 	// once still finds it (#2139).
 	spawnCtx, cancel := s.runContext(ctx, running, true)
+	noteSpawnBooking(ctx, running.BranchKey, "", false) // its branch holds its spend (#2992)
 	running.ID = newSpawnID()
 	running.Description = spawnDescription(prompt)
 	running.Started = time.Now()

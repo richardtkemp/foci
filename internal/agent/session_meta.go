@@ -203,6 +203,29 @@ func (a *Agent) SessionEffort(sessionKey string) string {
 	return a.getStringSetting(sessionKey, settingEffort)
 }
 
+// turnEffort is the effort level ts ran at, as reported on TurnComplete
+// (#2992): the API path's resolved TurnEffort, else (delegated, which leaves
+// TurnEffort unset) the session override, else the model's default. ""
+// when none of them names one.
+func (a *Agent) turnEffort(ts *TurnState) string {
+	if ts.TurnEffort != "" {
+		return ts.TurnEffort
+	}
+	if e := a.SessionEffort(ts.SessionKey); e != "" {
+		return e
+	}
+	if a.ModelDefaultsFn != nil {
+		model := ts.TurnModel
+		if model == "" {
+			model = ts.FinalModel
+		}
+		if model != "" {
+			return a.ModelDefaultsFn(model).Effort
+		}
+	}
+	return ""
+}
+
 // SetSessionEffort sets the per-session effort override and persists it. For a
 // delegated (ccstream) session it also pushes the level to the live CC process
 // via apply_flag_settings so the next turn runs at the new effort with no

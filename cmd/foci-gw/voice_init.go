@@ -112,7 +112,8 @@ const builtinFallbackTTSID = "edge-tts"
 // other [[tts]] entry by priority, highest first (config.TTSOrder), then the
 // built-in edge-tts if no entry declares it. A voice whose provider did not
 // build is left out. Each link has its own entry rate and replacements,
-// combined with the caller's agent-level ones. A chain of one is returned bare.
+// combined with the caller's agent-level ones. A chain of one is returned as a
+// voice.Named, which reports its id like a chain does (#2992).
 func resolveTTS(ttsMap map[string]voice.TTS, ttsEntries []config.TTSConfig, prefer []string, agentRate float64, replacements map[string]string) voice.TTS {
 	byID := make(map[string]*config.TTSConfig, len(ttsEntries))
 	for i := range ttsEntries {
@@ -141,7 +142,9 @@ func resolveTTS(ttsMap map[string]voice.TTS, ttsEntries []config.TTSConfig, pref
 	case 0:
 		return nil
 	case 1:
-		return chainLinks[0].TTS
+		// Named, not bare: the app's Message info reports which voice spoke
+		// (#2992), and a chain of one must say so too.
+		return &voice.Named{ID: chainLinks[0].ID, TTS: chainLinks[0].TTS}
 	default:
 		return &voice.FallbackTTS{Chain: chainLinks}
 	}

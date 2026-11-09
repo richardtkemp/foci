@@ -194,6 +194,25 @@ type TurnComplete struct {
 	Cost      float64
 	Model     string
 	Err       error
+
+	// The turn's identity, for a sink that records which turn produced what
+	// it delivered (#2992, the app's "Message info"). All "" when the emitter
+	// has no agent turn (a spawn's one-shot).
+	//
+	// TurnID is the cost ledger's id for the turn (api_calls.turn_id,
+	// agent.TurnState.RowID). Trigger is what started it (agent trigger:
+	// "user", "voice", "cron", "autonomous", ...), Via the [meta] via the
+	// model saw for it, Effort the resolved effort level ("" = none).
+	TurnID  string
+	Trigger string
+	Via     string
+	Effort  string
+	// DispatchedAt is when the turn's input went to the model: after the
+	// session turn lock (API), or when it was written to the backend
+	// (delegated). Zero when the emitter does not know it (an adopted
+	// autonomous run, a spawn's one-shot). Time before it is waiting, not
+	// generation (#2992).
+	DispatchedAt time.Time
 }
 
 func (TurnStart) turnEvent()      {}

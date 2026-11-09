@@ -149,6 +149,23 @@ func MarkMessageConsumed(convID, messageID string) {
 	b.send(fap.MessageConsumed{ConversationID: convID, MessageID: messageID})
 }
 
+// RecordMessageDelivery files how the app's user message messageID reached
+// the agent (#2992): the agent's Delivery* outcome, the turn's ledger id, and
+// when it was decided. No-op when the app provider is not running or the
+// message did not come through it.
+func RecordMessageDelivery(convID, messageID, outcome, turnID string, at time.Time) {
+	if convID == "" || messageID == "" {
+		return
+	}
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return
+	}
+	h.frames.PutUserDelivery(convID, messageID, outcome, turnID, at)
+}
+
 // SetSubagentDetail routes a running-subagent status detail (or "" when none
 // are running) to the conversation bound to sessionKey, updating its unified
 // Activity indicator. No-op when the app provider is not running or the session

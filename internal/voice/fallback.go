@@ -45,6 +45,7 @@ func (f *FallbackTTS) Synthesize(ctx context.Context, text string) ([]byte, erro
 			if i > 0 {
 				voiceLog.Infof("tts: synthesized via fallback %q (after %d provider(s) failed or skipped)", e.ID, i)
 			}
+			reportServed(ctx, e.ID)
 			return data, nil
 		}
 		var skip *TextTooLongError

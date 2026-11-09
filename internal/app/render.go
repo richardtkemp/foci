@@ -40,6 +40,11 @@ type appBackend struct {
 	// voice-mode clip can name the text message it reads aloud (#2985). Same
 	// goroutine as Emit, so no lock.
 	lastMsgID string
+
+	// delivered is every messageId Deliver sent this turn, in order: the
+	// messages the turn's Message info is recorded against (#2992). Same
+	// goroutine as Emit, so no lock.
+	delivered []string
 }
 
 func newAppBackend(b *convBinding) *appBackend {
@@ -65,6 +70,7 @@ func (p *appBackend) OpenStream() turn.StreamSink {
 func (p *appBackend) Deliver(pl turn.Payload, stream turn.StreamSink) (turn.DeliveryResult, error) {
 	msgID := fap.NewULID()
 	p.lastMsgID = msgID
+	p.delivered = append(p.delivered, msgID)
 	voiceUnavailable := p.voiceUnavailable
 	p.voiceUnavailable = ""
 	if ss, ok := stream.(*appStreamSink); ok && ss.surfaced() {

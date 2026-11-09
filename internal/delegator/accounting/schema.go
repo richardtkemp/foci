@@ -123,6 +123,21 @@ var schemaStmts = []string{
 		PRIMARY KEY (rate_model, class, effective_from)
 	) WITHOUT ROWID`,
 
+	// spawn_links: each spawn recorded against the conversation turn that
+	// started it, and where its spend is booked (#2992, SpawnLink).
+	`CREATE TABLE IF NOT EXISTS spawn_links (
+		spawn_id       TEXT PRIMARY KEY,
+		parent_turn_id TEXT NOT NULL,
+		parent_session TEXT NOT NULL,
+		name           TEXT,
+		mode           TEXT,
+		started_at     TEXT NOT NULL,
+		child_session  TEXT,
+		child_turn     TEXT,
+		in_parent_turn INTEGER NOT NULL DEFAULT 0
+	)`,
+	`CREATE INDEX IF NOT EXISTS spawn_links_parent ON spawn_links(parent_turn_id)`,
+
 	// call_class_costs: one call's cost in one class, priced at the rate row in
 	// effect on the call's billing date (UTC; billed_at is stored in UTC). NULL
 	// when the call has no rate_model, the class is outside the vocabulary, or

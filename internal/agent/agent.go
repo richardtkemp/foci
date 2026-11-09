@@ -208,6 +208,17 @@ type Agent struct {
 	// goroutine. Nil = no notice.
 	PromptAnswerRefusedNotifyFunc func(sessionKey, text string)
 
+	// OnInputDelivery reports how platform messages (refs) reached the agent
+	// (#2992): one of the Delivery* outcomes, the ledger id of the turn they
+	// started, joined or were steered into ("" while queued), and when. Called
+	// synchronously from the inbox and turn transport; must not block. nil =
+	// not reported.
+	OnInputDelivery func(sessionKey string, refs []delegator.InputRef, outcome, turnID string, at time.Time)
+
+	// liveTurns maps a session key to the ledger id of the turn running on it
+	// (liveturn.go).
+	liveTurns sync.Map
+
 	TurnQueuedNotifyFunc func(sessionKey, text string) // fired (in its own goroutine) when a user turn must wait for a turn-limit slot; nil = no queued notice
 
 	platforms  map[string]platform.Sender // per-agent platforms (telegram, discord, etc.); key = platform name
@@ -743,6 +754,12 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, texts []st
 			Cost:      ts.FinalCost,
 			Model:     ts.FinalModel,
 			Err:       err,
+			TurnID:    ts.RowID(),
+			Trigger:   ts.Trigger,
+			Via:       triggerToPlatform(ts.Trigger),
+			Effort:    a.turnEffort(ts),
+
+			DispatchedAt: a.turnDispatchedAt(ts),
 		}
 		if ts.foldedFollowUp && err == nil && a.sessionRouter(sessionKey).routesTo(sink) {
 			// The input joined a turn already in flight, which owns the

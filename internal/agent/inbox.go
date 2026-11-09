@@ -308,6 +308,9 @@ type SteerEntry struct {
 	Username   string
 	ChatID     int64
 	RecvText   string
+	// Ref names the platform message, so its delivery can be reported when
+	// the entry is drained into the running turn (#2992). Zero = none.
+	Ref delegator.InputRef
 }
 
 // InboxRefusedNotice is what a chat is told when Enqueue refuses a user message
@@ -341,6 +344,10 @@ const compactionHoldPoll = 100 * time.Millisecond
 // anything queued, held, deferred or running is never evicted, and an
 // Enqueue that has found the inbox pins it (evictMu) until it has written.
 type sessionInbox struct {
+	// steered reports the refs of steer-buffer entries drained into the
+	// running turn (#2992). nil = not reported.
+	steered func(refs []delegator.InputRef)
+
 	sk         string
 	ch         chan Envelope
 	steerMu    sync.Mutex
@@ -474,7 +481,7 @@ func (inb *sessionInbox) appendSteer(e SteerEntry) {
 // steerEntryFor is the one Envelope→SteerEntry mapping for the steer buffer.
 func steerEntryFor(env Envelope) SteerEntry {
 	return SteerEntry{Text: env.Text, ReceivedAt: env.ReceivedAt, Automated: env.Automated,
-		UserID: env.UserID, Username: env.Username, ChatID: env.ChatID, RecvText: attributedText(env)}
+		UserID: env.UserID, Username: env.Username, ChatID: env.ChatID, RecvText: attributedText(env), Ref: env.Ref}
 }
 
 // recordSteerRecv writes the recv row for a message that folded into the
@@ -525,9 +532,18 @@ func (inb *sessionInbox) drainSteerTexts() []string {
 		return nil
 	}
 	out := make([]string, len(entries))
+	var refs []delegator.InputRef
 	for i, e := range entries {
 		out[i] = e.Text
 		recordSteerRecv(inb.sk, e.UserID, e.Username, e.ChatID, e.RecvText)
+		if e.Ref.MessageID != "" {
+			refs = append(refs, e.Ref)
+		}
+	}
+	// Drained here, the entries join the running turn at a tool boundary
+	// (#2992): they were steered into it.
+	if inb.steered != nil && len(refs) > 0 {
+		inb.steered(refs)
 	}
 	return out
 }
@@ -809,6 +825,7 @@ func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 		select {
 		case inb.ch <- env:
 			a.logger().Infof("inbox: holding message during CC re-login sk=%s (%dB)", env.SessionKey, len(env.Text))
+			a.reportDelivery(env.SessionKey, envRefs(env), DeliveryQueued, "")
 			return true
 		default:
 			a.logger().Warnf("inbox: queue full for sk=%s during CC re-login, dropping message (%dB)", env.SessionKey, len(env.Text))
@@ -825,6 +842,7 @@ func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 		env.enqSeq = inb.enqSeq.Add(1)
 		select {
 		case inb.ch <- env:
+			a.reportDelivery(env.SessionKey, envRefs(env), DeliveryQueued, "")
 			return true
 		default:
 			a.logger().Warnf("inbox: queue full for sk=%s during a usage hold, dropping message (%dB)", env.SessionKey, len(env.Text))
@@ -863,6 +881,7 @@ func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 						a.logger().Warnf("inbox: plan-cancel-by-message failed sk=%s reqID=%s: %v (falling through)", env.SessionKey, reqID, err)
 					} else {
 						a.logger().Infof("inbox: plan approval cancelled by follow-up message sk=%s reqID=%s", env.SessionKey, reqID)
+						a.reportDelivery(env.SessionKey, envRefs(env), DeliveryPlanFeedback, a.LiveTurnID(env.SessionKey))
 						return true
 					}
 				}
@@ -911,6 +930,11 @@ func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 	env.enqSeq = inb.enqSeq.Add(1)
 	select {
 	case inb.ch <- env:
+		if isActive {
+			// It waits for the running turn (#2992); the turn it then
+			// starts or joins is reported when that happens.
+			a.reportDelivery(env.SessionKey, envRefs(env), DeliveryQueued, "")
+		}
 		return true
 	default:
 		a.logger().Warnf("inbox: queue full for sk=%s, dropping message (%dB)", env.SessionKey, len(env.Text))
@@ -974,6 +998,7 @@ func (a *Agent) trySteer(inb *sessionInbox, env Envelope, active, compacting boo
 	case err != nil:
 		a.logger().Warnf("inbox: backend lookup failed sk=%s: %v (falling back to buffer)", env.SessionKey, err)
 		inb.appendSteer(steerEntryFor(env))
+		a.reportDelivery(env.SessionKey, envRefs(env), DeliveryQueued, "")
 		return true
 	case be == nil && hasAttachments:
 		// API mode: the steer buffer is text-only, so a message with
@@ -982,6 +1007,9 @@ func (a *Agent) trySteer(inb *sessionInbox, env Envelope, active, compacting boo
 		// API-mode fallback: buffer for next tool-boundary drain.
 		inb.appendSteer(steerEntryFor(env))
 		a.logger().Debugf("inbox: buffered steer sk=%s %dB", env.SessionKey, len(env.Text))
+		// Waits in the steer buffer: steered when drained at a tool
+		// boundary, else a follow-up turn of its own (#2992).
+		a.reportDelivery(env.SessionKey, envRefs(env), DeliveryQueued, "")
 		return true
 	default:
 		if a.steerToBackend(be, env) {
@@ -1039,6 +1067,7 @@ func (a *Agent) steerToBackend(be delegator.Delegator, env Envelope) bool {
 	case err == nil:
 		a.logger().Debugf("inbox: urgent dispatch sk=%s sent %dB attachments=%d", env.SessionKey, len(inj.Text), len(inj.Attachments))
 		a.noteUserInputDelivered(env.SessionKey)
+		a.reportDelivery(env.SessionKey, envRefs(env), DeliverySteered, a.LiveTurnID(env.SessionKey))
 		// The sender's text as a turn records it (attributedText), not
 		// inj.Text: a fresh turn's recv row holds what the sender wrote, not
 		// the attachment notes prepended to it.
@@ -1290,6 +1319,9 @@ func (a *Agent) getOrCreateInbox(sk string) *sessionInbox {
 		return inb
 	}
 	inb := newSessionInbox(sk, a.logger())
+	inb.steered = func(refs []delegator.InputRef) {
+		a.reportDelivery(sk, refs, DeliverySteered, a.LiveTurnID(sk))
+	}
 	a.inboxes[sk] = inb
 	if a.inboxStarted {
 		inb.workerStarted.Do(func() {
@@ -2566,6 +2598,7 @@ func buildFollowUp(seed Envelope, orphans []SteerEntry, extras []Envelope) []Env
 			Automated:   s.Automated,
 			Original:    seed.Original,
 			Driver:      seed.Driver,
+			Ref:         s.Ref,
 		})
 	}
 	out = append(out, extras...)

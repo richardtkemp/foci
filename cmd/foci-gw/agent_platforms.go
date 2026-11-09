@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"foci/internal/agent"
+	"foci/internal/app"
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/provider"
@@ -121,6 +123,14 @@ func wireAgentPlatformCallbacks(
 	// backend prompt did not get the answer and is still waiting.
 	ag.PromptAnswerRefusedNotifyFunc = func(sessionKey, text string) {
 		route.NotifySessionChat(connMgr, acfg.ID, sessionKey, text)
+	}
+
+	// Message info (#2992): how each app message reached the agent, as the
+	// inbox and turn transport decided it.
+	ag.OnInputDelivery = func(_ string, refs []delegator.InputRef, outcome, turnID string, at time.Time) {
+		for _, r := range refs {
+			app.RecordMessageDelivery(r.ConversationID, r.MessageID, outcome, turnID, at)
+		}
 	}
 
 	// Max tokens — broadcast to every surface

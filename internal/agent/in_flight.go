@@ -350,12 +350,15 @@ func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator, tr
 
 	sink.Emit(ctx, turnevent.TurnStart{})
 	markDone := a.markInFlight(sessionKey, sink.DeliversToPlatform())
+	// The adopted run is the session's live turn (#2992) until it completes.
+	a.setLiveTurn(sessionKey, ts.RowID())
 
 	// Owning goroutine: OnTurnComplete (built into turnEvents) closes
 	// CompletionChan at idle / process exit. Post-turn accounting runs OFF the
 	// reader goroutine; the TurnComplete event emits the meta frame.
 	go func() {
 		<-ts.CompletionChan
+		a.clearLiveTurn(sessionKey, ts.RowID())
 		t.UpdateSessionMeta(ts)
 		t.RunCompaction(ts)
 		sink.Emit(ctx, turnevent.TurnComplete{
@@ -363,6 +366,10 @@ func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator, tr
 			Usage:     ts.FinalUsage,
 			Cost:      ts.FinalCost,
 			Model:     ts.FinalModel,
+			TurnID:    ts.RowID(),
+			Trigger:   ts.Trigger,
+			Via:       triggerToPlatform(ts.Trigger),
+			Effort:    a.turnEffort(ts),
 		})
 		if cleanup != nil {
 			cleanup()

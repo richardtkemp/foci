@@ -85,6 +85,17 @@ func (a *Agent) refuseSystemTurn(trigger string) error {
 	return nil
 }
 
+// turnDispatchedAt is ts's dispatch time (TurnDetail.DispatchedAt), zero
+// when it never dispatched (#2992).
+func (a *Agent) turnDispatchedAt(ts *TurnState) time.Time {
+	if ts.TurnDetail == nil {
+		return time.Time{}
+	}
+	a.turnDetailsMu.Lock()
+	defer a.turnDetailsMu.Unlock()
+	return ts.TurnDetail.DispatchedAt
+}
+
 // markTurnDispatched stamps the moment a registered turn actually began on
 // its backend, as distinct from when it was registered (it may have waited
 // behind an in-flight turn first). Shutdown diagnostics report elapsed time

@@ -116,6 +116,37 @@ func newFrameStore(path string, ttl time.Duration) (*frameStore, error) {
 			conv_id TEXT    NOT NULL PRIMARY KEY,
 			max_seq INTEGER NOT NULL
 		)`,
+		// The facts behind one message for the app's "Message info" (#2992),
+		// recorded where nothing else keeps them: an agent message's turn
+		// (the ledger's id, which joins to api.db for usage and cost) and what
+		// the app sink measured of it, its voice clip's synthesis, and a user
+		// message's device send time, server receipt and how it reached the
+		// agent (recorded where the agent decided it). NULL = not recorded.
+		// Trimmed with the frames (TrimOlderThan, by created_ms).
+		`CREATE TABLE IF NOT EXISTS app_message_info (
+			message_id      TEXT    NOT NULL PRIMARY KEY,
+			conv_id         TEXT    NOT NULL,
+			role            TEXT    NOT NULL,
+			turn_id         TEXT,
+			trigger         TEXT,
+			via             TEXT,
+			effort          TEXT,
+			turn_start_ms   INTEGER,
+			first_output_ms INTEGER,
+			turn_end_ms     INTEGER,
+			tool_ms         INTEGER,
+			tool_calls      INTEGER,
+			voice_provider  TEXT,
+			voice_ms        INTEGER,
+			dispatched_ms   INTEGER,
+			device_sent_ms  INTEGER,
+			server_recv_ms  INTEGER,
+			delivery        TEXT,
+			delivery_turn   TEXT,
+			delivered_ms    INTEGER,
+			created_ms      INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_app_message_info_turn ON app_message_info(turn_id)`,
 	)
 	if err != nil {
 		return nil, err
@@ -754,6 +785,7 @@ func (s *frameStore) TrimOlderThan(cutoffMs int64) int64 {
 		return 0
 	}
 	_, _ = s.db.Exec(`DELETE FROM app_prompts WHERE created_ms < ?`, cutoffMs)
+	_, _ = s.db.Exec(`DELETE FROM app_message_info WHERE created_ms < ?`, cutoffMs)
 	n, _ := res.RowsAffected()
 	if n > 0 {
 		// Reclaim freed pages incrementally (auto_vacuum=INCREMENTAL).

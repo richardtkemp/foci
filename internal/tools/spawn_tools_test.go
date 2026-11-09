@@ -361,7 +361,7 @@ func TestSpawnToolSetExcludesSpawn(t *testing.T) {
 
 // spawnWithLedger runs a two-loop one-shot spawn from session gil/c1 under ctx
 // with a live ledger, and returns the ledger's calls.
-func spawnWithLedger(t *testing.T, ctx context.Context) (*accounting.Ledger, []accounting.CallRow) {
+func spawnWithLedger(t *testing.T, ctx context.Context, liveTurn ...string) (*accounting.Ledger, []accounting.CallRow) {
 	t.Helper()
 	l, _, err := accounting.Open(filepath.Join(t.TempDir(), "api.db"), accounting.Options{})
 	if err != nil {
@@ -393,6 +393,14 @@ func spawnWithLedger(t *testing.T, ctx context.Context) (*accounting.Ledger, []a
 	})
 	deps := SpawnDeps{Client: newTestAnthropicClient(server.URL, "test-token"), Registry: reg,
 		FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: func() int { return 10 }}
+	if len(liveTurn) > 0 {
+		deps.LiveTurn = func(sk string) string {
+			if sk == "gil/c1" {
+				return liveTurn[0]
+			}
+			return ""
+		}
+	}
 	params, _ := json.Marshal(map[string]string{"name": "tools3", "prompt": "test", "context": "character"})
 	if _, err := NewSpawner(deps, nil).SpawnTool().Execute(WithSessionKey(ctx, "gil/c1"), params); err != nil {
 		t.Fatal(err)
@@ -438,4 +446,43 @@ func TestSpawnBooksEachCallOnOneSystemTurn(t *testing.T) {
 	if st, err := l.SessionStats("gil/c1"); err != nil || st.TurnCount != 0 || st.TotalCalls != 2 {
 		t.Errorf("session stats = %+v (%v): a spawn's own turn is a system turn", st, err)
 	}
+}
+
+// TestSpawnIsRecordedAgainstItsParentTurn (#2992): a spawn is recorded against
+// the caller's live turn when it starts, with where its spend went: on the
+// invoking turn itself, or on a turn of its own (priced from that turn). With
+// no live turn nothing is recorded. Not parallel: it makes a ledger the live one.
+func TestSpawnIsRecordedAgainstItsParentTurn(t *testing.T) {
+	t.Run("booked on the invoking turn", func(t *testing.T) {
+		parent := accounting.Turn{TurnID: "gil/c1@42", Session: "gil/c1", AgentID: "gil",
+			Backend: accounting.BackendAPI, Source: accounting.SourceUser, StartedAt: time.Now()}
+		l, _ := spawnWithLedger(t, accounting.WithTurn(context.Background(), parent), "gil/c1@42")
+		got, err := l.TurnSpawns("gil/c1@42")
+		if err != nil || len(got) != 1 {
+			t.Fatalf("spawns = %+v (%v), want the one spawn", got, err)
+		}
+		if got[0].Name != "tools3" || got[0].Mode != "character" || !got[0].InParentTurn || got[0].Priced {
+			t.Errorf("spawn = %+v, want tools3/character booked on the parent turn", got[0])
+		}
+	})
+	t.Run("booked on its own turn", func(t *testing.T) {
+		l, rows := spawnWithLedger(t, context.Background(), "gil/c1@7")
+		got, err := l.TurnSpawns("gil/c1@7")
+		if err != nil || len(got) != 1 {
+			t.Fatalf("spawns = %+v (%v), want the one spawn", got, err)
+		}
+		var want float64
+		for _, r := range rows {
+			want += r.Cost()
+		}
+		if !got[0].Priced || got[0].InParentTurn || got[0].CostUSD != want || want == 0 {
+			t.Errorf("spawn = %+v, want priced at its own turn's $%v", got[0], want)
+		}
+	})
+	t.Run("no live turn", func(t *testing.T) {
+		l, _ := spawnWithLedger(t, context.Background(), "")
+		if got, _ := l.TurnSpawns(""); len(got) != 0 {
+			t.Errorf("spawns recorded with no parent: %+v", got)
+		}
+	})
 }

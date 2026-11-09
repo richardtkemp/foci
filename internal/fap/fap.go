@@ -174,6 +174,12 @@ const (
 	// asking socket only. Socket-level, like the pin summary pair.
 	TypeSubagentSummarize = "subagent.summarize"
 	TypeSubagentSummary   = "subagent.summary"
+	// TypeMessageInfoGet (app->server) asks for the facts behind one message
+	// for the app's "Message info" (#2992); TypeMessageInfo (server->app) is
+	// the answer, sent to the asking socket only. Socket-level, like the pin
+	// summary pair.
+	TypeMessageInfoGet = "message.info.get"
+	TypeMessageInfo    = "message.info"
 	// TypeScrollPut (app->server) mirrors where the user left a conversation
 	// (#2144); TypeScrollSync (server->app) fans it to the user's other devices
 	// and is replayed after a hello, exactly like the draft pair.
@@ -1429,6 +1435,142 @@ type SubagentSummary struct {
 }
 
 func (SubagentSummary) Type() string { return TypeSubagentSummary }
+
+// MessageInfoGet asks for what the server knows about how one message was made
+// and delivered (app->server, #2992), for the app's "Message info". Answered by
+// one MessageInfo carrying the same RequestID, on the asking socket.
+type MessageInfoGet struct {
+	RequestID      string `json:"requestId"`
+	ConversationID string `json:"conversationId"`
+	MessageID      string `json:"messageId"`
+}
+
+// MessageInfo answers a MessageInfoGet (server->app, #2992). Every figure is
+// optional: an absent one was not recorded (an old message, a backend that
+// does not report it, no cost ledger), and the app says so rather than show a
+// guess or a 0. Times are unix milliseconds.
+type MessageInfo struct {
+	RequestID      string `json:"requestId"`
+	ConversationID string `json:"conversationId"`
+	MessageID      string `json:"messageId"`
+	// SessionKey is the conversation's session.
+	SessionKey string `json:"sessionKey,omitempty"`
+	// ServerSentMs is when the server first sent the message's frame: an
+	// agent message's delivery, a user message's echo (just after receipt).
+	ServerSentMs int64 `json:"serverSentMs,omitempty"`
+	// Turn is the agent turn that produced an agent message.
+	Turn *MessageTurnInfo `json:"turn,omitempty"`
+	// Voice is the voice-mode clip read aloud with an agent message.
+	Voice *MessageVoiceInfo `json:"voice,omitempty"`
+	// User is a user message's delivery.
+	User *MessageUserInfo `json:"user,omitempty"`
+	// Note says why the server has nothing at all, in words for the user
+	// ("not recorded: sent before message info existed"). Empty otherwise.
+	Note string `json:"note,omitempty"`
+}
+
+func (MessageInfo) Type() string { return TypeMessageInfo }
+
+// MessageTurnInfo is one agent turn's facts. Figures from the cost ledger
+// (tokens, cost, calls, context fill, stop reason, times) are absent when the
+// ledger holds no row for the turn; figures the app sink measured (tool calls,
+// first output, generation and tool time) are absent when the turn predates
+// them. A turn that produced several messages reports the same figures for
+// each: Messages says how many.
+type MessageTurnInfo struct {
+	TurnID string `json:"turnId"`
+	// Messages is how many messages this turn delivered to the conversation.
+	Messages  int    `json:"messages,omitempty"`
+	StartedMs int64  `json:"startedMs,omitempty"`
+	EndedMs   int64  `json:"endedMs,omitempty"`
+	Running   bool   `json:"running,omitempty"`
+	Backend   string `json:"backend,omitempty"`
+	Model     string `json:"model,omitempty"`
+	Effort    string `json:"effort,omitempty"`
+	// Trigger is what started the turn (foci's trigger name); Via is the
+	// [meta] via the model saw for it (app, cron, wake, agent, ...).
+	Trigger    string `json:"trigger,omitempty"`
+	Via        string `json:"via,omitempty"`
+	StopReason string `json:"stopReason,omitempty"`
+	// Tokens are the session thread's own tokens by ledger class (input,
+	// output, cache_read, cache_write_5m, ...); SubagentTokens its subagents'.
+	Tokens         map[string]int64 `json:"tokens,omitempty"`
+	SubagentTokens map[string]int64 `json:"subagentTokens,omitempty"`
+	Calls          *int64           `json:"calls,omitempty"`
+	SubagentCalls  *int64           `json:"subagentCalls,omitempty"`
+	ToolCalls      *int64           `json:"toolCalls,omitempty"`
+	// CostUsd sums the turn's priced calls (subagents included,
+	// SubagentCostUsd of it); UnpricedCalls had no price and are left out.
+	CostUsd         *float64 `json:"costUsd,omitempty"`
+	SubagentCostUsd *float64 `json:"subagentCostUsd,omitempty"`
+	UnpricedCalls   int64    `json:"unpricedCalls,omitempty"`
+	// ContextTokens is the context's size after the turn (the /context
+	// derivation: the last own call's in-context tokens).
+	ContextTokens *int64 `json:"contextTokens,omitempty"`
+	// Compactions ran in or because of the turn; CompactionCostUsd is their
+	// spend when booked on a compaction turn of their own (not in CostUsd).
+	Compactions       *int64   `json:"compactions,omitempty"`
+	CompactionCostUsd *float64 `json:"compactionCostUsd,omitempty"`
+	// The model's clock starts when the turn's input went to it: after the
+	// session turn lock (API) or when it was written to the backend
+	// (delegated). WaitMs is the time from the turn's start to that moment
+	// (the lock, a running turn or a busy backend). FirstOutputMs is from
+	// that moment to the first output (text, thinking or a tool call);
+	// GenerationMs from that moment to the end, minus ToolMs, the time its
+	// tools ran: the model's time, for tokens/s. All absent when the
+	// dispatch moment was not recorded (an adopted autonomous run).
+	WaitMs        *int64 `json:"waitMs,omitempty"`
+	FirstOutputMs *int64 `json:"firstOutputMs,omitempty"`
+	GenerationMs  *int64 `json:"generationMs,omitempty"`
+	ToolMs        *int64 `json:"toolMs,omitempty"`
+	// Spawns are the spawns recorded against the turn when they started.
+	// SpawnsRecorded says the list is a record (empty = none started); false
+	// means spawns were not recorded for this turn.
+	Spawns         []MessageSpawnInfo `json:"spawns,omitempty"`
+	SpawnsRecorded bool               `json:"spawnsRecorded,omitempty"`
+}
+
+// MessageSpawnInfo is one spawn a turn started, with its spend so far.
+// SessionKey is its own session, when it has one. CostUsd is set when its
+// spend was booked apart (its own session or turn); InTurnCost when it was
+// booked on the turn itself, so it is in the turn's CostUsd; neither when
+// where it went was not recorded.
+type MessageSpawnInfo struct {
+	SpawnID       string   `json:"spawnId"`
+	Name          string   `json:"name,omitempty"`
+	Mode          string   `json:"mode,omitempty"`
+	SessionKey    string   `json:"sessionKey,omitempty"`
+	StartedMs     int64    `json:"startedMs,omitempty"`
+	CostUsd       *float64 `json:"costUsd,omitempty"`
+	UnpricedCalls int64    `json:"unpricedCalls,omitempty"`
+	InTurnCost    bool     `json:"inTurnCost,omitempty"`
+}
+
+// MessageVoiceInfo is a voice-mode clip's synthesis. Provider is the [[tts]]
+// id that spoke; empty when the server could not tell (a single voice).
+type MessageVoiceInfo struct {
+	Provider    string `json:"provider,omitempty"`
+	SynthesisMs int64  `json:"synthesisMs,omitempty"`
+}
+
+// MessageUserInfo is a user message's delivery. DeviceSentMs is the sending
+// device's own clock; the others are the server's. Delivery is what the agent
+// recorded when it decided how the message reached it: "started" (it began a
+// turn), "queued" (a turn was running, so it waited, then began one, or is
+// still waiting), "joined" (it went into the running turn as its follow-up or
+// answered its prompt), "steered" (it was steered into the running turn) or
+// "plan_feedback" (it rejected the running turn's plan); empty when not
+// recorded. TurnID is the turn it started, joined or was steered into;
+// DeliveredMs when that was decided. AgentReceivedMs is the backend's own
+// consumption ack, from backends that send one.
+type MessageUserInfo struct {
+	DeviceSentMs     int64  `json:"deviceSentMs,omitempty"`
+	ServerReceivedMs int64  `json:"serverReceivedMs,omitempty"`
+	AgentReceivedMs  int64  `json:"agentReceivedMs,omitempty"`
+	Delivery         string `json:"delivery,omitempty"`
+	TurnID           string `json:"turnId,omitempty"`
+	DeliveredMs      int64  `json:"deliveredMs,omitempty"`
+}
 
 // ScrollPut mirrors where the user left a conversation's scroll view to the
 // server (app->server, #2144). Sent on the same "leave" event as DraftPut, and

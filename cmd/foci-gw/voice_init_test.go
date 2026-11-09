@@ -124,7 +124,11 @@ func TestResolveTTS_RateComposition(t *testing.T) {
 
 	// entry=1.3, agent=1.5 → effective=1.95
 	result := resolveTTS(ttsMap, entries, []string{"fast"}, 1.5, nil)
-	oai, ok := result.(*voice.OpenAITTS)
+	named, ok := result.(*voice.Named)
+	if !ok {
+		t.Fatalf("expected *voice.Named for a chain of one, got %T", result)
+	}
+	oai, ok := named.TTS.(*voice.OpenAITTS)
 	if !ok {
 		t.Fatalf("expected *OpenAITTS, got %T", result)
 	}
@@ -143,7 +147,11 @@ func TestResolveTTS_EntryRateOnly(t *testing.T) {
 	entries := []config.TTSConfig{{ID: "x", Rate: 1.3}}
 
 	result := resolveTTS(ttsMap, entries, []string{"x"}, 0, nil)
-	oai, ok := result.(*voice.OpenAITTS)
+	named, ok := result.(*voice.Named)
+	if !ok {
+		t.Fatalf("expected *voice.Named for a chain of one, got %T", result)
+	}
+	oai, ok := named.TTS.(*voice.OpenAITTS)
 	if !ok {
 		t.Fatalf("expected *OpenAITTS, got %T", result)
 	}
@@ -211,6 +219,9 @@ func ptr[T any](v T) *T { return &v }
 // slice for a bare (unchained) provider.
 func chainIDs(t *testing.T, tts voice.TTS) []string {
 	t.Helper()
+	if n, ok := tts.(*voice.Named); ok {
+		return []string{n.ID}
+	}
 	f, ok := tts.(*voice.FallbackTTS)
 	if !ok {
 		return []string{"<bare>"}
@@ -461,4 +472,19 @@ func mapKeys(m map[string]voice.TTS) []string {
 // mustTTSMap is the provider map of initVoice's current [[tts]] build.
 func mustTTSMap(reg *ttsRegistry, _ map[string]voice.STT) map[string]voice.TTS {
 	return reg.Voices().providers
+}
+
+// TestResolveTTS_SingleVoiceReportsID (#2992): the app's Message info names the
+// voice that spoke on every path, so a chain of one reports its id too.
+func TestResolveTTS_SingleVoiceReportsID(t *testing.T) {
+	t.Parallel()
+	ttsMap := map[string]voice.TTS{"only": &stubTTS{name: "x"}}
+	var served string
+	ctx := voice.WithServedRecorder(t.Context(), func(id string) { served = id })
+	if _, err := resolveTTS(ttsMap, []config.TTSConfig{{ID: "only"}}, nil, 0, nil).Synthesize(ctx, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	if served != "only" {
+		t.Errorf("served = %q, want only", served)
+	}
 }

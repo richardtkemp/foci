@@ -176,6 +176,9 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.handlePinSummarize(client, f)
 	case fap.SubagentSummarize:
 		h.handleSubagentSummarize(client, f)
+	case fap.MessageInfoGet:
+		// Off the socket goroutine: it reads app-frames.db and api.db.
+		safeGo("message-info", func() { h.handleMessageInfoGet(client, f) })
 	case fap.ScrollPut:
 		h.handleScroll(client, f)
 	case fap.ConvPinPut:
@@ -195,6 +198,8 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.handleServerRestart(client)
 
 	case fap.ClientMessage:
+		// Message info (#2992): when this device sent it and when we got it.
+		h.frames.PutUserMessageReceipt(f.ConversationID, in.ID, envelopeMillis(in.TS), time.Now().UnixMilli())
 		h.routeUserTurn(client, f.ConversationID, f.AgentID, f.Text, h.resolveAttachments(f.Attachments), h.echoAttachmentRefs(f.Attachments), in.ID, in.Seq, platform.SteerPreferenceFromWire(f.Steer), f.TranscribeOnly)
 
 	case fap.ShellCancel:

@@ -37,6 +37,10 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	// (RowID needs StartedAt), before any gate can fail — so a rate-limited
 	// or stale turn is still a (short, errored) trace.
 	a.traceBegin(ctx, ts)
+	// The live turn (#2992) is set where the turn's input goes to the model
+	// (APITransport.RegisterTurn, DelegatedTransport.beginTurn); a folded
+	// turn never sets it, and this clears only its own id.
+	defer a.clearLiveTurn(ts.SessionKey, ts.RowID())
 	// The turn's work carries the turn: a direct-API helper call it makes (a
 	// summary or spawn from a tool, the compaction after it) is booked on it
 	// (#2111). Only the API transport makes such calls — a delegated agent

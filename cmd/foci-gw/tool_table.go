@@ -614,6 +614,16 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 			}
 			return ""
 		},
+		// #2992: a spawn is recorded against its caller's running turn.
+		LiveTurn: func(sk string) string {
+			if d.agLazy == nil {
+				return ""
+			}
+			if ag := d.agLazy(); ag != nil {
+				return ag.LiveTurnID(sk)
+			}
+			return ""
+		},
 		CanResume: func(bk string) bool {
 			if d.agLazy == nil {
 				return false

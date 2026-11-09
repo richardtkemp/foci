@@ -429,6 +429,7 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		PinSummary{RequestID: "r", MessageID: "m", Summary: "flight times for Athens"},
 		PinSummary{RequestID: "r", MessageID: "m"},
 		SubagentSummary{ConversationID: "c", ID: "toolu_1", Summary: "Reading the config loader"},
+		MessageInfo{RequestID: "r", ConversationID: "c", MessageID: "m", Note: "not recorded"},
 		ScrollSync{ConversationID: "c", MessageID: "m", Following: false},
 		ConvPinSync{ConversationID: "c", Pinned: true},
 		CheckboxSync{DocumentID: "b", Lines: []int{1}},
@@ -674,6 +675,53 @@ func TestEncode_SubagentSummary(t *testing.T) {
 	for _, want := range []string{`"t":"subagent.summary"`, `"conversationId":"c1"`, `"id":"toolu_a"`, `"summary":"Reading the parser"`} {
 		if !strings.Contains(wire, want) {
 			t.Errorf("wire = %s, missing %s", wire, want)
+		}
+	}
+}
+
+// TestDecode_MessageInfoGet pins the app->server half of Message info
+// (#2992): the Kotlin encoder's field names.
+func TestDecode_MessageInfoGet(t *testing.T) {
+	in, err := Decode(`{"t":"message.info.get","id":"i1","d":{"requestId":"r1","conversationId":"c1","messageId":"m1"}}`)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	f, ok := in.Frame.(MessageInfoGet)
+	if !ok {
+		t.Fatalf("frame = %T, want MessageInfoGet", in.Frame)
+	}
+	if f.RequestID != "r1" || f.ConversationID != "c1" || f.MessageID != "m1" {
+		t.Errorf("decoded = %+v", f)
+	}
+}
+
+// TestEncode_MessageInfo pins the server->app answer's field names, which the
+// Kotlin decoder mirrors, and that an unrecorded figure is absent, not 0.
+func TestEncode_MessageInfo(t *testing.T) {
+	calls, cost := int64(3), 0.25
+	wire, err := Encode(MessageInfo{
+		RequestID: "r1", ConversationID: "c1", MessageID: "m1", SessionKey: "a/c1", ServerSentMs: 5,
+		Turn: &MessageTurnInfo{TurnID: "a/c1@1", Messages: 2, Tokens: map[string]int64{"output": 9}, Calls: &calls,
+			CostUsd: &cost, UnpricedCalls: 1, WaitMs: &calls, SpawnsRecorded: true,
+			Spawns: []MessageSpawnInfo{{SpawnID: "spawn-1", Name: "scout", Mode: "character", SessionKey: "a/c1/b1", StartedMs: 7, InTurnCost: true}}},
+		Voice: &MessageVoiceInfo{Provider: "groq", SynthesisMs: 800},
+		User:  &MessageUserInfo{DeviceSentMs: 1, ServerReceivedMs: 2, AgentReceivedMs: 3, Delivery: "joined", TurnID: "a/c1@1", DeliveredMs: 4},
+	}, 0, 0, "", "")
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	for _, want := range []string{`"t":"message.info"`, `"requestId":"r1"`, `"sessionKey":"a/c1"`, `"serverSentMs":5`,
+		`"turnId":"a/c1@1"`, `"messages":2`, `"tokens":{"output":9}`, `"calls":3`, `"costUsd":0.25`, `"unpricedCalls":1`,
+		`"spawns":[{"spawnId":"spawn-1","name":"scout","mode":"character","sessionKey":"a/c1/b1","startedMs":7,"inTurnCost":true}]`,
+		`"spawnsRecorded":true`, `"waitMs":3`, `"deliveredMs":4`, `"provider":"groq"`, `"synthesisMs":800`,
+		`"deviceSentMs":1`, `"serverReceivedMs":2`, `"agentReceivedMs":3`, `"delivery":"joined"`} {
+		if !strings.Contains(wire, want) {
+			t.Errorf("wire = %s, missing %s", wire, want)
+		}
+	}
+	for _, absent := range []string{`"toolCalls"`, `"generationMs"`, `"contextTokens"`, `"note"`} {
+		if strings.Contains(wire, absent) {
+			t.Errorf("wire = %s, has unrecorded %s", wire, absent)
 		}
 	}
 }

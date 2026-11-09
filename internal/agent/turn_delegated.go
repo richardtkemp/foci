@@ -321,6 +321,9 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 			// The answer resumes the backend's running turn; a refused answer
 			// reached nothing, so this turn did not run (#2446, #2762).
 			ts.inputDelivered = refused == nil
+			if refused == nil {
+				a.reportDelivery(ts.SessionKey, InputRefsFromContext(ts.Ctx), DeliveryJoined, a.LiveTurnID(ts.SessionKey))
+			}
 			// That turn owns the run's delivery, as with a folded follow-up
 			// below. So the refusal goes out as a notice: a turn error here
 			// would finalize that turn's sink mid-run (#2366).
@@ -411,6 +414,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		ts.foldedFollowUp = true
 		ts.inputDelivered = true
 		a.markTurnDispatched(ts.TurnDetail)
+		a.reportDelivery(ts.SessionKey, InputRefsFromContext(ts.Ctx), DeliveryJoined, a.LiveTurnID(ts.SessionKey))
 		// Backend has received the message — signal the inbox so steer
 		// routing opens for any further follow-ups arriving on the heels
 		// of this one. See WithOnPrimaryWritten / TODO #777.
@@ -556,6 +560,9 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 	}
 
 	t.logger().Debugf("RunInference: Inject(%s, begin-turn) start sk=%s attachments=%d", src, ts.SessionKey, len(atts))
+	// Live before the write (#2992): a spawn the model starts at once must
+	// find its parent turn. Cleared below if the turn never began.
+	a.setLiveTurn(ts.SessionKey, ts.RowID())
 	// A system turn refused for pending background work retries below; it
 	// stops waiting for that work once it has waited maxPendingHold, the same
 	// limit the inbox gate applies (#2792). An inject whose inbox hold
@@ -651,9 +658,13 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 		// it, so hand back the previous setting.
 		a.DelegatedManager.SetSystemTurn(ts.SessionKey, prevSystem)
 	}
+	if err != nil {
+		a.clearLiveTurn(ts.SessionKey, ts.RowID())
+	}
 	if err == nil {
 		ts.inputDelivered = true
 		a.markTurnDispatched(ts.TurnDetail)
+		a.reportDelivery(ts.SessionKey, InputRefsFromContext(ts.Ctx), DeliveryStarted, ts.RowID())
 		if typingAllowed {
 			a.noteUserInputDelivered(ts.SessionKey)
 		}

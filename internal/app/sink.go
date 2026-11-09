@@ -96,6 +96,11 @@ type appSink struct {
 	// sent: appConn.NewTurnSink points it at Hub.finishTurnRead, which applies
 	// a close_session mark_read deferred to this turn (#2592). nil = none.
 	afterTurn func()
+
+	// info measures the turn for the app's "Message info" (#2992) and, on
+	// TurnComplete, records it against every message the turn delivered
+	// (b.store). Same goroutine as Emit, so no lock.
+	info turnInfoMeter
 }
 
 // newAppSink builds the per-turn app sink: an appBackend (turn.Platform) wrapped
@@ -132,6 +137,7 @@ func (s *appSink) DeliversToPlatform() bool { return true }
 // Emit implements turnevent.Sink. It forwards to the shared StreamingSink for all
 // text coordination and layers on the app-specific typing + meta frames.
 func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
+	s.info.observe(ev, time.Now())
 	switch e := ev.(type) {
 	case turnevent.TurnStart:
 		// A fresh turn means this conversation's caller is active again — clear any
@@ -217,6 +223,7 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		if s.cacheExpiryFn != nil {
 			s.b.setCacheExpiry(s.cacheExpiryFn())
 		}
+		s.recordMessageInfo(e)
 
 	default:
 		s.inner.Emit(ctx, ev)
@@ -283,7 +290,7 @@ func (s *appSink) synthesizeVoiceMode(ctx context.Context, e turnevent.TurnCompl
 	if text == "" {
 		return nil
 	}
-	audio, err := s.tts.Synthesize(ctx, voice.NormalizeForSpeech(text))
+	audio, err := s.synthesize(ctx, text)
 	if err != nil {
 		s.ttsFailed(err)
 		return nil
@@ -291,16 +298,38 @@ func (s *appSink) synthesizeVoiceMode(ctx context.Context, e turnevent.TurnCompl
 	return audio
 }
 
+// synthesize speaks text through s.tts, noting which voice spoke and how long
+// it took for the clip's Message info (#2992); attachVoiceClip files the note
+// under the message the clip reads.
+func (s *appSink) synthesize(ctx context.Context, text string) ([]byte, error) {
+	var served string
+	start := time.Now()
+	audio, err := s.tts.Synthesize(voice.WithServedRecorder(ctx, func(id string) { served = id }), voice.NormalizeForSpeech(text))
+	if err == nil {
+		s.info.pendingVoice = &messageVoiceRecord{provider: served, ms: time.Since(start).Milliseconds()}
+	}
+	return audio, err
+}
+
 // attachVoiceClip sends synthesized audio (nil = nothing to send) as the
 // voice-mode clip of the text segment the event just forwarded delivered:
 // backend.lastMsgID, which the caller cleared before forwarding (#2985). When
 // that event delivered nothing the clip goes out unlinked, as before #2985.
 func (s *appSink) attachVoiceClip(audio []byte) {
+	pending := s.info.pendingVoice
+	s.info.pendingVoice = nil
 	if len(audio) == 0 || s.attachVoice == nil {
 		return
 	}
 	if err := s.attachVoice(audio, s.backend.lastMsgID); err != nil {
 		appLog.Warnf("voice-mode: attach synthesized audio (conv=%s): %v", s.b.convID, err)
+		return
+	}
+	if pending != nil && s.backend.lastMsgID != "" {
+		if s.info.voice == nil {
+			s.info.voice = map[string]messageVoiceRecord{}
+		}
+		s.info.voice[s.backend.lastMsgID] = *pending
 	}
 }
 
@@ -324,7 +353,7 @@ func (s *appSink) synthesizeVoiceModeBlock(ctx context.Context, rawText string) 
 		return nil
 	}
 	s.voiceBlockDelivered = true
-	audio, err := s.tts.Synthesize(ctx, voice.NormalizeForSpeech(text))
+	audio, err := s.synthesize(ctx, text)
 	if err != nil {
 		s.ttsFailed(err)
 		return nil
