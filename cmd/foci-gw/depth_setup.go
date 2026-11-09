@@ -18,7 +18,6 @@ import (
 	"foci/internal/delegator"
 	"foci/internal/delegator/accounting"
 	"foci/internal/platform"
-	"foci/internal/question"
 	"foci/internal/route"
 	"foci/internal/tools"
 	"foci/internal/turnevent"
@@ -96,13 +95,9 @@ func (d *toolDeps) getDepth() *tools.DepthManager {
 			}
 			return nil
 		},
-		CancelAsk: func(sk string) {
-			r := d.out.askRouter
-			if r == nil || r.PendingForSession == nil || r.HandleResponse == nil {
-				return
-			}
-			if reqID := r.PendingForSession(sk); reqID != "" {
-				r.HandleResponse(reqID, question.CancelData)
+		CancelAsk: func(sk string, tell bool) {
+			if r := d.out.askRouter; r != nil && r.CloseSession != nil {
+				r.CloseSession(sk, tell)
 			}
 		},
 		StopTurn: func(sk string) {

@@ -124,8 +124,13 @@ type DepthDeps struct {
 	MaxConcurrent func() int
 	// Notifier delivers the [DEPTH RESULTS] fan-in durably (InjectToAgentThen).
 	Notifier *AsyncNotifier
-	// CancelAsk cancels the session's pending foci_ask, if any (Ack).
-	CancelAsk func(sessionKey string)
+	// CancelAsk ends every foci_ask of the session (the one on screen and any
+	// queued behind it) and takes its prompt off the user's screen, so nothing
+	// can answer into a leaf that is closing (#3000). tell: the agent is told
+	// its ask was cancelled (Ack, Dismiss, reset); a leaf that reported itself
+	// is not, as nothing is listening for it and the notice would start a turn
+	// outside the tree.
+	CancelAsk func(sessionKey string, tell bool)
 	// StopTurn stops the session's running turn, if any (Dismiss, reset).
 	StopTurn func(sessionKey string)
 	// CostUSD returns a session's spend so far; ok=false when unknown.
@@ -1070,6 +1075,7 @@ func (m *DepthManager) report(caller, text string) (string, error) {
 	parent, tree := n.Parent, n.Tree
 	m.mu.Unlock()
 	m.persist(rec...)
+	m.closeAsks(caller)
 	m.checkFanIn(parent)
 	m.pushFeed(tree)
 	return "Reported. This thread is now outside the tree; end your turn.", nil
@@ -1273,7 +1279,7 @@ func (m *DepthManager) Ack(rootKey, leafID string) error {
 	m.mu.Unlock()
 	m.persist(rec...)
 	if m.deps.CancelAsk != nil {
-		m.deps.CancelAsk(key)
+		m.deps.CancelAsk(key, true)
 	}
 	m.pushFeed(tree)
 	m.runAck(key)
@@ -1323,8 +1329,18 @@ func (m *DepthManager) autoReport(key string) {
 	parent, tree := n.Parent, n.Tree
 	m.mu.Unlock()
 	m.persist(rec...)
+	m.closeAsks(key)
 	m.checkFanIn(parent)
 	m.pushFeed(tree)
+}
+
+// closeAsks ends the asks a leaf left open when it reported (#3000): the
+// user can no longer answer into a leaf that is outside the tree, and the
+// prompt leaves their screen. The leaf is not told.
+func (m *DepthManager) closeAsks(key string) {
+	if m.deps.CancelAsk != nil {
+		m.deps.CancelAsk(key, false)
+	}
 }
 
 // Dismiss is the feed's Dismiss (Q3): the node ends with no report, after its
@@ -1365,7 +1381,7 @@ func (m *DepthManager) Dismiss(rootKey, leafID string) error {
 			m.deps.StopTurn(k)
 		}
 		if m.deps.CancelAsk != nil {
-			m.deps.CancelAsk(k)
+			m.deps.CancelAsk(k, true)
 		}
 	}
 	m.checkFanIn(parent)
@@ -1413,7 +1429,7 @@ func (m *DepthManager) OnReset(rootKey string) {
 			m.deps.StopTurn(k)
 		}
 		if m.deps.CancelAsk != nil {
-			m.deps.CancelAsk(k)
+			m.deps.CancelAsk(k, true)
 		}
 	}
 	m.pushFeed(rootKey)

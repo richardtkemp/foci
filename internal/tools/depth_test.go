@@ -166,8 +166,9 @@ type depthHarness struct {
 	runner   *fakeDepthRunner
 	mu       sync.Mutex
 	delivers []depthDelivery
-	refuse   bool // fan-in delivery refused (shutdown)
-	cancels  []string
+	refuse   bool     // fan-in delivery refused (shutdown)
+	cancels  []string // CancelAsk with tell (Ack, Dismiss, reset)
+	closes   []string // CancelAsk without tell (a leaf that reported, #3000)
 	stops    []string
 	approve  func(sk, id, text string, cb func(bool)) error
 	resume   map[string]bool
@@ -201,10 +202,18 @@ func newDepthHarness(t *testing.T, store *memSpawnStore) *depthHarness {
 		OrientationTemplate: "LEAF {branch_key}\n{report_rule}",
 		RunTurn:             h.runner.run,
 		Notifier:            notifier,
-		CancelAsk:           func(k string) { h.mu.Lock(); h.cancels = append(h.cancels, k); h.mu.Unlock() },
-		StopTurn:            func(k string) { h.mu.Lock(); h.stops = append(h.stops, k); h.mu.Unlock() },
-		CostUSD:             func(string) (float64, bool) { return 0.25, true },
-		ContextTokens:       func(string) int { return 4321 },
+		CancelAsk: func(k string, tell bool) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			if tell {
+				h.cancels = append(h.cancels, k)
+			} else {
+				h.closes = append(h.closes, k)
+			}
+		},
+		StopTurn:      func(k string) { h.mu.Lock(); h.stops = append(h.stops, k); h.mu.Unlock() },
+		CostUSD:       func(string) (float64, bool) { return 0.25, true },
+		ContextTokens: func(string) int { return 4321 },
 		CanResume: func(k string) bool {
 			h.mu.Lock()
 			defer h.mu.Unlock()
@@ -362,6 +371,34 @@ func TestDepthFanoutReportFanIn(t *testing.T) {
 	}
 }
 
+// #3000: a leaf that reports with an ask still open has that ask closed, so
+// the user cannot answer into a leaf outside the tree. The leaf is not told:
+// the notice would start a turn in a thread nothing listens to.
+func TestDepthReportClosesTheLeafsOpenAsks(t *testing.T) {
+	h := newDepthHarness(t, nil)
+	kids := h.fanout(t, depthRoot, "Alpha", "Beta")
+	if err := h.report(t, kids[0], "alpha is fine"); err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	closes, cancels := append([]string(nil), h.closes...), append([]string(nil), h.cancels...)
+	h.mu.Unlock()
+	if len(closes) != 1 || closes[0] != kids[0] {
+		t.Errorf("silent ask closes = %v, want [%s]", closes, kids[0])
+	}
+	if len(cancels) != 0 {
+		t.Errorf("told cancels = %v, want none for a self-report", cancels)
+	}
+	if err := h.report(t, kids[0], "again"); err == nil {
+		t.Fatal("a second report must be refused")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.closes) != 1 {
+		t.Errorf("a refused report closed asks again: %v", h.closes)
+	}
+}
+
 // Ack = report now (NQ1): the pending ask is cancelled, one completion turn
 // runs, and a turn that ends without depth_report reports its final text.
 func TestDepthAckAutoReports(t *testing.T) {
@@ -389,6 +426,12 @@ func TestDepthAckAutoReports(t *testing.T) {
 	n := h.node(kids[0])
 	if n.State != depthReported || !strings.HasPrefix(n.Report, "my summary") || !strings.Contains(n.Report, "auto-reported") {
 		t.Fatalf("after ack: %s %q", n.State, n.Report)
+	}
+	h.mu.Lock()
+	closes := append([]string(nil), h.closes...)
+	h.mu.Unlock()
+	if len(closes) != 1 || closes[0] != kids[0] {
+		t.Errorf("auto-report ask closes = %v, want [%s] (#3000)", closes, kids[0])
 	}
 	if len(h.deliveries()) != 1 {
 		t.Fatalf("fan-in deliveries = %d", len(h.deliveries()))

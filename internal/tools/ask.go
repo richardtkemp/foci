@@ -1367,6 +1367,49 @@ func (a *askState) completeSession(sessionKey string) (answered, total int, ok b
 	return idx, total, true
 }
 
+// closeSession ends every ask of sessionKey with no answer (AskRouter.CloseSession,
+// #3000). Unlike a cancel, it does not promote a queued ask: the session is
+// closing, so nothing should take the slot. Each on-screen prompt (not a queued
+// one, which was never shown) is removed from the user's screen.
+func (a *askState) closeSession(sessionKey string, tell bool) int {
+	type closed struct {
+		requestID, msgID string
+		answered, total  int
+	}
+	a.mu.Lock()
+	var out []closed
+	for _, id := range append([]string(nil), a.bySession[sessionKey]...) {
+		p := a.byReqID[id]
+		if p == nil {
+			continue
+		}
+		c := closed{requestID: p.requestID, answered: p.acc.Index(), total: p.acc.Total()}
+		if !p.queued {
+			idx := p.acc.Index()
+			if p.batched {
+				idx = 0 // a batched form is addressed by question 0's id (tryPresentBatch)
+			}
+			c.msgID = questionMsgID(p.requestID, idx)
+		}
+		a.removeLocked(p)
+		out = append(out, c)
+	}
+	if len(out) > 0 {
+		a.persistLocked()
+	}
+	a.mu.Unlock()
+	for _, c := range out {
+		askLog.Infof("session=%s req=%s ask closed with its session (%d/%d answered, told=%v)", sessionKey, c.requestID, c.answered, c.total, tell && c.msgID != "")
+		if c.msgID != "" && a.remove != nil {
+			a.remove(sessionKey, c.msgID)
+		}
+		if tell && c.msgID != "" {
+			a.deliverCancel(sessionKey, c.requestID, c.answered, c.total)
+		}
+	}
+	return len(out)
+}
+
 // formatAnswerBatch renders the collected answers as the inbound user message
 // the asking agent receives. Includes a readable Q→A list plus a compact JSON
 // line so the agent can parse the result deterministically if it wants to.
@@ -1703,6 +1746,13 @@ type AskRouter struct {
 	// is partial). Returns (answered, total, true) on success; ok=false with
 	// total==0 when no ask is pending, or total>0 when nothing is answered yet.
 	CompleteSession func(sessionKey string) (answered, total int, ok bool)
+	// CloseSession ends every ask of the session, the one on screen and any
+	// queued behind it, with no answer: each on-screen prompt is removed from
+	// the user's screen (WithRemove) and no queued ask is presented in its
+	// place. tell: the agent is told its on-screen ask was cancelled, as a
+	// Cancel click would. Used when the session itself is closing, e.g. a depth
+	// leaf that reported or was completed (#3000). Returns how many it ended.
+	CloseSession func(sessionKey string, tell bool) int
 	// DeliverRestoreNotices sends the agent notices restore produced (asks that
 	// expired across the restart, #1894). Restore runs at construction, before the
 	// gateway can route an injection to the agent, so these are held until the
@@ -1864,6 +1914,7 @@ func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn
 		ResumeSession:         func(sk string) bool { return state.setPaused(sk, false) },
 		IsPaused:              state.isPaused,
 		CompleteSession:       state.completeSession,
+		CloseSession:          state.closeSession,
 		DeliverRestoreNotices: state.deliverRestoreNotices,
 	}
 	return t, router
