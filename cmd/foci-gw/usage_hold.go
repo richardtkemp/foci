@@ -58,13 +58,25 @@ func applyUsageHoldThreshold(cfg *config.Config) {
 // wireUsageHeldRestore sets how ag drives the input a usage hold parked when
 // no live platform message carries it (#2491): the hidden resume line of an
 // interrupted turn, and held input restored after a restart (its platform
-// object did not survive). Both run as a user message through
+// object did not survive). The same driver runs a restart's resume of a cut
+// turn and the queued messages restored with it (#2999), whose notice it
+// also wires. Both run as a user message through
 // usageHoldDriver; a held injection goes back through the path that first
 // built it, under its stored id.
 func wireUsageHeldRestore(ag *agent.Agent, ctx context.Context, connMgr platform.ConnectionManager, agentID string, resolver func(string) *agentInstance, deliverChit chitDeliverer) {
 	inst := &agentInstance{id: agentID, ag: ag}
 	ag.UsageHeldDriver = func(sk string) agent.Driver {
 		return &usageHoldDriver{agentID: agentID, sessionKey: sk, connMgr: connMgr}
+	}
+	// The chat line of a restart resume (#2999): turn-free, in the session's
+	// chat, as a resumed spawn's parent is told (#2589).
+	ag.RestartResumeNotice = func(sk, text string) {
+		if connMgr == nil {
+			return
+		}
+		if conn, _ := route.ConnFor(connMgr, agentID, sk, route.PolicyFallback); conn != nil {
+			conn.SendNotification(text)
+		}
 	}
 	ag.UsageHeldInjectRestore = func(sk string, d agent.DurableInject, id string) {
 		switch d.Kind {

@@ -143,6 +143,11 @@ type HarnessOptions struct {
 	// ReadyTimeout caps how long to wait for the gateway to log the
 	// terminal startup line. Zero = 20s.
 	ReadyTimeout time.Duration
+	// GracefulShutdownTimeout, if non-empty, is written as [http]
+	// graceful_shutdown_timeout (the harness owns the [http] table, so
+	// ExtraConfigTOML cannot set it). A value below Restart's 15s grace makes
+	// a held turn get cut by the shutdown rather than the SIGKILL (#2999).
+	GracefulShutdownTimeout string
 	// ExtraConfigTOML, if non-empty, is appended verbatim to the
 	// generated foci.toml. Use to inject sections the default config
 	// writer doesn't emit ([keepalive], [reflection], [background],
@@ -463,6 +468,7 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 		HTTPPort:                httpPort,
 		SocketPath:              gwSock,
 		ExtraConfigTOML:         opts.ExtraConfigTOML,
+		GracefulShutdownTimeout: opts.GracefulShutdownTimeout,
 		SuppressNudgeExtraction: !opts.EnableNudgeExtraction,
 	})
 	// Structural guard (foci_todo #1492): fail loudly, before foci-gw is

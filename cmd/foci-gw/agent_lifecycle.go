@@ -240,6 +240,15 @@ var agentRestorePhases = []func(*agentInstance){
 			r()
 		}
 	},
+	// Resume the user-facing sessions whose turn a restart cut, and run the
+	// user messages the last process accepted but never started (#2999).
+	// After SpawnRestore and DepthRestore (spawns and depth tasks resume by
+	// their own records, and write no cut_turn record), and before
+	// RestoreUndelivered, so the resume line is the first input the session
+	// sees after the restart.
+	func(inst *agentInstance) {
+		inst.ag.RestoreCutTurns()
+	},
 	// Re-send inputs a backend never confirmed consuming before the last
 	// shutdown or crash (#2050). After StartAll, so the redelivered turns'
 	// replies have chats to land in.

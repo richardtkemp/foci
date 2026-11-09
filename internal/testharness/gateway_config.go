@@ -31,6 +31,9 @@ type testConfigOpts struct {
 	HTTPPort        int    // kernel-assigned ephemeral port; 0 falls back to foci's default 18791 (collides under t.Parallel)
 	SocketPath      string // short /tmp path for the same-user unix socket; "" lets foci default to DataDir (sun_path hazard)
 	ExtraConfigTOML string // appended verbatim at the end of the config
+	// GracefulShutdownTimeout is written as [http] graceful_shutdown_timeout
+	// when non-empty.
+	GracefulShutdownTimeout string
 	// SuppressNudgeExtraction emits nudge_auto_extract=false per agent so the
 	// startup nudge-rule batch run (a delegated cc-stub spawn) doesn't race the
 	// one-shot script tests write. Default-on for the harness; the handful of
@@ -65,13 +68,16 @@ welcome_file = %q
 	// hardcoded default (127.0.0.1:18791). The harness picks an ephemeral
 	// port via the kernel before we get here; if HTTPPort is zero we skip
 	// the override and let foci's default apply.
-	if o.HTTPPort > 0 || o.SocketPath != "" {
+	if o.HTTPPort > 0 || o.SocketPath != "" || o.GracefulShutdownTimeout != "" {
 		sb.WriteString("\n[http]\n")
 		if o.HTTPPort > 0 {
 			fmt.Fprintf(&sb, "port = %d\n", o.HTTPPort)
 		}
 		if o.SocketPath != "" {
 			fmt.Fprintf(&sb, "socket_path = %q\n", o.SocketPath)
+		}
+		if o.GracefulShutdownTimeout != "" {
+			fmt.Fprintf(&sb, "graceful_shutdown_timeout = %q\n", o.GracefulShutdownTimeout)
 		}
 	}
 

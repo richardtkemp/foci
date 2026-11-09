@@ -203,6 +203,13 @@ type Agent struct {
 	UsageHeldDriver        func(sessionKey string) Driver
 	UsageHeldInjectRestore func(sessionKey string, d DurableInject, id string)
 
+	// RestartResumeNotice posts a turn-free notice line in sessionKey's chat
+	// when a restart resumes (or gives up resuming) the turn it cut (#2999,
+	// restart_resume.go). Nil = no notice.
+	RestartResumeNotice func(sessionKey, text string)
+	cutTurn             cutTurnState
+	queuedInputMu       sync.Mutex // serialises read-modify-write of the queued_input lists (#2999)
+
 	// PromptAnswerRefusedNotifyFunc tells sessionKey's chat that a typed answer
 	// did not reach the backend prompt waiting for it (#2762). Fired in its own
 	// goroutine. Nil = no notice.

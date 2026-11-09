@@ -146,6 +146,14 @@ type Envelope struct {
 	// folded turn at lift and no client shows it.
 	usageHeldID string
 	usageResume bool
+
+	// queuedID names this user message in the session's queued-input store
+	// (#2999, queued_input_store.go) from the moment Enqueue queues it until
+	// its turn starts or it is dropped; set on a copy restored after a
+	// restart. restartResume marks the hidden resume line of a turn a restart
+	// cut (restart_resume.go): no client shows it.
+	queuedID      string
+	restartResume bool
 }
 
 // EnvelopeFromQueuedMessage builds the Envelope for a turn driven by a queued
@@ -821,6 +829,7 @@ func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 		return a.enqueueInjection(inb, env, reloginHold)
 	}
 	if reloginHold {
+		a.storeQueuedInput(&env)
 		env.enqSeq = inb.enqSeq.Add(1)
 		select {
 		case inb.ch <- env:
@@ -829,6 +838,7 @@ func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 			return true
 		default:
 			a.logger().Warnf("inbox: queue full for sk=%s during CC re-login, dropping message (%dB)", env.SessionKey, len(env.Text))
+			a.forgetQueuedInput(env)
 			return false
 		}
 	}
@@ -837,8 +847,11 @@ func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 	// cancel the plan of the turn running now (a keepalive, a remind fire,
 	// or one being interrupted). It goes to the worker, which parks it. A
 	// held message restored after a restart never steers either: it runs as
-	// its own turn, which takes it off the restart store.
-	if a.usageHoldsTrigger("user", false) || env.usageHeldID != "" {
+	// its own turn, which takes it off the restart store. So does a message
+	// restored from the queued-input store and a restart's resume line
+	// (#2999): each is a turn of its own, never a fold.
+	if a.usageHoldsTrigger("user", false) || env.usageHeldID != "" || env.queuedID != "" || env.restartResume {
+		a.storeQueuedInput(&env)
 		env.enqSeq = inb.enqSeq.Add(1)
 		select {
 		case inb.ch <- env:
@@ -846,6 +859,7 @@ func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 			return true
 		default:
 			a.logger().Warnf("inbox: queue full for sk=%s during a usage hold, dropping message (%dB)", env.SessionKey, len(env.Text))
+			a.forgetQueuedInput(env)
 			return false
 		}
 	}
@@ -926,7 +940,9 @@ func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 		return true
 	}
 
-	// Push to this session's channel; drop with warning if full.
+	// Push to this session's channel; drop with warning if full. Stored
+	// first (#2999): a restart before its turn starts runs it then.
+	a.storeQueuedInput(&env)
 	env.enqSeq = inb.enqSeq.Add(1)
 	select {
 	case inb.ch <- env:
@@ -938,6 +954,7 @@ func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 		return true
 	default:
 		a.logger().Warnf("inbox: queue full for sk=%s, dropping message (%dB)", env.SessionKey, len(env.Text))
+		a.forgetQueuedInput(env)
 		return false
 	}
 }
@@ -1504,6 +1521,7 @@ func (a *Agent) handleDequeued(ctx context.Context, inb *sessionInbox, env Envel
 func (a *Agent) stoppedQueued(inb *sessionInbox, env Envelope) bool {
 	if env.Inject == nil && env.enqSeq != 0 && env.enqSeq <= inb.stopThrough.Load() {
 		a.logger().Infof("inbox: /stop dropped queued message sk=%s seq=%d", inb.sk, env.enqSeq)
+		a.forgetQueuedInput(env)
 		return true
 	}
 	return false
@@ -1763,6 +1781,7 @@ func (a *Agent) acquireTurnSlots(ctx context.Context, inb *sessionInbox, seed []
 			return slotShutdown
 		}
 		a.logger().Infof("inbox: /stop dropped queued turn sk=%s envelopes=%d", inb.sk, len(batch))
+		a.forgetQueuedInput(batch...) // dropped: it must not run after a restart (#2999)
 		return slotDropped
 	}
 	for _, step := range []struct {
@@ -2508,6 +2527,7 @@ func (a *Agent) driveAndDrainOrphans(ctx context.Context, inb *sessionInbox, bat
 	driver := seed.Driver
 	if driver == nil {
 		a.logger().Warnf("inbox: no driver on envelope sk=%s, dropping batch (%d msgs)", inb.sk, len(batch))
+		a.forgetQueuedInput(batch...)
 		return
 	}
 	router := a.sessionRouter(inb.sk)
@@ -2565,6 +2585,10 @@ func (a *Agent) driveOnce(ctx context.Context, inb *sessionInbox, batch []Envelo
 	if a.turnObserver != nil {
 		a.turnObserver(inb.sk, batch)
 	}
+	// The batch's queued messages leave the restart store once the turn has
+	// them (#2999): at its input's delivery, or when it ends.
+	turnCtx = withQueuedInputs(turnCtx, batch)
+	defer a.settleDrivenQueuedInput(batch)
 	err := driver.WrapTurn(turnCtx, func() error {
 		return a.RunTurn(turnCtx, inb.sk, batch, steerer, router, driver)
 	})

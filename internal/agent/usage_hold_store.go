@@ -175,32 +175,45 @@ func (a *Agent) forgetUsageHeld(envs ...Envelope) {
 }
 
 func (a *Agent) loadUsageHeldLocked(sk string) []usageHeldRecord {
-	raw, err := a.SessionIndex.GetSessionMetadata(sk, session.MetaKeyUsageHeld)
+	return a.loadInputRecords(sk, session.MetaKeyUsageHeld, "usage hold: held input")
+}
+
+func (a *Agent) saveUsageHeldLocked(sk string, list []usageHeldRecord) {
+	a.saveInputRecords(sk, session.MetaKeyUsageHeld, "usage hold: held input", list)
+}
+
+// loadInputRecords reads the stored input list under key on sk (usage_held,
+// queued_input); what names it in log lines. An unreadable list is
+// discarded.
+func (a *Agent) loadInputRecords(sk, key, what string) []usageHeldRecord {
+	raw, err := a.SessionIndex.GetSessionMetadata(sk, key)
 	if err != nil || raw == "" {
 		return nil
 	}
 	var list []usageHeldRecord
 	if err := json.Unmarshal([]byte(raw), &list); err != nil {
-		a.logger().Warnf("usage hold: held input of %s unreadable, discarding: %v", sk, err)
+		a.logger().Warnf("%s of %s unreadable, discarding: %v", what, sk, err)
 		return nil
 	}
 	return list
 }
 
-func (a *Agent) saveUsageHeldLocked(sk string, list []usageHeldRecord) {
+// saveInputRecords writes list under key on sk, or deletes the key when the
+// list is empty.
+func (a *Agent) saveInputRecords(sk, key, what string, list []usageHeldRecord) {
 	if len(list) == 0 {
-		if err := a.SessionIndex.DeleteSessionMetadata(sk, session.MetaKeyUsageHeld); err != nil {
-			a.logger().Warnf("usage hold: clear held input of %s: %v", sk, err)
+		if err := a.SessionIndex.DeleteSessionMetadata(sk, key); err != nil {
+			a.logger().Warnf("%s: clear %s: %v", what, sk, err)
 		}
 		return
 	}
 	raw, err := json.Marshal(list)
 	if err != nil {
-		a.logger().Warnf("usage hold: encode held input of %s: %v", sk, err)
+		a.logger().Warnf("%s: encode %s: %v", what, sk, err)
 		return
 	}
-	if err := a.SessionIndex.SetSessionMetadata(sk, session.MetaKeyUsageHeld, string(raw)); err != nil {
-		a.logger().Warnf("usage hold: persist held input of %s: %v", sk, err)
+	if err := a.SessionIndex.SetSessionMetadata(sk, key, string(raw)); err != nil {
+		a.logger().Warnf("%s: persist %s: %v", what, sk, err)
 	}
 }
 

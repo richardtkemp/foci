@@ -68,6 +68,13 @@ func runShutdown(
 	// Wait for in-flight agent turns to complete naturally
 	gracefulShutdown(agents, cfg.gracefulTimeout)
 
+	// Every turn still running is cut from here (#2999): as each ends it keeps
+	// its cut_turn record, and the next process resumes its session. A turn
+	// that ended inside the graceful wait finished and keeps none.
+	for _, inst := range agents {
+		inst.ag.MarkTurnsCut()
+	}
+
 	// Close delegated sessions (kills CC tmux panes, saves resume IDs) and
 	// MCP managers.
 	for _, inst := range agents {

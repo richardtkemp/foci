@@ -377,6 +377,11 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	// Post-creation agent configuration (API-specific)
 	setupRedaction(ag, p, agentStore)
 
+	// How restored input runs without its platform message: a restart's
+	// resume of a cut turn and the queued messages it restores (#2999). The
+	// usage hold that also uses it (#2491) follows delegated backends only.
+	wireUsageHeldRestore(ag, p.ctx, p.connMgr, acfg.ID, p.agentResolverFn, app.DeliverAgentMessage)
+
 	return finalizeParams{
 		bootstrap:      bs.bootstrap,
 		registry:       registry,

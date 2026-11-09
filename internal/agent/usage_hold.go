@@ -260,7 +260,12 @@ func (a *Agent) usageHoldPassesPast(env Envelope) bool {
 // it, and a copy restored after a restart, notify nobody. Worker-confined.
 func (a *Agent) parkUsageHeld(inb *sessionInbox, env Envelope) {
 	restored := env.usageHeldID != ""
-	a.storeUsageHeld(&env)
+	// It leaves the queued-input store for the held one (#2999). A restart's
+	// resume line is not stored at all: its cut_turn record brings it back.
+	a.forgetQueuedInput(env)
+	if !env.restartResume {
+		a.storeUsageHeld(&env)
+	}
 	if env.usageResume {
 		for _, h := range inb.usageHeld {
 			if h.usageResume {
@@ -327,11 +332,13 @@ func (a *Agent) UsageHoldRefusal() string {
 // were doing\" - do not show this in the clients").
 const UsageResumeLine = tools.UsageResumeLine
 
-// leadingUsageResume counts the resume lines heading batch.
+// leadingUsageResume counts the hidden resume lines heading batch: a usage
+// hold's, or a restart's (#2999, restart_resume.go). Both reach the model but
+// no client.
 func leadingUsageResume(batch []Envelope) int {
 	n := 0
 	for _, env := range batch {
-		if !env.usageResume {
+		if !env.usageResume && !env.restartResume {
 			break
 		}
 		n++

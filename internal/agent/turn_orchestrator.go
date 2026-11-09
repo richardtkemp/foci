@@ -141,6 +141,10 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	a.traceInput(ctx, ts)
 
 	// Phase 3: Execution
+	// From the moment its input reaches the backend, a turn on a
+	// user-facing session holds a cut_turn record until it ends, so a
+	// restart that cuts it resumes the session (#2999, restart_resume.go).
+	defer a.trackCutTurn(ts)()
 	err := tc.RunInference(ts)
 	if delegated && ts.inputDelivered {
 		a.recordTurnRan(ts)

@@ -60,6 +60,17 @@ const (
 	// agent.PausedBackground: set while it is paused, cleared once it runs on.
 	// A restart resumes it from here (agent/usage_hold_background.go).
 	MetaKeyUsageHoldPaused = "usage_hold_paused"
+	// MetaKeyCutTurn marks a turn running on a user-facing session (#2999),
+	// as a JSON agent.cutTurnRecord: written when the turn begins, deleted
+	// when it ends, and left in place when a foci shutdown cuts it (or the
+	// process dies). A restart resumes the session from here
+	// (agent/restart_resume.go).
+	MetaKeyCutTurn = "cut_turn"
+	// MetaKeyQueuedInput holds the user messages accepted on the session but
+	// not yet started as a turn (#2999), as a JSON array in arrival order,
+	// written before each is queued and trimmed as each starts or is
+	// dropped (agent/queued_input_store.go), so a restart runs them.
+	MetaKeyQueuedInput = "queued_input"
 	// MetaKeyQuietCompactedAt holds the RFC3339Nano time of the session's
 	// last quiet-hours compaction ATTEMPT that passed the guards, written by
 	// the periodic runner (#2218) — the anchor for the once-per-window and
@@ -122,6 +133,8 @@ var SessionMetadataKeys = []SessionMetadataKey{
 	{Key: MetaKeyCCUndelivered},
 	{Key: MetaKeyUsageHeld},
 	{Key: MetaKeyUsageHoldPaused},
+	{Key: MetaKeyCutTurn},
+	{Key: MetaKeyQueuedInput},
 	{Key: MetaKeyQuietCompactedAt},
 	{Key: MetaKeyPrecoldCompactedAt},
 }
