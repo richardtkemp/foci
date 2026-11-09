@@ -36,7 +36,8 @@
 #                   a nightly unit run stays on Linux (foci-linux-nightly.py, #2907).
 #                   .ci.mk is not synced, so the Mac writes no CI_HOOK row: remote-run.sh
 #                   writes it HERE from the Mac's result, under remote_record below.
-#   lint            dispatched: the analysers run with GOOS=linux (LINT_ENV), so
+#   lint            dispatched (so is make land's lint gate, LAND_LINT_TARGET=lint,
+#                   #2957): the analysers run with GOOS=linux (LINT_ENV), so
 #                   they check the production build, with this host's Go
 #                   (LINT_GOTOOLCHAIN). Needs golangci-lint and deadcode in the
 #                   Mac's $(go env GOPATH)/bin, at the NUC's versions.

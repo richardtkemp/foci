@@ -18,9 +18,20 @@
 #                       before pushing (e.g. `test` for foci, `test-mpp` for
 #                       foci-client — foci-client compiles + tests both
 #                       platforms under that target, foci does not need to).
+#   LAND_LINT_TARGET    required. The `make` target land runs as the lint gate,
+#                       on the REBASED tree, before the test gate (`lint` in
+#                       both repos).
 #
 # Run FROM the feature-branch worktree you want to land (via `make land`, which
-# passes the two vars above and nothing else repo-specific).
+# passes the three vars above and nothing else repo-specific).
+#
+# LINT GATE (#2957): the pre-commit hook lints the tree a commit was made on,
+# which is NOT the tree that lands. A lint rule that reaches origin/main after
+# your commit (#2915's find-misplaced-doc-comments, 9f5ce175e) never saw your
+# code: #2925 landed a violation of it and main's lint stayed red unseen for
+# ~1.5 h. So land lints main+branch after the rebase. It runs BEFORE the test
+# gate because it is the cheaper of the two, so a lint failure costs little.
+# Required, not optional, so a repo cannot drop the gate by omission.
 #
 # Serialises every landing through its own MERGE lock (LAND_LOCK), separate
 # from whatever COMPUTE lock(s) the repo's own LAND_TEST_TARGET may take
@@ -132,20 +143,22 @@ set -u
 
 if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
 	cat <<'EOF' >&2
-usage: LAND_LOCK=<path> LAND_TEST_TARGET=<make-target> land.sh
+usage: LAND_LOCK=<path> LAND_TEST_TARGET=<make-target> LAND_LINT_TARGET=<make-target> land.sh
 
 The sanctioned path to main for foci and foci-client. Run from the feature-
-branch worktree you want to land (normally via `make land`, which sets the two
+branch worktree you want to land (normally via `make land`, which sets the three
 required env vars for you — see each repo's mk/deploy.mk or Makefile).
 
   LAND_LOCK          merge-lock file path, unique per repo
   LAND_TEST_TARGET    `make` target to run as the test gate before pushing
+  LAND_LINT_TARGET    `make` target to run as the lint gate on the rebased
+                      tree, before the test gate
 EOF
 	exit 0
 fi
 
-if [ -z "${LAND_LOCK:-}" ] || [ -z "${LAND_TEST_TARGET:-}" ]; then
-	echo "usage: LAND_LOCK=<path> LAND_TEST_TARGET=<make-target> land.sh (see -h)" >&2
+if [ -z "${LAND_LOCK:-}" ] || [ -z "${LAND_TEST_TARGET:-}" ] || [ -z "${LAND_LINT_TARGET:-}" ]; then
+	echo "usage: LAND_LOCK=<path> LAND_TEST_TARGET=<make-target> LAND_LINT_TARGET=<make-target> land.sh (see -h)" >&2
 	exit 2
 fi
 
@@ -206,6 +219,15 @@ land() {
 	# be empty by the time the dirty-main-checkout check below needs it (#1701).
 	local base
 	base=$(git rev-parse origin/main)
+
+	# Lint the rebased tree, not the one the pre-commit hook saw (#2957).
+	say "running lint gate on the rebased tree (make $LAND_LINT_TARGET) ..." >&2
+	make "$LAND_LINT_TARGET" 9<&- || {
+		echo "ABORT: lint gate failed on $branch rebased onto origin/main — not landing" >&2
+		echo "  (a lint rule may have landed after your commit: run make $LAND_LINT_TARGET here, fix, commit, re-run make land)" >&2
+		echo ">>> LAND_RESULT: FAILED lint gate failed" >&2
+		return 8
+	}
 
 	say "running test gate (make $LAND_TEST_TARGET) ..." >&2
 	make "$LAND_TEST_TARGET" 9<&- || {

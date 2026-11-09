@@ -5,6 +5,10 @@
 # Cases:
 #   red      a failing gate: LAND_RESULT FAILED test gate failed, exit != 0,
 #            origin main unchanged
+#   lintred  a lint rule that landed on origin main after the feature's commit,
+#            which only the REBASED tree violates (#2957): LAND_RESULT FAILED
+#            lint gate failed, exit != 0, origin main unchanged, test gate not run
+#   nolint   LAND_LINT_TARGET unset: usage error, exit 2, no push
 #   green    a passing gate: LAND_RESULT SUCCESS <sha>, exit 0, origin main =
 #            the feature tip rebased onto a moved origin main
 #   nolock   no flock on PATH: FAILED naming the lock, exit != 0, no push
@@ -13,7 +17,8 @@
 #
 # The red, green and concur cases pass on the pre-#2583 script on Linux
 # (characterisation). nolock and lockfail fail on it: it ignored flock's
-# failure and pushed without the lock.
+# failure and pushed without the lock. lintred and nolint fail on the
+# pre-#2957 script: it ran no lint after the rebase and pushed.
 #
 # usage: bash scripts/test-land.sh [path/to/land.sh]
 #   default land.sh: the one next to this script. KEEP=1 keeps the temp dir.
@@ -57,6 +62,10 @@ pass:
 	@echo gate-pass
 fail:
 	@echo gate-fail; exit 1
+lint:
+	@echo lint-pass
+lintcombo:
+	@if [ -f feature.txt ] && [ -f upstream.txt ]; then echo lint-fail-combined; exit 1; fi; echo lint-pass
 slow:
 	@echo "start $$GATE_NAME" >> "$$GATE_LOG"; sleep 2; echo "end $$GATE_NAME" >> "$$GATE_LOG"
 EOF
@@ -73,10 +82,11 @@ EOF
 }
 origin_main() { git -C "$TMP/$1/origin.git" rev-parse main; }
 
-# land NAME TARGET [PATH]: run land.sh from the feature worktree; sets rc, last.
+# land NAME TARGET [PATH] [LINT]: run land.sh from the feature worktree; sets
+# rc, last. LINT is the lint gate target (default `lint`, which passes).
 land() {
-	local d="$TMP/$1" p="${3:-$PATH}"
-	(cd "$d/feat" && PATH="$p" LAND_LOCK="$d/merge.lock" LAND_TEST_TARGET="$2" bash "$LAND") >"$d/out.log" 2>&1
+	local d="$TMP/$1" p="${3:-$PATH}" l="${4-lint}"
+	(cd "$d/feat" && PATH="$p" LAND_LOCK="$d/merge.lock" LAND_TEST_TARGET="$2" LAND_LINT_TARGET="$l" bash "$LAND") >"$d/out.log" 2>&1
 	rc=$?
 	last=$(tail -n 1 "$d/out.log")
 }
@@ -89,6 +99,34 @@ if [ "$rc" -ne 0 ] && [ "$last" = ">>> LAND_RESULT: FAILED test gate failed" ] &
 	pass "red: rc=$rc, '$last', origin main unchanged"
 else
 	fail "red: rc=$rc last='$last' origin $(origin_main red) (was $before)"; cat "$TMP/red/out.log"
+fi
+
+# --- lint rule from origin main, violated only by the rebased tree (#2957) ---
+# The lintcombo target fails only when the feature's file AND upstream's file
+# are both present: the feature's own tree passes it (as its pre-commit lint
+# did), origin main passes it, the combination does not.
+setup lintred
+before=$(origin_main lintred)
+if ! (cd "$TMP/lintred/feat" && make -s lintcombo >/dev/null 2>&1); then
+	fail "lintred: setup: lintcombo fails on the un-rebased feature tree"
+fi
+land lintred pass "" lintcombo
+if [ "$rc" -ne 0 ] && [ "$last" = ">>> LAND_RESULT: FAILED lint gate failed" ] &&
+	[ "$(origin_main lintred)" = "$before" ] && grep -q lint-fail-combined "$TMP/lintred/out.log" &&
+	! grep -q gate-pass "$TMP/lintred/out.log"; then
+	pass "lintred: rc=$rc, '$last', origin main unchanged, test gate not run"
+else
+	fail "lintred: rc=$rc last='$last' origin $(origin_main lintred) (was $before)"; cat "$TMP/lintred/out.log"
+fi
+
+# --- no lint target given ---
+setup nolint
+before=$(origin_main nolint)
+land nolint pass "" ""
+if [ "$rc" -eq 2 ] && [ "$(origin_main nolint)" = "$before" ] && ! grep -q gate-pass "$TMP/nolint/out.log"; then
+	pass "nolint: rc=2, gate not run, origin main unchanged"
+else
+	fail "nolint: rc=$rc last='$last' origin $(origin_main nolint) (was $before)"; cat "$TMP/nolint/out.log"
 fi
 
 # --- green gate ---
@@ -152,9 +190,9 @@ git -C "$d/clone" worktree add -q -b feat2 "$d/feat2" origin/main
 echo two >"$d/feat2/two.txt"
 git -C "$d/feat2" add -A && git -C "$d/feat2" commit -q -m two
 export GATE_LOG="$d/gates.log"
-(cd "$d/feat" && GATE_NAME=A LAND_LOCK="$d/merge.lock" LAND_TEST_TARGET=slow bash "$LAND") >"$d/a.log" 2>&1 &
+(cd "$d/feat" && GATE_NAME=A LAND_LOCK="$d/merge.lock" LAND_TEST_TARGET=slow LAND_LINT_TARGET=lint bash "$LAND") >"$d/a.log" 2>&1 &
 pa=$!
-(cd "$d/feat2" && GATE_NAME=B LAND_LOCK="$d/merge.lock" LAND_TEST_TARGET=slow bash "$LAND") >"$d/b.log" 2>&1 &
+(cd "$d/feat2" && GATE_NAME=B LAND_LOCK="$d/merge.lock" LAND_TEST_TARGET=slow LAND_LINT_TARGET=lint bash "$LAND") >"$d/b.log" 2>&1 &
 pb=$!
 wait "$pa"; ra=$?
 wait "$pb"; rb=$?

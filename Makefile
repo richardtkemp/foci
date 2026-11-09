@@ -561,8 +561,10 @@ bucket-audit:
 # it moved into the repos so a checkout on the work Mac (no /home/foci) can land.
 # This repo's only per-repo inputs are passed as env vars, never forked into the
 # logic: LAND_LOCK (this repo's own merge lock, so foci and foci-client landings
-# never block each other) and LAND_TEST_TARGET (the `make` target land runs as
-# its test gate).
+# never block each other), LAND_TEST_TARGET (the `make` target land runs as
+# its test gate) and LAND_LINT_TARGET (the lint gate, run on the rebased tree
+# before the tests, because the pre-commit lint saw only the pre-rebase tree:
+# #2957).
 #
 # Cheap repo-state work (fetch, rebase, conflict/dirty detection) runs BEFORE
 # the compute step, so merge-lock hold time is ~= the unit suite + heavy
@@ -584,7 +586,7 @@ bench-test-build:
 	@PKG='$(or $(PKG),./cmd/foci-gw/)' REPS='$(or $(REPS),3)' MODE='$(or $(MODE),both)' VARIANTS="$(VARIANTS)" bash scripts/bench-test-build.sh
 
 land:
-	@LAND_LOCK=/tmp/foci-merge.lock LAND_TEST_TARGET=test bash scripts/land.sh
+	@LAND_LOCK=/tmp/foci-merge.lock LAND_TEST_TARGET=test LAND_LINT_TARGET=lint bash scripts/land.sh
 
 coverage:
 	$(eval TESTDIR := $(call fgw_testdir,test))
