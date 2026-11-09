@@ -1865,6 +1865,8 @@ type ConfigFieldDesc struct {
 	// entry for mapObject (e.g. model/context for models; the entries are a
 	// JSON object-of-objects at Values[section]). Each carries its own
 	// Key/ValueType/Description; see ConfigPut for the mapObject frame shape.
+	// An object[] sub-field of type "map" ([[tts]] replacements, #2946) is a
+	// string->string table: a JSON object inside its entry, both ways.
 	Fields []ConfigFieldDesc `json:"fields,omitempty"`
 }
 

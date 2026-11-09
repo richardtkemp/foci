@@ -44,6 +44,8 @@ func (t FieldType) TypeName() string {
 		return "string[]"
 	case FieldSchedule:
 		return "schedule"
+	case FieldStringMap:
+		return "map"
 	default:
 		return "string"
 	}
@@ -389,6 +391,20 @@ func coerceObjectValue(v any, ft FieldType) (any, error) {
 			return nil, fmt.Errorf("expected a boolean")
 		}
 		return b, nil
+	case FieldStringMap:
+		obj, ok := v.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("expected an object of strings")
+		}
+		m := make(map[string]string, len(obj))
+		for k, e := range obj {
+			s, ok := e.(string)
+			if !ok {
+				return nil, fmt.Errorf("key %q: expected a string", k)
+			}
+			m[k] = s
+		}
+		return m, nil
 	default:
 		return nil, fmt.Errorf("unsupported field type")
 	}

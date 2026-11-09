@@ -446,7 +446,9 @@ foci auto-registers a built-in, key-less `edge-tts` voice under the id `edge-tts
 
 **`fallback` is retired.** Before #2974 each entry named one `fallback` entry, forming a chain. The key is still accepted, so an old config loads, but it changes nothing: foci logs a warning at load that names the order now used. `fallback = ""` no longer stops a voice's chain. Set `priority` instead, and remove `fallback`.
 
-`[[tts]]` applies live when changed with `/config set` or `foci config set` (the whole array, `tts`, or one entry, `tts[<id>]`): adding, removing or reordering an entry, or changing any of its keys, reaches the next speech request with no restart. A speech request already in progress finishes with the voices it started with. A connected app gets the new voice list for read-to-me at once: the change re-sends `hello` to every app socket. A hand edit to foci.toml still needs a restart.
+`[[tts]]` applies live when changed with `/config set`, `foci config set` (the whole array, `tts`, or one entry, `tts[<id>]`) or the app's config editor (#2946): adding, removing or reordering an entry, or changing any of its keys, reaches the next speech request with no restart. A speech request already in progress finishes with the voices it started with. A connected app gets the new voice list for read-to-me at once: the change re-sends `hello` to every app socket. A hand edit to foci.toml still needs a restart.
+
+In the app's config editor each voice is a card with every key below except the retired `fallback`, and `replacements` is edited as word pairs. Cards can be added, removed and moved up or down (list order only breaks priority ties). A save rewrites only the voices that changed, so the others keep their layout and comments; a voice that is edited loses a `fallback` key it still carries. The editor keeps the file's layout: `[[tts]]` blocks stay blocks, and a one-line `tts = [...]` stays one line.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|

@@ -20,6 +20,10 @@ const (
 	FieldDuration                    // Go duration string (e.g. "5m"), quoted in TOML
 	FieldStringList                  // []string; wire value is a JSON array, TOML value is ["a", "b"]
 	FieldSchedule                    // "HH:MM" clock time or positive Go duration, quoted in TOML
+	// FieldStringMap is a string->string table, used only as an object-list
+	// sub-field ([[tts]] replacements, #2946): wire value a JSON object, TOML
+	// value an inline table. No scalar registry field has this type.
+	FieldStringMap
 )
 
 // ConfigField describes a single settable config key.
@@ -537,6 +541,21 @@ var objectFieldSpecs = []ObjectFieldSpec{
 		{Key: "name", Type: FieldString, Description: "Unique identifier (e.g. canonical, code, docs)"},
 		{Key: "dir", Type: FieldString, Description: "Directory path to index"},
 		{Key: "weight", Type: FieldFloat, Description: "Weight multiplier 0.0-1.0 (1.0 = highest priority)"},
+	}},
+	{Section: "tts", Description: "Text-to-speech voices. A speech request tries them by priority, highest first; equal priorities keep list order", Live: true, Fields: []ObjectSubField{
+		{Key: "id", Type: FieldString, Description: "Voice id, used by per-agent voice.tts and voice.tts_order"},
+		{Key: "format", Type: FieldString, Description: "Provider format: openai, google or edge-tts"},
+		{Key: "endpoint", Type: FieldString, Description: "API URL (not used by edge-tts)"},
+		{Key: "model", Type: FieldString, Description: "Model name (not used by edge-tts)"},
+		{Key: "voice", Type: FieldString, Description: "Voice name (format-specific)"},
+		{Key: "rate", Type: FieldFloat, Description: "Speed multiplier: 1.0 = normal, 0 or empty = not sent"},
+		{Key: "secret", Type: FieldString, Description: "Secret name in secrets.toml holding the API key"},
+		{Key: "command", Type: FieldString, Description: "edge-tts binary (default edge-tts)"},
+		{Key: "response_format", Type: FieldString, Description: "Audio format: mp3, wav, ... (default wav; google default mp3)"},
+		{Key: "priority", Type: FieldInt, Description: "Order of the voices: highest tried first; unset is 0, negative allowed"},
+		{Key: "max_chars", Type: FieldInt, Description: "Longest text this voice takes, in characters; a longer text skips it. Empty or 0 = no limit"},
+		{Key: "local_speed_control", Type: FieldBool, Description: "foci applies the rate itself by stretching the WAV, for an endpoint that ignores speed (openai format, wav only)"},
+		{Key: "replacements", Type: FieldStringMap, Description: "Word replacements applied before synthesis (e.g. foci = foki)"},
 	}},
 	{Section: "modelinfo", Description: "Model registry overrides — pricing, capabilities, and context window for models not in the built-in registry, or partial overrides of existing ones", Live: true, Fields: []ObjectSubField{
 		{Key: "id", Type: FieldString, Description: "Bare model ID (e.g. 'claude-haiku-4-5'). Overrides existing entry if present, creates new one if not"},

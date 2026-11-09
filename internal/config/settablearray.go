@@ -41,12 +41,19 @@ func SetTableArray(path, section string, entries []map[string]any, mode os.FileM
 // When the array already exists, only the entries that differ are edited
 // (planTableArrayDiff, #2938), so unchanged blocks keep their comments and
 // layout; the result must decode exactly as the whole rewrite below would.
+//
+// The element diff also edits an array the file writes as one inline
+// assignment (`tts = [{...}, ...]`, Dick's live [[tts]], #2946); clearing one
+// removes the assignment (planClearInlineArray).
 func PlanSetTableArray(content, section string, entries []map[string]any) (string, error) {
+	if next, ok, err := planClearInlineArray(content, section, entries); ok {
+		return next, err
+	}
 	whole, err := planSetTableArrayWhole(content, section, entries)
 	if err != nil {
 		return "", err
 	}
-	if next, ok := planTableArrayDiff(content, section, entries, whole); ok {
+	if next, ok := planTableArrayDiff(content, section, entries); ok {
 		return next, nil
 	}
 	return whole, nil
@@ -54,8 +61,8 @@ func PlanSetTableArray(content, section string, entries []map[string]any) (strin
 
 // planTableArrayDiff edits the existing array at section element by element
 // into entries. ok is false when it cannot, or when its result does not
-// decode exactly like whole (the full rewrite).
-func planTableArrayDiff(content, section string, entries []map[string]any, whole string) (string, bool) {
+// decode as content with exactly that array replaced by entries.
+func planTableArrayDiff(content, section string, entries []map[string]any) (string, bool) {
 	keys := strings.Split(section, ".")
 	if len(entries) == 0 || keys[0] == agentsKey {
 		return "", false
@@ -77,23 +84,10 @@ func planTableArrayDiff(content, section string, entries []map[string]any, whole
 	texts := make([]string, len(entries))
 	newArr := make([]any, len(entries))
 	for i, entry := range entries {
-		names := make([]string, 0, len(entry))
-		for k := range entry {
-			if !bareKeyRe.MatchString(k) {
-				return "", false
-			}
-			names = append(names, k)
+		var err error
+		if texts[i], err = entryInlineTable(entry); err != nil {
+			return "", false
 		}
-		sort.Strings(names)
-		parts := make([]string, len(names))
-		for j, k := range names {
-			v, err := formatTableArrayValue(entry[k])
-			if err != nil {
-				return "", false
-			}
-			parts[j] = k + " = " + v
-		}
-		texts[i] = "{" + strings.Join(parts, ", ") + "}"
 		if newArr[i], err = DecodeTOMLValue(texts[i]); err != nil {
 			return "", false
 		}
@@ -104,11 +98,61 @@ func planTableArrayDiff(content, section string, entries []map[string]any, whole
 	}
 	next := strings.TrimRight(ed.result(), "\n") + "\n"
 	got, err1 := decodeDoc(next)
-	want, err2 := decodeDoc(whole)
-	if err1 != nil || err2 != nil || !reflect.DeepEqual(normValue(got), normValue(want)) {
+	want, err2 := decodeDoc(content)
+	if err1 != nil || err2 != nil || setIn(want, keys, newArr) != nil || !reflect.DeepEqual(normValue(got), normValue(want)) {
 		return "", false
 	}
 	return next, true
+}
+
+// entryInlineTable renders one entry as a TOML inline table, keys sorted.
+// Sub-field names must be bare keys.
+func entryInlineTable(entry map[string]any) (string, error) {
+	names := make([]string, 0, len(entry))
+	for k := range entry {
+		if !bareKeyRe.MatchString(k) {
+			return "", fmt.Errorf("field name %q is not a bare TOML key", k)
+		}
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	parts := make([]string, len(names))
+	for j, k := range names {
+		v, err := formatTableArrayValue(entry[k])
+		if err != nil {
+			return "", fmt.Errorf("%s: %w", k, err)
+		}
+		parts[j] = k + " = " + v
+	}
+	return "{" + strings.Join(parts, ", ") + "}", nil
+}
+
+// planClearInlineArray removes a section the file holds as an inline array
+// assignment (`tts = [...]`) when entries is empty: the block planners only
+// see [[section]] headers and would leave it in place. ok is false when this
+// is not that case.
+func planClearInlineArray(content, section string, entries []map[string]any) (string, bool, error) {
+	keys := strings.Split(section, ".")
+	if len(entries) > 0 || keys[0] == agentsKey {
+		return "", false, nil
+	}
+	p := KeyPath{Keys: keys}
+	if _, set, err := LookupPath(content, p); err != nil || !set {
+		return "", false, nil
+	}
+	lines := strings.Split(content, "\n")
+	top := topLevel(lines)
+	headerRe := tableArrayHeaderRe(section)
+	for i, l := range lines {
+		if top[i] && headerRe.MatchString(l) {
+			return "", false, nil
+		}
+	}
+	next, err := PlanUnsetPath(content, p)
+	if err != nil {
+		return "", true, err
+	}
+	return strings.TrimRight(next, "\n") + "\n", true, nil
 }
 
 // planSetTableArrayWhole rewrites every [[section]] block (the original
@@ -139,7 +183,7 @@ func planSetTableArrayWhole(content, section string, entries []map[string]any) (
 			// Skip this block: the header plus its body (blockBodyEnd),
 			// minus any trailing comment run that must stay
 			// (blockRemovalEnd — the shared comment-keeping rule).
-			i = blockRemovalEnd(lines, i, blockBodyEnd(lines, top, i))
+			i = blockRemovalEnd(lines, i, subTablesEnd(lines, top, section, blockBodyEnd(lines, top, i)))
 			continue
 		}
 		out = append(out, lines[i])
@@ -183,6 +227,17 @@ func blockBodyEnd(lines []string, top []bool, header int) int {
 	end := header + 1
 	for end < len(lines) && !(top[end] && anySectionRe.MatchString(lines[end])) {
 		end++
+	}
+	return end
+}
+
+// subTablesEnd extends a [[section]] block's end over the sub-tables that
+// belong to its element ([section.x], [[section.x]]), so removing the block
+// does not leave them behind, attached to the previous element.
+func subTablesEnd(lines []string, top []bool, section string, end int) int {
+	subRe := regexp.MustCompile(`^\s*\[\[?` + regexp.QuoteMeta(section) + `\.`)
+	for end < len(lines) && top[end] && subRe.MatchString(lines[end]) {
+		end = blockBodyEnd(lines, top, end)
 	}
 	return end
 }
@@ -271,7 +326,36 @@ func formatTableArrayValue(v any) (string, error) {
 		return strconv.FormatInt(val, 10), nil
 	case float64:
 		return strconv.FormatFloat(val, 'g', -1, 64), nil
+	case map[string]string:
+		return formatInlineStringMap(val)
 	default:
 		return fmt.Sprintf("%v", val), nil
 	}
+}
+
+// formatInlineStringMap writes a string->string table as a TOML inline table,
+// keys sorted; a key that is not bare is quoted (FieldStringMap, #2946).
+func formatInlineStringMap(m map[string]string) (string, error) {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		kt := k
+		if !bareKeyRe.MatchString(k) {
+			q, err := encodeTOMLBasicString(k)
+			if err != nil {
+				return "", err
+			}
+			kt = q
+		}
+		v, err := encodeTOMLBasicString(m[k])
+		if err != nil {
+			return "", err
+		}
+		parts[i] = kt + " = " + v
+	}
+	return "{" + strings.Join(parts, ", ") + "}", nil
 }

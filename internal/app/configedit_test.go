@@ -9,6 +9,8 @@ import (
 	"foci/internal/config"
 	"foci/internal/fap"
 	"foci/internal/platform"
+
+	"github.com/BurntSushi/toml"
 )
 
 const configEditTOML = `[notify]
@@ -489,5 +491,71 @@ func TestConfigGet_AgentScopeSharedRunningRung(t *testing.T) {
 				t.Errorf("agent.sessions.max_system_prompt_chars_file = %v, want 20000 (the mapped global's running value)", got)
 			}
 		})
+	}
+}
+
+// TestConfigPut_TTSKeepsReplacements (#2946): [[tts]] is an editable, live
+// object-list. The schema carries each voice's replacements as a JSON object
+// under a "map" sub-field, a put of the list the app sends back keeps them,
+// the inline `tts = [...]` layout is edited in place (the load check would
+// refuse an added [[tts]] block), and the edit is applied live.
+func TestConfigPut_TTSKeepsReplacements(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "foci.toml")
+	os.WriteFile(path, []byte("# voices\ntts = [{id = \"groq\", format = \"openai\", voice = \"troy\", replacements = {foci = \"foki\"}}, {id = \"edge\", format = \"edge-tts\"}]\n"), 0o600)
+	h := newTestHub()
+	var applied []string
+	h.deps = platform.ProviderDeps{
+		Config: &config.Config{SourcePath: path, FileMode: "0600"},
+		ApplyLive: func(section, key string) (bool, error) {
+			applied = append(applied, section+"|"+key)
+			return true, nil
+		},
+	}
+	c := fakeClient()
+	c.features = map[string]struct{}{featureConfigEdit: {}}
+	h.clients[c] = struct{}{}
+
+	h.handleConfigGet(c)
+	schema := lastConfigSchema(t, c)
+	var desc map[string]any
+	for _, fe := range schema["fields"].([]any) {
+		if f, _ := fe.(map[string]any); f["section"] == "tts" {
+			desc = f
+		}
+	}
+	if desc == nil || desc["type"] != "object[]" || desc["needsRestart"] == true {
+		t.Fatalf("tts descriptor = %v, want a live object[]", desc)
+	}
+	var mapSub bool
+	for _, se := range desc["fields"].([]any) {
+		if sf, _ := se.(map[string]any); sf["key"] == "replacements" && sf["type"] == "map" {
+			mapSub = true
+		}
+	}
+	if !mapSub {
+		t.Error("tts descriptor has no replacements sub-field of type map")
+	}
+	got, _ := scopeByID(t, schema, "")["values"].(map[string]any)["tts"].(string)
+	if !strings.Contains(got, `"replacements":{"foci":"foki"}`) {
+		t.Fatalf("tts value = %s, want groq's replacements as a JSON object", got)
+	}
+
+	h.handleConfigPut(c, fap.ConfigPut{Section: "tts", Value: `[{"id":"edge","format":"edge-tts","voice":"en-GB-RyanNeural"},{"id":"groq","format":"openai","voice":"troy","replacements":{"foci":"foki"}}]`})
+	if s := lastConfigSchema(t, c); s["error"] != nil && s["error"] != "" {
+		t.Fatalf("put refused: %v", s["error"])
+	}
+	data, _ := os.ReadFile(path)
+	var cfg config.Config
+	if _, err := toml.Decode(string(data), &cfg); err != nil {
+		t.Fatalf("written file does not load: %v\n%s", err, data)
+	}
+	if len(cfg.TTS) != 2 || cfg.TTS[0].ID != "edge" || cfg.TTS[0].Voice != "en-GB-RyanNeural" || cfg.TTS[1].Replacements["foci"] != "foki" {
+		t.Errorf("tts after put = %+v\n%s", cfg.TTS, data)
+	}
+	if !strings.Contains(string(data), "# voices") || strings.Contains(string(data), "[[tts]]") {
+		t.Errorf("layout not kept:\n%s", data)
+	}
+	if len(applied) != 1 || applied[0] != "tts|" {
+		t.Errorf("ApplyLive calls = %v, want [tts|]", applied)
 	}
 }
