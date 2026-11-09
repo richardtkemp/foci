@@ -492,6 +492,22 @@ func NotifyAliasChanged(agentID, platform string, chatID int64) {
 	h.pushRosterAll()
 }
 
+// NotifySpeechSourcesChanged re-sends hello to every live socket after the
+// server's speech voices may have changed (a live [[tts]] edit, #2945).
+// hello.caps.speech is the only frame that carries the voice list, so without
+// this the app's Speak ladder showed the old voices until it reconnected. The
+// client applies a mid-session hello like the one at connect. No-op when the
+// app provider isn't running.
+func NotifySpeechSourcesChanged() {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return
+	}
+	h.pushHelloAll()
+}
+
 // MintFacetConversation surfaces a facet branch to app clients via the active
 // hub (see Hub.mintFacetConversation). Injected into the command layer by the
 // gateway as CommandContext.MintFacetConversation. Errors if the app provider

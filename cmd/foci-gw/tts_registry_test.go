@@ -56,7 +56,8 @@ voice = "old-voice"
 	reg := newTTSRegistry(startup, newTestStore(t, nil))
 	la := newLiveApply(configPath, nil)
 	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{}))
-	registerTTSLiveApplier(la, reg)
+	notified := 0
+	registerTTSLiveApplier(la, reg, func() { notified++ })
 
 	inFlight := reg.Voices()
 	if openaiVoice(t, inFlight, "groq").LocalSpeed {
@@ -86,6 +87,11 @@ local_speed_control = true
 	applied, err := la.Apply(section, key)
 	if err != nil || !applied {
 		t.Fatalf("Apply(%q, %q) = %v, %v; want applied", section, key, applied, err)
+	}
+
+	// #2945: the app hears of the new voice list at once, after the rebuild.
+	if notified != 1 {
+		t.Errorf("speech-change notifier ran %d times after a [[tts]] apply, want 1", notified)
 	}
 
 	now := reg.Voices()

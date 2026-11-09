@@ -6,6 +6,7 @@ import (
 
 	"foci/internal/fap"
 	"foci/internal/platform"
+	"foci/internal/voice"
 )
 
 // rosterConvs returns the conversations carried by the LAST hello frame a socket
@@ -307,4 +308,61 @@ func TestNotifyAliasChanged_RosterCarriesNewTitle(t *testing.T) {
 	if _, seen := rosterConvs(t, other); seen {
 		t.Error("a non-app alias change broadcast the roster")
 	}
+}
+
+// lastHelloSpeech returns the caps.speech voice ids of the LAST hello a socket
+// received, and whether it received one.
+func lastHelloSpeech(t *testing.T, c *wsClient) ([]string, bool) {
+	t.Helper()
+	var ids []string
+	seen := false
+	for _, f := range drain(t, c) {
+		if f.t != fap.TypeHello {
+			continue
+		}
+		seen = true
+		ids = nil
+		caps, _ := f.d["caps"].(map[string]any)
+		speech, _ := caps["speech"].([]any)
+		for _, s := range speech {
+			if m, ok := s.(map[string]any); ok {
+				id, _ := m["id"].(string)
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids, seen
+}
+
+// TestNotifySpeechSourcesChanged_HelloCarriesNewVoices is the #2945
+// regression: hello.caps.speech went out only at connect, so after a live
+// [[tts]] edit the app's Speak ladder listed the old voices until it
+// reconnected. NotifySpeechSourcesChanged must re-send hello, with the current
+// voices, to every live socket.
+func TestNotifySpeechSourcesChanged_HelloCarriesNewVoices(t *testing.T) {
+	const agentID = "arnix"
+	h, sender, other := rosterTestHub(t, agentID)
+	sources := []voice.SpeechSource{{ID: "groq", Kind: voice.SpeechKindAPI}}
+	h.deps.SpeechSources = func() []voice.SpeechSource { return sources }
+	setActiveHub(h)
+	t.Cleanup(func() { setActiveHub(nil) })
+
+	sources = []voice.SpeechSource{{ID: "google", Kind: voice.SpeechKindAPI}, {ID: "edge-tts", Kind: voice.SpeechKindEdge}}
+	NotifySpeechSourcesChanged()
+
+	for name, c := range map[string]*wsClient{"sender": sender, "other": other} {
+		ids, seen := lastHelloSpeech(t, c)
+		if !seen {
+			t.Fatalf("%s received no hello after a speech-voice change (#2945)", name)
+		}
+		if len(ids) != 2 || ids[0] != "google" || ids[1] != "edge-tts" {
+			t.Errorf("%s hello caps.speech = %v, want [google edge-tts]", name, ids)
+		}
+	}
+}
+
+// With no app provider running, the notifier is a no-op, not a panic.
+func TestNotifySpeechSourcesChanged_NoHub(t *testing.T) {
+	setActiveHub(nil)
+	NotifySpeechSourcesChanged()
 }

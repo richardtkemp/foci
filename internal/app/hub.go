@@ -1917,6 +1917,14 @@ func (h *Hub) pushRoster(client *wsClient) {
 // has never seen (InboundFrameDispatcher.applyRoster), which is what makes the
 // broadcast sufficient without a client-side change.
 func (h *Hub) pushRosterAll() {
+	h.pushHelloAll()
+	h.pushCommandsAll()
+}
+
+// pushHelloAll sends a fresh hello (caps and roster) to every live socket,
+// without the command palette. A change to the caps alone, such as the speech
+// voices after a live [[tts]] edit (#2945), needs only this.
+func (h *Hub) pushHelloAll() {
 	hello := fap.HelloServer{Version: fap.ProtocolVersion, Caps: h.caps(), Agents: h.agentRoster()}
 	h.mu.RLock()
 	clients := make([]*wsClient, 0, len(h.clients))
@@ -1927,7 +1935,6 @@ func (h *Hub) pushRosterAll() {
 	for _, c := range clients {
 		c.sendRaw(hello)
 	}
-	h.pushCommandsAll()
 }
 
 // loadAppSettings reads the persisted bag. Unset is an empty map with a nil

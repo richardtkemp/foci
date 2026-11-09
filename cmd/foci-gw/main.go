@@ -334,7 +334,7 @@ Subcommands:
 	// registered after agent setup (registerLiveAppliers), edits before that
 	// are file-only like any restart-required field.
 	gwLiveApply = newLiveApply(configPath, gwConfigProtect)
-	registerTTSLiveApplier(gwLiveApply, ttsVoices)
+	registerTTSLiveApplier(gwLiveApply, ttsVoices, app.NotifySpeechSourcesChanged)
 
 	// The agent registry is empty until agent setup below; it is made here
 	// because the speech catalog reads each agent's live voice.tts_rate from it.

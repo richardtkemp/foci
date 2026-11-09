@@ -446,7 +446,7 @@ foci auto-registers a built-in, key-less `edge-tts` voice under the id `edge-tts
 
 **`fallback` is retired.** Before #2974 each entry named one `fallback` entry, forming a chain. The key is still accepted, so an old config loads, but it changes nothing: foci logs a warning at load that names the order now used. `fallback = ""` no longer stops a voice's chain. Set `priority` instead, and remove `fallback`.
 
-`[[tts]]` applies live when changed with `/config set` or `foci config set` (the whole array, `tts`, or one entry, `tts[<id>]`): adding, removing or reordering an entry, or changing any of its keys, reaches the next speech request with no restart. A speech request already in progress finishes with the voices it started with. The app reads the voice list for read-to-me when it connects, so it sees a change at its next connection. A hand edit to foci.toml still needs a restart.
+`[[tts]]` applies live when changed with `/config set` or `foci config set` (the whole array, `tts`, or one entry, `tts[<id>]`): adding, removing or reordering an entry, or changing any of its keys, reaches the next speech request with no restart. A speech request already in progress finishes with the voices it started with. A connected app gets the new voice list for read-to-me at once: the change re-sends `hello` to every app socket. A hand edit to foci.toml still needs a restart.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|

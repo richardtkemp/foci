@@ -73,10 +73,16 @@ var liveApplyTTSAddrs = []string{"tts"}
 
 // registerTTSLiveApplier rebuilds the voices from the freshly loaded [[tts]]
 // entries on a [[tts]] edit: an add, a remove, a reorder or any key of an entry.
-func registerTTSLiveApplier(la *liveApply, reg *ttsRegistry) {
+// After the rebuild it calls changed (nil = none): the gateway passes
+// app.NotifySpeechSourcesChanged, so connected apps get the new voice list
+// (hello.caps.speech) at once, not at their next connect (#2945).
+func registerTTSLiveApplier(la *liveApply, reg *ttsRegistry, changed func()) {
 	la.register(liveApplyTTSAddrs, func(fresh *config.Config) error {
 		reg.Configure(fresh.TTS)
 		mainLog.Infof("TTS voices rebuilt live: %d [[tts]] entries", len(fresh.TTS))
+		if changed != nil {
+			changed()
+		}
 		return nil
 	})
 }
