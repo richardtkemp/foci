@@ -540,6 +540,9 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # auto_name_first = 10                 # messages before a chat's first automatic name
 # auto_name_every = 50                 # new messages before the name is checked again (also the most messages read)
 # auto_name_words = 6                  # words asked for; an answer over 1.5x this is not used
+# chat_sections = true                 # find each chat's sections (its Contents) as it goes (needs the pin_summary_model path)
+# chat_sections_every = 5              # new messages between two section checks
+# chat_sections_after_break = 10       # new messages after a check that found a new section, before the next check
 # allowed_devices = []                 # device IDs allowed to pair (empty = any)
 
 # ─── Sessions ─────────────────────────────────────────────────────────

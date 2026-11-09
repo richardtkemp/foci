@@ -146,6 +146,8 @@ func decodeClient(t string, d json.RawMessage) (any, error) {
 		dst = &SubagentSummarize{}
 	case TypeMessageInfoGet:
 		dst = &MessageInfoGet{}
+	case TypeSectionsGet:
+		dst = &SectionsGet{}
 	case TypeScrollPut:
 		dst = &ScrollPut{}
 	case TypeConvPinPut:
@@ -235,6 +237,8 @@ func derefClient(dst any) any {
 	case *SubagentSummarize:
 		return *v
 	case *MessageInfoGet:
+		return *v
+	case *SectionsGet:
 		return *v
 	case *ScrollPut:
 		return *v

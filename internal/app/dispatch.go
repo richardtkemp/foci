@@ -179,6 +179,9 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 	case fap.MessageInfoGet:
 		// Off the socket goroutine: it reads app-frames.db and api.db.
 		safeGo("message-info", func() { h.handleMessageInfoGet(client, f) })
+	case fap.SectionsGet:
+		// Off the socket goroutine: it reads the session index.
+		safeGo("sections-get", func() { h.handleSectionsGet(client, f) })
 	case fap.ScrollPut:
 		h.handleScroll(client, f)
 	case fap.ConvPinPut:

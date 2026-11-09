@@ -74,16 +74,13 @@ type autoNameSettings struct {
 // autoNamer holds the live settings and which chats are being named or are
 // waiting out a failure.
 type autoNamer struct {
-	mu      sync.Mutex
-	set     autoNameSettings
-	busy    map[string]bool      // convID → a check is running
-	again   map[string]bool      // convID → a message was stored while its check ran
-	retryAt map[string]time.Time // convID → not before this, after a failure
-	now     func() time.Time     // nil = time.Now; a test sets it
+	mu  sync.Mutex
+	set autoNameSettings
+	convClaims
 }
 
 func newAutoNamer(app *config.AppSpecific) *autoNamer {
-	n := &autoNamer{busy: make(map[string]bool), again: make(map[string]bool), retryAt: make(map[string]time.Time)}
+	n := &autoNamer{convClaims: newConvClaims()}
 	n.configure(app)
 	return n
 }
@@ -125,35 +122,15 @@ func ConfigureAutoName(app *config.AppSpecific) {
 	h.autoName.configure(app)
 }
 
-func (n *autoNamer) clock() time.Time {
-	if n.now != nil {
-		return n.now()
-	}
-	return time.Now()
-}
-
 // begin claims convID for one check and returns the settings to use. false
 // when the feature is off, a check of convID is already running, or convID
-// is waiting out a failure. A call that finds a check running marks convID
-// to be checked again when that check ends (end), so a message stored after
-// the running check counted is not missed.
+// is waiting out a failure (convClaims.claim).
 func (n *autoNamer) begin(convID string) (autoNameSettings, bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	if !n.set.enabled {
+	if !n.set.enabled || !n.claim(convID) {
 		return autoNameSettings{}, false
 	}
-	if n.busy[convID] {
-		n.again[convID] = true
-		return autoNameSettings{}, false
-	}
-	if t, ok := n.retryAt[convID]; ok {
-		if n.clock().Before(t) {
-			return autoNameSettings{}, false
-		}
-		delete(n.retryAt, convID)
-	}
-	n.busy[convID] = true
 	return n.set, true
 }
 
@@ -162,13 +139,7 @@ func (n *autoNamer) begin(convID string) (autoNameSettings, bool) {
 func (n *autoNamer) end(convID string, failed bool) (again bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	delete(n.busy, convID)
-	again = n.again[convID]
-	delete(n.again, convID)
-	if failed {
-		n.retryAt[convID] = n.clock().Add(autoNameRetryGap)
-	}
-	return again
+	return n.release(convID, failed, autoNameRetryGap)
 }
 
 // autoNameCounts reports whether frame is a chat message the automatic name

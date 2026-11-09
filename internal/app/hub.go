@@ -87,6 +87,9 @@ type Hub struct {
 	// autoName names open chats that have no name set on purpose, from the
 	// conversation, with pinSum's model (#2962).
 	autoName *autoNamer
+	// sections finds each app chat's sections (its table of contents) with
+	// pinSum's model as the chat goes (#2993).
+	sections *sectioner
 	// subAct keeps each running subagent's latest steps and its Stop-view
 	// summary (#2960).
 	subAct *subagentActivityStore
@@ -322,6 +325,7 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		deps:          deps,
 		pinSum:        newPinSummariser(appCfg, secretGetter(deps, pinSummarySecret)),
 		autoName:      newAutoNamer(appCfg),
+		sections:      newSectioner(appCfg),
 		subAct:        newSubagentActivityStore(),
 		pairKeys:      newPairKeyStore(),
 		blobs:         blobs,
@@ -1640,7 +1644,7 @@ func (h *Hub) ensureBinding(client *wsClient, agentID, convID string) *convBindi
 		existing.attach(client)
 		return existing
 	}
-	b = &convBinding{convID: convID, chatID: chatID, replayDepth: h.replayDepth, replayTTL: h.replayTTL, store: h.frames, seq: h.frames.MaxSeq(convID), seen: make(map[string]struct{}), notifyOffline: h.pushNotify, onMessageStored: h.autoNameCheck}
+	b = &convBinding{convID: convID, chatID: chatID, replayDepth: h.replayDepth, replayTTL: h.replayTTL, store: h.frames, seq: h.frames.MaxSeq(convID), seen: make(map[string]struct{}), notifyOffline: h.pushNotify, onMessageStored: h.chatMessageStored}
 	b.setIdent(agentID, sk)
 	if preview, sentMs, ok := h.frames.LastVisible(convID); ok {
 		b.lastPreview = preview
@@ -2565,7 +2569,8 @@ type convBinding struct {
 	notifyOffline func(p pushPayload) // fires a wake push for offline visible frames; nil = no push
 	// onMessageStored runs after a chat message frame (autoNameCounts) is in
 	// the durable store, on a goroutine of its own; nil = none. The hub's
-	// automatic chat name (#2962) counts messages from there.
+	// automatic chat name (#2962) and chat sections (#2993) count messages
+	// from there (Hub.chatMessageStored).
 	onMessageStored func(b *convBinding)
 
 	mu           sync.Mutex

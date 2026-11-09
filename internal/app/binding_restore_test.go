@@ -316,7 +316,7 @@ func TestConvBindingFieldCensus(t *testing.T) {
 		"convID": true, "ident": true, "chatID": true, // ident: agent + session key, set by ensureBinding (setIdent)
 		"replayDepth": true, "replayTTL": true, "store": true,
 		"notifyOffline": true, "seq": true, "seen": true,
-		"onMessageStored": true, // h.autoNameCheck (#2962)
+		"onMessageStored": true, // h.chatMessageStored (#2962, #2993)
 	}
 	// durableBacked: correctness depends on a value from persistent storage
 	// (frameStore / SessionIndex) that predates this process — MUST be

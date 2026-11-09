@@ -163,6 +163,10 @@ var (
 	// into the app hub's autoNamer (a derived handle).
 	liveApplyAutoNameAddrs = []string{"platforms.app.auto_name", "platforms.app.auto_name_first", "platforms.app.auto_name_every", "platforms.app.auto_name_words"}
 
+	// #2993: the chat sections' switch and counts, pushed into the app hub's
+	// sectioner (a derived handle).
+	liveApplyChatSectionsAddrs = []string{"platforms.app.chat_sections", "platforms.app.chat_sections_every", "platforms.app.chat_sections_after_break"}
+
 	// Global rows only: the agent./platforms. debug override rows are dead
 	// (nothing reads them — tracker #1199), so their struct tags carry the
 	// ",global" scope marker and no applier exists for them.
@@ -450,6 +454,15 @@ func registerLiveAppliers(la *liveApply, agents *agentRegistry) {
 			appCfg = p.App
 		}
 		app.ConfigureAutoName(appCfg)
+		return nil
+	})
+
+	la.register(liveApplyChatSectionsAddrs, func(fresh *config.Config) error {
+		var appCfg *config.AppSpecific
+		if p := fresh.Platform("app"); p != nil {
+			appCfg = p.App
+		}
+		app.ConfigureChatSections(appCfg)
 		return nil
 	})
 

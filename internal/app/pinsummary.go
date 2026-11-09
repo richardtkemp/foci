@@ -150,7 +150,7 @@ func (s *pinSummariser) warnIfUnconfigured() {
 	}
 	fastSummaryWarnOnce.Do(func() {
 		appLog.Warnf("fast summary: secret %s is not set, so the model calls of [platforms.app] pin_summary_model are off: "+
-			"pin label suggestions, Stop-view subagent summaries and automatic chat names", pinSummarySecret)
+			"pin label suggestions, Stop-view subagent summaries, automatic chat names and chat sections", pinSummarySecret)
 	})
 }
 
@@ -235,6 +235,10 @@ type summaryAsk struct {
 	// result, and log warning"). A shorter answer is used as written, never
 	// cut.
 	maxWords int
+	// raw returns the answer as the model wrote it, only trimmed: line breaks
+	// are kept and it is not cleaned to one label line. For an answer in a
+	// form its caller parses (the chat sections, #2993).
+	raw bool
 }
 
 // summaryWordsOK reports whether summary is within 1.5 times maxWords words
@@ -326,6 +330,13 @@ func (s *pinSummariser) ask(ctx context.Context, a summaryAsk, text, session, ag
 		a.what, session, served, out.Usage.PromptTokens, out.Usage.CompletionTokens, duration.Round(time.Millisecond))
 	bookSummary(a.what, out, served, session, agentID, start, duration)
 
+	if a.raw {
+		answer := strings.TrimSpace(out.Choices[0].Message.Content)
+		if answer == "" {
+			return "", fmt.Errorf("openrouter: empty answer")
+		}
+		return answer, nil
+	}
 	summary := cleanPinSummary(out.Choices[0].Message.Content)
 	if summary == "" {
 		return "", fmt.Errorf("openrouter: empty summary")

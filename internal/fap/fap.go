@@ -180,6 +180,12 @@ const (
 	// summary pair.
 	TypeMessageInfoGet = "message.info.get"
 	TypeMessageInfo    = "message.info"
+	// TypeSectionsGet (app->server) asks for a conversation's table of
+	// contents, the sections the fast model found as the chat went (#2993);
+	// TypeSections (server->app) is the answer, sent to the asking socket
+	// only. Socket-level, like the message info pair.
+	TypeSectionsGet = "sections.get"
+	TypeSections    = "sections"
 	// TypeScrollPut (app->server) mirrors where the user left a conversation
 	// (#2144); TypeScrollSync (server->app) fans it to the user's other devices
 	// and is replayed after a hello, exactly like the draft pair.
@@ -1470,6 +1476,35 @@ type MessageInfo struct {
 }
 
 func (MessageInfo) Type() string { return TypeMessageInfo }
+
+// SectionsGet asks for one conversation's sections (app->server, #2993), for
+// the chat's Contents view. Answered by one Sections carrying the same
+// RequestID, on the asking socket.
+type SectionsGet struct {
+	RequestID      string `json:"requestId"`
+	ConversationID string `json:"conversationId"`
+}
+
+// ChatSection is one section of a conversation (#2993): where it starts and
+// its title. Only titled sections are sent.
+type ChatSection struct {
+	// MessageID is the section's first message, the one the app jumps to.
+	MessageID string `json:"messageId"`
+	Title     string `json:"title"`
+	// StartMs is when that message was sent (unix ms).
+	StartMs int64 `json:"startMs"`
+}
+
+// Sections answers a SectionsGet (server->app, #2993): the conversation's
+// sections, oldest first. Empty when none has been found yet, the chat began
+// before the feature, or the feature is off.
+type Sections struct {
+	RequestID      string        `json:"requestId"`
+	ConversationID string        `json:"conversationId"`
+	Sections       []ChatSection `json:"sections"`
+}
+
+func (Sections) Type() string { return TypeSections }
 
 // MessageTurnInfo is one agent turn's facts. Figures from the cost ledger
 // (tokens, cost, calls, context fill, stop reason, times) are absent when the

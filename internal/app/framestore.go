@@ -866,24 +866,50 @@ func (s *frameStore) CountMessagesAfter(convID string, afterSeq int64, limit int
 	return n
 }
 
-// chatMessage is one chat message read back for the automatic chat name.
+// chatMessage is one chat message read back for the automatic chat name
+// (#2962) and the chat sections (#2993).
 type chatMessage struct {
-	seq  int64
-	user bool // false = the agent
-	text string
+	seq    int64
+	id     string // the message id the app keys its row by
+	sentMs int64
+	user   bool // false = the agent
+	text   string
 }
 
 // LastMessagesAfter returns the newest limit chat messages (chatMessageWhere)
 // of convID with seq > afterSeq, oldest first. A nil store or a read error
 // gives nil.
 func (s *frameStore) LastMessagesAfter(convID string, afterSeq int64, limit int) []chatMessage {
+	out := s.readChatMessages(convID, afterSeq, limit, true)
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}
+
+// FirstMessagesAfter returns the oldest limit chat messages (chatMessageWhere)
+// of convID with seq > afterSeq, oldest first. A nil store or a read error
+// gives nil.
+func (s *frameStore) FirstMessagesAfter(convID string, afterSeq int64, limit int) []chatMessage {
+	return s.readChatMessages(convID, afterSeq, limit, false)
+}
+
+const (
+	chatMessagesOldestFirst = `SELECT seq, sent_ms, wire FROM app_frames WHERE ` + chatMessageWhere + ` ORDER BY seq ASC LIMIT ?`
+	chatMessagesNewestFirst = `SELECT seq, sent_ms, wire FROM app_frames WHERE ` + chatMessageWhere + ` ORDER BY seq DESC LIMIT ?`
+)
+
+// readChatMessages reads up to limit chat messages of convID with seq >
+// afterSeq, oldest first, or newest first when newest is set.
+func (s *frameStore) readChatMessages(convID string, afterSeq int64, limit int, newest bool) []chatMessage {
 	if s == nil || limit <= 0 {
 		return nil
 	}
-	rows, err := s.db.Query(
-		`SELECT seq, wire FROM app_frames WHERE `+chatMessageWhere+` ORDER BY seq DESC LIMIT ?`,
-		convID, afterSeq, limit,
-	)
+	query := chatMessagesOldestFirst
+	if newest {
+		query = chatMessagesNewestFirst
+	}
+	rows, err := s.db.Query(query, convID, afterSeq, limit)
 	if err != nil {
 		appLog.Warnf("frame store: read messages %s: %v", convID, err)
 		return nil
@@ -891,9 +917,9 @@ func (s *frameStore) LastMessagesAfter(convID string, afterSeq int64, limit int)
 	defer rows.Close() //nolint:errcheck
 	var out []chatMessage
 	for rows.Next() {
-		var seq int64
+		var seq, sentMs int64
 		var wire string
-		if err := rows.Scan(&seq, &wire); err != nil {
+		if err := rows.Scan(&seq, &sentMs, &wire); err != nil {
 			appLog.Warnf("frame store: read messages %s: scan: %v", convID, err)
 			return nil
 		}
@@ -902,6 +928,7 @@ func (s *frameStore) LastMessagesAfter(convID string, afterSeq int64, limit int)
 			continue
 		}
 		var d struct {
+			MessageID string  `json:"messageId"`
 			Role      string  `json:"role"`
 			Text      string  `json:"text"`
 			FinalText *string `json:"finalText"`
@@ -909,7 +936,7 @@ func (s *frameStore) LastMessagesAfter(convID string, afterSeq int64, limit int)
 		if json.Unmarshal(env.D, &d) != nil {
 			continue
 		}
-		m := chatMessage{seq: seq, user: env.T == fap.TypeMessage && d.Role == "user", text: d.Text}
+		m := chatMessage{seq: seq, id: d.MessageID, sentMs: sentMs, user: env.T == fap.TypeMessage && d.Role == "user", text: d.Text}
 		if env.T == fap.TypeTextEnd && d.FinalText != nil {
 			m.text = *d.FinalText
 		}
@@ -918,9 +945,6 @@ func (s *frameStore) LastMessagesAfter(convID string, afterSeq int64, limit int)
 	if err := rows.Err(); err != nil {
 		appLog.Warnf("frame store: read messages %s: %v", convID, err)
 		return nil
-	}
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-		out[i], out[j] = out[j], out[i]
 	}
 	return out
 }

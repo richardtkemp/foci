@@ -967,6 +967,12 @@ type AppSpecific struct {
 	AutoNameFirst *int  `toml:"auto_name_first" hot:"event" min:"1" desc:"How many messages a chat has before its first automatic name (default 10)"`
 	AutoNameEvery *int  `toml:"auto_name_every" hot:"event" min:"1" desc:"How many new messages after the last automatic name until the name is checked again; also the most messages the model reads (default 50)"`
 	AutoNameWords *int  `toml:"auto_name_words" hot:"event" min:"1" desc:"The most words the model is asked to use for an automatic chat name; an answer longer than 1.5 times this is not used (default 6)"`
+	// Chat sections (#2993): each app chat's table of contents, found by the
+	// pin summary's model (pin_summary_model / pin_summary_provider,
+	// openrouter.api_key) as the chat goes.
+	ChatSections           *bool `toml:"chat_sections"             hot:"event" desc:"Find the sections of each app chat (a table of contents, shown from the chat's menu) with the pin_summary_model model as the chat goes; only messages sent after this is on are sectioned. Runs only when that model can be called (not off, openrouter.api_key set) (default true)"`
+	ChatSectionsEvery      *int  `toml:"chat_sections_every"       hot:"event" min:"1" desc:"How many new messages between two checks of a chat's sections (default 5)"`
+	ChatSectionsAfterBreak *int  `toml:"chat_sections_after_break" hot:"event" min:"1" desc:"How many new messages must pass after a check that found a new section before the next check (default 10)"`
 	// AllowedDevices: if non-empty, only these device IDs may pair (empty allows
 	// any). A slice → set in the TOML file, not via /config set, so no desc tag
 	// (mirrors AccessConfig.AllowedUsers).
@@ -1077,6 +1083,15 @@ func (p *PlatformConfig) ApplyDefaults(defaults PlatformConfig) {
 		}
 		if p.App.AutoNameWords == nil {
 			p.App.AutoNameWords = defaults.App.AutoNameWords
+		}
+		if p.App.ChatSections == nil {
+			p.App.ChatSections = defaults.App.ChatSections
+		}
+		if p.App.ChatSectionsEvery == nil {
+			p.App.ChatSectionsEvery = defaults.App.ChatSectionsEvery
+		}
+		if p.App.ChatSectionsAfterBreak == nil {
+			p.App.ChatSectionsAfterBreak = defaults.App.ChatSectionsAfterBreak
 		}
 		if p.App.AllowedDevices == nil {
 			p.App.AllowedDevices = defaults.App.AllowedDevices

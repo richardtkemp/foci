@@ -430,6 +430,7 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		PinSummary{RequestID: "r", MessageID: "m"},
 		SubagentSummary{ConversationID: "c", ID: "toolu_1", Summary: "Reading the config loader"},
 		MessageInfo{RequestID: "r", ConversationID: "c", MessageID: "m", Note: "not recorded"},
+		Sections{RequestID: "r", ConversationID: "c", Sections: []ChatSection{{MessageID: "m", Title: "Setup", StartMs: 1}}},
 		ScrollSync{ConversationID: "c", MessageID: "m", Following: false},
 		ConvPinSync{ConversationID: "c", Pinned: true},
 		CheckboxSync{DocumentID: "b", Lines: []int{1}},
@@ -1034,5 +1035,44 @@ func TestShellCommandFrames(t *testing.T) {
 	f, ok := in.Frame.(ShellCancel)
 	if !ok || f.ConversationID != "c" || f.RunID != "r" {
 		t.Errorf("frame = %#v", in.Frame)
+	}
+}
+
+// TestDecode_SectionsGet pins the app->server half of the chat sections pair
+// (#2993): the Kotlin encoder's field names.
+func TestDecode_SectionsGet(t *testing.T) {
+	in, err := Decode(`{"t":"sections.get","id":"i1","d":{"requestId":"r1","conversationId":"c1"}}`)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	f, ok := in.Frame.(SectionsGet)
+	if !ok {
+		t.Fatalf("frame = %T, want SectionsGet", in.Frame)
+	}
+	if f.RequestID != "r1" || f.ConversationID != "c1" {
+		t.Errorf("decoded = %+v", f)
+	}
+}
+
+// TestEncode_Sections pins the server->app answer's field names, which the
+// Kotlin decoder mirrors, and that no sections encode as [] (never null).
+func TestEncode_Sections(t *testing.T) {
+	wire, err := Encode(Sections{RequestID: "r1", ConversationID: "c1",
+		Sections: []ChatSection{{MessageID: "m1", Title: "Wiring the hub", StartMs: 5}}}, 0, 0, "", "")
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	for _, want := range []string{`"t":"sections"`, `"requestId":"r1"`, `"conversationId":"c1"`,
+		`"sections":[{"messageId":"m1","title":"Wiring the hub","startMs":5}]`} {
+		if !strings.Contains(wire, want) {
+			t.Errorf("wire = %s, missing %s", wire, want)
+		}
+	}
+	wire, err = Encode(Sections{RequestID: "r2", ConversationID: "c1", Sections: []ChatSection{}}, 0, 0, "", "")
+	if err != nil {
+		t.Fatalf("encode empty: %v", err)
+	}
+	if !strings.Contains(wire, `"sections":[]`) {
+		t.Errorf("empty wire = %s, want sections:[]", wire)
 	}
 }
