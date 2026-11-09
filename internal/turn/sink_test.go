@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"foci/internal/turnevent"
 )
@@ -489,5 +491,91 @@ func TestSinkDeliversToPlatform(t *testing.T) {
 	sess := NewSessionSink(&fakeSessionConn{}, "sess-1", "test")
 	if !sess.DeliversToPlatform() {
 		t.Errorf("SessionSink.DeliversToPlatform() = false, want true")
+	}
+}
+
+// blockingSessionConn is a fakeSessionConn safe for concurrent use whose
+// SendToSession for blockText parks until release is closed, after signalling
+// entered. It lets a test hold an intermediate delivery mid-send.
+type blockingSessionConn struct {
+	fakeTypingConn
+
+	blockText string
+	entered   chan struct{}
+	release   chan struct{}
+
+	mu        sync.Mutex
+	sendCalls []string
+}
+
+func (f *blockingSessionConn) SetTyping(bool) {}
+
+func (f *blockingSessionConn) SendToSession(_ string, text string) error {
+	if text == f.blockText {
+		close(f.entered)
+		<-f.release
+	}
+	f.mu.Lock()
+	f.sendCalls = append(f.sendCalls, text)
+	f.mu.Unlock()
+	return nil
+}
+
+// TestSessionSinkConcurrentTextBlockAndTurnComplete covers #2958: one
+// SessionSink receives TextBlocks on the backend's reader goroutine (via the
+// session router) and TurnComplete on the session worker. The delivered flag
+// must be read and written under one lock, and the check-then-send must be
+// atomic: a TurnComplete arriving while an intermediate block is mid-send has
+// to wait for it and then suppress the final text, not deliver it a second
+// time. Run under GOFLAGS=-race the unsynchronised version also reports the
+// data race the nightly found.
+//
+// The 200ms grace below only decides how long the unfixed sink is given to
+// finish TurnComplete while the TextBlock is parked; on a heavily loaded host
+// a too-short grace can make the test pass on broken code, never fail on good
+// code (the fixed sink cannot finish until release, and the test waits for it).
+func TestSessionSinkConcurrentTextBlockAndTurnComplete(t *testing.T) {
+	conn := &blockingSessionConn{
+		blockText: "live update",
+		entered:   make(chan struct{}),
+		release:   make(chan struct{}),
+	}
+	sink := NewSessionSink(conn, "sess-1", "test")
+	ctx := context.Background()
+
+	tbDone := make(chan struct{})
+	go func() {
+		defer close(tbDone)
+		sink.Emit(ctx, turnevent.TextBlock{Text: "live update", Phase: turnevent.PhaseIntermediate})
+	}()
+	select {
+	case <-conn.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("TextBlock never reached SendToSession")
+	}
+
+	tcDone := make(chan struct{})
+	go func() {
+		defer close(tcDone)
+		sink.Emit(ctx, turnevent.TurnComplete{FinalText: "the final reply"})
+	}()
+	select {
+	case <-tcDone:
+		// Unfixed: TurnComplete ran while the intermediate send was in flight.
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(conn.release)
+	for _, ch := range []chan struct{}{tbDone, tcDone} {
+		select {
+		case <-ch:
+		case <-time.After(10 * time.Second):
+			t.Fatal("Emit did not return after release")
+		}
+	}
+
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+	if len(conn.sendCalls) != 1 || conn.sendCalls[0] != "live update" {
+		t.Errorf("sendCalls = %q, want [live update] (final text must be suppressed once the intermediate block is delivered)", conn.sendCalls)
 	}
 }

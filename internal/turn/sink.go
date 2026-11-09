@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	"foci/internal/log"
 	"foci/internal/platform"
@@ -193,12 +194,19 @@ func (s *StreamingSink) Emit(ctx context.Context, ev turnevent.Event) {
 //
 // SessionSink owns its own delivered flag: once an intermediate TextBlock
 // fires, the final TurnComplete text is suppressed, preventing double-delivery.
+//
+// Emit is called from two goroutines on one sink: TextBlocks arrive on the
+// backend's stream reader (through the session router), TurnComplete on the
+// session worker that ran the turn (#2958). deliverMu makes each delivery
+// decision and its send one step, so a TurnComplete that arrives while an
+// intermediate block is mid-send waits for it and then sees delivered.
 type SessionSink struct {
 	conn       platform.Connection
 	sessionKey string
 	trigger    string // used for error logging; caller-provided label
 	lg         *log.ComponentLogger
 
+	deliverMu sync.Mutex // guards delivered, held across the TextBlock / TurnComplete send
 	delivered bool
 	onError   func(trigger string, err error)
 }
@@ -273,6 +281,8 @@ func (s *SessionSink) Emit(_ context.Context, ev turnevent.Event) {
 			s.onError(s.trigger, err)
 		}
 	case turnevent.TextBlock:
+		s.deliverMu.Lock()
+		defer s.deliverMu.Unlock()
 		if e.Phase != turnevent.PhaseIntermediate || s.conn == nil {
 			s.lg.Debugf("sink=%p SessionSink TextBlock: skip (phase=%v conn_nil=%v)", s, e.Phase, s.conn == nil)
 			return
@@ -294,6 +304,8 @@ func (s *SessionSink) Emit(_ context.Context, ev turnevent.Event) {
 		s.delivered = true
 		s.lg.Debugf("sink=%p SessionSink TextBlock: delivered_after=true", s)
 	case turnevent.TurnComplete:
+		s.deliverMu.Lock()
+		defer s.deliverMu.Unlock()
 		// Strip a leading spurious token then trailing silencing sentinel(s) so
 		// an agent that appended the marker to a real reply still delivers the
 		// clean text; a fully-silent/junk FinalText strips to "" and is
