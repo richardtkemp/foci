@@ -48,6 +48,7 @@ blocked_paths                      a whole array of tables
 agents[main].platforms             one agent's array of tables
 blocked_paths[etc]                 ONE element: the table whose name (else id) is "etc"
 rules[tool=Bash]                   ONE element: the table whose tool is "Bash"
+tts[groq-playai].fallback          ONE key inside one element (get, set and unset)
 rules[3]                           ONE element: index 3, counting from 0
 paths["/tmp/x"]                    ONE element: the string "/tmp/x" (quote non-bare values)
 ```
@@ -69,6 +70,7 @@ foci config unset 'agents[main].effort'
 foci config unset 'agents[main].backend_config.pretool_rules[old_rule]'     # remove one rule
 foci config set 'agents[main].backend_config.pretool_rules[old_rule]' '{name = "old_rule", tool = "Bash", command = "x", reason = "y"}'
 foci config add 'agents[main].backend_config.pretool_rules' '{name = "new_rule", tool = "Bash", command = "x", reason = "y"}'
+foci config unset 'tts[groq-playai].fallback'                      # one key of one element; the rest keep their text
 ```
 
 A set of a whole array replaces every entry: list all the entries you want to keep. Only the entries that differ are rewritten, so the others keep their layout and comments. For one entry, prefer a selector.

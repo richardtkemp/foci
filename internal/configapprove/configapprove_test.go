@@ -389,6 +389,34 @@ func TestElement_RemoveShowsOnlyTheElement(t *testing.T) {
 	}
 }
 
+// TestElement_UnsetKeyInsideElement proves `unset arr[name].key` (#2991):
+// the prompt shows that key's value and "(unset)", Approve removes only that
+// key's text, and the live apply gets the array's address.
+func TestElement_UnsetKeyInsideElement(t *testing.T) {
+	h := newHarness(t)
+	if err := os.WriteFile(h.path, []byte(rulesConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st := h.svc.Submit(Submission{AgentID: "main", SessionKey: "main/app/1", Op: OpUnset, Path: "agents[main].backend_config.pretool_rules[drop].reason"})
+	if st.Outcome != Pending {
+		t.Fatalf("submit: %+v", st)
+	}
+	if st.Old != `"b"` || st.New != "(unset)" {
+		t.Errorf("old = %s, new = %s", st.Old, st.New)
+	}
+	h.prompt(0).OnAnswer(true)
+	want := strings.Replace(rulesConfig, `{ name = "drop", tool = "Bash", reason = "b" }`, `{ name = "drop", tool = "Bash" }`, 1)
+	if got := h.file(); got != want {
+		t.Errorf("file:\n%s\nwant:\n%s", got, want)
+	}
+	if len(h.applied) != 1 {
+		t.Fatalf("applied = %v", h.applied)
+	}
+	if sec, key := mustKeyPath(t, h.applied[0]).LiveApplyAddress(); sec != "agent" || key != "backend_config.pretool_rules" {
+		t.Errorf("live-apply address = %s %s", sec, key)
+	}
+}
+
 // TestElement_Add proves `add` appends one element and the prompt shows
 // only the new element.
 func TestElement_Add(t *testing.T) {

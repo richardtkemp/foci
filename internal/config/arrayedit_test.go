@@ -203,8 +203,8 @@ func TestElement_Refusals(t *testing.T) {
 			t.Errorf("%s: err = %v, want %q", tc.path, err, tc.want)
 		}
 	}
-	if _, err := ParseKeyPath("a.list[0].name"); err == nil {
-		t.Error("a selector before the end of the path parsed")
+	if _, err := ParseKeyPath("a.list[0].name[1]"); err == nil {
+		t.Error("a second selector parsed")
 	}
 	if _, err := PlanAddElement(dup, mustPath(t, "a.list[x]"), `{name = "z"}`); err == nil {
 		t.Error("add with a selector was accepted")

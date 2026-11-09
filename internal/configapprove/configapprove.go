@@ -245,7 +245,7 @@ func (s *Service) Submit(sub Submission) Status {
 		return Status{Outcome: Failed, Path: p.String(), Reason: err.Error()}
 	}
 	newText := "(unset)"
-	if p.Elem != nil {
+	if p.Elem != nil && len(p.Sub) == 0 {
 		newText = "(element removed)"
 	}
 	if sub.Op != OpUnset {

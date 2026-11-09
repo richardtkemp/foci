@@ -3526,7 +3526,9 @@ An agent changes a setting through the approval flow:
 foci config set|unset|add <path> [<value>]   (cmd/foci/cmd_config.go)
   → POST /config/request {session, op, path, value, timeout_secs}   (same auth as /command)
       → configapprove.Service.Submit
-          → config.ParseKeyPath (a trailing [sel] = one array element, KeyPath.Elem, #2938)
+          → config.ParseKeyPath ([sel] = one array element, KeyPath.Elem, #2938; a dotted key after it
+                                = a key inside that element, KeyPath.Sub, #2991: elementsubedit.go
+                                builds the element's new text and hands it to the element replace)
             → read file → config.LookupPath (old value: the key, or the one element)
           → config.PlanSetPath / PlanUnsetPath / PlanAddElement
                                                     ← any TOML key path; candidates tried in order,

@@ -29,11 +29,13 @@ import (
 // KeyPath names one key in the config file. AgentID non-empty means a key
 // inside the [[agents]] block whose id is AgentID; Keys are the unquoted
 // dotted-key segments relative to that block (or to the file's root table).
-// Elem non-nil names ONE element of the array at Keys (#2938).
+// Elem non-nil names ONE element of the array at Keys (#2938); Sub then
+// optionally names a key inside that element, a table (#2991).
 type KeyPath struct {
 	AgentID string
 	Keys    []string
 	Elem    *ElemSel
+	Sub     []string
 }
 
 // ElemSel picks one element of an array, written after the array's key in
@@ -66,6 +68,11 @@ func (e ElemSel) String() string {
 // when it has no selector).
 func (p KeyPath) Array() KeyPath {
 	return KeyPath{AgentID: p.AgentID, Keys: p.Keys}
+}
+
+// Element is the path of the one element p names, without p's key inside it.
+func (p KeyPath) Element() KeyPath {
+	return KeyPath{AgentID: p.AgentID, Keys: p.Keys, Elem: p.Elem}
 }
 
 // parseElemSel parses the selector text between the brackets.
@@ -169,6 +176,9 @@ const agentsKey = "agents"
 // "basic" / 'literal' quoted ones), where a leading agents[<id>] selects one
 // agent's block. Examples: agent_loop.max_tool_loops,
 // agents[clutch].nudge.enable, models."claude.fast".id, blocked_paths.
+// One element selector may follow the keys (blocked_paths[root]), and a
+// dotted key after it names a key inside that element
+// (tts[groq-playai].fallback, #2991).
 func ParseKeyPath(s string) (KeyPath, error) {
 	s = strings.TrimSpace(s)
 	var p KeyPath
@@ -201,11 +211,23 @@ func ParseKeyPath(s string) (KeyPath, error) {
 		if err != nil {
 			return KeyPath{}, fmt.Errorf("key path %q: %w", s, err)
 		}
-		if strings.TrimSpace(after) != "" {
-			return KeyPath{}, fmt.Errorf("key path %q: an element selector [...] must end the path (got %q after it)", s, after)
-		}
 		p.Elem = &sel
 		rest = ""
+		if after = strings.TrimSpace(after); after != "" {
+			dot, ok := strings.CutPrefix(after, ".")
+			if !ok {
+				return KeyPath{}, fmt.Errorf("key path %q: expected '.' and a key after the element selector (got %q)", s, after)
+			}
+			sub, subRest, err := parseDottedKey(dot)
+			if err != nil {
+				return KeyPath{}, fmt.Errorf("key path %q: key after the element selector: %w", s, err)
+			}
+			if strings.HasPrefix(subRest, "[") {
+				return KeyPath{}, fmt.Errorf("key path %q: only one element selector [...] per path", s)
+			}
+			p.Sub = sub
+			rest = subRest
+		}
 	}
 	if strings.TrimSpace(rest) != "" {
 		return KeyPath{}, fmt.Errorf("key path %q: unexpected %q after the key", s, rest)
@@ -222,6 +244,9 @@ func (p KeyPath) String() string {
 	k := renderDottedKey(p.Keys)
 	if p.Elem != nil {
 		k += p.Elem.String()
+		if len(p.Sub) > 0 {
+			k += "." + renderDottedKey(p.Sub)
+		}
 	}
 	if p.AgentID != "" {
 		return agentsKey + "[" + p.AgentID + "]." + k
@@ -564,6 +589,9 @@ func (d *tomlDoc) withoutDefs(pd pathDefs) []string {
 // inline tables). A whole array of tables is replaced. The result is
 // verified (VerifyPathEdit) before it is returned.
 func PlanSetPath(content string, p KeyPath, value string) (string, error) {
+	if len(p.Sub) > 0 {
+		return planElementSubEdit(content, p, value, false)
+	}
 	if p.Elem != nil {
 		return planElementEdit(content, p, elemReplace, value)
 	}
@@ -620,6 +648,9 @@ func PlanSetPath(content string, p KeyPath, value string) (string, error) {
 // PlanUnsetPath returns content with every definition of the key at p
 // removed. An absent key is an error: there is nothing to change.
 func PlanUnsetPath(content string, p KeyPath) (string, error) {
+	if len(p.Sub) > 0 {
+		return planElementSubEdit(content, p, "", true)
+	}
 	if p.Elem != nil {
 		return planElementEdit(content, p, elemRemove, "")
 	}
@@ -850,7 +881,15 @@ func LookupPath(content string, p KeyPath) (any, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	return arr[k], true, nil
+	if len(p.Sub) == 0 {
+		return arr[k], true, nil
+	}
+	m, isTable := arr[k].(map[string]any)
+	if !isTable {
+		return nil, false, fmt.Errorf("%s is not a table, so it has no key %s", p.Element(), renderDottedKey(p.Sub))
+	}
+	v, ok = lookupIn(m, p.Sub)
+	return v, ok, nil
 }
 
 // VerifyPathEdit checks that next differs from cur ONLY at p and, for a set,

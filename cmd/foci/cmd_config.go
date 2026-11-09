@@ -30,7 +30,9 @@ import (
 //
 // A path may end in an element selector (rules[name], rules[3],
 // rules[field=value], #2938): set replaces that one element, unset removes
-// it, and the prompt shows only that element.
+// it, and the prompt shows only that element. A dotted key after the
+// selector (tts[groq-playai].fallback, #2991) names a key inside that
+// element: get, set and unset then act on that key alone.
 //
 // set, unset, add and wait print exactly one outcome — applied, denied, timed out
 // or failed (with a reason) — and exit 0 only for applied.
@@ -282,6 +284,11 @@ of tables included). set then replaces only that element, unset removes it
   rules[tool=Bash]    the table whose tool is "Bash" (must match one)
   rules[3]            the element at index 3, counting from 0
   paths["/tmp/x"]     quote a value that is not a bare word
+A dotted key after the selector names one key inside that element; get, set
+and unset then act on that key alone, and the element's other keys keep
+their text:
+  foci config unset 'tts[groq-playai].fallback'
+  foci config set 'tts[groq-playai].max_chars' 300
   foci config unset 'agents[main].backend_config.pretool_rules[old_rule]'
   foci config add 'agents[main].backend_config.pretool_rules' '{name = "x", tool = "Bash", command = "y"}'
 
