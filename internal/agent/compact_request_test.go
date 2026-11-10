@@ -148,3 +148,34 @@ func TestRequestedCompaction_APITransport(t *testing.T) {
 		t.Error("request still recorded after the turn ended")
 	}
 }
+
+// TestRequestedCompaction_NoCompactSessionRefused (Q64, Dick 2026-11-10): a
+// no_compact session refuses the request at request time, and a request made
+// before no_compact was set is dropped at the turn's end, compacting nothing.
+func TestRequestedCompaction_NoCompactSessionRefused(t *testing.T) {
+	t.Parallel()
+	const sk = "test-agent/c1"
+	ag, _, sent := bgCompactAgent(t, sk)
+
+	ag.SetSessionNoCompact(sk, true)
+	if err := ag.RequestCompaction(sk); err == nil {
+		t.Fatal("want an error: the session has no_compact set")
+	}
+	if ag.CompactionRequested(sk) {
+		t.Fatal("a refused request was recorded")
+	}
+
+	ag.SetSessionNoCompact(sk, false)
+	if err := ag.RequestCompaction(sk); err != nil {
+		t.Fatalf("RequestCompaction: %v", err)
+	}
+	ag.SetSessionNoCompact(sk, true)
+	tr := &DelegatedTransport{sharedTurnOps{agent: ag}}
+	tr.RunCompaction(requestTurn(t, ag, sk))
+	if len(*sent) != 0 {
+		t.Fatalf("sent %q: a request in a no_compact session must not compact", *sent)
+	}
+	if ag.CompactionRequested(sk) {
+		t.Error("request still recorded after it was dropped")
+	}
+}

@@ -28,6 +28,11 @@ func (a *Agent) RequestCompaction(sessionKey string) error {
 	if sessionKey == "" {
 		return fmt.Errorf("no session to compact")
 	}
+	// A no_compact session refuses the agent's request (Dick 2026-11-10,
+	// Q64), unlike the user's /compact, which ignores the flag.
+	if a.SessionNoCompact(sessionKey) {
+		return fmt.Errorf("this session has compaction turned off (no_compact)")
+	}
 	a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.compactRequest = true })
 	a.logger().Infof("session=%s compaction requested by the agent: runs after this turn", sessionKey)
 	return nil
@@ -63,6 +68,11 @@ func (a *Agent) takeCompactionRequest(sessionKey string) bool {
 // the request waits for that run's own end.
 func (a *Agent) runRequestedCompaction(ts *TurnState) bool {
 	if !a.takeCompactionRequest(ts.SessionKey) {
+		return false
+	}
+	// no_compact set after the request was made: drop it (Q64).
+	if a.SessionNoCompact(ts.SessionKey) {
+		a.logger().Infof("session=%s agent-requested compaction dropped: no_compact set since the request", ts.SessionKey)
 		return false
 	}
 	// ts.Ctx is done once the turn has returned; keep its values (the cost
