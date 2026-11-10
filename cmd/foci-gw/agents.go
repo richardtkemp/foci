@@ -124,6 +124,7 @@ type setupParams struct {
 	sessionIndex    *session.SessionIndex
 	tts             *ttsRegistry
 	sttMap          map[string]voice.STT
+	sttStream       *sttStreamProvider // hands-free voice input (#3018); nil = none
 	braveKey        string
 	gwSocketPath    string                    // Unix socket path for same-user CLI auth (injected into child env as FOCI_GW_SOCK)
 	skillLoader     *skills.Loader            // shared across all agents so the shared skills dir is scanned/warned once, not once per agent

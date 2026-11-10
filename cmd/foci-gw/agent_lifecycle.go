@@ -38,6 +38,7 @@ type agentEnv struct {
 	mem             *memorySystem
 	tts             *ttsRegistry
 	sttMap          map[string]voice.STT
+	sttStream       *sttStreamProvider
 	braveKey        string
 	gwSocketPath    string
 	skillLoader     *skills.Loader
@@ -113,6 +114,7 @@ func (e *agentEnv) buildAgent(acfg config.AgentConfig) *agentInstance {
 		sessionIndex:    e.si.sessionIndex,
 		tts:             e.tts,
 		sttMap:          e.sttMap,
+		sttStream:       e.sttStream,
 		braveKey:        e.braveKey,
 		gwSocketPath:    e.gwSocketPath,
 		skillLoader:     e.skillLoader,

@@ -203,7 +203,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 	case fap.ClientMessage:
 		// Message info (#2992): when this device sent it and when we got it.
 		h.frames.PutUserMessageReceipt(f.ConversationID, in.ID, envelopeMillis(in.TS), time.Now().UnixMilli())
-		h.routeUserTurn(client, f.ConversationID, f.AgentID, f.Text, h.resolveAttachments(f.Attachments), h.echoAttachmentRefs(f.Attachments), in.ID, in.Seq, platform.SteerPreferenceFromWire(f.Steer), f.TranscribeOnly)
+		h.routeUserTurn(client, f.ConversationID, f.AgentID, f.Text, h.resolveAttachments(f.Attachments), h.echoAttachmentRefs(f.Attachments), in.ID, in.Seq, platform.SteerPreferenceFromWire(f.Steer), f.TranscribeOnly, f.Voice)
 
 	case fap.ShellCancel:
 		h.shellRuns.cancel(f.ConversationID, f.RunID)
@@ -1071,7 +1071,13 @@ func inboundConvID(frame any) string {
 // A depth-mode leaf is a conversation of its own (#2611), so a reply to one
 // arrives here like any message; the depth manager hears of it first
 // (LeafUserMessage: a done leaf becomes a side thread).
-func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts []platform.Attachment, echoRefs []fap.AttachmentRef, inID string, inSeq int64, steer platform.SteerPreference, transcribeOnly bool) {
+//
+// spoken marks the text as a transcript the app streamed through /app/stt/stream
+// (fap.ClientMessage.Voice, #3018). A spoken text is treated like a
+// transcribed voice note: the turn is tagged voice (Envelope.Voice), and it is
+// never a "!cmd", a command or a message transform, which a voice note's
+// transcript never reaches either (it is transcribed after them).
+func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts []platform.Attachment, echoRefs []fap.AttachmentRef, inID string, inSeq int64, steer platform.SteerPreference, transcribeOnly, spoken bool) {
 	if convID == "" || (text == "" && len(atts) == 0) {
 		return
 	}
@@ -1079,7 +1085,7 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 	// A typed "!cmd" (#2812): only text with no attachment. A transcribe-only send
 	// never runs anything: its text is headed for the composer.
 	shellScript, isShell := "", false
-	if len(atts) == 0 && len(echoRefs) == 0 && !transcribeOnly {
+	if len(atts) == 0 && len(echoRefs) == 0 && !transcribeOnly && !spoken {
 		shellScript, isShell = usercmd.Parse(text)
 	}
 
@@ -1091,7 +1097,7 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 	// IsRoutableCommand already guards against file paths (/home/foci/x has an
 	// embedded slash in its first token → not a command) and only routes .cmd
 	// when the command is actually registered (so ".sigh" reaches the agent).
-	if text != "" && (text[0] == '/' || text[0] == '.') {
+	if text != "" && !spoken && (text[0] == '/' || text[0] == '.') {
 		aid := agentID
 		if aid == "" {
 			aid = h.defaultAgentID()
@@ -1112,7 +1118,7 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 
 	// Apply message transforms (mirrors the Telegram/Discord interceptor).
 	// A transform can rewrite the text or turn it into a command (e.g. "st" → "/stop").
-	if text != "" && !isShell {
+	if text != "" && !isShell && !spoken {
 		aid := agentID
 		if aid == "" {
 			aid = h.defaultAgentID()
@@ -1194,6 +1200,7 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 		return
 	}
 	text, atts, voiceTranscribed := h.transcribeVoice(conn, text, atts)
+	voiceTranscribed = voiceTranscribed || spoken
 	if transcribeOnly {
 		// Return the transcript for the user to edit; don't echo or run a turn.
 		// Ephemeral (sendRaw, no seq/durability) to the recording device only: it's a

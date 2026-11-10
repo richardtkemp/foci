@@ -91,6 +91,10 @@ type ResolvedVoice struct {
 	TTSOrder        []string
 	TTSReplacements map[string]string
 	STTReplacements map[string]string
+	// Hands-free voice input stream settings (#3018). Zero = unset.
+	StreamEOTThreshold   float64
+	StreamEOTTimeout     string
+	StreamSilenceTimeout string
 }
 
 // TTSPreference is the voices this agent tries before the [[tts]] priority
@@ -110,6 +114,10 @@ func resolveVoice(m VoiceConfig) ResolvedVoice {
 		TTSOrder:        m.TTSOrder,
 		TTSReplacements: m.TTSReplacements,
 		STTReplacements: m.STTReplacements,
+
+		StreamEOTThreshold:   DerefFloat(m.StreamEOTThreshold),
+		StreamEOTTimeout:     DerefStr(m.StreamEOTTimeout),
+		StreamSilenceTimeout: DerefStr(m.StreamSilenceTimeout),
 	}
 }
 

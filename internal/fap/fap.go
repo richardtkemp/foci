@@ -1199,6 +1199,11 @@ type ClientMessage struct {
 	// before sending, instead of being routed to the agent as a turn. Ignored
 	// when there is no voice attachment.
 	TranscribeOnly bool `json:"transcribeOnly,omitempty"`
+	// Voice marks Text as spoken: a transcript of the app's hands-free voice
+	// input (/app/stt/stream, #3018). The turn is tagged voice like a
+	// transcribed voice note (low effort, a spoken reply in voice mode), and
+	// the text is never a "!cmd", a command or a message transform.
+	Voice bool `json:"voice,omitempty"`
 }
 
 // Command is a slash-command invocation from the app. AgentID names the owning

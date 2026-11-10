@@ -591,6 +591,10 @@ func ReplayHandler() http.HandlerFunc { return withHub((*Hub).ServeReplay) }
 // STTHandler returns the GET /app/stt handler (direct-call STT credential).
 func STTHandler() http.HandlerFunc { return withHub((*Hub).ServeSTT) }
 
+// STTStreamHandler returns the GET /app/stt/stream handler (hands-free voice
+// relay, #3018).
+func STTStreamHandler() http.HandlerFunc { return withHub((*Hub).ServeSTTStream) }
+
 // SpeechHandler returns the POST /app/speech handler (read a message aloud, #2858).
 func SpeechHandler() http.HandlerFunc { return withHub((*Hub).ServeSpeech) }
 

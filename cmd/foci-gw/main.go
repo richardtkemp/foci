@@ -410,6 +410,7 @@ Subcommands:
 		mem:          mem,
 		tts:          ttsVoices,
 		sttMap:       sttMap,
+		sttStream:    initSTTStream(cfg, sec.store),
 		braveKey:     braveKey,
 		gwSocketPath: gwSocketPath,
 		// One skill loader shared across every agent so the shared skills

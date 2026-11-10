@@ -204,7 +204,7 @@ func TestDepthRouteUserTurn_ToLeaf(t *testing.T) {
 	lb := registerLeaf(t, h, root, branch, "leaf-9", "Nine")
 	drain(t, c)
 
-	h.routeUserTurn(c, lb.convID, "ag", "my reply", nil, nil, "env-1", 1, platform.SteerDefault, false)
+	h.routeUserTurn(c, lb.convID, "ag", "my reply", nil, nil, "env-1", 1, platform.SteerDefault, false, false)
 	if fa.env == nil || fa.env.SessionKey != branch {
 		t.Fatalf("enqueued %+v, want session %s", fa.env, branch)
 	}

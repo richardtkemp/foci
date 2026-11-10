@@ -249,7 +249,7 @@ func conventionSecretRefs(cfg *Config) []SecretRef {
 		if entry.Secret != "" {
 			continue
 		}
-		if key := HostnameSecretKey(entry.Endpoint); key != "" {
+		if key := HostnameSecretKey(entry.SecretEndpoint()); key != "" {
 			refs = append(refs, SecretRef{
 				Key:     key,
 				Context: fmt.Sprintf("stt %q endpoint", entry.ID),

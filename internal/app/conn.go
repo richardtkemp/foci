@@ -87,7 +87,10 @@ type appConn struct {
 	// field at call time: it is wired after the platform. nil = none.
 	redact func(string) string
 	stt    voice.STT // inbound voice transcription; nil = unsupported
-	tts    voice.TTS // outbound voice-mode synthesis (#1439); nil = unconfigured, text-only
+	// sttStream resolves the streaming STT for a hands-free voice stream
+	// (/app/stt/stream, #3018); nil = unsupported.
+	sttStream func() voice.StreamSetup
+	tts       voice.TTS // outbound voice-mode synthesis (#1439); nil = unconfigured, text-only
 
 	// Pending interactive headers, set by SetInteractiveHeader and consumed
 	// by SendTextWithButtons. Keyed by prompt ID. Pointer-based so the

@@ -632,17 +632,23 @@ const DefaultWebFetchMaxBytes int64 = 1 << 20 // 1 MiB
 // VoiceConfig holds TTS/STT settings.
 // Global: [voice], per-agent: [[agents]].voice.*
 type VoiceConfig struct {
-	TTS                  *string           `toml:"tts"      hot:"event" desc:"Text-to-speech voice to try first for voice replies, by [[tts]] id. If it is skipped or fails, the others follow in priority order"`
-	STT                  *string           `toml:"stt"      hot:"event" desc:"Which speech-to-text provider to use for transcribing voice messages"`
-	TTSRate              *float64          `toml:"tts_rate"  hot:"event" desc:"Speeds up or slows down text-to-speech playback. 1.0 is normal speed, higher is faster, lower is slower. 0 is treated as 1.0"`
-	TTSOrder             []string          `toml:"tts_order" hot:"event" desc:"Text-to-speech voices to try first, by [[tts]] id, in this order. Voices not listed follow, highest priority first. A voice named by tts comes before all of them"`
-	TTSReplacements      map[string]string `toml:"tts_replacements"`
-	STTReplacements      map[string]string `toml:"stt_replacements"`
-	MaxFrameBytes        *int              `toml:"max_frame_bytes" default:"1048576"  scope:"global" desc:"Maximum size in bytes of a single incoming voice websocket message; larger frames are rejected (1 MiB)"`
-	MaxAudioBytes        *int              `toml:"max_audio_bytes" default:"52428800" scope:"global" desc:"Maximum total bytes of audio buffered for one voice turn before it is cut off (50 MiB)"`
-	MaxConcurrentTurns   *int              `toml:"max_concurrent_turns" default:"4" scope:"global" desc:"Maximum number of voice turns, speech-to-text plus agent reply plus text-to-speech, that can be in progress at once on one connection"`
-	HTTPTimeout          *string           `toml:"http_timeout" default:"60s" scope:"global" desc:"How long to wait for the speech-to-text or text-to-speech provider to respond before giving up"`
-	HTTPMaxResponseBytes *int              `toml:"http_max_response_bytes" default:"67108864" scope:"global" desc:"Maximum size in bytes of a response from the speech-to-text or text-to-speech provider before it is rejected (64 MiB)"`
+	TTS             *string           `toml:"tts"      hot:"event" desc:"Text-to-speech voice to try first for voice replies, by [[tts]] id. If it is skipped or fails, the others follow in priority order"`
+	STT             *string           `toml:"stt"      hot:"event" desc:"Which speech-to-text provider to use for transcribing voice messages"`
+	TTSRate         *float64          `toml:"tts_rate"  hot:"event" desc:"Speeds up or slows down text-to-speech playback. 1.0 is normal speed, higher is faster, lower is slower. 0 is treated as 1.0"`
+	TTSOrder        []string          `toml:"tts_order" hot:"event" desc:"Text-to-speech voices to try first, by [[tts]] id, in this order. Voices not listed follow, highest priority first. A voice named by tts comes before all of them"`
+	TTSReplacements map[string]string `toml:"tts_replacements"`
+	STTReplacements map[string]string `toml:"stt_replacements"`
+	// Hands-free voice input (#3018): the end-of-turn settings of a streaming
+	// [[stt]] entry (deepgram-flux), read when each stream opens. Unset leaves
+	// the provider's default (Flux: 0.7 and 5s).
+	StreamEOTThreshold   *float64 `toml:"stream_eot_threshold"   hot:"event" min:"0.5" max:"1" desc:"Hands-free voice input: how sure the speech service must be that you have finished speaking before it sends your words, from 0.5 to 1. Higher waits for clearer pauses. Unset uses the service's default (0.7 for Deepgram Flux). Applies from the next time you start talking"`
+	StreamEOTTimeout     *string  `toml:"stream_eot_timeout"     hot:"event" desc:"Hands-free voice input: after you stop speaking, the longest wait before your words are sent anyway, as a duration from 500ms to 60s. Unset uses the service's default (5s for Deepgram Flux). Applies from the next time you start talking" type:"duration"`
+	StreamSilenceTimeout *string  `toml:"stream_silence_timeout" default:"15s" hot:"event" desc:"Hands-free voice input: the microphone stream closes when no words are heard for this long, so the speech service (billed per open minute) stops. Applies from the next time you start talking" type:"duration"`
+	MaxFrameBytes        *int     `toml:"max_frame_bytes" default:"1048576"  scope:"global" desc:"Maximum size in bytes of a single incoming voice websocket message; larger frames are rejected (1 MiB)"`
+	MaxAudioBytes        *int     `toml:"max_audio_bytes" default:"52428800" scope:"global" desc:"Maximum total bytes of audio buffered for one voice turn before it is cut off (50 MiB)"`
+	MaxConcurrentTurns   *int     `toml:"max_concurrent_turns" default:"4" scope:"global" desc:"Maximum number of voice turns, speech-to-text plus agent reply plus text-to-speech, that can be in progress at once on one connection"`
+	HTTPTimeout          *string  `toml:"http_timeout" default:"60s" scope:"global" desc:"How long to wait for the speech-to-text or text-to-speech provider to respond before giving up"`
+	HTTPMaxResponseBytes *int     `toml:"http_max_response_bytes" default:"67108864" scope:"global" desc:"Maximum size in bytes of a response from the speech-to-text or text-to-speech provider before it is rejected (64 MiB)"`
 }
 
 // AgentLoopConfig holds settings consumed by agent.HandleTurn().
@@ -1249,11 +1255,36 @@ var GoogleTTSEncodings = map[string]string{
 // Multiple entries are supported via [[stt]]; first entry is the default.
 type STTConfig struct {
 	ID           string            `toml:"id"`           // lookup key for agent overrides
-	Format       string            `toml:"format"`       // "openai" (only supported format currently)
+	Format       string            `toml:"format"`       // "openai" (batch) or "deepgram-flux" (streaming, #3018)
 	Endpoint     string            `toml:"endpoint"`     // API URL
 	Model        string            `toml:"model"`        // model name
 	Secret       string            `toml:"secret"`       // secret name in secrets.toml (optional, fallback: hostname)
 	Replacements map[string]string `toml:"replacements"` // word replacements applied after transcription (e.g. "foki" = "foci")
+}
+
+// STTFormatDeepgramFlux is the [[stt]] format of a Deepgram Flux entry: a
+// streaming provider for the app's hands-free voice input (#3018). Endpoint
+// and model may be left empty (Flux's own wss URL and flux-general-en); the
+// key is secret, or deepgram.api_key by the hostname convention.
+const STTFormatDeepgramFlux = "deepgram-flux"
+
+// STTFluxDefaultEndpoint is the Flux endpoint a deepgram-flux entry with no
+// endpoint uses.
+const STTFluxDefaultEndpoint = "wss://api.deepgram.com/v2/listen"
+
+// Streaming reports whether the entry is a streaming provider. A streaming
+// entry never transcribes an uploaded recording: it is not a batch provider
+// and is never the batch default.
+func (e STTConfig) Streaming() bool { return e.Format == STTFormatDeepgramFlux }
+
+// SecretEndpoint is the endpoint the hostname secret convention reads: the
+// entry's own, or Flux's default for a deepgram-flux entry that leaves it
+// empty.
+func (e STTConfig) SecretEndpoint() string {
+	if e.Endpoint == "" && e.Format == STTFormatDeepgramFlux {
+		return STTFluxDefaultEndpoint
+	}
+	return e.Endpoint
 }
 
 type BitwardenConfig struct {

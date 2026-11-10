@@ -480,18 +480,26 @@ max_chars = 4500
 
 ### `[[stt]]`
 
-Speech-to-text provider entries. Multiple entries are supported; the first is the default. Agents override by id via `stt = "id"` in their config.
+Speech-to-text provider entries. Multiple entries are supported; the first batch entry is the default. Agents override by id via `stt = "id"` in their config.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `id` | string | `""` | Lookup key for agent overrides. |
-| `format` | string | `""` | Provider format: `"openai"` (only supported format). |
-| `endpoint` | string | `""` | API endpoint URL. |
-| `model` | string | `""` | Model name (e.g. `"whisper-large-v3"`). |
+| `format` | string | `""` | Provider format: `"openai"` (batch: transcribes an uploaded recording) or `"deepgram-flux"` (streaming: the app's hands-free voice input, #3018). |
+| `endpoint` | string | `""` | API endpoint URL. `deepgram-flux`: empty = `wss://api.deepgram.com/v2/listen`. |
+| `model` | string | `""` | Model name (e.g. `"whisper-large-v3"`). `deepgram-flux`: empty = `flux-general-en` (or `flux-general-multi`). |
 | `secret` | string | `""` | Secret name in secrets.toml. If empty, auto-detected from endpoint hostname. |
 | `replacements` | map | `{}` | Word replacements applied to transcribed text after transcription. Case-insensitive whole-word matching; preserves original case pattern. Example: `{ foki = "foci" }` (reverse of TTS replacements). |
 
-API keys are resolved via the `secret` field or auto-detected from the endpoint hostname (e.g. `https://api.groq.com/...` → `groq.api_key` in secrets.toml). The `/voice` WebSocket endpoint is enabled via `[http] ws_enabled = true`.
+API keys are resolved via the `secret` field or auto-detected from the endpoint hostname (e.g. `https://api.groq.com/...` → `groq.api_key` in secrets.toml; a `deepgram-flux` entry → `deepgram.api_key`). The `/voice` WebSocket endpoint is enabled via `[http] ws_enabled = true`.
+
+**Hands-free voice input (`deepgram-flux`, #3018).** A streaming entry is never a batch provider: it is not in the `stt =` choice and never the default, even when listed first. The first streaming entry that has a key turns on the app's hands-free voice input: the app streams its microphone to foci (`/app/stt/stream`), foci relays it to Deepgram Flux (the key stays on the server), the words show as they are heard, and when Flux reports the end of the turn the text is sent as the user's message, with the entry's and `[voice] stt_replacements` applied. With no key, one startup warning and the app records and uploads as before. The end-of-turn settings are `[voice] stream_*` (below), read at each stream, so they apply live. The provider itself (entry, key) is restart-only, like every `[[stt]]` entry.
+
+```toml
+[[stt]]
+id = "flux"
+format = "deepgram-flux"   # key: deepgram.api_key
+```
 
 ### `[bitwarden]`
 
@@ -1330,6 +1338,9 @@ All platform fields from `[[platforms]]` can be overridden per-agent via `[[agen
 | `stt` | string | `""` | `[voice]` | Override STT entry by id (empty = default entry). |
 | `tts_replacements` | map | `{}` | `[voice]` | TTS word replacements (merged with `[[tts]]` entry replacements; per-agent wins). Case-insensitive whole-word matching. |
 | `stt_replacements` | map | `{}` | `[voice]` | STT word replacements (merged with `[[stt]]` entry replacements; per-agent wins). Case-insensitive whole-word matching. |
+| `stream_eot_threshold` | float | unset | `[voice]` | Hands-free voice input: end-of-turn confidence needed before the words are sent, 0.5 to 1 (Flux `eot_threshold`; unset = Flux's 0.7). Out of range: the provider default, with a warning. Applies live, from the next stream. |
+| `stream_eot_timeout` | duration | unset | `[voice]` | Hands-free voice input: after speech stops, the longest wait before the words are sent anyway, 500ms to 60s (Flux `eot_timeout_ms`; unset = Flux's 5s). Applies live, from the next stream. |
+| `stream_silence_timeout` | duration | `15s` | `[voice]` | Hands-free voice input: the stream (billed per open minute) closes when no new words are heard for this long. `0s` = no silence close (a 5-minute cap still applies). Applies live, from the next stream. |
 | `max_frame_bytes` | int | `1048576` | `[voice]` | Max size in bytes of a single inbound `/voice` WebSocket frame. Frames over this close the connection (DoS guard). |
 | `max_audio_bytes` | int | `52428800` | `[voice]` | Max accumulated audio buffer in bytes for one recording. Exceeding it stops recording and returns an error (memory DoS guard). |
 | `max_concurrent_turns` | int | `4` | `[voice]` | Max in-flight STT→agent→TTS turns per `/voice` connection. A client that floods frames beyond this is told to slow down rather than spawning unbounded goroutines. |

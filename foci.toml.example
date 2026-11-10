@@ -100,6 +100,9 @@ model = "anthropic/claude-haiku-4-5-20251001"
 # tts_rate = 0.0                           # TTS speech rate multiplier
 # tts_replacements = {}                    # TTS word replacements (e.g. { foci = "foki" })
 # stt_replacements = {}                    # STT word replacements
+# stream_eot_threshold = 0.7               # hands-free voice: end-of-turn confidence, 0.5-1 (unset = provider default; live)
+# stream_eot_timeout = "5s"                # hands-free voice: longest wait after speech stops, 500ms-60s (unset = provider default; live)
+# stream_silence_timeout = "15s"           # hands-free voice: close the stream after this long with no words (live)
 # max_frame_bytes = 1048576                # max voice websocket message size (global only)
 # max_audio_bytes = 52428800               # max audio buffered per voice turn (global only)
 # max_concurrent_turns = 4                 # max in-flight voice turns per connection (global only)
@@ -225,6 +228,9 @@ system_files = [
 # [agents.voice]
 # tts_rate = 0.0
 # tts_order = ["neural2", "groq-playai"]  # this agent's own voice order; the rest follow by priority
+# stream_eot_threshold = 0.8
+# stream_eot_timeout = "3s"
+# stream_silence_timeout = "20s"
 
 # Per-agent session overrides (from [sessions]):
 # [agents.sessions]
@@ -666,7 +672,7 @@ bind = "127.0.0.1"
 # command = "edge-tts"                    # edge-tts binary
 
 # ─── STT (speech-to-text) ────────────────────────────────────────────
-# First entry is the default. Agents override by id via stt = "id".
+# First batch entry is the default. Agents override by id via stt = "id".
 #
 # [[stt]]
 # id = "groq-whisper"
@@ -675,6 +681,12 @@ bind = "127.0.0.1"
 # model = "whisper-large-v3"
 # secret = "groq.api_key"                 # secret name in secrets.toml
 # replacements = { foki = "foci" }        # word replacements applied after transcription
+#
+# Hands-free voice input in the app (streaming, #3018). Never the batch default.
+# [[stt]]
+# id = "flux"
+# format = "deepgram-flux"                # key: deepgram.api_key (or secret = ...)
+# model = "flux-general-en"               # default; endpoint defaults to wss://api.deepgram.com/v2/listen
 
 # ─── Bitwarden ────────────────────────────────────────────────────────
 # [bitwarden]

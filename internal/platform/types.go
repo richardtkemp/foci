@@ -811,7 +811,11 @@ type AgentConnectionParams struct {
 	AgentConfig    config.AgentConfig
 	STT            voice.STT
 	TTS            voice.TTS
-	ReclaimHook    func(sessionKey string)
+	// STTStream resolves the agent's streaming STT for one hands-free voice
+	// stream (#3018), read when each stream opens. nil = never streams; a
+	// result with a nil STT = no streaming provider now. Only the app reads it.
+	STTStream   func() voice.StreamSetup
+	ReclaimHook func(sessionKey string)
 
 	// DisplayOverrideFn returns per-session display overrides.
 	// Empty fields mean "not overridden — use config default".

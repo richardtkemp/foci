@@ -3208,6 +3208,37 @@ frames, so it refreshes whenever the roster does; no dedicated frame type.
 
 **Read a message aloud (`POST /app/speech`, #2858):** the app's Speak item asks for a clip of a message's text, outside any turn: no model, no frame, nothing added to the conversation. The body is `{agentId, source, text}`; the handler cleans the text with `voice.NormalizeForSpeech` and synthesizes with exactly ONE voice, `ProviderDeps.SpeechTTS(agent, source)`, with that agent's rate and word replacements and no `FallbackTTS` chain (the rate is the running agent's live `voice.tts_rate`, read per request through `agentRegistry.liveTTSRate`, #2944; replacements and an unknown agent's rate come from the startup config), so a reading cannot change voice part way. The next voice is the app's choice, from its per-device ladder. The voices it may name come from `hello.caps.speech` (`cmd/foci-gw/speech.go` `speechCatalog`: every `[[tts]]` entry with a key or a loopback endpoint and every edge-tts with its binary on the Trusted PATH, plus the built-in edge-tts even with no `[[tts]]`; names and kinds only). A server without the endpoint names none. Errors carry a short body, never the provider's message: 404 source gone, 413 too large or over the voice's `max_chars` (#2919, no provider call), 429 rate limited, 502 failed. The whole message goes in one call: a provider's size limit is a failure like any other, and the app moves on. `hello.caps.speech` also carries each voice's `maxChars`, so the app can skip it without a request.
 
+**Hands-free voice relay (`GET /app/stt/stream?agentId=<id>`, WebSocket, #3018):**
+the app streams its microphone (raw PCM16 LE mono 16 kHz, binary frames) and
+foci relays it to the agent's streaming STT, so the provider key never leaves
+the server. Startup: `initSTTStream` (`cmd/foci-gw/voice_init.go`) builds a
+`voice.FluxSTT` from the first `[[stt]]` entry with `format = "deepgram-flux"`
+(`initSTT` leaves streaming entries out of the batch map and its default);
+`setupPlatformConnections` passes `AgentConnectionParams.STTStream`, a closure
+that resolves a `voice.StreamSetup` per stream: the entry's and the agent's
+`stt_replacements` (`voice.WrapStreamingSTT`) and the `[voice] stream_*`
+end-of-turn settings read from `resolvedLive`, so those apply live. The hub
+stores it as `appConn.sttStream`; `hello.caps.features` carries `sttStream`
+when any agent has one. `Hub.ServeSTTStream` (`internal/app/stt_stream.go`)
+authenticates like `/app/stt`, answers a plain 404 before the upgrade when the
+agent has no streaming STT, opens the provider stream, and `relaySTTStream`
+runs it: one reader goroutine forwards audio (`{"type":"stop"}` or a dead
+socket ends it; `{"type":"finish"}`, the user pressing stop, asks the provider
+to end the turn now: Flux `ForceEndTurn`, bounded at 5 s, after which the words
+so far are final), the relay goroutine is the only writer and sends `ready`,
+`partial` (the whole turn so far), `final` (end of turn, then it closes),
+`closed` (`silence` after `stream_silence_timeout` with no new words,
+`nothing_heard` on a finish before any words, or `max_duration` at 5 min) or
+`error`. Every exit closes the provider stream
+(Flux: `CloseStream`, then the connection) and drains its events. The app
+sends the final text as an ordinary `message` frame with `voice: true`
+(`fap.ClientMessage.Voice`): `routeUserTurnSpoken` tags the envelope
+`Voice` (trigger "voice": low effort, spoken reply in voice mode) and skips
+the `!cmd`, command and transform interception a voice note's transcript
+never meets either. Flux protocol and its fake for tests:
+`internal/voice/flux.go`, `internal/voice/fluxfake` (both cite Deepgram's
+listen-flux reference).
+
 **Direct STT credential (`GET /app/stt?agentId=<id>`, #2315 — server half of
 #1151):** hands a paired device the agent's speech-to-text provider credential
 so the app can transcribe a preview-the-text voice note directly at the

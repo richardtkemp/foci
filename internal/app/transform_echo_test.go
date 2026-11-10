@@ -55,7 +55,7 @@ func TestRouteUserTurn_TransformedCommandEchoesUnderInboundID(t *testing.T) {
 			c := fakeClient()
 			c.hub = h
 
-			h.routeUserTurn(c, "c1", "ag", tc.text, nil, nil, "env-1", 1, platform.SteerDefault, false)
+			h.routeUserTurn(c, "c1", "ag", tc.text, nil, nil, "env-1", 1, platform.SteerDefault, false, false)
 
 			select {
 			case <-ran:

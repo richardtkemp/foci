@@ -481,6 +481,12 @@ func (h *Hub) caps() fap.Caps {
 			break
 		}
 	}
+	for _, conn := range h.agents {
+		if conn.streamSetup().STT != nil {
+			c.Features = append(c.Features, featureSTTStream)
+			break
+		}
+	}
 	h.mu.RUnlock()
 	if h.deps.SessionIndex != nil {
 		c.Features = append(c.Features, featureSettingsSync)
@@ -885,6 +891,7 @@ func (h *Hub) setupAgent(params platform.AgentConnectionParams) *appConn {
 		conn.cmdCtx = cc
 	}
 	conn.stt = params.STT
+	conn.sttStream = params.STTStream
 	conn.tts = params.TTS
 	conn.toolCallConfig = liveToolCallConfig(params.ResolvedLive)
 	conn.displayOverride = params.DisplayOverrideFn

@@ -381,6 +381,14 @@ func setupPlatformConnections(
 			return p.tts.Resolve(vc.TTSPreference(), vc.TTSRate, ttsRepls)
 		}}
 	}
+	// Hands-free voice input (#3018): resolved per stream, so the stream_*
+	// end-of-turn settings and voice.stt_replacements apply live.
+	var sttStreamParam func() voice.StreamSetup
+	if p.sttStream != nil {
+		sttStreamParam = func() voice.StreamSetup {
+			return p.sttStream.setup(p.resolvedLive.Load().Voice, voice.MergeReplacements(p.cfg.Voice.STTReplacements, acfg.Voice.STTReplacements))
+		}
+	}
 	results := p.plat.SetupAgentConnection(platform.AgentConnectionParams{
 		AgentID:        acfg.ID,
 		Handler:        ag,
@@ -389,6 +397,7 @@ func setupPlatformConnections(
 		LastMsgStore:   lastMsgStore,
 		AgentConfig:    acfg,
 		STT:            sttParam,
+		STTStream:      sttStreamParam,
 		TTS:            ttsParam,
 		ReclaimHook: func(sessionKey string) {
 			ag.FireSessionEndMemory(p.ctx, sessionKey, reclaimOrientTemplate, false)

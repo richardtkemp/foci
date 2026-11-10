@@ -81,12 +81,21 @@ func buildTTSProviders(entries []config.TTSConfig, store *secrets.Store, httpOpt
 	return ttsMap
 }
 
-// initSTT builds the STT providers from [[stt]]. They are restart-only.
+// initSTT builds the batch STT providers from [[stt]]. They are restart-only.
+// A streaming entry (deepgram-flux, #3018) is not a batch provider: it is
+// left out here and built by initSTTStream, and the default ("") is the first
+// batch entry.
 func initSTT(cfg *config.Config, store *secrets.Store) map[string]voice.STT {
 	sttMap := make(map[string]voice.STT)
 	httpOpts := voiceHTTPOpts(cfg)
 
+	first := true
 	for i, entry := range cfg.STT {
+		if entry.Streaming() {
+			continue
+		}
+		isFirst := first
+		first = false
 		apiKey := resolveVoiceAPIKey(store, entry.Secret, entry.Endpoint)
 		s, err := voice.NewSTT(entry.Format, entry.Endpoint, apiKey, entry.Model, httpOpts)
 		if err != nil {
@@ -94,12 +103,108 @@ func initSTT(cfg *config.Config, store *secrets.Store) map[string]voice.STT {
 			continue
 		}
 		sttMap[entry.ID] = s
-		if i == 0 {
+		if isFirst {
 			sttMap[""] = s // default
 		}
 		mainLog.Infof("STT %q enabled (format=%s model=%s)", entry.ID, entry.Format, entry.Model)
 	}
 	return sttMap
+}
+
+// sttStreamProvider is the streaming STT for hands-free voice input (#3018):
+// the first streaming [[stt]] entry that built. The provider is restart-only
+// like every [[stt]] entry; its end-of-turn settings are read from the
+// agent's live voice config each time a stream opens.
+type sttStreamProvider struct {
+	entry config.STTConfig
+	stt   voice.StreamingSTT
+}
+
+// initSTTStream builds the streaming provider from the first streaming [[stt]]
+// entry, or returns nil when there is none or it cannot build (one startup
+// warning, e.g. a missing deepgram.api_key).
+func initSTTStream(cfg *config.Config, store *secrets.Store) *sttStreamProvider {
+	for i, entry := range cfg.STT {
+		if !entry.Streaming() {
+			continue
+		}
+		apiKey := resolveVoiceAPIKey(store, entry.Secret, entry.SecretEndpoint())
+		s, _, err := voice.NewStreamingSTT(entry.Format, entry.Endpoint, apiKey, entry.Model)
+		if err != nil {
+			mainLog.Warnf("stt[%d] %q: hands-free voice input off: %v", i, entry.ID, err)
+			return nil
+		}
+		mainLog.Infof("STT %q enabled for hands-free voice input (format=%s)", entry.ID, entry.Format)
+		return &sttStreamProvider{entry: entry, stt: s}
+	}
+	return nil
+}
+
+// setup resolves one stream's setup from the agent's live voice config: the
+// entry's and the caller's word replacements (later wins, as resolveSTT), and
+// the stream_* end-of-turn settings. A nil p has no provider.
+func (p *sttStreamProvider) setup(vc config.ResolvedVoice, replacements map[string]string) voice.StreamSetup {
+	if p == nil {
+		return voice.StreamSetup{}
+	}
+	return voice.StreamSetup{
+		STT:            voice.WrapStreamingSTT(p.stt, voice.MergeReplacements(p.entry.Replacements, replacements)),
+		Options:        streamOptions(vc),
+		SilenceTimeout: streamSilence(vc),
+	}
+}
+
+// Flux's documented ranges (https://developers.deepgram.com/docs/flux/configuration).
+const (
+	streamEOTThresholdMin = 0.5
+	streamEOTThresholdMax = 1.0
+	streamEOTTimeoutMin   = 500 * time.Millisecond
+	streamEOTTimeoutMax   = 60 * time.Second
+)
+
+// streamOptions converts the stream_* settings. A value out of the provider's
+// range is left out (the provider's default applies) with a warning, rather
+// than failing every stream: the app would silently fall back each time.
+func streamOptions(vc config.ResolvedVoice) voice.StreamOptions {
+	var o voice.StreamOptions
+	if t := vc.StreamEOTThreshold; t != 0 {
+		if t < streamEOTThresholdMin || t > streamEOTThresholdMax {
+			mainLog.Warnf("voice.stream_eot_threshold %v is outside %v-%v: using the provider default", t, streamEOTThresholdMin, streamEOTThresholdMax)
+		} else {
+			o.EOTThreshold = t
+		}
+	}
+	if s := vc.StreamEOTTimeout; s != "" {
+		d, err := time.ParseDuration(s)
+		switch {
+		case err != nil:
+			mainLog.Warnf("voice.stream_eot_timeout %q: %v: using the provider default", s, err)
+		case d < streamEOTTimeoutMin || d > streamEOTTimeoutMax:
+			mainLog.Warnf("voice.stream_eot_timeout %s is outside %s-%s: using the provider default", d, streamEOTTimeoutMin, streamEOTTimeoutMax)
+		default:
+			o.EOTTimeoutMs = int(d / time.Millisecond)
+		}
+	}
+	return o
+}
+
+// defaultStreamSilence mirrors the stream_silence_timeout default tag, for a
+// config built without tag defaults.
+const defaultStreamSilence = 15 * time.Second
+
+// streamSilence is the silence close. An unset or unreadable value is the
+// default; "0" turns the silence close off (the max duration still applies).
+func streamSilence(vc config.ResolvedVoice) time.Duration {
+	s := vc.StreamSilenceTimeout
+	if s == "" {
+		return defaultStreamSilence
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d < 0 {
+		mainLog.Warnf("voice.stream_silence_timeout %q is not a duration: using %s", s, defaultStreamSilence)
+		return defaultStreamSilence
+	}
+	return d
 }
 
 // builtinFallbackTTSID is the id of the free, key-less edge-tts provider foci
@@ -182,10 +287,16 @@ func resolveSTT(sttMap map[string]voice.STT, sttEntries []config.STTConfig, sttI
 	if stt == nil {
 		return stt
 	}
-	// Find entry replacements.
+	// Find entry replacements. The default is the first batch entry: a
+	// streaming entry is never the batch default (initSTT).
 	var entryRepls map[string]string
-	if sttID == "" && len(sttEntries) > 0 {
-		entryRepls = sttEntries[0].Replacements
+	if sttID == "" {
+		for _, e := range sttEntries {
+			if !e.Streaming() {
+				entryRepls = e.Replacements
+				break
+			}
+		}
 	} else {
 		for _, e := range sttEntries {
 			if e.ID == sttID {

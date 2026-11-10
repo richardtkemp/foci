@@ -74,7 +74,7 @@ func newShellHarness(t *testing.T, limit int, timeout time.Duration) *shellHarne
 }
 
 func (s *shellHarness) send(text string) {
-	s.h.routeUserTurn(s.client, "conv-1", "ag", text, nil, nil, "msg-1", 1, platform.SteerDefault, false)
+	s.h.routeUserTurn(s.client, "conv-1", "ag", text, nil, nil, "msg-1", 1, platform.SteerDefault, false, false)
 }
 
 func (s *shellHarness) envelopes() []agent.Envelope {
@@ -233,7 +233,7 @@ func TestShellCommand_App_EscapesStayNormalText(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newShellHarness(t, 1000, 5*time.Second)
-			s.h.routeUserTurn(s.client, "conv-1", "ag", tc.text, tc.atts, tc.refs, "msg-1", 1, platform.SteerDefault, tc.transcribeOnly)
+			s.h.routeUserTurn(s.client, "conv-1", "ag", tc.text, tc.atts, tc.refs, "msg-1", 1, platform.SteerDefault, tc.transcribeOnly, false)
 			envs := s.envelopes()
 			if tc.wantEnqueued && (len(envs) != 1 || envs[0].Text != tc.text) {
 				t.Errorf("envelopes = %+v, want the text unchanged", envs)
