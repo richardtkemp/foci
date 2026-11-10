@@ -183,7 +183,8 @@ const (
 	// TypeSectionsGet (app->server) asks for a conversation's table of
 	// contents, the sections the fast model found as the chat went (#2993);
 	// TypeSections (server->app) is the answer, sent to the asking socket
-	// only. Socket-level, like the message info pair.
+	// only, and is also pushed to every socket, with no requestId, when a
+	// run changes a chat's sections (#3010).
 	TypeSectionsGet = "sections.get"
 	TypeSections    = "sections"
 	// TypeScrollPut (app->server) mirrors where the user left a conversation
@@ -1497,8 +1498,11 @@ type ChatSection struct {
 
 // Sections answers a SectionsGet (server->app, #2993): the conversation's
 // sections, oldest first. Empty when none has been found yet, the chat began
-// before the feature, or the feature is off.
+// before the feature, or the feature is off. The server also pushes one to
+// every socket when a run titles, retitles or adds a section (#3010); a push
+// has an empty RequestID and always the chat's full list.
 type Sections struct {
+	// RequestID is the SectionsGet's; "" on a push.
 	RequestID      string        `json:"requestId"`
 	ConversationID string        `json:"conversationId"`
 	Sections       []ChatSection `json:"sections"`

@@ -297,3 +297,82 @@ func TestSections_LiveSendPath(t *testing.T) {
 		t.Errorf("first section starts at %q, want u0", got)
 	}
 }
+
+// sectionPushes returns the sections frames queued on c (#3010).
+func sectionPushes(t *testing.T, c *wsClient) []decoded {
+	t.Helper()
+	var out []decoded
+	for _, f := range drain(t, c) {
+		if f.t == fap.TypeSections {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// TestSections_PushOnChange (#3010): a run that titles, retitles or breaks a
+// section sends every connected socket one sections frame (no requestId) with
+// the chat's titled sections; the first sight (no title yet), a run that
+// changes nothing and a failed run send none.
+func TestSections_PushOnChange(t *testing.T) {
+	stub := &nameStub{reply: "TITLE: Flights\nNEW: none"}
+	h, _, b := sectionHub(t, stub, nil)
+	c1, c2 := fakeClient(), fakeClient()
+	h.clients[c1] = struct{}{}
+	h.clients[c2] = struct{}{}
+
+	seq := seedChat(t, h, 0, 1, "trip")
+	h.sectionCheck(b)
+	if got := sectionPushes(t, c1); len(got) != 0 {
+		t.Fatalf("first sight pushed %v, want none (no title yet)", got)
+	}
+
+	seq = seedChat(t, h, seq, 4, "trip")
+	h.sectionCheck(b)
+	for i, c := range []*wsClient{c1, c2} {
+		got := sectionPushes(t, c)
+		if len(got) != 1 {
+			t.Fatalf("socket %d: %d pushes after the first title, want 1", i+1, len(got))
+		}
+		d := got[0].d
+		secs, _ := d["sections"].([]any)
+		if d["conversationId"] != autoNameConv || d["requestId"] != "" || len(secs) != 1 ||
+			secs[0].(map[string]any)["title"] != "Flights" || secs[0].(map[string]any)["messageId"] != "m1" {
+			t.Errorf("socket %d: push = %v", i+1, d)
+		}
+	}
+
+	// Same title again: nothing changed, nothing pushed.
+	seq = seedChat(t, h, seq, 5, "trip")
+	h.sectionCheck(b)
+	if n := stub.count(); n != 2 {
+		t.Fatalf("calls = %d, want 2", n)
+	}
+	if got := sectionPushes(t, c1); len(got) != 0 {
+		t.Errorf("unchanged run pushed %v", got)
+	}
+
+	// A failed run (no title): nothing pushed.
+	stub.set("no idea", 0)
+	seq = seedChat(t, h, seq, 5, "trip")
+	h.sectionCheck(b)
+	if got := sectionPushes(t, c1); len(got) != 0 {
+		t.Errorf("failed run pushed %v", got)
+	}
+
+	// A break: pushed with both sections, oldest first.
+	h.sections.mu.Lock()
+	h.sections.retryAt = map[string]time.Time{}
+	h.sections.mu.Unlock()
+	stub.set("TITLE: Flights booked\nNEW: M2 | Hotel", 0)
+	_ = seedChat(t, h, seq, 5, "hotel")
+	h.sectionCheck(b)
+	got := sectionPushes(t, c2)
+	if len(got) != 1 {
+		t.Fatalf("%d pushes after a break, want 1", len(got))
+	}
+	secs, _ := got[0].d["sections"].([]any)
+	if len(secs) != 2 || secs[0].(map[string]any)["title"] != "Flights booked" || secs[1].(map[string]any)["title"] != "Hotel" {
+		t.Errorf("push after break = %v", got[0].d)
+	}
+}

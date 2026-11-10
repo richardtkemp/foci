@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,7 +25,9 @@ import (
 // State per chat lives in chat_metadata "sections" (JSON, chatSections): the
 // sections found so far, oldest first, and the frame seq of the last message
 // the last run read. It is the same on every device because the app asks the
-// server for it (sections.get / sections). The agent never sees it (Dick,
+// server for it (sections.get / sections) when it opens a chat or reconnects,
+// and a run that changes the titled sections pushes them to every socket
+// (#3010). The agent never sees it (Dick,
 // 2026-11-09 Q50): nothing puts this key in a prompt.
 //
 // Rulings (Dick, 2026-11-09):
@@ -110,6 +113,12 @@ type sectioner struct {
 	mu  sync.Mutex
 	set sectionSettings
 	convClaims
+
+	// serveMu orders what the sockets hear (#3010): a run holds it from its
+	// save to the end of its push, and a sections.get from its read to its
+	// answer, so an answer read before a save cannot reach a socket after
+	// that save's push and undo it there.
+	serveMu sync.Mutex
 }
 
 func newSectioner(app *config.AppSpecific) *sectioner {
@@ -258,6 +267,7 @@ func (h *Hub) sectionRun(b *convBinding, idx *session.SessionIndex, set sectionS
 		return false
 	}
 
+	prev := chatSections{Sections: slices.Clone(st.Sections)}
 	cur := st.Sections[len(st.Sections)-1]
 	head := h.frames.FirstMessagesAfter(b.convID, cur.StartSeq-1, sectionHeadMaxMsgs)
 	tail := h.frames.LastMessagesAfter(b.convID, cur.StartSeq-1, sectionTailMsgs)
@@ -297,9 +307,17 @@ func (h *Hub) sectionRun(b *convBinding, idx *session.SessionIndex, set sectionS
 		st.Broke = true
 	}
 	st.ReadSeq = shown[len(shown)-1].seq
+	h.sections.serveMu.Lock()
+	defer h.sections.serveMu.Unlock()
 	if err := saveSections(idx, agentID, b.chatID, st); err != nil {
 		appLog.Warnf("chat sections %s: save: %v", b.convID, err)
 		return true
+	}
+	// Push the change to every socket (#3010), so an open chat's dividers and
+	// Contents update without asking. Only when what a socket is shown (the
+	// titled sections) changed: most runs keep the same title.
+	if pushed := titledSections(st); !slices.Equal(pushed, titledSections(prev)) {
+		h.broadcastExcept(nil, fap.Sections{ConversationID: b.convID, Sections: pushed})
 	}
 	if res.newAt > 0 {
 		appLog.Infof("chat sections %s: %q ends; %q starts at %s", b.convID, res.title, res.newTitle, shown[res.newAt-1].id)
@@ -483,6 +501,10 @@ func (h *Hub) handleSectionsGet(client *wsClient, f fap.SectionsGet) {
 	if f.RequestID == "" || f.ConversationID == "" {
 		return
 	}
+	if h.sections != nil {
+		h.sections.serveMu.Lock()
+		defer h.sections.serveMu.Unlock()
+	}
 	client.sendRaw(h.sectionsFor(f.RequestID, f.ConversationID))
 }
 
@@ -502,11 +524,19 @@ func (h *Hub) sectionsFor(requestID, convID string) fap.Sections {
 	if !ok {
 		return out
 	}
+	out.Sections = titledSections(st)
+	return out
+}
+
+// titledSections is st's sections as the app sees them: the titled ones,
+// oldest first, never nil.
+func titledSections(st chatSections) []fap.ChatSection {
+	out := []fap.ChatSection{}
 	for _, s := range st.Sections {
 		if s.Title == "" {
 			continue
 		}
-		out.Sections = append(out.Sections, fap.ChatSection{MessageID: s.MessageID, Title: s.Title, StartMs: s.StartMs})
+		out = append(out, fap.ChatSection{MessageID: s.MessageID, Title: s.Title, StartMs: s.StartMs})
 	}
 	return out
 }
