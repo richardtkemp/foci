@@ -157,20 +157,18 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// command reports "unavailable" rather than mis-driving the wrong backend.
 	claudeBin := config.DerefStr(bc.Binary)
 	workDir := p.acfg.Workspace
-	// auto marks an automatic trigger (a 401, the startup probe): it gets one
-	// attempt per expiry and starts nothing while a login is pending (#3006);
-	// /login always starts one.
-	startRelogin := func(reason, sessionKey string, auto bool) bool {
-		start := relogin.G.Start
-		if auto {
-			start = relogin.G.StartAuto
-		}
+	// start claims the gate: relogin.G.Start for /login (always starts one),
+	// relogin.G.StartAuto for an automatic trigger (a 401, the startup probe:
+	// one attempt per expiry, nothing while a login is pending, #3006), and
+	// StartAfterUserFailure for a user-typed message that met the expired
+	// login (#3015). auto marks the automatic trigger, for the refusal log.
+	startRelogin := func(reason, sessionKey string, start func() bool, auto bool) bool {
 		if !start() {
 			if auto && !relogin.G.Active() {
 				// INFO, not WARN: a warning here would become a proactive
 				// injection, which is what this rule exists to stop.
 				log.NewComponentLogger("relogin/"+agentID).Infof(
-					"CC auth failure while a login is pending: no new attempt (send /login): %s", reason)
+					"CC auth failure while a login is pending: no new attempt (a user message or /login starts one): %s", reason)
 			}
 			return false
 		}
@@ -210,7 +208,11 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	}
 	if spec.Supports(delegator.CapRelogin) {
 		ag.ReloginTrigger = func(reason, sessionKey string) bool {
-			return startRelogin(reason, sessionKey, false)
+			return startRelogin(reason, sessionKey, relogin.G.Start, false)
+		}
+		ag.ReloginRetry = func(sessionKey string, attempt uint64) bool {
+			return startRelogin("a user message met the expired login", sessionKey,
+				func() bool { return relogin.G.StartAfterUserFailure(attempt) }, false)
 		}
 		ag.ReloginLinkTarget = func(sessionKey string) *relogin.LinkTarget {
 			return reloginLinkTarget(connMgr, agentID, sessionKey)
@@ -281,7 +283,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	}
 	if spec.Supports(delegator.CapRelogin) {
 		hostHooks.OnAuthFailure = func(detail string) {
-			startRelogin("401 auth failure: "+firstLine(detail), "", true)
+			startRelogin("401 auth failure: "+firstLine(detail), "", relogin.G.StartAuto, true)
 		}
 		hostHooks.OnLoginExpiry = loginExpiryHook(loginExpiryWarner(p.cfg), connMgr, p.cfg.MasterAgent, agentID)
 	}

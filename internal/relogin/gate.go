@@ -51,6 +51,7 @@ type Gate struct {
 
 	pending    bool         // a login is owed: set by Start, cleared by Complete / ClearPendingIf
 	attempt    uint64       // incremented by every successful Start, and by an auth failure StartAuto refuses
+	lastStart  uint64       // the attempt number the last successful Start took (StartAfterUserFailure)
 	onComplete []func()     // run (outside mu) each time pending clears
 	link       *linkMessage // the sign-in link message of this pending login (link.go); cleared with pending
 }
@@ -71,16 +72,36 @@ func (g *Gate) Start() bool {
 // StartAuto is Start for an automatic trigger: an auth failure (401) or the
 // startup readiness probe. An expiry gets one automatic attempt (#3006): while
 // a login is pending (an attempt failed and nothing has worked since), it
-// starts nothing, and only a manual /login (Start) tries again. Each attempt
-// sends a new sign-in link, so without this every 401 from the dead
-// credential started another one. A refused trigger still advances the
-// attempt number: the failure shows the credential is still dead, so a user
-// turn that met it must not clear the pending state (ClearPendingIf).
+// starts nothing. Each attempt sends a new sign-in link, so without this every
+// 401 from the dead credential started another one. Only a manual /login
+// (Start) or a user-typed message that met the failure
+// (StartAfterUserFailure, #3015) tries again. A refused trigger still advances
+// the attempt number: the failure shows the credential is still dead, so a
+// user turn that met it must not clear the pending state (ClearPendingIf).
 func (g *Gate) StartAuto() bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.pending && !g.active {
 		g.attempt++
+		return false
+	}
+	return g.startLocked()
+}
+
+// StartAfterUserFailure starts one new attempt after a user-typed turn met an
+// auth failure while a login was pending (#3015, Dick 2026-11-10: once the
+// link has expired, the next user-typed message in any chat starts one new
+// attempt, and its link goes to that chat). attempt is the number
+// PendingAttempt returned before the turn ran. It starts an attempt only when
+// a login is pending, none is running, an auth failure was refused during the
+// turn (the attempt number moved), and no attempt started since the turn
+// began (two chats' failed turns start one attempt between them, and a /login
+// meanwhile is not followed by another). Background and system work never
+// calls it: their 401s stay refused by StartAuto.
+func (g *Gate) StartAfterUserFailure(attempt uint64) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.pending || g.active || g.attempt == attempt || g.lastStart > attempt {
 		return false
 	}
 	return g.startLocked()
@@ -94,6 +115,7 @@ func (g *Gate) startLocked() bool {
 	g.active = true
 	g.pending = true
 	g.attempt++
+	g.lastStart = g.attempt
 	g.resetCaptureLocked()
 	g.codeCh = make(chan string, 1)
 	g.released = make(chan struct{})

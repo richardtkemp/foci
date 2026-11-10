@@ -269,3 +269,61 @@ func TestInbox_Relogin_OtherChatGetsLinkThenCode(t *testing.T) {
 		t.Fatalf("the code's chat got the link again: %q", got)
 	}
 }
+
+// TestInbox_Relogin_UserMessageAfterExpiryStartsOneAttempt (#3015, Dick
+// 2026-11-10): the link expired (the attempt aborted). A background 401 starts
+// nothing, and neither does an automated send's turn; the next user-typed
+// message whose turn meets the failure starts exactly one new attempt, with
+// the link in that message's chat.
+func TestInbox_Relogin_UserMessageAfterExpiryStartsOneAttempt(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+	a.DelegatedManager = &DelegatedManager{}
+
+	claimRelogin(t)
+	relogin.G.Release() // nobody pasted the code: the link expired
+	if relogin.G.StartAuto() {
+		t.Fatal("a background 401 started an attempt while a login is pending")
+	}
+
+	var mu sync.Mutex
+	var started []string
+	a.ReloginRetry = func(sk string, attempt uint64) bool {
+		if !relogin.G.StartAfterUserFailure(attempt) {
+			return false
+		}
+		mu.Lock()
+		started = append(started, sk)
+		mu.Unlock()
+		return true
+	}
+	startedIn := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), started...)
+	}
+	// Every turn meets the dead credential: the backend's 401 hook fires
+	// inside the turn, and StartAuto refuses it.
+	d := &recordingDriver{}
+	a.SetTurnObserver(func(sk string, batch []Envelope) {
+		relogin.G.StartAuto()
+		d.recordBatch(sk, batch)
+	})
+
+	a.Enqueue(Envelope{SessionKey: "app/a", Text: "cron says hi", Automated: true, Driver: d})
+	mustWait(t, "automated turn", func() bool { return d.NumCalls() == 1 })
+	if waitFor(200*time.Millisecond, func() bool { return len(startedIn()) > 0 }) || relogin.G.Active() {
+		t.Fatalf("an automated send's turn started an attempt: %v", startedIn())
+	}
+
+	a.Enqueue(Envelope{SessionKey: "app/b", Text: "hello?", Driver: d})
+	if !waitFor(time.Second, func() bool { return len(startedIn()) > 0 }) {
+		t.Fatal("a user message that met the expired login did not start a new attempt")
+	}
+	if got := startedIn(); len(got) != 1 || got[0] != "app/b" {
+		t.Fatalf("attempts started in %v, want exactly one, in app/b", got)
+	}
+	if !relogin.G.Active() || !relogin.G.Pending() {
+		t.Fatal("no attempt running after the user message")
+	}
+}

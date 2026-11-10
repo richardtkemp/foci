@@ -207,3 +207,46 @@ func (g *Gate) ShouldCapture(agentID, sessionKey string) bool {
 	defer g.mu.Unlock()
 	return g.capturingChatLocked(agentID, sessionKey) != nil
 }
+
+// TestGateStartAfterUserFailure (#3015): once the link has expired (the
+// attempt aborted), a user-typed turn that meets the auth failure starts one
+// new attempt. A turn with no failure, a second chat's failed turn after the
+// first started one, and a turn during which /login started one, start none.
+func TestGateStartAfterUserFailure(t *testing.T) {
+	g := &Gate{}
+	if g.StartAfterUserFailure(0) {
+		t.Fatal("started an attempt with no login pending")
+	}
+	g.StartAuto()
+	g.Release() // the link expired: the attempt aborted
+
+	if g.StartAuto() { // background work 401s
+		t.Fatal("an automatic trigger started an attempt while a login is pending")
+	}
+
+	attempt, _ := g.PendingAttempt() // a user turn starts...
+	if g.StartAfterUserFailure(attempt) {
+		t.Fatal("started an attempt after a turn that met no auth failure")
+	}
+	other, _ := g.PendingAttempt() // ...and so does one in another chat
+	g.StartAuto()                  // the first turn 401s: refused
+	g.StartAuto()                  // the other turn 401s: refused
+	if !g.StartAfterUserFailure(attempt) {
+		t.Fatal("a user turn that met the expired login did not start a new attempt")
+	}
+	if g.StartAfterUserFailure(other) {
+		t.Fatal("a second chat's failed turn started another attempt")
+	}
+	g.Release()
+	if g.StartAfterUserFailure(other) {
+		t.Fatal("a turn that began before the last attempt started one after it")
+	}
+
+	attempt, _ = g.PendingAttempt()
+	g.Start() // /login during the turn
+	g.Release()
+	g.StartAuto() // the turn 401s
+	if g.StartAfterUserFailure(attempt) {
+		t.Fatal("a /login during the turn was followed by another attempt")
+	}
+}

@@ -202,6 +202,12 @@ type Agent struct {
 	// cannot carry the link, and its messages are only held.
 	ReloginLinkTarget func(sessionKey string) *relogin.LinkTarget
 
+	// ReloginRetry is set with ReloginTrigger: after a user-typed turn in
+	// sessionKey met an auth failure while a login was pending, it starts one
+	// new attempt whose link goes to that chat (#3015), through
+	// relogin.G.StartAfterUserFailure(attempt). Reports whether it started.
+	ReloginRetry func(sessionKey string, attempt uint64) bool
+
 	// Restart restore of held input (#2491, usage_hold_store.go).
 	// UsageHeldDriver drives a restored held message; UsageHeldInjectRestore
 	// rebuilds a restored held injection. Nil = that input waits for a later

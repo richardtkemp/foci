@@ -1237,6 +1237,23 @@ func (a *Agent) reloginPendingAttempt() (uint64, bool) {
 	return relogin.G.PendingAttempt()
 }
 
+// retryReloginAfterUserTurn starts one new login attempt when a user-typed
+// message's turn met an auth failure while a login was pending: the link of
+// the last attempt expired, and the user is here now (#3015, Dick
+// 2026-11-10). The new link goes to this message's chat. An automated
+// envelope (an HTTP /send without the human declaration, a restart or usage
+// resume) is not the user, so it starts nothing, like every background and
+// system source (#3006). Whether the turn met a failure, and whether another
+// attempt started meanwhile, the gate decides (StartAfterUserFailure).
+func (a *Agent) retryReloginAfterUserTurn(env Envelope, attempt uint64) {
+	if env.Inject != nil || env.Automated || a.ReloginRetry == nil {
+		return
+	}
+	if a.ReloginRetry(env.SessionKey, attempt) {
+		a.logger().Infof("inbox: a user message met the expired CC login: new attempt sk=%s", env.SessionKey)
+	}
+}
+
 // reloginHeldBy is the deferredInject.heldBy tag for an injection paused while
 // a CC login is pending (#2384). A NUL prefix keeps it apart from any ask
 // requestID.
@@ -1513,8 +1530,8 @@ func (a *Agent) handleDequeued(ctx context.Context, inb *sessionInbox, env Envel
 	if !a.runUserBatch(ctx, inb, env) {
 		return false
 	}
-	if loginPending {
-		relogin.G.ClearPendingIf(attempt)
+	if loginPending && !relogin.G.ClearPendingIf(attempt) {
+		a.retryReloginAfterUserTurn(env, attempt)
 	}
 	// Injections the batch's drains pulled off the channel stay on the
 	// worker's queue, in their place (#2362), and run from the loop top.
