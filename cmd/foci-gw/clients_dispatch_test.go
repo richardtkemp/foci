@@ -127,17 +127,19 @@ func TestClientRegistry_DispatchesLocalEndpoint(t *testing.T) {
 	}
 }
 
-// TestClientRegistry_AutomatedTurnsMedium (#3023): on an endpoint with
+// TestClientRegistry_AutomatedTurnsMedium (#3023, #3025): on an endpoint with
 // max_in_flight 1, turns that automation started (a cron/foci send = trigger
-// "user", a webhook, an agent message, a reminder wake) wait at Medium behind
-// a running user turn and behind a user turn that arrives after them, go
-// before a background turn, and are never replaced: two cron sends of the
-// same chat both reach the server, in arrival order.
+// "user", a foci branch / HTTP /branch = trigger "branch", a webhook, an agent
+// message, a reminder wake) wait at Medium behind a running user turn and
+// behind a user turn that arrives after them, go before a background turn,
+// and are never replaced: two cron sends of the same chat both reach the
+// server, in arrival order, and so do two branches. A --human send or branch
+// is High.
 func TestClientRegistry_AutomatedTurnsMedium(t *testing.T) {
 	name := fmt.Sprintf("gate-medium-%d", time.Now().UnixNano()) // epdispatch is process-wide
 	var mu sync.Mutex
 	var order []string
-	entered := make(chan string, 8)
+	entered := make(chan string, 16)
 	hold := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -170,7 +172,7 @@ func TestClientRegistry_AutomatedTurnsMedium(t *testing.T) {
 	}
 	d := epdispatch.For(name)
 
-	errs := make(chan error, 8)
+	errs := make(chan error, 16)
 	send := func(ctx context.Context, model string) {
 		req := &provider.MessageRequest{Model: model, MaxTokens: 10, Messages: []provider.Message{{Role: "user", Content: provider.TextContent("hi")}}}
 		_, err := provider.Send(ctx, c, req, nil, nil, nil, nil)
@@ -209,13 +211,19 @@ func TestClientRegistry_AutomatedTurnsMedium(t *testing.T) {
 	waitTiers(0, 4, 0)
 	go send(ctxFor("scheduled_wake"), "wake")
 	waitTiers(0, 5, 0)
+	go send(ctxFor("branch"), "branch1")
+	waitTiers(0, 6, 0)
+	go send(ctxFor("branch"), "branch2")
+	waitTiers(0, 7, 0)
 	go send(ctxFor(agent.TriggerKeepalive), "keepalive")
-	waitTiers(0, 5, 1)
+	waitTiers(0, 7, 1)
 	go send(agent.WithHumanSource(ctxFor("user")), "human")
-	waitTiers(1, 5, 1)
+	waitTiers(1, 7, 1)
+	go send(agent.WithHumanSource(ctxFor("branch")), "humanbranch")
+	waitTiers(2, 7, 1)
 
 	unhold()
-	for range 8 {
+	for range 11 {
 		if err := <-errs; err != nil {
 			t.Fatal(err) // ErrReplaced here = a Medium agent call was dropped
 		}
@@ -223,7 +231,7 @@ func TestClientRegistry_AutomatedTurnsMedium(t *testing.T) {
 	mu.Lock()
 	got := fmt.Sprint(order)
 	mu.Unlock()
-	if want := "[first human cron1 cron2 webhook agentmsg wake keepalive]"; got != want {
+	if want := "[first human humanbranch cron1 cron2 webhook agentmsg wake branch1 branch2 keepalive]"; got != want {
 		t.Errorf("server order = %s, want %s", got, want)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"foci/internal/defersend"
+	"foci/internal/epdispatch"
 )
 
 // TestWake_RunsWithWakeTrigger proves the /branch happy path with the gate open:
@@ -302,5 +303,42 @@ func TestBranch_DecodeErrorNamesField(t *testing.T) {
 	}
 	if calls := mock.snapshot(); len(calls) != 0 {
 		t.Errorf("backend called %d time(s) for an undecodable body, want 0", len(calls))
+	}
+}
+
+// TestBranch_TurnTier (#3025, Dick 2026-11-10: "Cron branch medium"): a turn
+// that foci branch / HTTP /branch starts runs at Medium on a local endpoint,
+// sync or async, like a cron /send; a branch that declares a human sender
+// (--human) stays High, as a --human /send does.
+func TestBranch_TurnTier(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, body string
+		want       epdispatch.Tier
+	}{
+		{"sync", `{"text":"branch work"}`, epdispatch.Medium},
+		{"async", `{"text":"branch work","async":true,"silent":true}`, epdispatch.Medium},
+		{"human sync", `{"text":"branch work","human":true}`, epdispatch.High},
+		{"human async", `{"text":"branch work","human":true,"async":true,"silent":true}`, epdispatch.High},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d, mock := httpTestSetup(t, httpTestOpts{})
+			mux := newTestMux(d)
+
+			w := postJSON(mux, "/branch", tc.body)
+
+			if w.Code != http.StatusOK && w.Code != http.StatusAccepted {
+				t.Fatalf("status = %d, want 200/202; body: %s", w.Code, w.Body.String())
+			}
+			waitForCond(t, "branch turn reached the backend", func() bool { return len(mock.snapshot()) == 1 })
+			c := mock.snapshot()[0]
+			if c.trigger != "branch" {
+				t.Errorf("trigger = %q, want branch", c.trigger)
+			}
+			if c.tier != tc.want {
+				t.Errorf("tier = %s, want %s", c.tier, tc.want)
+			}
+		})
 	}
 }

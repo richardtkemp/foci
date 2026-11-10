@@ -291,16 +291,18 @@ var backgroundCallTriggers = map[string]bool{
 // mediumCallTriggers are the triggers of agent turns that automation, not a
 // person at a chat, started: the middle tier on a local endpoint (#3023,
 // Dick 2026-11-10: "Cron and webhook should be medium priority"; "Messages
-// and reminders: medium"). They are an HTTP /send (foci send, cron; trigger
-// "user"), an inbound webhook, an agent-to-agent message (send_to_session,
-// "session_notify") and a reminder wake (foci_remind wake,
+// and reminders: medium"; #3025, "Cron branch medium"). They are an HTTP
+// /send (foci send, cron; trigger "user"), an HTTP /branch (foci branch, cron;
+// trigger "branch"), an inbound webhook, an agent-to-agent message
+// (send_to_session, "session_notify") and a reminder wake (foci_remind wake,
 // "scheduled_wake"). A /send with a delivery choice runs with trigger "" and
-// is marked by withHTTPSend instead. A /send that declares a human sender (--human, the
-// human-source marker) stays High. A Medium agent call has no replacement
+// is marked by withHTTPSend instead. A /send or /branch that declares a human
+// sender (--human, the human-source marker) stays High. A Medium agent call has no replacement
 // key: it is never dropped or replaced while it waits, unlike a chat-name or
 // section check.
 var mediumCallTriggers = map[string]bool{
 	"user":           true,
+	"branch":         true,
 	"webhook":        true,
 	"session_notify": true,
 	"scheduled_wake": true,
@@ -310,8 +312,8 @@ var mediumCallTriggers = map[string]bool{
 // endpoint (internal/epdispatch): Low for a background agent turn
 // (backgroundCallTriggers), Medium for an automated one (mediumCallTriggers),
 // High for everything else: the user's messages (platform, voice, a
-// human-declared /send, an ask answer) and the triggers listed in neither
-// (async_notify, redelivery, branch, depth, autonomous runs, restart and
+// human-declared /send or /branch, an ask answer) and the triggers listed in
+// neither (async_notify, redelivery, depth, autonomous runs, restart and
 // warning injections, the compaction summary and prompt diff batches, spawns).
 func CallTier(ctx context.Context) epdispatch.Tier {
 	trigger := TriggerFromContext(ctx)

@@ -191,7 +191,9 @@ func createBranchSession(d httpHandlerDeps, inst *agentInstance, parentKey strin
 // (streaming to the chat unless silent) and returns no reply. human marks a
 // request whose caller declared a human sent it (#1130): the turn context
 // then carries the human-source marker, so the turn's entry write stamps
-// last_user_activity_at on the branch session. Deliberately a parameter,
+// last_user_activity_at on the branch session, and its model calls stay High
+// on a local endpoint where an automated branch runs at Medium
+// (agent.CallTier, #3025). Deliberately a parameter,
 // NOT a branchTurnOptions field — the options are the deferrable subset, and
 // the human flag is intentionally NOT deferrable: the deferred sweep always
 // passes false (the human may be gone at delivery time).
