@@ -236,7 +236,7 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 	// returns false here and sends no nudge (the session is idle by then).
 	if a.reloadOnCompact() && a.DelegatedManager != nil {
 		if a.DelegatedManager.BounceAfterCompaction(sessionKey, force) {
-			a.maybeInjectCompactionResume(sessionKey)
+			a.maybeInjectCompactionResume(ctx, sessionKey)
 		}
 	}
 	return nil
@@ -300,12 +300,20 @@ const compactionResumePrompt = "[system: your context was just compacted and you
 //   - async self-injection is unavailable (AsyncNotifier nil), or
 //   - the user already queued a follow-up message — that message will respawn
 //     CC and drive continuation with the user's actual intent, so our generic
-//     nudge would be redundant (and could race a second turn).
+//     nudge would be redundant (and could race a second turn), or
+//   - the compaction is a compact_session request with a wake message
+//     (#3041): that wake is the next turn and says what to do.
 //
 // Runs from the post-turn worker goroutine (auto-compaction) or the command
 // handler (manual /compact); both serialise with the inbox check below.
-func (a *Agent) maybeInjectCompactionResume(sessionKey string) {
+func (a *Agent) maybeInjectCompactionResume(ctx context.Context, sessionKey string) {
 	if a.AsyncNotifier == nil {
+		return
+	}
+	if compactionWakeFollows(ctx) {
+		// The compact_session request's own wake follows and restarts the
+		// agent (#3041); a nudge as well would run a second turn.
+		a.logger().Debugf("session=%s skip compaction-resume nudge: the request's wake follows", sessionKey)
 		return
 	}
 	if a.InboxHasPendingInput(sessionKey) {

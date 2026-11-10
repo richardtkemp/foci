@@ -497,12 +497,12 @@ var toolTable = []toolEntry{
 	// post-turn phase of the turn that made it, on every backend. The lazy
 	// agent getter resolves per call: the tool is built before the agent.
 	{name: "compact_session", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {
-		return tools.NewCompactSessionTool(func(sk string) error {
+		return tools.NewCompactSessionTool(func(sk, wake string) error {
 			ag := d.agLazy()
 			if ag == nil {
 				return errors.New("agent not ready")
 			}
-			return ag.RequestCompaction(sk)
+			return ag.RequestCompaction(sk, wake)
 		})
 	}},
 

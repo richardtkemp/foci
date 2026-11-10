@@ -13,7 +13,7 @@ import (
 func TestCompactSession_RequestsForCallingSession(t *testing.T) {
 	t.Parallel()
 	var got []string
-	tool := NewCompactSessionTool(func(sk string) error {
+	tool := NewCompactSessionTool(func(sk, _ string) error {
 		got = append(got, sk)
 		return nil
 	})
@@ -36,7 +36,7 @@ func TestCompactSession_Refusals(t *testing.T) {
 	t.Parallel()
 	calls := 0
 	reqErr := errors.New("compaction is not configured for this agent")
-	tool := NewCompactSessionTool(func(string) error {
+	tool := NewCompactSessionTool(func(string, string) error {
 		calls++
 		return reqErr
 	})
@@ -54,5 +54,35 @@ func TestCompactSession_Refusals(t *testing.T) {
 	_, err := tool.Execute(WithSessionKey(context.Background(), "clutch/app/c1"), nil)
 	if !errors.Is(err, reqErr) {
 		t.Errorf("err = %v, want the requester's error wrapped", err)
+	}
+}
+
+// TestCompactSession_WakeMessage (#3041): wake_message reaches the requester
+// trimmed, and the result says the wake follows; without it the result says
+// nothing wakes the agent.
+func TestCompactSession_WakeMessage(t *testing.T) {
+	t.Parallel()
+	var gotWake string
+	tool := NewCompactSessionTool(func(_, wake string) error {
+		gotWake = wake
+		return nil
+	})
+	ctx := WithSessionKey(context.Background(), "clutch/app/c1")
+	res, err := tool.Execute(ctx, []byte(`{"wake_message":"  continue step 2  "}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if gotWake != "continue step 2" {
+		t.Errorf("requester got wake %q, want it trimmed", gotWake)
+	}
+	if !strings.Contains(res.Text, "wake message is sent") {
+		t.Errorf("result %q does not say the wake follows", res.Text)
+	}
+	res, err = tool.Execute(ctx, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if gotWake != "" || !strings.Contains(res.Text, "Nothing wakes you") {
+		t.Errorf("no wake_message: requester got %q, result %q", gotWake, res.Text)
 	}
 }

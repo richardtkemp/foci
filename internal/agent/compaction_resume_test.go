@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"testing"
@@ -31,7 +32,7 @@ func TestMaybeInjectCompactionResume(t *testing.T) {
 		var got []string
 		a := &Agent{AsyncNotifier: newNotifier(&got, &mu)}
 
-		a.maybeInjectCompactionResume(sk)
+		a.maybeInjectCompactionResume(context.Background(), sk)
 
 		mu.Lock()
 		defer mu.Unlock()
@@ -50,7 +51,7 @@ func TestMaybeInjectCompactionResume(t *testing.T) {
 		inb := a.getOrCreateInbox(sk)
 		inb.ch <- Envelope{SessionKey: sk, Text: "do the next thing"}
 
-		a.maybeInjectCompactionResume(sk)
+		a.maybeInjectCompactionResume(context.Background(), sk)
 
 		mu.Lock()
 		defer mu.Unlock()
@@ -66,7 +67,7 @@ func TestMaybeInjectCompactionResume(t *testing.T) {
 		inb := a.getOrCreateInbox(sk)
 		inb.appendSteer(SteerEntry{Text: "mid-flow paste", ReceivedAt: time.Now()})
 
-		a.maybeInjectCompactionResume(sk)
+		a.maybeInjectCompactionResume(context.Background(), sk)
 
 		mu.Lock()
 		defer mu.Unlock()
@@ -77,6 +78,6 @@ func TestMaybeInjectCompactionResume(t *testing.T) {
 
 	t.Run("nil notifier is a no-op", func(t *testing.T) {
 		a := &Agent{}
-		a.maybeInjectCompactionResume(sk) // must not panic
+		a.maybeInjectCompactionResume(context.Background(), sk) // must not panic
 	})
 }
