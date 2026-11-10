@@ -1,12 +1,14 @@
 package agent
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"foci/internal/relogin"
 	"foci/internal/usagehold"
 )
 
@@ -176,5 +178,55 @@ func TestInbox_UsageHold_InjectionsWaitRemindRuns(t *testing.T) {
 	a.ObserveUsage(usagehold.Event{Window: "seven_day", Util: 0.2, HasUtil: true})
 	if !waitFor(3*time.Second, func() bool { return cron.Load() && wake2.Load() }) {
 		t.Fatalf("at lift: cron ran=%v wake ran=%v, want both", cron.Load(), wake2.Load())
+	}
+}
+
+// TestRelogin_PendingBlocksBackgroundWork (#3006): while a Claude Code login
+// is pending, no periodic work runs on an agent that uses that login —
+// keepalive included. Each such run 401'd and started a new login attempt
+// (10 Nov: keepalive, reflection and two scheduled resets each did). A
+// backend with no Claude Code login is not blocked.
+func TestRelogin_PendingBlocksBackgroundWork(t *testing.T) {
+	reg := usagehold.New()
+	cc := holdAgent(reg, "claude-code")
+	cc.ReloginTrigger = func(string, string) bool { return true }
+	other := holdAgent(reg, "codex")
+	sk := "claude-code-agent/c1"
+
+	if lim, reason := cc.SessionRateLimited(sk); lim {
+		t.Fatalf("blocked with no login pending: %q", reason)
+	}
+	if !relogin.G.Start() {
+		t.Fatal("re-login gate already active at test start")
+	}
+	t.Cleanup(func() {
+		relogin.G.Release()
+		relogin.G.Complete()
+	})
+	relogin.G.Release() // the attempt failed: the login is still owed
+
+	if lim, reason := cc.SessionRateLimited(sk); !lim || !strings.Contains(reason, "login") {
+		t.Errorf("SessionRateLimited while a login is pending = %v %q, want blocked by the login", lim, reason)
+	}
+	if lim, reason := cc.KeepaliveRateLimited(sk); !lim || !strings.Contains(reason, "login") {
+		t.Errorf("KeepaliveRateLimited while a login is pending = %v %q, want blocked by the login", lim, reason)
+	}
+	if ok, _ := cc.CanFireBackgroundOperation(context.Background(), sk); ok {
+		t.Error("CanFireBackgroundOperation allowed background work while a login is pending")
+	}
+	// The credential is shared: one pending login blocks every CC agent.
+	cc2 := &Agent{AgentID: "helen", Endpoint: "ep", UsageHoldRegistry: reg,
+		DelegatedManager: &DelegatedManager{BackendType: "claude-code"},
+		ReloginTrigger:   func(string, string) bool { return true }}
+	if lim, _ := cc2.KeepaliveRateLimited("helen/c1"); !lim {
+		t.Error("a second Claude Code agent ran background work while the shared login is pending")
+	}
+	if lim, reason := other.KeepaliveRateLimited("codex-agent/c1"); lim {
+		t.Errorf("a backend without the Claude Code login was blocked: %q", reason)
+	}
+
+	relogin.G.Complete()
+	if lim, reason := cc.KeepaliveRateLimited(sk); lim {
+		t.Errorf("still blocked after the login completed: %q", reason)
 	}
 }

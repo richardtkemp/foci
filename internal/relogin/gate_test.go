@@ -144,3 +144,58 @@ func TestGatePending(t *testing.T) {
 		t.Fatalf("after Complete: pending=%v completed=%d, want false,2", g.Pending(), completed)
 	}
 }
+
+// TestGateStartAuto (#3006): an expiry gets one automatic attempt. Once that
+// attempt has failed, an automatic trigger (a 401, the startup probe) starts
+// nothing until the login completes; only a manual /login (Start) tries again.
+func TestGateStartAuto(t *testing.T) {
+	g := &Gate{}
+	if !g.StartAuto() {
+		t.Fatal("first automatic trigger of an expiry must start an attempt")
+	}
+	if g.StartAuto() {
+		t.Fatal("an automatic trigger must not start a second attempt while one runs")
+	}
+	g.Release() // the attempt failed: the login is still owed
+	if g.StartAuto() {
+		t.Fatal("an automatic trigger started a second attempt for the same expiry")
+	}
+	if g.Active() || !g.Pending() {
+		t.Fatalf("after a refused automatic trigger: active=%v pending=%v, want false,true", g.Active(), g.Pending())
+	}
+	if !g.Start() {
+		t.Fatal("a manual /login must start a new attempt while a login is pending")
+	}
+	g.Release()
+	g.Complete() // a login completed elsewhere, or the next attempt worked
+	if !g.StartAuto() {
+		t.Fatal("a new expiry (after the login completed) must get its automatic attempt")
+	}
+	g.Release()
+}
+
+// TestGateStartAuto_FailureKeepsPending (#3006): a user turn that runs while a
+// login is pending and meets a 401 has shown the credential is still dead. The
+// refused automatic trigger records that, so ClearPendingIf after that turn
+// must not end the pending state (it would resume background work against the
+// dead credential, and the next 401 would start another attempt).
+func TestGateStartAuto_FailureKeepsPending(t *testing.T) {
+	g := &Gate{}
+	g.StartAuto()
+	g.Release()
+	attempt, pending := g.PendingAttempt() // a user turn starts
+	if !pending {
+		t.Fatal("want a pending login")
+	}
+	g.StartAuto() // the turn 401s: refused, no new attempt
+	if g.ClearPendingIf(attempt) {
+		t.Fatal("ClearPendingIf cleared after a turn that met an auth failure")
+	}
+	if !g.Pending() {
+		t.Fatal("login no longer pending after a failed turn")
+	}
+	attempt, _ = g.PendingAttempt() // a later turn runs without a 401
+	if !g.ClearPendingIf(attempt) {
+		t.Fatal("ClearPendingIf must clear after a turn with no auth failure")
+	}
+}

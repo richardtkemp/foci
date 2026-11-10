@@ -157,8 +157,21 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// command reports "unavailable" rather than mis-driving the wrong backend.
 	claudeBin := config.DerefStr(bc.Binary)
 	workDir := p.acfg.Workspace
-	triggerRelogin := func(reason, sessionKey string) bool {
-		if !relogin.G.Start() {
+	// auto marks an automatic trigger (a 401, the startup probe): it gets one
+	// attempt per expiry and starts nothing while a login is pending (#3006);
+	// /login always starts one.
+	startRelogin := func(reason, sessionKey string, auto bool) bool {
+		start := relogin.G.Start
+		if auto {
+			start = relogin.G.StartAuto
+		}
+		if !start() {
+			if auto && !relogin.G.Active() {
+				// INFO, not WARN: a warning here would become a proactive
+				// injection, which is what this rule exists to stop.
+				log.NewComponentLogger("relogin/"+agentID).Infof(
+					"CC auth failure while a login is pending: no new attempt (send /login): %s", reason)
+			}
 			return false
 		}
 		// Logged under relogin/<agent> with the driver's lines, so the held
@@ -196,7 +209,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		return true
 	}
 	if spec.Supports(delegator.CapRelogin) {
-		ag.ReloginTrigger = triggerRelogin
+		ag.ReloginTrigger = func(reason, sessionKey string) bool {
+			return startRelogin(reason, sessionKey, false)
+		}
 	}
 
 	// PreToolUse rules (#2028): built-in defaults, then [cc_backend], then this
@@ -263,7 +278,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	}
 	if spec.Supports(delegator.CapRelogin) {
 		hostHooks.OnAuthFailure = func(detail string) {
-			triggerRelogin("401 auth failure: "+firstLine(detail), "")
+			startRelogin("401 auth failure: "+firstLine(detail), "", true)
 		}
 		hostHooks.OnLoginExpiry = loginExpiryHook(loginExpiryWarner(p.cfg), connMgr, p.cfg.MasterAgent, agentID)
 	}

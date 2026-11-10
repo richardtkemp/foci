@@ -10,6 +10,7 @@ import (
 
 	"foci/internal/procx"
 	"foci/internal/ratelimit"
+	"foci/internal/relogin"
 	"foci/internal/session"
 )
 
@@ -230,7 +231,9 @@ func (a *Agent) resolveEndpoint(sessionKey string) string {
 }
 
 // SessionRateLimited reports whether the given session may NOT fire because its
-// endpoint's rate-limit gate is closed (or the session key is empty). This is
+// endpoint's rate-limit gate is closed, the account is on a usage hold, a
+// Claude Code login is pending (reloginBlocksBackground), or the session key
+// is empty. This is
 // the shared gate every periodic scheduler consults — it does NOT run the
 // can_run_background script (that is background-work-only). Returns (true,
 // reason) when blocked, (false, "") when clear.
@@ -248,12 +251,32 @@ func (a *Agent) SessionRateLimited(sessionKey string) (limited bool, reason stri
 	if blocked, reason := a.UsageHoldBlocks(false); blocked {
 		return true, reason
 	}
+	if blocked, reason := a.reloginBlocksBackground(); blocked {
+		return true, reason
+	}
 	return false, ""
 }
 
-// KeepaliveRateLimited is SessionRateLimited for keepalive: the endpoint gate
-// and a usage STOP block it; a usage HOLD does not — keepalives are what a
-// hold keeps running (#2491).
+// reloginBlocksBackground reports whether a Claude Code login is owed on an
+// agent that uses it (#3006): an attempt is running, or one failed and
+// nothing has worked since. Background work then does not run, keepalive
+// included: on the dead credential each run would only 401 (#2384 pauses
+// injections the same way; periodic work forks its own backend and passed
+// that pause). It resumes when the login completes. Agents on other backends
+// do not use the login (ReloginTrigger is set only for CapRelogin).
+func (a *Agent) reloginBlocksBackground() (bool, string) {
+	if a.ReloginTrigger == nil || a.DelegatedManager == nil {
+		return false, ""
+	}
+	if relogin.G.Active() || relogin.G.Pending() {
+		return true, "Claude Code login pending (send /login)"
+	}
+	return false, ""
+}
+
+// KeepaliveRateLimited is SessionRateLimited for keepalive: the endpoint gate,
+// a usage STOP and a pending login block it; a usage HOLD does not —
+// keepalives are what a hold keeps running (#2491).
 func (a *Agent) KeepaliveRateLimited(sessionKey string) (limited bool, reason string) {
 	if sessionKey == "" {
 		return true, "no session key"
@@ -262,7 +285,10 @@ func (a *Agent) KeepaliveRateLimited(sessionKey string) (limited bool, reason st
 	if lim, until := a.getOrCreateRateLimitGate(endpoint).IsLimited(); lim {
 		return true, rateLimitedText(endpoint, until)
 	}
-	return a.UsageHoldBlocks(true)
+	if blocked, reason := a.UsageHoldBlocks(true); blocked {
+		return true, reason
+	}
+	return a.reloginBlocksBackground()
 }
 
 // engageRateLimit is the single gate-closing path for API and delegated

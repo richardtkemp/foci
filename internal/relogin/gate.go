@@ -42,7 +42,7 @@ type Gate struct {
 	released       chan struct{} // closed by Release; nil while inactive
 
 	pending    bool         // a login is owed: set by Start, cleared by Complete / ClearPendingIf
-	attempt    uint64       // incremented by every successful Start
+	attempt    uint64       // incremented by every successful Start, and by an auth failure StartAuto refuses
 	onComplete []func()     // run (outside mu) each time pending clears
 	link       *linkMessage // the sign-in link message of this pending login (link.go); cleared with pending
 }
@@ -52,9 +52,34 @@ var G = &Gate{}
 
 // Start attempts to claim the gate for a re-login. Returns true if claimed (the
 // caller should run the driver); false if a re-login is already in progress.
+// It is the manual trigger (/login): it starts an attempt whether or not a
+// login is already pending. Automatic triggers use StartAuto.
 func (g *Gate) Start() bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	return g.startLocked()
+}
+
+// StartAuto is Start for an automatic trigger: an auth failure (401) or the
+// startup readiness probe. An expiry gets one automatic attempt (#3006): while
+// a login is pending (an attempt failed and nothing has worked since), it
+// starts nothing, and only a manual /login (Start) tries again. Each attempt
+// sends a new sign-in link, so without this every 401 from the dead
+// credential started another one. A refused trigger still advances the
+// attempt number: the failure shows the credential is still dead, so a user
+// turn that met it must not clear the pending state (ClearPendingIf).
+func (g *Gate) StartAuto() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.pending && !g.active {
+		g.attempt++
+		return false
+	}
+	return g.startLocked()
+}
+
+// startLocked claims the gate; mu must be held.
+func (g *Gate) startLocked() bool {
 	if g.active {
 		return false
 	}
@@ -86,8 +111,9 @@ func (g *Gate) PendingAttempt() (uint64, bool) {
 }
 
 // ClearPendingIf ends the pending state when no attempt is running and none
-// has started since attempt was read: a user turn ran to the end without a
-// 401, so the credential works (for example, it was renewed outside foci).
+// has started (and no auth failure was reported, see StartAuto) since attempt
+// was read: a user turn ran to the end without a 401, so the credential works
+// (for example, it was renewed outside foci).
 // Without it a login completed elsewhere would pause injections until the
 // next restart. Reports whether it cleared.
 func (g *Gate) ClearPendingIf(attempt uint64) bool {
