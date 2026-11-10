@@ -208,6 +208,17 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		s.b.setRetrying(retryDetail(e.Status, e.Attempt, e.Delay))
 
 	case turnevent.TurnComplete:
+		// A final text that is foci's notice (e.g. "Max tool call depth
+		// reached.") is not the agent's reply (#3005): the renderer sees an
+		// empty final text, and the notice goes out as a system message after
+		// it — also when the turn already streamed a reply, since it reports
+		// how the turn ended rather than repeating the reply.
+		notice := ""
+		if e.FinalNotice {
+			notice = platform.StripSilencingSuffix(platform.StripSpuriousPrefix(e.FinalText))
+			e.FinalText = ""
+			ev = e
+		}
 		// Voice-mode bundling (#1439): synthesize BEFORE forwarding so the reply
 		// waits on synthesis — text and its voice-mode attachment land together,
 		// not text now / audio as a separate follow-up once TTS finishes.
@@ -218,6 +229,9 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		s.inner.Emit(ctx, ev)
 		s.backend.voiceUnavailable = ""
 		s.attachVoiceClip(audio)
+		if notice != "" {
+			s.b.send(fap.ServerMessage{ConversationID: s.b.convID, MessageID: fap.NewULID(), Role: "system", Text: notice})
+		}
 		s.b.setTurnActivity(fap.ActivityKindIdle)
 		s.emitMeta(e)
 		if s.cacheExpiryFn != nil {

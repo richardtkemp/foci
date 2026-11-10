@@ -584,7 +584,10 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 	}
 	a.logger().Warnf("max tool call depth reached for session %s", sessionFile)
 
+	// foci's notice, not the agent's words: sinks show it as a system notice
+	// (#3005).
 	ts.FinalText = "Max tool call depth reached."
+	ts.FinalNotice = true
 	close(ts.CompletionChan)
 	return nil
 }

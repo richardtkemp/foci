@@ -158,9 +158,11 @@ type DelegatedManager struct {
 	SubagentRunningFunc func(sessionKey string, running []delegator.RunningSubagent)
 
 	// SystemNoticeFunc sends an out-of-band system notice directly to a
-	// session's platform chat (NOT through an agent turn). Used to tell the
-	// user when a requested session could not be resumed and a fresh one was
-	// started in its place. Nil = notices are silently dropped (e.g. tests).
+	// session's platform chat (NOT through an agent turn), with the system
+	// role (#3005). Used to tell the user when a requested session could not
+	// be resumed and a fresh one was started in its place, and that a message
+	// is queued behind a busy session. Nil = notices are silently dropped
+	// (e.g. tests).
 	SystemNoticeFunc func(sessionKey, text string)
 
 	// LastUseFunc reports when the session last ran a turn before the current

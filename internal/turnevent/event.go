@@ -190,10 +190,15 @@ type ModelKnown struct {
 // fires, including on error paths (Err will be non-nil in that case).
 type TurnComplete struct {
 	FinalText string
-	Usage     *provider.Usage
-	Cost      float64
-	Model     string
-	Err       error
+	// FinalNotice marks FinalText as foci's own notice ending the turn (e.g.
+	// "Max tool call depth reached."), not the agent's reply (#3005). A sink
+	// that can tell the two apart shows it as a system notice; a buffering
+	// caller (spawn, sync HTTP) still gets it as the turn's text.
+	FinalNotice bool
+	Usage       *provider.Usage
+	Cost        float64
+	Model       string
+	Err         error
 
 	// The turn's identity, for a sink that records which turn produced what
 	// it delivered (#2992, the app's "Message info"). All "" when the emitter

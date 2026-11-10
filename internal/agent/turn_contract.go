@@ -191,6 +191,9 @@ type TurnState struct {
 	// --- Phase 3 outputs ---
 
 	FinalText string // response text from the completed turn
+	// FinalNotice: FinalText is a foci notice, not the agent's reply (#3005);
+	// carried to TurnComplete.FinalNotice.
+	FinalNotice bool
 	// FinalUsage is the turn's usage as the backend reports it: input/cache
 	// are the final cycle's context fill (what compaction sizes from),
 	// output and Turn are summed across every cycle — including a pre-answer

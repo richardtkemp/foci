@@ -175,8 +175,22 @@ func noticeSweeper(t *testing.T, d *httpHandlerDeps, store *defersend.Store) (*d
 	return sweepFor(*d, store), conn
 }
 
-func sentTexts(c *recordingConn) []string {
-	_, texts := c.snapshot()
+// noticeTexts returns the drop notices conn received. A drop notice is foci's
+// notice, so it must arrive through the injected (system-role) send, addressed
+// to testSessionKey's chat, never as an agent-role SendToSession (#3005).
+func noticeTexts(t *testing.T, c *recordingConn) []string {
+	t.Helper()
+	if _, agentRole := c.snapshot(); len(agentRole) != 0 {
+		t.Errorf("notice sent with the agent role (SendToSession): %v", agentRole)
+	}
+	var texts []string
+	for _, rec := range c.injectedSnapshot() {
+		key, text, _ := strings.Cut(rec, "|")
+		if key != testSessionKey {
+			t.Errorf("notice addressed to session %q, want %q", key, testSessionKey)
+		}
+		texts = append(texts, text)
+	}
 	return texts
 }
 
@@ -205,7 +219,7 @@ func TestSweep_TransientFailureRetriesThenDrops(t *testing.T) {
 	if n := storedCount(t, store); n != 1 {
 		t.Fatalf("stored=%d after 2 transient failures, want 1 (kept for retry)", n)
 	}
-	if texts := sentTexts(conn); len(texts) != 0 {
+	if texts := noticeTexts(t, conn); len(texts) != 0 {
 		t.Fatalf("notice sent before the third failure: %v", texts)
 	}
 
@@ -230,7 +244,7 @@ func TestSweep_TransientFailureRetriesThenDrops(t *testing.T) {
 	if n := storedCount(t, store); n != 0 {
 		t.Fatalf("stored=%d after the third failure, want 0", n)
 	}
-	texts := sentTexts(conn)
+	texts := noticeTexts(t, conn)
 	if len(texts) != 1 {
 		t.Fatalf("notices=%v want exactly one", texts)
 	}
@@ -272,7 +286,7 @@ func TestSweep_PermanentFailureDropsAtOnce(t *testing.T) {
 	if n := storedCount(t, store); n != 0 {
 		t.Fatalf("stored=%d want 0", n)
 	}
-	texts := sentTexts(conn)
+	texts := noticeTexts(t, conn)
 	if len(texts) != 1 {
 		t.Fatalf("notices=%v want one", texts)
 	}
@@ -300,7 +314,7 @@ func TestSweep_UnknownCommandAtDelivery_DroppedWithNotice(t *testing.T) {
 	if n := storedCount(t, store); n != 0 {
 		t.Fatalf("stored=%d want 0", n)
 	}
-	texts := sentTexts(conn)
+	texts := noticeTexts(t, conn)
 	if len(texts) != 1 {
 		t.Fatalf("notices=%v want one", texts)
 	}
@@ -328,7 +342,7 @@ func TestSweep_DropNoticeOnlyToOwnSession(t *testing.T) {
 	if n := storedCount(t, store); n != 0 {
 		t.Fatalf("stored=%d want 0", n)
 	}
-	if texts := sentTexts(other); len(texts) != 0 {
+	if texts := noticeTexts(t, other); len(texts) != 0 {
 		t.Errorf("notice went to a connection that is not the session's own: %v", texts)
 	}
 }
@@ -352,7 +366,7 @@ func TestSweep_SuccessRemovesRecord_NoNotice(t *testing.T) {
 	if n := storedCount(t, store); n != 0 {
 		t.Errorf("stored=%d want 0", n)
 	}
-	if texts := sentTexts(conn); len(texts) != 0 {
+	if texts := noticeTexts(t, conn); len(texts) != 0 {
 		t.Errorf("notice on success: %v", texts)
 	}
 }
@@ -487,7 +501,7 @@ func TestSweep_CommandPastDeadlineDropped(t *testing.T) {
 	if n := storedCount(t, store); n != 0 {
 		t.Errorf("stored=%d want 0", n)
 	}
-	texts := sentTexts(conn)
+	texts := noticeTexts(t, conn)
 	if len(texts) != 1 {
 		t.Fatalf("notices=%v want one", texts)
 	}

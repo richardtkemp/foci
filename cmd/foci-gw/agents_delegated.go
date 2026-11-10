@@ -422,14 +422,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			app.SetSubagents(sessionKey, running)
 		},
 		SystemNoticeFunc: func(sessionKey, text string) {
-			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
-			if conn == nil {
-				log.NewComponentLogger("agent:"+agentID).Warnf("system notice: no connection for session=%s, dropped: %s", sessionKey, text)
-				return
-			}
-			if err := conn.SendText(text); err != nil {
-				log.NewComponentLogger("agent:"+agentID).Warnf("system notice send failed for session=%s: %v", sessionKey, err)
-			}
+			sendSystemNotice(connMgr, agentID, sessionKey, text)
 		},
 		// Adopt CC-initiated runs as first-class foci turns — streaming, in-flight
 		// tracking, accounting, and meta all flow through the normal turn path
@@ -1473,4 +1466,20 @@ func newBatchSummariser(p setupParams, agLazy func() *agent.Agent) *tools.BatchS
 		return ""
 	},
 		acfg.Workspace, acfg.ID, func() int { return p.resolvedLive.Load().Summary.MaxSummaryInputChars })
+}
+
+// sendSystemNotice delivers a foci notice (a resume that started fresh, a
+// queued turn) to the chat of sessionKey with the system role: through the
+// injected send, so the app shows it as System, not as the agent speaking
+// (#3005), and Telegram/Discord send it to the session's own chat with the
+// injected_message_header. A missing connection or a failed send is logged.
+func sendSystemNotice(connMgr platform.ConnectionManager, agentID, sessionKey, text string) {
+	conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
+	if conn == nil {
+		log.NewComponentLogger("agent:"+agentID).Warnf("system notice: no connection for session=%s, dropped: %s", sessionKey, text)
+		return
+	}
+	if err := conn.SendInjectedMessage(sessionKey, text); err != nil {
+		log.NewComponentLogger("agent:"+agentID).Warnf("system notice send failed for session=%s: %v", sessionKey, err)
+	}
 }

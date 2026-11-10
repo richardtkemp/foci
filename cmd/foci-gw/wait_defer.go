@@ -464,13 +464,15 @@ func deferDropNotice(r defersend.Record, class string) string {
 
 // notifyDropped sends the drop notice to the target session's OWN chat
 // (route.PolicyStrict: never the agent's primary), and nothing when that
-// session has no live connection. For a branch the target is the parent.
+// session has no live connection. For a branch the target is the parent. It
+// is foci's notice, not the agent's words, so it goes through the injected
+// (system-role) send (#3005).
 func (s *deferSweeper) notifyDropped(r defersend.Record, class string) {
 	conn, _ := route.ConnFor(s.deps.connMgr, r.AgentID, r.SessionKey, route.PolicyStrict)
 	if conn == nil {
 		return
 	}
-	if err := conn.SendToSession(r.SessionKey, deferDropNotice(r, class)); err != nil {
+	if err := conn.SendInjectedMessage(r.SessionKey, deferDropNotice(r, class)); err != nil {
 		deferLog.Warnf("deferred %s %d: drop notice not sent: %v", r.EffectiveKind(), r.ID, err)
 	}
 }

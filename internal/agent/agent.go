@@ -768,15 +768,16 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, texts []st
 		a.logger().Debugf("deferred TurnComplete: session=%s final_text_len=%d err=%v folded=%v",
 			sessionKey, len(ts.FinalText), err, ts.foldedFollowUp)
 		complete := turnevent.TurnComplete{
-			FinalText: ts.FinalText,
-			Usage:     ts.FinalUsage,
-			Cost:      ts.FinalCost,
-			Model:     ts.FinalModel,
-			Err:       err,
-			TurnID:    ts.RowID(),
-			Trigger:   ts.Trigger,
-			Via:       triggerToPlatform(ts.Trigger),
-			Effort:    a.turnEffort(ts),
+			FinalText:   ts.FinalText,
+			FinalNotice: ts.FinalNotice,
+			Usage:       ts.FinalUsage,
+			Cost:        ts.FinalCost,
+			Model:       ts.FinalModel,
+			Err:         err,
+			TurnID:      ts.RowID(),
+			Trigger:     ts.Trigger,
+			Via:         triggerToPlatform(ts.Trigger),
+			Effort:      a.turnEffort(ts),
 
 			DispatchedAt: a.turnDispatchedAt(ts),
 		}

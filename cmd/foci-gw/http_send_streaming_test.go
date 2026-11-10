@@ -25,6 +25,9 @@ type recordingConn struct {
 	mu        sync.Mutex
 	typingSeq []bool
 	sentTexts []string
+	// injected records SendInjectedMessage calls (system-role notices,
+	// #3005) as "<sessionKey>|<text>", apart from the agent-role sentTexts.
+	injected []string
 }
 
 func newRecordingConn(sessionKey string) *recordingConn {
@@ -42,6 +45,20 @@ func (c *recordingConn) SendToSession(_ string, text string) error {
 	defer c.mu.Unlock()
 	c.sentTexts = append(c.sentTexts, text)
 	return nil
+}
+
+func (c *recordingConn) SendInjectedMessage(sessionKey, text string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.injected = append(c.injected, sessionKey+"|"+text)
+	return nil
+}
+
+// injectedSnapshot returns a copy of the recorded system-role sends.
+func (c *recordingConn) injectedSnapshot() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.injected...)
 }
 
 // snapshot returns copies of the recorded typing toggles and sent texts.
