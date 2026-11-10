@@ -8,7 +8,7 @@ import (
 )
 
 // reloginLinkTarget builds where one re-login attempt's sign-in link goes: an
-// updatable message (platform.SessionMessageEditor) in the triggering
+// updatable system notice (platform.SessionMessageEditor) in the triggering
 // session's chat, so later attempts rewrite it in place and only the newest
 // link is visible (#2384). A connection without the capability still gets
 // the link, but untracked. The connection is resolved at send time, the same
@@ -33,9 +33,9 @@ func reloginLinkTarget(connMgr platform.ConnectionManager, agentID, sessionKey s
 				return "", err
 			}
 			if ed, ok := conn.(platform.SessionMessageEditor); ok {
-				return ed.SendEditableToSession(sessionKey, text)
+				return ed.SendEditableInjected(sessionKey, text)
 			}
-			return "", conn.SendToSession(sessionKey, text)
+			return "", conn.SendInjectedMessage(sessionKey, text)
 		},
 		Edit: func(id, text string) error {
 			conn, err := resolve()
@@ -46,7 +46,7 @@ func reloginLinkTarget(connMgr platform.ConnectionManager, agentID, sessionKey s
 			if !ok {
 				return fmt.Errorf("connection %s cannot edit messages", conn.PlatformName())
 			}
-			return ed.EditSessionMessage(sessionKey, id, text)
+			return ed.EditInjectedMessage(sessionKey, id, text)
 		},
 	}
 }

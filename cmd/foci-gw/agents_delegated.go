@@ -183,11 +183,14 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 				// nil. SendToSession reads the chat ID straight from the key, so
 				// delivery works whichever bot resolves, even agent-less facets
 				// (the #843 "no chat ID — no default chat configured" bug).
+				// Injected, not SendToSession: these are foci's notices, not
+				// the agent's words, so the app shows them with the system
+				// role (#3003).
 				conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
 				if conn == nil {
 					return fmt.Errorf("no connection for agent %s", agentID)
 				}
-				return conn.SendToSession(sessionKey, text)
+				return conn.SendInjectedMessage(sessionKey, text)
 			},
 		})
 		return true

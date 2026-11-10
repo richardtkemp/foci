@@ -275,12 +275,12 @@ func TestSend_Routing(t *testing.T) {
 			c.SendNotification("⚡ rate limited")
 			f.assertOnePost(t, target.Channel, target.threadTS(), "rate-limit notice")
 		}},
-		{"SendEditableToSession + EditSessionMessage", func(t *testing.T, f *routingFixture, conn *Conn, target Target, sessionKey string) {
-			id, err := conn.SendEditableToSession(sessionKey, "sign-in link v1")
+		{"SendEditableInjected + EditInjectedMessage", func(t *testing.T, f *routingFixture, conn *Conn, target Target, sessionKey string) {
+			id, err := conn.SendEditableInjected(sessionKey, "sign-in link v1")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := conn.EditSessionMessage(sessionKey, id, "sign-in link v2"); err != nil {
+			if err := conn.EditInjectedMessage(sessionKey, id, "sign-in link v2"); err != nil {
 				t.Fatal(err)
 			}
 			f.assertOnePost(t, target.Channel, target.threadTS(), "editable message")
@@ -632,22 +632,22 @@ func TestSend_SendToChatToolEndToEnd(t *testing.T) {
 	}
 }
 
-// TestSend_EditSessionMessageRefusesForeignConversation proves requirement 5's
+// TestSend_EditInjectedMessageRefusesForeignConversation proves requirement 5's
 // guard on the session-addressed edit: a bound DM view refuses to edit a
 // message id naming another conversation (a channel thread), makes no API
 // call, and still edits its own conversation's messages.
-func TestSend_EditSessionMessageRefusesForeignConversation(t *testing.T) {
+func TestSend_EditInjectedMessageRefusesForeignConversation(t *testing.T) {
 	f := newRoutingFixture(t)
 	dmConn := f.h.mgr.BotForSession(f.dmKey)
 	threadConn := f.h.mgr.BotForSession(f.threadKey)
 
 	// An id from the thread's conversation, handed to the DM session's view.
-	threadID, err := threadConn.SendEditableToSession(f.threadKey, "thread message")
+	threadID, err := threadConn.SendEditableInjected(f.threadKey, "thread message")
 	if err != nil {
 		t.Fatal(err)
 	}
 	mark := f.h.fake.totalCalls()
-	if err := dmConn.EditSessionMessage(f.dmKey, threadID, "hijacked"); err == nil || !strings.Contains(err.Error(), "different conversation") {
+	if err := dmConn.EditInjectedMessage(f.dmKey, threadID, "hijacked"); err == nil || !strings.Contains(err.Error(), "different conversation") {
 		t.Fatalf("a DM session's view edited a thread message; want the cross-conversation refusal, got %v", err)
 	}
 	if got := f.h.fake.totalCalls(); got != mark {
@@ -655,11 +655,11 @@ func TestSend_EditSessionMessageRefusesForeignConversation(t *testing.T) {
 	}
 
 	// The same view edits its own conversation's message.
-	dmID, err := dmConn.SendEditableToSession(f.dmKey, "dm message")
+	dmID, err := dmConn.SendEditableInjected(f.dmKey, "dm message")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := dmConn.EditSessionMessage(f.dmKey, dmID, "dm message v2"); err != nil {
+	if err := dmConn.EditInjectedMessage(f.dmKey, dmID, "dm message v2"); err != nil {
 		t.Fatalf("edit of the session's own message failed: %v", err)
 	}
 	edits := f.h.fake.callsFor("chat.update")
@@ -698,18 +698,18 @@ func TestSend_SendToSessionUnroutableReportsError(t *testing.T) {
 	}
 }
 
-// TestSend_EditSessionMessageRefusesUnregisteredSession proves the edit guard
+// TestSend_EditInjectedMessageRefusesUnregisteredSession proves the edit guard
 // fails closed on the SessionMessageEditor surface: a session key with no
 // resolvable Slack conversation — never registered, or another agent's — is
 // refused before any API call with the no-conversation diagnosis (not the
 // different-conversation one: the session has nothing to compare, which is
 // its own refusal), never edited on the strength of having nothing to
 // compare.
-func TestSend_EditSessionMessageRefusesUnregisteredSession(t *testing.T) {
+func TestSend_EditInjectedMessageRefusesUnregisteredSession(t *testing.T) {
 	f := newRoutingFixture(t)
 	unbound := f.h.mgr.PrimaryBot("helen")
 
-	dmID, err := unbound.SendEditableToSession(f.dmKey, "dm message")
+	dmID, err := unbound.SendEditableInjected(f.dmKey, "dm message")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -719,8 +719,8 @@ func TestSend_EditSessionMessageRefusesUnregisteredSession(t *testing.T) {
 		sessionKeyFor("zz", f.dm),     // the DM's conversation under another agent
 		sessionKeyFor("zz", f.thread), // the thread's conversation under another agent
 	} {
-		if err := unbound.EditSessionMessage(key, dmID, "hijacked"); err == nil || !strings.Contains(err.Error(), "no Slack conversation registered") {
-			t.Errorf("EditSessionMessage(%s) = %v; want the no-conversation refusal (the unregistered-session branch, not the mismatch one)", key, err)
+		if err := unbound.EditInjectedMessage(key, dmID, "hijacked"); err == nil || !strings.Contains(err.Error(), "no Slack conversation registered") {
+			t.Errorf("EditInjectedMessage(%s) = %v; want the no-conversation refusal (the unregistered-session branch, not the mismatch one)", key, err)
 		}
 	}
 	if got := f.h.fake.totalCalls(); got != mark {
@@ -783,7 +783,7 @@ func TestSend_BoundViewToChatRefusesForeignChat(t *testing.T) {
 // dimension (#2459 req 5): two threads of one channel are different
 // conversations, so a thread session's edit of the OTHER thread's message
 // id is refused on both edit surfaces (the bound view's EditMessageText and
-// the session-addressed EditSessionMessage) with no API call — while its own
+// the session-addressed EditInjectedMessage) with no API call — while its own
 // thread's ids still edit, and the ids carry their thread.
 func TestSend_EditRefusesCrossThreadInSameChannel(t *testing.T) {
 	h := newHarness(t, "helen", nil)
@@ -800,7 +800,7 @@ func TestSend_EditRefusesCrossThreadInSameChannel(t *testing.T) {
 	oneConn := h.mgr.BotForSession(oneKey)
 	twoConn := h.mgr.BotForSession(twoKey)
 
-	oneID, err := oneConn.SendEditableToSession(oneKey, "thread one says")
+	oneID, err := oneConn.SendEditableInjected(oneKey, "thread one says")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -809,8 +809,8 @@ func TestSend_EditRefusesCrossThreadInSameChannel(t *testing.T) {
 	}
 	mark := h.fake.totalCalls()
 
-	if err := twoConn.EditSessionMessage(twoKey, oneID, "hijacked"); err == nil {
-		t.Error("EditSessionMessage edited another thread's message in the same channel; want refusal")
+	if err := twoConn.EditInjectedMessage(twoKey, oneID, "hijacked"); err == nil {
+		t.Error("EditInjectedMessage edited another thread's message in the same channel; want refusal")
 	}
 	if err := twoConn.EditMessageText(oneID, "hijacked"); err == nil {
 		t.Error("bound EditMessageText edited another thread's message in the same channel; want refusal")
@@ -825,11 +825,11 @@ func TestSend_EditRefusesCrossThreadInSameChannel(t *testing.T) {
 	}
 
 	// The session's own thread still edits in place.
-	twoID, err := twoConn.SendEditableToSession(twoKey, "thread two says")
+	twoID, err := twoConn.SendEditableInjected(twoKey, "thread two says")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := twoConn.EditSessionMessage(twoKey, twoID, "thread two v2"); err != nil {
+	if err := twoConn.EditInjectedMessage(twoKey, twoID, "thread two v2"); err != nil {
 		t.Fatalf("edit of the session's own thread failed: %v", err)
 	}
 	edits := h.fake.callsFor("chat.update")
@@ -926,9 +926,9 @@ func TestSend_UnknownMessageIDNamedInRefusal(t *testing.T) {
 	backend := &slackBackend{core: f.h.core("helen"), target: f.dm}
 
 	for name, err := range map[string]error{
-		"EditMessageText":    conn.EditMessageText("not-an-id", "x"),
-		"EditSessionMessage": conn.EditSessionMessage(f.dmKey, "not-an-id", "x"),
-		"EditChunk":          backend.EditChunk("not-an-id", "x"),
+		"EditMessageText":     conn.EditMessageText("not-an-id", "x"),
+		"EditInjectedMessage": conn.EditInjectedMessage(f.dmKey, "not-an-id", "x"),
+		"EditChunk":           backend.EditChunk("not-an-id", "x"),
 	} {
 		if err == nil || !strings.Contains(err.Error(), "unknown message id") || errors.Is(err, errNoSessionAddress) {
 			t.Errorf("%s of a malformed id = %v, want the unknown-id refusal", name, err)
@@ -955,7 +955,7 @@ func TestSend_BoundViewRefusesForeignSessionKey(t *testing.T) {
 	f := newRoutingFixture(t)
 	threadConn := f.h.mgr.BotForSession(f.threadKey)
 	dmConn := f.h.mgr.BotForSession(f.dmKey)
-	dmID, err := dmConn.SendEditableToSession(f.dmKey, "dm message")
+	dmID, err := dmConn.SendEditableInjected(f.dmKey, "dm message")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -968,11 +968,11 @@ func TestSend_BoundViewRefusesForeignSessionKey(t *testing.T) {
 	if err := threadConn.SendInjectedMessage(f.dmKey, "leak via SendInjectedMessage"); err == nil {
 		t.Error("SendInjectedMessage(foreign key) on a bound view returned nil")
 	}
-	if id, err := threadConn.SendEditableToSession(f.dmKey, "leak via SendEditableToSession"); err == nil {
-		t.Errorf("SendEditableToSession(foreign key) on a bound view returned id %q, nil", id)
+	if id, err := threadConn.SendEditableInjected(f.dmKey, "leak via SendEditableInjected"); err == nil {
+		t.Errorf("SendEditableInjected(foreign key) on a bound view returned id %q, nil", id)
 	}
-	if err := threadConn.EditSessionMessage(f.dmKey, dmID, "hijacked"); err == nil {
-		t.Error("EditSessionMessage(foreign key) on a bound view returned nil")
+	if err := threadConn.EditInjectedMessage(f.dmKey, dmID, "hijacked"); err == nil {
+		t.Error("EditInjectedMessage(foreign key) on a bound view returned nil")
 	}
 	if got := f.h.fake.totalCalls(); got != mark {
 		t.Errorf("refused foreign-key calls made %d API calls, want 0: %+v", got-mark, f.h.fake.callsSnapshot()[mark:])

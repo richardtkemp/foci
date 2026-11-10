@@ -991,9 +991,9 @@ func TestSendToSession_EmitsMessageFrame(t *testing.T) {
 	}
 }
 
-// TestEditableMessage_SendThenEditInPlace (#2384): an editable send is an
-// ordinary agent message frame whose id a later message.edit names, with the
-// new text, in the same conversation.
+// TestEditableMessage_SendThenEditInPlace (#2384): an editable send is a
+// system message frame (#3003: a foci notice, not the agent's words) whose id
+// a later message.edit names, with the new text, in the same conversation.
 func TestEditableMessage_SendThenEditInPlace(t *testing.T) {
 	h := newTestHub()
 	c := fakeClient()
@@ -1001,18 +1001,18 @@ func TestEditableMessage_SendThenEditInPlace(t *testing.T) {
 	h.bySession[b.key()] = b
 
 	var conn platform.SessionMessageEditor = &appConn{hub: h, agentID: "ag"}
-	id, err := conn.SendEditableToSession(b.key(), "link one")
+	id, err := conn.SendEditableInjected(b.key(), "link one")
 	if err != nil || id == "" {
-		t.Fatalf("SendEditableToSession = %q, %v", id, err)
+		t.Fatalf("SendEditableInjected = %q, %v", id, err)
 	}
-	if err := conn.EditSessionMessage(b.key(), id, "link two"); err != nil {
+	if err := conn.EditInjectedMessage(b.key(), id, "link two"); err != nil {
 		t.Fatal(err)
 	}
 	got := drain(t, c)
 	if len(got) != 2 || got[0].t != fap.TypeMessage || got[1].t != fap.TypeMessageEdit {
 		t.Fatalf("frames = %v, want [message, message.edit]", types(got))
 	}
-	if got[0].d["messageId"] != id || got[0].d["role"] != "agent" || got[0].d["text"] != "link one" {
+	if got[0].d["messageId"] != id || got[0].d["role"] != "system" || got[0].d["text"] != "link one" {
 		t.Errorf("message frame = %v", got[0].d)
 	}
 	if got[1].d["messageId"] != id || got[1].d["conversationId"] != "c1" || got[1].d["text"] != "link two" {

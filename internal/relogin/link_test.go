@@ -167,3 +167,62 @@ func TestRun_SecondAttemptEditsLinkInPlace(t *testing.T) {
 		t.Fatalf("m1 history = %q; want link one, expired, link two, expired", h)
 	}
 }
+
+// TestSignInLinkText (#3003): the sign-in URL becomes a markdown link with
+// short text, the URL inside it byte for byte (#1931). A URL with a character
+// that would end or alter the link destination is shown raw instead.
+func TestSignInLinkText(t *testing.T) {
+	url := "https://claude.ai/oauth/authorize?code=true&client_id=9d1c_250a&redirect_uri=https%3A%2F%2Fconsole.anthropic.com%2Foauth%2Fcode%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile&state=Ab_cD-eF"
+	got := signInLinkText(url)
+	if !strings.Contains(got, "[Sign in to Claude Code]("+url+")") {
+		t.Fatalf("signInLinkText = %q, want a markdown link holding the exact URL", got)
+	}
+	if strings.Count(got, "https://") != 1 {
+		t.Fatalf("signInLinkText = %q, want the URL once (no raw copy beside the link)", got)
+	}
+	for _, bad := range []string{"https://x/a?s=1)2", "https://x/a?s=(1", "https://x/a?s=<1>", `https://x/a?s=1\2`, "https://x/a?s=1 2"} {
+		got := signInLinkText(bad)
+		if strings.Contains(got, "](") || !strings.HasSuffix(got, "\n\n"+bad) {
+			t.Errorf("signInLinkText(%q) = %q, want the raw URL on its own line, no markdown link", bad, got)
+		}
+	}
+}
+
+// TestRun_FailedAttemptSaysSendLoginOnce (#3003): a failed attempt tells the
+// user to send /login once. The expired link edit carries no instruction; the
+// failure notice does. The link alone says to paste the code.
+func TestRun_FailedAttemptSaysSendLoginOnce(t *testing.T) {
+	g := &Gate{}
+	chat := newFakeChat()
+	if !g.Start() {
+		t.Fatal("Start")
+	}
+	screen := "Use the url below to sign in\nhttps://claude.ai/oauth?state=one\nPaste code here if prompted"
+	fp := &fakePane{captures: []string{screen}}
+	var msgs []string
+	var mu sync.Mutex
+	cfg := newTestConfig(g, fp, &msgs, &mu)
+	cfg.CodeTimeout = 20 * time.Millisecond
+	cfg.Link = chat.target("app|clutch|s")
+	Run(context.Background(), cfg)
+
+	mu.Lock()
+	defer mu.Unlock()
+	all := append(append([]string{}, chat.hist["m1"]...), msgs...)
+	count := func(sub string) int {
+		n := 0
+		for _, s := range all {
+			n += strings.Count(strings.ToLower(s), sub)
+		}
+		return n
+	}
+	if n := count("/login"); n != 1 {
+		t.Errorf("\"/login\" appears %d times across %q; want once", n, all)
+	}
+	if n := count("paste the code"); n != 1 {
+		t.Errorf("\"paste the code\" appears %d times across %q; want once", n, all)
+	}
+	if len(msgs) != 1 || !strings.Contains(msgs[0], "timed out waiting for the login code") {
+		t.Errorf("notices = %q, want one failure notice with the reason", msgs)
+	}
+}

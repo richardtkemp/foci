@@ -307,3 +307,26 @@ func TestSendNotificationImmediate_ShortSingleSend(t *testing.T) {
 		t.Errorf("id = %q, want 1", id)
 	}
 }
+
+// TestEditableInjected_HeaderOnSendAndEdit (#3003): the relogin link is a
+// system notice, so its send and every edit carry the injected header, like
+// SendInjectedMessage.
+func TestEditableInjected_HeaderOnSendAndEdit(t *testing.T) {
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	b.display.InjectedMessageHeader = "[injected]"
+	chatKey := session.NewChatSessionKey("scout", 777)
+
+	id, err := b.SendEditableInjected(chatKey, "link one")
+	if err != nil {
+		t.Fatalf("SendEditableInjected: %v", err)
+	}
+	if !strings.HasPrefix(mock.lastSendInjected, "[injected]\nlink one") {
+		t.Errorf("sent = %q, want header then text", mock.lastSendInjected)
+	}
+	if err := b.EditInjectedMessage(chatKey, id, "link two"); err != nil {
+		t.Fatalf("EditInjectedMessage: %v", err)
+	}
+	if !strings.HasPrefix(mock.lastEditText, "[injected]\nlink two") {
+		t.Errorf("edit = %q, want header then text", mock.lastEditText)
+	}
+}

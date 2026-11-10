@@ -493,10 +493,7 @@ func (b *Bot) SendText(text string) error {
 // if the session key doesn't contain a chat ID (e.g. independent sessions).
 // Prepends the configured InjectedMessageHeader (if non-empty).
 func (b *Bot) SendInjectedMessage(sessionKey, text string) error {
-	if header := b.getDisplay().InjectedMessageHeader; header != "" && strings.TrimSpace(text) != "" {
-		text = header + "\n" + text
-	}
-	return b.SendToSession(sessionKey, text)
+	return b.SendToSession(sessionKey, b.withInjectedHeader(text))
 }
 
 // SendToSession sends a text message (without header) to the chat
@@ -514,17 +511,19 @@ func (b *Bot) SendToSession(sessionKey, text string) error {
 	return b.SendTextToChat(chatID, text)
 }
 
-// SendEditableToSession sends text (markdown, converted as SendTextToChat
+// SendEditableInjected sends text (markdown, converted as SendTextToChat
 // does) to the chat owning sessionKey as one message and returns its id for a
-// later EditSessionMessage. Implements platform.SessionMessageEditor (#2384).
+// later EditInjectedMessage. Like SendInjectedMessage it prepends the
+// injected_message_header (#3003). Implements platform.SessionMessageEditor
+// (#2384).
 // Text longer than one Telegram message is not split: an editable message
 // must be a single message.
-func (b *Bot) SendEditableToSession(sessionKey, text string) (string, error) {
+func (b *Bot) SendEditableInjected(sessionKey, text string) (string, error) {
 	chatID := b.chatIDForSession(sessionKey)
 	if chatID == 0 {
 		return "", fmt.Errorf("no chat ID for session %q and no default chat", sessionKey)
 	}
-	msg, ok := sendHTMLWithFallback(b, b.client, chatID, ConvertToTelegramHTML(text, b.tableOpts()))
+	msg, ok := sendHTMLWithFallback(b, b.client, chatID, ConvertToTelegramHTML(b.withInjectedHeader(text), b.tableOpts()))
 	if !ok || msg == nil {
 		return "", fmt.Errorf("send editable message to chat %d failed", chatID)
 	}
@@ -532,8 +531,18 @@ func (b *Bot) SendEditableToSession(sessionKey, text string) (string, error) {
 	return strconv.FormatInt(msg.MessageId, 10), nil
 }
 
-// EditSessionMessage rewrites message msgID in the chat owning sessionKey.
-// Implements platform.SessionMessageEditor (#2384).
-func (b *Bot) EditSessionMessage(sessionKey, msgID, text string) error {
-	return b.EditNotificationInSession(sessionKey, msgID, text)
+// EditInjectedMessage rewrites message msgID in the chat owning sessionKey,
+// keeping the injected_message_header the send prepended. Implements
+// platform.SessionMessageEditor (#2384).
+func (b *Bot) EditInjectedMessage(sessionKey, msgID, text string) error {
+	return b.EditNotificationInSession(sessionKey, msgID, b.withInjectedHeader(text))
+}
+
+// withInjectedHeader prepends the configured InjectedMessageHeader to a
+// non-blank text; an empty header leaves the text unchanged.
+func (b *Bot) withInjectedHeader(text string) string {
+	if header := b.getDisplay().InjectedMessageHeader; header != "" && strings.TrimSpace(text) != "" {
+		return header + "\n" + text
+	}
+	return text
 }

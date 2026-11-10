@@ -235,8 +235,8 @@ func (c *Conn) chatGuard(chatID int64, what string) bool {
 }
 
 // sessionGuard is chatGuard for the methods that take an explicit session
-// key (SendToSession, SendInjectedMessage, SendEditableToSession,
-// EditSessionMessage; review F2): on a BOUND view, a key naming another
+// key (SendToSession, SendInjectedMessage, SendEditableInjected,
+// EditInjectedMessage; review F2): on a BOUND view, a key naming another
 // conversation is refused and logged, never looked up. The comparison is by
 // conversation (agent + chat id), so a branch of the view's own session —
 // which BotForSession would resolve to this same conversation — still sends.
@@ -282,10 +282,16 @@ func (c *Conn) sendToSession(sessionKey, text, what string) error {
 // injected_message_header prepended (empty disables; same display setting the
 // other chat transports honour).
 func (c *Conn) SendInjectedMessage(sessionKey, text string) error {
+	return c.sendToSession(sessionKey, c.withInjectedHeader(text), "SendInjectedMessage")
+}
+
+// withInjectedHeader prepends the configured injected_message_header to a
+// non-empty text; an empty header leaves the text unchanged.
+func (c *Conn) withInjectedHeader(text string) string {
 	if c.core.injectedHeader != "" && text != "" {
-		text = c.core.injectedHeader + "\n" + text
+		return c.core.injectedHeader + "\n" + text
 	}
-	return c.sendToSession(sessionKey, text, "SendInjectedMessage")
+	return text
 }
 
 func (c *Conn) SendNotification(text string) {
@@ -482,17 +488,22 @@ func (c *Conn) editRef(msgID, text string, buttons []platform.ButtonChoice, call
 
 // --- platform.SessionMessageEditor (#2384) ---
 
-// SendEditableToSession posts text to a session's conversation and returns
-// the id EditSessionMessage rewrites in place. It rides the one
+// SendEditableInjected posts text to a session's conversation, with the
+// injected_message_header prepended like SendInjectedMessage (#3003), and
+// returns the id EditInjectedMessage rewrites in place. It rides the one
 // session-text preamble (deliverSessionText) and translates its outcomes
 // into this surface's contract: an empty message and an unroutable session
 // are both errors — the caller asked for a return id, so "nothing was sent"
 // must never masquerade as success.
-func (c *Conn) SendEditableToSession(sessionKey, text string) (string, error) {
+func (c *Conn) SendEditableInjected(sessionKey, text string) (string, error) {
 	if !c.sessionGuard(sessionKey, "editable message") {
 		return "", errForeignSession
 	}
-	ref, sent, err := c.deliverSessionText(sessionKey, text, "editable message")
+	if cleanText(text) == "" {
+		// Checked before the header goes on: a header alone is not a message.
+		return "", fmt.Errorf("editable message for session %q is empty", sessionKey)
+	}
+	ref, sent, err := c.deliverSessionText(sessionKey, c.withInjectedHeader(text), "editable message")
 	switch {
 	case err != nil:
 		if errors.Is(err, errNoSessionAddress) {
@@ -505,18 +516,19 @@ func (c *Conn) SendEditableToSession(sessionKey, text string) (string, error) {
 	return ref.String(), nil
 }
 
-// EditSessionMessage rewrites a SendEditableToSession message in place. The
+// EditInjectedMessage rewrites a SendEditableInjected message in place. The
 // id must name a message in sessionKey's own conversation — channel and
 // thread — an id from another conversation is refused, never edited (req 5:
 // no send of one session may touch another session's conversation).
-func (c *Conn) EditSessionMessage(sessionKey, msgID, text string) error {
-	if !c.sessionGuard(sessionKey, "EditSessionMessage") {
+func (c *Conn) EditInjectedMessage(sessionKey, msgID, text string) error {
+	if !c.sessionGuard(sessionKey, "EditInjectedMessage") {
 		return errForeignSession
 	}
 	clean := cleanText(text)
 	if clean == "" {
 		return fmt.Errorf("edit of message %s is empty", msgID)
 	}
+	clean = c.withInjectedHeader(clean)
 	ref, err := parseEditRef(msgID)
 	if err != nil {
 		return err

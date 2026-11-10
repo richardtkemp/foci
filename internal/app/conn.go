@@ -240,10 +240,10 @@ func (c *appConn) SendToSession(sessionKey, text string) error {
 	return nil
 }
 
-// SendEditableToSession sends an agent message like SendToSession and returns
-// its messageID, so EditSessionMessage can rewrite it later. Implements
-// platform.SessionMessageEditor (#2384).
-func (c *appConn) SendEditableToSession(sessionKey, text string) (string, error) {
+// SendEditableInjected sends a system message like SendInjectedMessage and
+// returns its messageID, so EditInjectedMessage can rewrite it later.
+// Implements platform.SessionMessageEditor (#2384, system role #3003).
+func (c *appConn) SendEditableInjected(sessionKey, text string) (string, error) {
 	clean := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(text))
 	if clean == "" {
 		return "", fmt.Errorf("editable message for session %q is empty", sessionKey)
@@ -256,15 +256,15 @@ func (c *appConn) SendEditableToSession(sessionKey, text string) (string, error)
 		clean = misdeliveryBanner(sessionKey, b.convID, clean)
 	}
 	msgID := fap.NewULID()
-	b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: msgID, Role: "agent", Text: clean})
+	b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: msgID, Role: "system", Text: clean})
 	return msgID, nil
 }
 
-// EditSessionMessage rewrites the agent message msgID in place with a
-// fap.MessageEdit: same row and position, no unread bump, no push. It
+// EditInjectedMessage rewrites the system message msgID in place with a
+// fap.MessageEdit: same row, position and role, no unread bump, no push. It
 // resolves the conversation the same way the send did. Implements
 // platform.SessionMessageEditor (#2384).
-func (c *appConn) EditSessionMessage(sessionKey, msgID, text string) error {
+func (c *appConn) EditInjectedMessage(sessionKey, msgID, text string) error {
 	clean := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(text))
 	if clean == "" {
 		return fmt.Errorf("edit of message %s is empty", msgID)

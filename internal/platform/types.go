@@ -397,21 +397,25 @@ type SessionNotifier interface {
 }
 
 // SessionMessageEditor is optionally implemented by connections that can send
-// an ordinary message to a session's chat and later rewrite that same message
-// in place: the updatable-message class (#2384). The rewrite keeps the
-// message where it is and shows no "edited" marker; on the app it fires no
-// unread bump or push either. It exists for a message whose content goes
-// stale while the conversation moves on, where only the newest version may
-// stay visible (the CC sign-in link: only the latest link is valid). The app
-// implements it with fap.MessageEdit; Telegram and Discord with their
-// edit-message APIs.
+// a system (injected) message to a session's chat and later rewrite that same
+// message in place: the updatable-notice class (#2384). The message has the
+// same standing as SendInjectedMessage: the app shows it with the system role,
+// and the chat transports prepend the injected_message_header (#3003). The
+// rewrite keeps the message where it is and shows no "edited" marker; on the
+// app it fires no unread bump or push either. It exists for a notice whose
+// content goes stale while the conversation moves on, where only the newest
+// version may stay visible (the CC sign-in link: only the latest link is
+// valid). The app implements it with fap.MessageEdit; Telegram, Discord and
+// Slack with their edit-message APIs.
 type SessionMessageEditor interface {
-	// SendEditableToSession sends text to the chat owning sessionKey and
-	// returns an id for EditSessionMessage. An error means nothing was sent.
-	SendEditableToSession(sessionKey, text string) (msgID string, err error)
-	// EditSessionMessage replaces the text of message msgID (from
-	// SendEditableToSession on this connection) in the chat owning sessionKey.
-	EditSessionMessage(sessionKey, msgID, text string) error
+	// SendEditableInjected sends text as a system message to the chat owning
+	// sessionKey and returns an id for EditInjectedMessage. An error means
+	// nothing was sent.
+	SendEditableInjected(sessionKey, text string) (msgID string, err error)
+	// EditInjectedMessage replaces the text of message msgID (from
+	// SendEditableInjected on this connection) in the chat owning sessionKey.
+	// The message stays a system message.
+	EditInjectedMessage(sessionKey, msgID, text string) error
 }
 
 // OwnChatDocumentSender is optionally implemented by connections whose plain

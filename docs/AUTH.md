@@ -90,8 +90,8 @@ The flow is also triggered manually with the `/login` command (ccstream backend 
 
 What you see:
 
-1. The URL message arrives in the chat that triggered the re-login — the chat that ran `/login` for the manual path, or the agent's default chat for the auto-401 path: `🔐 Sign in to re-authenticate Claude Code, then paste the code back to me:` followed by the sign-in URL.
+1. The sign-in message arrives in the chat that triggered the re-login — the chat that ran `/login` for the manual path, or the agent's default chat for the auto-401 path: `🔐 Sign in to Claude Code, then paste the code here.`, where "Sign in to Claude Code" is a link to the sign-in URL (on a chat that renders markdown; the URL is shown raw if it holds a character that would break the link). In the app it, and every other re-login message, is a system message.
 2. You sign in via the browser and reply with the code from the page.
-3. On success: `✅ Login completed.`
+3. On success: `✅ Claude Code login completed.`
 
-While a re-login is in progress, message processing for delegated agents is paused; it resumes once login completes, fails, or times out. If it fails, foci tells you to send `/login` in the chat to try again.
+While a re-login is in progress, message processing for delegated agents is paused; it resumes once login completes, fails, or times out. If it fails, the sign-in message changes to say the link has expired, and a separate notice gives the reason and tells you to send `/login` in the chat to try again.

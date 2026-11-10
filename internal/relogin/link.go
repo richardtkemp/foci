@@ -31,9 +31,6 @@ type linkMessage struct {
 	edit func(id, text string) error
 }
 
-// expiredLinkText replaces a link whose attempt ended without a login.
-const expiredLinkText = "🔐 This Claude Code sign-in link has expired. Send /login for a new one."
-
 // showLink puts text (the new sign-in link) in front of the user. It rewrites
 // the pending login's link message in place when the target is the same chat.
 // Otherwise it marks any old message expired and sends a new one.

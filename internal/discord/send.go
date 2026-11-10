@@ -351,10 +351,16 @@ func (b *Bot) SendText(text string) error {
 // if the session key doesn't contain a chat ID (e.g. independent sessions).
 // Prepends the configured InjectedMessageHeader (if non-empty).
 func (b *Bot) SendInjectedMessage(sessionKey, text string) error {
+	return b.SendToSession(sessionKey, b.withInjectedHeader(text))
+}
+
+// withInjectedHeader prepends the configured InjectedMessageHeader to a
+// non-blank text; an empty header leaves the text unchanged.
+func (b *Bot) withInjectedHeader(text string) string {
 	if header := b.getDisplay().InjectedMessageHeader; header != "" && strings.TrimSpace(text) != "" {
-		text = header + "\n" + text
+		return header + "\n" + text
 	}
-	return b.SendToSession(sessionKey, text)
+	return text
 }
 
 // SendToSession sends a text message (without header) to the channel
@@ -676,20 +682,22 @@ func buildButtonComponents(buttons []platform.ButtonChoice, callbackPrefix strin
 	return components
 }
 
-// SendEditableToSession sends text to the channel owning sessionKey and
-// returns the message id for a later EditSessionMessage. Implements
-// platform.SessionMessageEditor (#2384). Over-length text is chunked like a
+// SendEditableInjected sends text to the channel owning sessionKey and
+// returns the message id for a later EditInjectedMessage. Implements
+// platform.SessionMessageEditor (#2384). Like SendInjectedMessage it prepends
+// the injected_message_header (#3003). Over-length text is chunked like a
 // notification; the id is the first chunk's, so only that chunk is editable.
-func (b *Bot) SendEditableToSession(sessionKey, text string) (string, error) {
-	id := b.sendNotificationToChannel(b.channelIDForSession(sessionKey), text)
+func (b *Bot) SendEditableInjected(sessionKey, text string) (string, error) {
+	id := b.sendNotificationToChannel(b.channelIDForSession(sessionKey), b.withInjectedHeader(text))
 	if id == "" {
 		return "", fmt.Errorf("send editable message for session %q failed", sessionKey)
 	}
 	return id, nil
 }
 
-// EditSessionMessage rewrites message msgID in the channel owning sessionKey.
-// Implements platform.SessionMessageEditor (#2384).
-func (b *Bot) EditSessionMessage(sessionKey, msgID, text string) error {
-	return b.EditNotificationInSession(sessionKey, msgID, text)
+// EditInjectedMessage rewrites message msgID in the channel owning sessionKey,
+// keeping the injected_message_header the send prepended. Implements
+// platform.SessionMessageEditor (#2384).
+func (b *Bot) EditInjectedMessage(sessionKey, msgID, text string) error {
+	return b.EditNotificationInSession(sessionKey, msgID, b.withInjectedHeader(text))
 }

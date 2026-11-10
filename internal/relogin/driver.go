@@ -23,7 +23,9 @@ type Config struct {
 	Env       []string
 	Gate      *Gate // the claimed gate (driver releases it on every exit path)
 
-	// SendMessage pushes a message to the triggering agent's user (Telegram).
+	// SendMessage pushes a system notice to the triggering agent's user
+	// (Connection.SendInjectedMessage: the app shows it with the system role,
+	// #3003).
 	SendMessage func(text string) error
 	// Link is where the sign-in link goes, as an updatable message that every
 	// attempt of one pending login rewrites in place (link.go, #2384).
@@ -121,7 +123,7 @@ func Run(ctx context.Context, c Config) {
 				log.NewComponentLogger(comp).Warnf("could not mark the sign-in link expired: %v", err)
 			}
 		}
-		notify("🔐 Claude Code re-login failed: " + reason + "\nSend /login here to try again.")
+		notify(failText(reason))
 	}
 	// dumpScreen writes a captured TUI screen to the log on a failure path so the
 	// reason an anchor never appeared is diagnosable after the fact.
@@ -184,7 +186,7 @@ func Run(ctx context.Context, c Config) {
 	// Step 7: open the capture window and ask the user to sign in. A failure to
 	// relay the URL is fatal — the user can never complete login without it.
 	g.OpenCapture(c.AgentID)
-	linkText := "🔐 Sign in to re-authenticate Claude Code, then paste the code back to me:\n\n" + url
+	linkText := signInLinkText(url)
 	if c.Link != nil {
 		if err := g.showLink(c.Link, linkText); err != nil {
 			fail("could not send the login URL to you: " + err.Error())
@@ -229,7 +231,7 @@ func Run(ctx context.Context, c Config) {
 	// Steps 9–11: pane killed by defer, gate released by defer. Complete ends
 	// the pending state so paused injections resume (#2384).
 	g.Complete()
-	notify("✅ Login completed.")
+	notify(completedText)
 	log.NewComponentLogger(comp).Infof("re-login completed for agent %s", c.AgentID)
 }
 
@@ -261,6 +263,35 @@ func (c *Config) waitFor(ctx context.Context, pn pane, anchor string) (string, b
 		}
 		c.sleep(c.PollInterval)
 	}
+}
+
+// The user-facing texts of one re-login (#3003). Each instruction appears once
+// per attempt: the /login reply (command/login.go) says processing is paused,
+// the link says to paste the code back, the expired edit only marks the link
+// dead, and the failure notice alone says to send /login again. The auto-401
+// path has no /login reply, so nothing else may carry the paste instruction.
+const (
+	// expiredLinkText replaces a link whose attempt ended without a login.
+	// It carries no instruction: the failure notice that follows it does.
+	expiredLinkText = "🔐 This Claude Code sign-in link has expired."
+	completedText   = "✅ Claude Code login completed."
+)
+
+// failText is the notice for an attempt that ended without a login.
+func failText(reason string) string {
+	return "🔐 Claude Code login failed: " + reason + ". Send /login to try again."
+}
+
+// signInLinkText is the sign-in message for url. Where the chat renders
+// markdown, the URL is a link with short text rather than ~600 characters on
+// screen. The URL goes into the link byte for byte (#1931: a changed state
+// param breaks the login), so a URL with a character that would end or
+// alter a markdown link destination is shown raw instead.
+func signInLinkText(url string) string {
+	if strings.ContainsAny(url, "()<>\\ \t\r\n") {
+		return "🔐 Sign in to Claude Code, then paste the code here:\n\n" + url
+	}
+	return "🔐 [Sign in to Claude Code](" + url + "), then paste the code here."
 }
 
 // firstLineOf returns the first line of s, for compact single-line logging.

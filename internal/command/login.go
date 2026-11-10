@@ -35,7 +35,7 @@ func LoginCommand() *Command {
 			if !cc.Agent.ReloginTrigger("manual /login command", req.SessionKey) {
 				return Response{Text: "A re-login is already in progress."}, nil
 			}
-			return Response{Text: "🔐 Re-login started. Message processing is paused — watch for the login URL, then reply with the code from the browser."}, nil
+			return Response{Text: "🔐 Re-login started. Message processing is paused until it finishes."}, nil
 		},
 	}
 }
