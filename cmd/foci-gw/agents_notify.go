@@ -212,6 +212,14 @@ func newAsyncNotifier(
 		if targetAg == nil {
 			return "", nil
 		}
+		// An archived conversation is hidden from the user: a turn run there
+		// is delivered where nobody sees it, and nothing unarchives it. So the
+		// send is refused before any turn, and the caller told (#3024, Dick
+		// 2026-11-10). Session-blind delivery never gets here: its resolution
+		// already skips archived chats.
+		if idx := targetAg.SessionIndex; idx != nil && idx.SessionArchived(targetSession) {
+			return "", &session.ArchivedSessionError{SessionKey: targetSession}
+		}
 		reason, _ := targetAg.Unavailable()
 		return reason, nil
 	})

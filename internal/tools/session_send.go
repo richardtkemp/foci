@@ -207,6 +207,8 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 			// exist is refused here rather than reported as sent, and a target
 			// that cannot run a turn now is named in the tool result. That
 			// result is the one channel every caller has, a oneshot included.
+			// A target whose app conversation is archived is refused here too,
+			// before any turn, with an error naming it (#3024).
 			unavailable, err := notifier.CheckTarget(targetKey)
 			if err != nil {
 				return ToolResult{}, fmt.Errorf("could not send to %q: %w", p.SessionKey, err)

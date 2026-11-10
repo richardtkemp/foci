@@ -349,6 +349,15 @@ func (s *deferSweeper) sweep() {
 			_ = s.store.Delete(r.ID)
 			continue
 		}
+		// A send or branch whose session was archived after it was queued
+		// would run a turn nobody sees (#3024): drop it. No drop notice: its
+		// only destination is the archived chat itself. A command is not a
+		// turn, so it still runs.
+		if r.EffectiveKind() != defersend.KindCommand && s.deps.sessionIndex != nil && s.deps.sessionIndex.SessionArchived(r.SessionKey) {
+			deferLog.Warnf("dropping deferred %s %d: session %s has been archived", r.EffectiveKind(), r.ID, r.SessionKey)
+			_ = s.store.Delete(r.ID)
+			continue
+		}
 		in := activityGateInputs{
 			AgentID:     r.AgentID,
 			SessionBase: r.SessionKey,

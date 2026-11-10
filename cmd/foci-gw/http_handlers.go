@@ -226,6 +226,18 @@ func resolveTargetSession(d httpHandlerDeps, w http.ResponseWriter, agentID, sel
 		t.Policy = p
 	}
 	res, err := r.Resolve(t)
+	if err == nil && d.sessionIndex != nil && d.sessionIndex.SessionArchived(res.SessionKey) {
+		// A session whose app conversation is archived is refused with 409
+		// before any gate or turn, as send_to_session refuses it (#3024): a
+		// turn there is delivered where nobody sees it. Every HTTP entry point
+		// that names a target resolves here (/send, /branch, /webhook,
+		// /command's selector). The default rung never resolves to an archived
+		// chat, so only a named session is refused.
+		aerr := &session.ArchivedSessionError{SessionKey: res.SessionKey}
+		httpLog.Warnf("POST %s: %v", endpoint, aerr)
+		http.Error(w, aerr.Error(), http.StatusConflict)
+		return route.Resolution{}, route.Receipt{}, false
+	}
 	if err == nil {
 		rcpt := res.ReceiptFor(t)
 		if t.Policy != route.PolicyFallback {

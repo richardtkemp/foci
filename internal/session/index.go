@@ -1785,6 +1785,106 @@ func (idx *SessionIndex) ArchivedChatsForAgent(agentID, platform string) map[int
 	return out
 }
 
+// ErrSessionArchived is returned for a send that names a session whose app
+// conversation is archived (#3024). Archived = hidden from the app, so a turn
+// run there would be delivered where nobody sees it.
+var ErrSessionArchived = errors.New("session has been archived")
+
+// ArchivedSessionError names the archived session a send was refused for. It
+// matches ErrSessionArchived under errors.Is.
+type ArchivedSessionError struct{ SessionKey string }
+
+func (e *ArchivedSessionError) Error() string {
+	return fmt.Sprintf("session %s has been archived: its conversation is hidden from the user, so nobody would see the reply. The message was not sent. It can be sent once the user unarchives the conversation", e.SessionKey)
+}
+
+// Is makes errors.Is(err, ErrSessionArchived) hold.
+func (e *ArchivedSessionError) Is(target error) bool { return target == ErrSessionArchived }
+
+// SessionArchived reports whether sessionKey's app conversation is archived
+// (#3024): the session has at least one app conversation, and every one of
+// them is archived. A conversation counts as archived when it carries the
+// is_archived flag itself, or when it is a depth leaf (depth_root row, #2611)
+// whose root conversation is archived (#2613 archives leaves with their root).
+//
+// A session's app conversations are the chats whose session_key row names it
+// (an adopted named session, a depth leaf), plus its own chat for a root chat
+// key (agent/c<chatID>) when that chat has app rows and no session_key row
+// pointing elsewhere. A session with no app conversation (a telegram chat, a
+// spawn, a plain branch) is never archived. A query error reads as not
+// archived: refusing a send on a database fault would hide the fault behind a
+// false reason.
+func (idx *SessionIndex) SessionArchived(sessionKey string) bool {
+	agentID := AgentIDFromKey(sessionKey)
+	if agentID == "" {
+		return false
+	}
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	chats := map[int64]bool{}
+	rows, err := idx.db.Query(
+		`SELECT DISTINCT chat_id FROM chat_metadata WHERE agent_id = ? AND platform = 'app' AND key = 'session_key' AND value = ?`,
+		agentID, sessionKey,
+	)
+	if err != nil {
+		return false
+	}
+	for rows.Next() {
+		var chatID int64
+		if err := rows.Scan(&chatID); err != nil {
+			_ = rows.Close()
+			return false
+		}
+		chats[chatID] = true
+	}
+	_ = rows.Close()
+	if rows.Err() != nil {
+		return false
+	}
+	// Only a root chat key owns its chat: a branch key (agent/c<id>/b<n>)
+	// parses to the same chat id, but its conversation, if any, is its own.
+	var own int64
+	if sk, err := ParseSessionKey(sessionKey); err == nil && sk.IsRoot() {
+		own = sk.ChatID()
+	}
+	if own != 0 && !chats[own] {
+		var appRows, adoptedElsewhere int
+		err := idx.db.QueryRow(
+			`SELECT COUNT(*), COALESCE(SUM(key = 'session_key' AND value != ?), 0) FROM chat_metadata
+			 WHERE agent_id = ? AND platform = 'app' AND chat_id = ?`,
+			sessionKey, agentID, own,
+		).Scan(&appRows, &adoptedElsewhere)
+		if err != nil {
+			return false
+		}
+		if appRows > 0 && adoptedElsewhere == 0 {
+			chats[own] = true
+		}
+	}
+	if len(chats) == 0 {
+		return false
+	}
+	for chatID := range chats {
+		var archived bool
+		err := idx.db.QueryRow(
+			`SELECT EXISTS (SELECT 1 FROM chat_metadata
+			   WHERE agent_id = ?1 AND platform = 'app' AND chat_id = ?2 AND key = 'is_archived' AND value = 'true')
+			 OR EXISTS (SELECT 1 FROM chat_metadata leaf
+			   JOIN chat_metadata conv ON conv.agent_id = leaf.agent_id AND conv.platform = 'app'
+			     AND conv.key = 'conv_id' AND conv.value = leaf.value
+			   JOIN chat_metadata arch ON arch.agent_id = conv.agent_id AND arch.platform = 'app'
+			     AND arch.chat_id = conv.chat_id AND arch.key = 'is_archived' AND arch.value = 'true'
+			   WHERE leaf.agent_id = ?1 AND leaf.platform = 'app' AND leaf.chat_id = ?2 AND leaf.key = 'depth_root')`,
+			agentID, chatID,
+		).Scan(&archived)
+		if err != nil || !archived {
+			return false
+		}
+	}
+	return true
+}
+
 // DefaultChatIDs returns all default chat IDs for an agent across all platforms.
 // Used by /sessions to mark defaults with ★ regardless of which platform the
 // command is invoked from.
