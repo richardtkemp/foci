@@ -43,7 +43,7 @@ func TestToolTable_PerPathSets(t *testing.T) {
 		"ask", "spawn", "spawn_send", "spawn_status", "spawn_stop", "send_to_spawner",
 		"depth_fanout", "depth_report", "depth_claims", "depth_status",
 		"remind", "client",
-		"set_session_alias", "close_session", "whoami",
+		"set_session_alias", "close_session", "compact_session", "whoami",
 	}
 	wantExec := []string{
 		"browser", "summary", "http_request", "web_search", "web_fetch",
@@ -51,7 +51,7 @@ func TestToolTable_PerPathSets(t *testing.T) {
 		"ask", "spawn", "spawn_send", "spawn_status", "spawn_stop", "send_to_spawner",
 		"depth_fanout", "depth_report", "depth_claims", "depth_status",
 		"remind", "client",
-		"set_session_alias", "close_session", "whoami",
+		"set_session_alias", "close_session", "compact_session", "whoami",
 	}
 
 	if !equalStrings(api, wantAPI) {
@@ -110,7 +110,7 @@ func TestToolTable_APISet(t *testing.T) {
 		"scratchpad": true, "todo": true, "send_to_chat": true,
 		"send_to_session": true, "ask": true, "spawn": true, "remind": true,
 		"spawn_send": true, "spawn_status": true, "spawn_stop": true, "send_to_spawner": true,
-		"set_session_alias": true, "whoami": true,
+		"set_session_alias": true, "whoami": true, "compact_session": true,
 	}
 	// task_list and bitwarden need their stores; taskListStore/bwStore are left
 	// nil here, so those rows are intentionally absent from `want`.
@@ -165,7 +165,7 @@ func TestToolTable_ExecSet(t *testing.T) {
 		"browser": true, "summary": true, "http_request": true, "web_search": true,
 		"web_fetch": true, "memory_search": true, "todo": true,
 		"send_to_chat": true, "send_to_session": true, "ask": true,
-		"remind": true, "set_session_alias": true, "whoami": true,
+		"remind": true, "set_session_alias": true, "whoami": true, "compact_session": true,
 	}
 	assertRegistrySet(t, registry, want)
 }

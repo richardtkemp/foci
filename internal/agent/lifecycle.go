@@ -121,14 +121,14 @@ func (a *Agent) ResetSession(ctx context.Context, sessionKey string) (ResetMemor
 // *BackgroundWorkError (#1539): the post-compaction restart would kill that
 // work. CompactSessionForce overrides.
 func (a *Agent) CompactSession(ctx context.Context, sessionKey string, dryRun bool) (CompactResult, error) {
-	return a.compactSession(ctx, sessionKey, dryRun, false)
+	return a.compactSession(ctx, sessionKey, dryRun, compactRefuseBusy)
 }
 
 // CompactSessionForce is "/compact force": compaction that ignores background
 // work entirely. It compacts, and restarts CC at once if the prompt changed,
 // even though that kills running subagents (Dick, 2026-10-06, #1539).
 func (a *Agent) CompactSessionForce(ctx context.Context, sessionKey string) (CompactResult, error) {
-	return a.compactSession(ctx, sessionKey, false, true)
+	return a.compactSession(ctx, sessionKey, false, compactForce)
 }
 
 // BackgroundWorkError refuses a manual /compact while the session has
@@ -210,7 +210,7 @@ func (a *Agent) QuietCompact(ctx context.Context, sessionKey string) error {
 	if reason := a.QuietCompactBlocked(sessionKey); reason != "" {
 		return &QuietCompactRefusedError{Reason: reason}
 	}
-	_, err := a.compactSession(ctx, sessionKey, false, false)
+	_, err := a.compactSession(ctx, sessionKey, false, compactRefuseBusy)
 	var bw *BackgroundWorkError
 	if errors.As(err, &bw) {
 		return &QuietCompactRefusedError{Reason: bw.Running}
@@ -234,7 +234,26 @@ func (a *Agent) compactBlockedBy(sessionKey string) string {
 	return running
 }
 
-func (a *Agent) compactSession(ctx context.Context, sessionKey string, dryRun, force bool) (CompactResult, error) {
+// compactMode is how compactSession treats the session's background work
+// (subagents, background commands) that the post-compaction CC restart would
+// kill (#1539).
+type compactMode int
+
+const (
+	// compactRefuseBusy refuses with *BackgroundWorkError when the restart
+	// would kill background work (/compact, quiet compaction).
+	compactRefuseBusy compactMode = iota
+	// compactForce compacts and restarts CC at once, killing that work
+	// (/compact force).
+	compactForce
+	// compactDeferRestart compacts while background work runs and defers
+	// the restart until the work finishes, so nothing is killed (the
+	// agent's own compact_session request, Dick 2026-11-10, #3040).
+	compactDeferRestart
+)
+
+func (a *Agent) compactSession(ctx context.Context, sessionKey string, dryRun bool, mode compactMode) (CompactResult, error) {
+	force := mode == compactForce
 	// Neither transport available — agent is misconfigured. Surface this
 	// first because it's more diagnostic than "no active session".
 	if a.Compactor == nil && a.DelegatedManager == nil {
@@ -243,7 +262,7 @@ func (a *Agent) compactSession(ctx context.Context, sessionKey string, dryRun, f
 	if sessionKey == "" {
 		return CompactResult{}, fmt.Errorf("no active session to compact")
 	}
-	if !force && !dryRun {
+	if mode == compactRefuseBusy && !dryRun {
 		if running := a.compactBlockedBy(sessionKey); running != "" {
 			return CompactResult{}, &BackgroundWorkError{Running: running}
 		}

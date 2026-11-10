@@ -1032,7 +1032,7 @@ func (a *Agent) recordDelegatedTurn(ts *TurnState, spec delegator.Spec, end bool
 // token counts; the context window comes from model metadata.
 func (t *DelegatedTransport) RunCompaction(ts *TurnState) {
 	a := t.agent
-	if a.Compactor == nil || ts.FinalUsage == nil {
+	if ts.FinalUsage == nil {
 		return
 	}
 	// Compaction acts on the backend that ran this turn. If that backend is
@@ -1042,6 +1042,14 @@ func (t *DelegatedTransport) RunCompaction(ts *TurnState) {
 	// this defers rather than loses a real compaction (#2705).
 	if a.DelegatedManager != nil && !a.DelegatedManager.IsLiveBackend(ts.SessionKey, ts.Backend) {
 		a.logger().Infof("session=%s post-turn compaction skipped: the turn's backend is closed", ts.SessionKey)
+		return
+	}
+	// The agent asked for this compaction during the turn (#3040): it runs
+	// now, whatever the threshold, and also while background work runs.
+	if a.runRequestedCompaction(ts) {
+		return
+	}
+	if a.Compactor == nil {
 		return
 	}
 

@@ -120,6 +120,7 @@ type SpawnSteerer interface {
 // parent's session key, chat and model as if they were the spawn's (#2226).
 // close_session is excluded for the same reason (#2573): on the parent's
 // context it would close the PARENT's chat on a throwaway sub-call's say-so.
+// compact_session likewise (#3040): it would compact the PARENT's session.
 var spawnRawBlacklist = map[string]bool{
 	"shell":           true,
 	"tmux":            true,
@@ -129,6 +130,7 @@ var spawnRawBlacklist = map[string]bool{
 	"todo":            true,
 	"whoami":          true,
 	"close_session":   true,
+	"compact_session": true,
 }
 
 // spawnCharacterBlacklist lists tools excluded from an API agent's "character"

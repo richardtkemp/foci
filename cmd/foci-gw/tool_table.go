@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -490,6 +491,20 @@ var toolTable = []toolEntry{
 		build: func(d *toolDeps) *tools.Tool {
 			return tools.NewCloseSessionTool(app.CloseSessionConversations, app.MarkSessionRead)
 		}},
+
+	// compact_session: the agent asks foci to compact its own conversation
+	// (#3040). The tool only records the request; the compaction runs in the
+	// post-turn phase of the turn that made it, on every backend. The lazy
+	// agent getter resolves per call: the tool is built before the agent.
+	{name: "compact_session", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {
+		return tools.NewCompactSessionTool(func(sk string) error {
+			ag := d.agLazy()
+			if ag == nil {
+				return errors.New("agent not ready")
+			}
+			return ag.RequestCompaction(sk)
+		})
+	}},
 
 	// whoami: read-only identity of the calling session (agent, session key,
 	// chat, platform, backend, transport, model) — the facts agents otherwise

@@ -642,7 +642,9 @@ func (t *APITransport) RunCompaction(ts *TurnState) {
 	}
 	// The compaction is booked on this turn (ts.Ctx carries it), after the
 	// turn ended: the turn's spending activity closes when it does (R8).
-	if a.maybeCompact(ts.Ctx, ts.SessionKey, ts.Messages, ts.System, ts.FinalUsage, ts.SessionMeta) {
+	// One the agent asked for during the turn (#3040) runs whatever the
+	// threshold.
+	if a.runRequestedCompaction(ts) || a.maybeCompact(ts.Ctx, ts.SessionKey, ts.Messages, ts.System, ts.FinalUsage, ts.SessionMeta) {
 		a.recordAPITurnActivity(ts)
 	}
 }

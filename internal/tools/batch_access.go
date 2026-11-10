@@ -24,10 +24,13 @@ var spawnToolNames = map[string]bool{
 // owner's root) would close the OWNER's chat on a throwaway session's say-so
 // (#2573); and ask, since nobody is there to answer a character spawn
 // (#2643). (Its permission requests go up to its spawner instead, #2684.)
+// compact_session is left out too (#3040): an API character one-shot's tool
+// calls run on its parent's context, so it would compact the PARENT's session.
 // An API character one-shot leaves out the same (spawnCharacterBlacklist).
 var parentBatchExcluded = map[string]bool{
-	"close_session": true,
-	"ask":           true,
+	"close_session":   true,
+	"compact_session": true,
+	"ask":             true,
 }
 
 // Subset returns a registry holding only the tools keep accepts. The tools
