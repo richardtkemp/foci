@@ -4,7 +4,7 @@ Messages starting with `/` are intercepted at the Telegram router level before r
 
 **Two `/`-words are delivery modes, not commands (#1318):** `/steer <message>` and `/queue <message>` (Telegram/Discord, case-insensitive, first word only). The word is stripped and the rest is delivered with that mode — `/steer` redirects the running turn now, `/queue` waits for it to finish and runs as its own fresh turn. A bare `/steer` or `/queue` (no message text) answers with one usage line and delivers nothing. They are not registered commands and never reach the agent as text.
 
-All registered slash commands are also available to the agent as tools (without the `/` prefix), except those marked **CLI-only** below. See [TOOLS.md](TOOLS.md) for details.
+**Who can run a command.** You (the user) can run every command below by typing it in chat on any platform (app, Telegram, Discord) or with `foci command "/<command> …"`. The agent can also call each one as a tool (without the `/` prefix), except those marked **User only** below: those are never offered to the agent. See [TOOLS.md](TOOLS.md) for details.
 
 ---
 
@@ -102,7 +102,7 @@ Use `/` as an explicit delimiter when search terms collide with filter keywords:
 Porter stemming is active: "running" matches "run", "deployed" matches "deploy".
 
 ### `/tmux <subcommand>`
-Manage tmux sessions. **CLI-only** (the `tmux` tool is the agent-facing equivalent). Only available when the tmux tool is registered.
+Manage tmux sessions. **User only** (the agent uses the `tmux` tool instead). Only available when the tmux tool is registered.
 - `/tmux list` — list owned/watched sessions
 - `/tmux start <name> [command] [--no-watch]` — start a session (auto-watches by default)
 - `/tmux send <name> <keys...>` — send keystrokes
@@ -203,7 +203,7 @@ Fork the current session to a secondary Telegram bot for parallel conversation. 
 Fork the current conversation into a new app chat. The new chat is an ordinary chat (no orientation prompt, compaction on) whose history is the current conversation; the current chat is not changed. Works from any platform; the new chat appears in the app. Same listing rule as `/facet`. Any text after `/fork` is sent into the new chat as your first message there, as if typed in it, and the agent answers in the new chat. With no text, the new chat waits for you.
 
 ### `/secrets <subcommand>`
-Manage secrets. **CLI-only**.
+Manage secrets. **User only**: type it in chat; the agent cannot call it.
 - `/secrets list` — show all secrets grouped by section/key with allowed hosts (values never displayed)
 - `/secrets set <section.key> <value>` — add or update a secret
 - `/secrets remove <section.key>` — delete a secret
@@ -213,7 +213,7 @@ Manage secrets. **CLI-only**.
 - `/secrets hosts <section> clear` — remove all allowed hosts
 
 ### `/bitwarden <subcommand>`
-Bitwarden vault integration. **CLI-only**.
+Bitwarden vault integration. **User only**: type it in chat; the agent cannot call it.
 - `/bitwarden setup` — check prerequisites (bw CLI, bitwarden system user), attempt to create user if missing
 - `/bitwarden status` — show current state: enabled/disabled, item count, cache age, unlocked secrets
 
