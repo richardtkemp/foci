@@ -115,3 +115,25 @@ func (b *Backend) reportLoginExpiry(c credentialExpiry) {
 		b.onLoginExpiry(c.at)
 	}
 }
+
+// assistantAuthError reports whether an assistant frame ended in an
+// authentication error, whether or not a new sign-in would fix it: CC's
+// assistantErrAuthFailed frame, or a frame CC produced itself (the synthetic
+// model) whose text is an auth failure. The second covers a failed /compact,
+// which CC 2.1.314 streams with no top-level error field (#3002 probe). Such a
+// call cost nothing; the ledger settles it at zero (ccBook.authErrored).
+func assistantAuthError(msg *AssistantMessage) bool {
+	if msg.Error != nil && *msg.Error == assistantErrAuthFailed {
+		return true
+	}
+	if msg.Message.Model != syntheticModel {
+		return false
+	}
+	var text strings.Builder
+	for _, block := range msg.Message.Content {
+		if block.Type == "text" {
+			text.WriteString(block.Text)
+		}
+	}
+	return isAuthFailure(text.String())
+}

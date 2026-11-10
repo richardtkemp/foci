@@ -67,6 +67,12 @@
 //     call that spawned it, with the same message id (#2492). It is the main
 //     tail's to book: a sub line whose id the main thread named or holds is
 //     skipped, so the call is never booked with the fork as its actor.
+//   - An AUTH ERROR (#3002): a call that ended in an authentication error
+//     cost nothing (Dick, 2026-11-10: "settled at zero cost", no alarm). CC
+//     writes no assistant line for a /compact that failed so (only a system
+//     local_command record), so the book does not wait for its line: if one
+//     comes (an ordinary turn's does) it books as usual, else the call books
+//     at its window's close with no counts, at $0, completed.
 //   - At process exit the last remainder is flushed from the cost-state record
 //     CC appends on a graceful close, else from the last result.
 //   - CHECKS (#2111 §8), once the booked set is what CC counted — at each
@@ -396,8 +402,16 @@ type namedCall struct {
 	// retracted: a refusal fallback retracted this call (#2255) — not waited
 	// for from here on, and dropped at its window's close.
 	retracted bool
-	pending   *ccLine // latest line seen without a stop_reason
+	// authErr: the call ended in an authentication error (#3002) — not waited
+	// for, and booked from this zero-count line at its window's close if its
+	// transcript line never came.
+	authErr *ccLine
+	pending *ccLine // latest line seen without a stop_reason
 }
+
+// awaited reports whether the book waits for the call's transcript line: a
+// retracted call's spend books elsewhere, and an auth error's costs nothing.
+func (n *namedCall) awaited() bool { return !n.retracted && n.authErr == nil }
 
 // ccAgent is one subagent seen in this process.
 type ccAgent struct {
@@ -675,6 +689,31 @@ func (c *ccBook) retract(uuids []string) {
 	for _, t := range turns {
 		c.closeIfIdle(t, c.now())
 	}
+}
+
+// authErrored marks the named call id as one that ended in an authentication
+// error (#3002): l is its zero-count line, built from the stream frame. From
+// here on the book does not wait for its transcript line. A call not named
+// (already booked) is not touched. A turn whose last awaited call this was can
+// close its activity now.
+func (c *ccBook) authErrored(id string, l *ccLine) {
+	n := c.named[id]
+	if n == nil || n.authErr != nil || l == nil {
+		return
+	}
+	n.authErr = l
+	c.closeIfIdle(n.turn, c.now())
+}
+
+// authErrorLine is the zero-count line an auth-error call books from when CC
+// writes none for it: the frame's model and stop_reason, no tokens.
+func authErrorLine(msg *AssistantMessage, at time.Time) *ccLine {
+	l := &ccLine{id: msg.Message.ID, model: msg.Message.Model, at: at, complete: true}
+	if msg.Message.StopReason != nil {
+		l.stopReason = *msg.Message.StopReason
+	}
+	l.tokens, l.method = ccTokens(ccUsageJSON{})
+	return l
 }
 
 // runTurnFor is the turn a run no foci turn opened (an autonomous CC run) is
@@ -961,7 +1000,7 @@ func (c *ccBook) closeIfIdle(turn string, at time.Time) {
 		}
 	}
 	for _, n := range c.named {
-		if n.turn == turn && !n.retracted {
+		if n.turn == turn && n.awaited() {
 			return
 		}
 	}
@@ -1092,10 +1131,11 @@ func (c *ccBook) settle(force bool) {
 // outstanding counts, for windows up to w, the named calls not yet booked (an
 // interrupted one waiting at its stopless line counts as in) and the subagent
 // tails still open. A call a refusal fallback retracted is not waited for
-// (#2255): its spend books with the refused attempt.
+// (#2255): its spend books with the refused attempt. Nor is one that ended in
+// an auth error (#3002): it cost nothing.
 func (c *ccBook) outstanding(w int) (named, tails int) {
 	for _, n := range c.named {
-		if n.window <= w && n.pending == nil && !n.retracted {
+		if n.window <= w && n.pending == nil && n.awaited() {
 			named++
 		}
 	}
@@ -1109,11 +1149,12 @@ func (c *ccBook) outstanding(w int) (named, tails int) {
 
 // unseenNamed counts the main-thread calls the stream named whose transcript
 // line has not been read yet — what a turn's flush waits for. A retracted
-// call's line may never come (#2255), so it is not waited for.
+// call's line may never come (#2255), nor an auth error's (#3002), so neither
+// is waited for.
 func (c *ccBook) unseenNamed() int {
 	n := 0
 	for _, nc := range c.named {
-		if nc.pending == nil && !nc.retracted {
+		if nc.pending == nil && nc.awaited() {
 			n++
 		}
 	}
@@ -1122,7 +1163,8 @@ func (c *ccBook) unseenNamed() int {
 
 // closeWindows finalises the main-thread calls of windows up to w: a call seen
 // only at a stopless line was interrupted, and is booked — priced — from it; a
-// call whose line never came alarms. A retracted call's line may never come
+// call whose line never came alarms, unless it ended in an auth error, which
+// books at $0 (#3002). A retracted call's line may never come
 // (#2255): it is dropped with neither, because CC's modelUsage counts the
 // refused attempt and the refusal remainder already holds its spend. Held
 // lines no stream named are copies.
@@ -1147,6 +1189,13 @@ func (c *ccBook) closeWindows(w int) {
 		}
 		if n.pending != nil {
 			c.bookCall(n.pending, n.turn, "", n.window, accounting.FinalityInterrupted)
+			continue
+		}
+		if n.authErr != nil {
+			c.bookCall(n.authErr, n.turn, "", n.window, accounting.FinalityCompleted)
+			c.mainWin[id] = n.window
+			c.lg.Infof("ledger: session %s: call %s ended in an authentication error and no transcript line came; booked at $0 (#3002)",
+				c.session, id)
 			continue
 		}
 		c.done[id] = true

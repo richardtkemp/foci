@@ -51,7 +51,8 @@ type ccEvent struct {
 	at      time.Time
 	turn    string // the foci turn open when it happened
 	id      string
-	uuid    string // ccNamed: the stream frame's uuid, for refusal retraction (#2255)
+	uuid    string  // ccNamed: the stream frame's uuid, for refusal retraction (#2255)
+	authErr *ccLine // ccNamed: the call ended in an auth error; its zero-count line (#3002)
 	agent   string
 	parent  string // ccTailOpened: the agent whose turn this one books on
 	line    *ccLine
@@ -185,6 +186,9 @@ func (s *ccLedger) run() {
 			switch e.kind {
 			case ccNamed:
 				c.streamNamed(e.id, e.uuid, e.turn, e.at)
+				if e.authErr != nil {
+					c.authErrored(e.id, e.authErr)
+				}
 			case ccMainLine:
 				c.mainLine(e.line)
 			case ccSubLine:

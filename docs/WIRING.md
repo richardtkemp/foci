@@ -2155,7 +2155,8 @@ interval less the counted calls' (`solveRemainderTTL`, `class_method=solved`; ex
 `accounting.SolveTolerance`, like the migration's solve), and one that will not solve stays
 TTL-unknown at the 1h rate and alarms `invRemainderTTLUnsolved`; a negative class alarms
 `invNegativeRemainder` and books nothing; a named call whose line never came alarms
-`invStreamIdBooked` (a call a refusal fallback retracted is not waited for — below). At exit
+`invStreamIdBooked` (a call a refusal fallback retracted is not waited for — below; nor is
+an auth error's — below). At exit
 the last remainder comes from the `cost-state` record, else the
 last result. A call on a run no foci turn opened books on a minted `run` turn
 (`runTurnFor`), whose row the book records as it mints it — `autonomous`, `started_at` = the
@@ -2210,6 +2211,14 @@ writes in its place (the retry prompt, or the final "could not be parsed" `<synt
 assistant line) lists it in `retractedMessageUuids`. The main tail (`parseCCRetraction`)
 enqueues those as `ccRetractEv` → `ccBook.retract`, so the attempt is treated like a refusal
 retraction above; CC's `modelUsage` counts it, so its spend lands in the window's remainder.
+**An auth error (#3002, live on CC 2.1.314):** a call that ended in an authentication error
+cost nothing. `OnAssistant` tests each top-level frame with `assistantAuthError` (CC's
+`error: authentication_failed`, or a `<synthetic>` frame whose text `isAuthFailure` matches —
+a failed `/compact` streams with no `error` field and gets no assistant line, only a system
+`local_command` record) and sends its zero-count line as `ccEvent.authErr` →
+`ccBook.authErrored` (`namedCall.authErr`). The call is not waited for (`namedCall.awaited`):
+its own line books it as usual if it comes, else it books at window close with no counts, at
+$0, `completed`, with an INFO line and no alarm.
 **A fork subagent (#2492, live on CC 2.1.314)** copies one parent line into its transcript,
 the main-thread call that spawned it (same message id and timestamp). `subLine` skips a line
 whose id the main thread named or holds, so that call books on the main thread, never with

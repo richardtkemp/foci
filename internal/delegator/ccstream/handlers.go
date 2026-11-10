@@ -129,8 +129,14 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	// The stream names which main-thread calls this process made; their
 	// usage is booked from the main transcript (ccbook.go). The frame's uuid
 	// rides along: a refusal fallback's retraction names those uuids (#2255).
+	// A call that ended in an auth error cost nothing and may have no
+	// transcript line (a failed /compact has none): it books at $0 (#3002).
 	if isTopLevel {
-		b.ledger.Load().enqueue(ccEvent{kind: ccNamed, id: msg.Message.ID, turn: b.openTurnRowID(), uuid: msg.UUID})
+		e := ccEvent{kind: ccNamed, id: msg.Message.ID, turn: b.openTurnRowID(), uuid: msg.UUID, at: time.Now()}
+		if assistantAuthError(msg) {
+			e.authErr = authErrorLine(msg, e.at)
+		}
+		b.ledger.Load().enqueue(e)
 	}
 
 	// CC's synthetic "No response requested." placeholder is a no-API-call turn,
