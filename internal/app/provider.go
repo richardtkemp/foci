@@ -155,6 +155,7 @@ func (p *appProvider) DefaultPlatformConfig() config.PlatformConfig {
 			MermaidCmd:             mermaid.DefaultCmd,
 			PinSummaryModel:        defaultPinSummaryModel,
 			PinSummaryProvider:     defaultPinSummaryProvider,
+			PinSummaryEndpoint:     defaultPinSummaryEndpoint,
 			AutoName:               &autoNameOn,
 			AutoNameFirst:          &autoNameFirst,
 			AutoNameEvery:          &autoNameEvery,

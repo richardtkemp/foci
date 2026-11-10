@@ -161,7 +161,7 @@ func autoNameCounts(frame fap.ServerFrame) bool {
 // its automatic name, when the chat is due; see the file comment.
 func (h *Hub) autoNameCheck(b *convBinding) {
 	idx := h.deps.SessionIndex
-	if h.autoName == nil || h.frames == nil || idx == nil || !h.pinSum.usable() {
+	if h.autoName == nil || h.frames == nil || idx == nil || !h.pinSum.usable(useAutoName) {
 		return
 	}
 	for {
@@ -223,16 +223,16 @@ func (h *Hub) autoNameRun(b *convBinding, idx *session.SessionIndex, set autoNam
 	}
 	input := autoNameInput(msgs, prev, set.words)
 
-	ctx, cancel := context.WithTimeout(context.Background(), autoNameTimeout)
-	defer cancel()
 	ask := summaryAsk{
 		what:          "auto chat name",
+		use:           useAutoName,
+		timeout:       autoNameTimeout,
 		system:        autoNameSystemPrompt,
 		maxInputRunes: utf8.RuneCountInString(input),
 		maxTokens:     autoNameMaxTokens,
 		maxWords:      set.words,
 	}
-	name, err := h.pinSum.ask(ctx, ask, input, sessionKey, agentID)
+	name, err := h.pinSum.ask(context.Background(), ask, input, sessionKey, agentID)
 	if err != nil {
 		appLog.Warnf("auto chat name %s: %v", b.convID, err)
 		return true

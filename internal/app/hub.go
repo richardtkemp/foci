@@ -323,7 +323,7 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		frames:        frames,
 		checkboxes:    checkboxes,
 		deps:          deps,
-		pinSum:        newPinSummariser(appCfg, secretGetter(deps, pinSummarySecret)),
+		pinSum:        newPinSummariser(appCfg, endpointsOf(deps.Config), secretReader(deps)),
 		autoName:      newAutoNamer(appCfg),
 		sections:      newSectioner(appCfg),
 		subAct:        newSubagentActivityStore(),

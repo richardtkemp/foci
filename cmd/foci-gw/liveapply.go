@@ -157,7 +157,14 @@ var (
 
 	// #2956: the pin label summary's model and provider order, pushed into
 	// the app hub's summariser (a derived handle).
-	liveApplyPinSummaryAddrs = []string{"platforms.app.pin_summary_model", "platforms.app.pin_summary_provider"}
+	// #3012: the model and endpoint of the fast-summary tasks (the shared
+	// pin_summary_* and the chat name's and sections' own). The [endpoints]
+	// applier also re-applies them, as a target's URL and key come from there.
+	liveApplyPinSummaryAddrs = []string{
+		"platforms.app.pin_summary_model", "platforms.app.pin_summary_provider", "platforms.app.pin_summary_endpoint",
+		"platforms.app.auto_name_model", "platforms.app.auto_name_endpoint",
+		"platforms.app.chat_sections_model", "platforms.app.chat_sections_endpoint",
+	}
 
 	// #2962: the automatic chat name's switch, counts and word limit, pushed
 	// into the app hub's autoNamer (a derived handle).
@@ -444,7 +451,7 @@ func registerLiveAppliers(la *liveApply, agents *agentRegistry) {
 		if p := fresh.Platform("app"); p != nil {
 			appCfg = p.App
 		}
-		app.ConfigurePinSummary(appCfg)
+		app.ConfigurePinSummary(appCfg, fresh.Endpoints)
 		return nil
 	})
 
@@ -470,6 +477,12 @@ func registerLiveAppliers(la *liveApply, agents *agentRegistry) {
 		if gwClients != nil {
 			gwClients.Reconfigure(fresh)
 		}
+		// The fast-summary tasks (#3012) read their endpoint's URL and key.
+		var appCfg *config.AppSpecific
+		if p := fresh.Platform("app"); p != nil {
+			appCfg = p.App
+		}
+		app.ConfigurePinSummary(appCfg, fresh.Endpoints)
 		return nil
 	})
 

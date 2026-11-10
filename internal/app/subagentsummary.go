@@ -55,6 +55,7 @@ var subagentSummaryAsk = summaryAsk{
 	maxInputRunes: pinSummaryMaxInputRunes,
 	maxTokens:     subagentSummaryMaxTokens,
 	maxWords:      subagentSummaryWords,
+	timeout:       pinSummaryTimeout,
 }
 
 // subagentActivityStore holds the latest steps of every running subagent and
@@ -212,7 +213,7 @@ func NoteSubagentActivity(sessionKey, groupKey, kind, text string) {
 // returns. An id with nothing to say gets no answer, so its entry shows as
 // before.
 func (h *Hub) handleSubagentSummarize(client *wsClient, f fap.SubagentSummarize) {
-	if h.subAct == nil || h.pinSum == nil || !h.pinSum.usable() {
+	if h.subAct == nil || h.pinSum == nil || !h.pinSum.usable(useShared) {
 		return // off or no key: the shared path's startup warning covers it
 	}
 	b := h.convForReliability(f.ConversationID)
@@ -237,7 +238,7 @@ func (h *Hub) handleSubagentSummarize(client *wsClient, f fap.SubagentSummarize)
 }
 
 func (h *Hub) summariseSubagent(client *wsClient, convID, id, session, agentID string, p summaryPlan) {
-	ctx, cancel := context.WithTimeout(context.Background(), pinSummaryTimeout)
+	ctx, cancel := context.WithCancel(context.Background()) // ask applies the timeout
 	defer cancel()
 	if client.done != nil {
 		go func() {

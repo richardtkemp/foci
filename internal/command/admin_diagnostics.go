@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"foci/internal/display"
+	"foci/internal/fastload"
 	"foci/internal/tools"
 )
 
@@ -159,6 +160,13 @@ func StatusCommand() *Command {
 				if info := cc.Agent.DelegatedManager.BackendInfo(sk, compacting); info != "" {
 					fmt.Fprintf(&sb, "\n\n🔌 Backend: %s", info)
 				}
+			}
+
+			// The load the app's fast-summary tasks put on each model they
+			// call (#3012), for tuning how often they run. Process-wide, not
+			// per session; absent when none ran in 24 hours.
+			if rep := fastload.Default.Report(); rep != "" {
+				sb.WriteString("\n\n" + rep)
 			}
 
 			return Response{Text: strings.TrimRight(sb.String(), "\n")}, nil

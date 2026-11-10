@@ -13,6 +13,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/fap"
+	"foci/internal/fastload"
 )
 
 // openRouterStub is a chat-completions endpoint that records each request and
@@ -63,8 +64,9 @@ func (s *openRouterStub) requests() []map[string]any {
 }
 
 func testSummariser(url string, app *config.AppSpecific) *pinSummariser {
-	s := newPinSummariser(app, func() (string, bool) { return "sk-test", true })
-	s.url = url
+	s := newPinSummariser(app, nil, func(string) (string, bool) { return "sk-test", true })
+	s.openRouterURL = url
+	s.load = fastload.New()
 	return s
 }
 
@@ -122,11 +124,11 @@ func TestPinSummary_LiveConfigure(t *testing.T) {
 	srv := stub.serve(t)
 	s := testSummariser(srv.URL, nil)
 
-	s.configure(&config.AppSpecific{PinSummaryModel: "meta-llama/llama-3.3-70b-instruct", PinSummaryProvider: "any"})
+	s.configure(&config.AppSpecific{PinSummaryModel: "meta-llama/llama-3.3-70b-instruct", PinSummaryProvider: "any"}, nil)
 	if _, err := s.summarise(context.Background(), "hi", "", ""); err != nil {
 		t.Fatalf("summarise: %v", err)
 	}
-	s.configure(&config.AppSpecific{PinSummaryProvider: "cerebras, groq"})
+	s.configure(&config.AppSpecific{PinSummaryProvider: "cerebras, groq"}, nil)
 	if _, err := s.summarise(context.Background(), "hi", "", ""); err != nil {
 		t.Fatalf("summarise: %v", err)
 	}
@@ -148,7 +150,7 @@ func TestPinSummary_LiveConfigure(t *testing.T) {
 		t.Errorf("order = %v, want [cerebras groq]", order)
 	}
 
-	s.configure(&config.AppSpecific{PinSummaryModel: "OFF"})
+	s.configure(&config.AppSpecific{PinSummaryModel: "OFF"}, nil)
 	got, err := s.summarise(context.Background(), "hi", "", "")
 	if got != "" || err != nil {
 		t.Errorf("off: summary=%q err=%v, want empty and nil", got, err)
@@ -164,8 +166,8 @@ func TestPinSummary_Failures(t *testing.T) {
 	stub := &openRouterStub{status: http.StatusInternalServerError}
 	srv := stub.serve(t)
 
-	noKey := newPinSummariser(nil, func() (string, bool) { return "", false })
-	noKey.url = srv.URL
+	noKey := newPinSummariser(nil, nil, func(string) (string, bool) { return "", false })
+	noKey.openRouterURL = srv.URL
 	if _, err := noKey.summarise(context.Background(), "hi", "", ""); err == nil {
 		t.Error("no key: want an error")
 	}
@@ -256,5 +258,147 @@ func awaitPinSummary(t *testing.T, c *wsClient) map[string]any {
 	case <-time.After(10 * time.Second):
 		t.Fatal("no pin.summary within 10s")
 		return nil
+	}
+}
+
+// TestFastSummary_PerTaskEndpoint (#3012): the chat name and the sections can
+// go to a model of their own on another [endpoints] entry (a local
+// OpenAI-format server) while the pin label stays on OpenRouter. The local
+// call carries the model id as written, no OpenRouter provider preference and
+// no key when the endpoint names none; each call is recorded per target in
+// the load figures; and an [endpoints] edit moves the target live.
+func TestFastSummary_PerTaskEndpoint(t *testing.T) {
+	remote := &openRouterStub{reply: "Remote label"}
+	remoteSrv := remote.serve(t)
+	local := &openRouterStub{reply: "Local name"}
+	localSrv := local.serve(t)
+
+	app := &config.AppSpecific{
+		AutoNameModel: "qwen3.6:35b-a3b", AutoNameEndpoint: "local",
+		ChatSectionsModel: "qwen3.6:35b-a3b", ChatSectionsEndpoint: "local",
+	}
+	endpoints := map[string]config.EndpointConfig{
+		"local": {Format: "openai", URL: localSrv.URL + "/v1/", HTTPTimeout: "10m"},
+	}
+	s := newPinSummariser(app, endpoints, func(name string) (string, bool) {
+		if name == pinSummarySecret {
+			return "sk-or", true
+		}
+		return "", false
+	})
+	s.openRouterURL = remoteSrv.URL
+	s.load = fastload.New()
+	for _, u := range []summaryUse{useShared, useAutoName, useSections} {
+		if !s.usable(u) {
+			t.Fatalf("use %d not usable", u)
+		}
+	}
+
+	if got, err := s.summarise(context.Background(), "pin this", "", ""); err != nil || got != "Remote label" {
+		t.Fatalf("pin summary = %q, %v", got, err)
+	}
+	name := summaryAsk{what: "auto chat name", use: useAutoName, system: "s", maxInputRunes: 100, maxTokens: 10, timeout: time.Second}
+	if got, err := s.ask(context.Background(), name, "the chat", "", ""); err != nil || got != "Local name" {
+		t.Fatalf("auto name = %q, %v", got, err)
+	}
+	sec := summaryAsk{what: "chat sections", use: useSections, system: "s", maxInputRunes: 100, maxTokens: 10, raw: true}
+	if _, err := s.ask(context.Background(), sec, "the chat", "", ""); err != nil {
+		t.Fatalf("sections: %v", err)
+	}
+
+	if n := len(remote.requests()); n != 1 {
+		t.Errorf("OpenRouter requests = %d, want 1 (the pin label)", n)
+	}
+	lreqs := local.requests()
+	if len(lreqs) != 2 {
+		t.Fatalf("local requests = %d, want 2", len(lreqs))
+	}
+	for _, r := range lreqs {
+		if r["model"] != "qwen3.6:35b-a3b" {
+			t.Errorf("local model = %v, want the id as written", r["model"])
+		}
+		if _, has := r["provider"]; has {
+			t.Errorf("local request carries an OpenRouter provider preference: %v", r["provider"])
+		}
+	}
+	local.mu.Lock()
+	auth := append([]string(nil), local.auth...)
+	local.mu.Unlock()
+	for _, a := range auth {
+		if a != "" {
+			t.Errorf("local Authorization = %q, want none (the endpoint names no key)", a)
+		}
+	}
+	if tgt := s.target(useAutoName); tgt.timeout != 10*time.Minute {
+		t.Errorf("local timeout = %v, want the endpoint's http_timeout", tgt.timeout)
+	}
+
+	loads := map[string]fastload.Load{}
+	for _, l := range s.load.Loads(time.Hour) {
+		loads[l.Target] = l
+	}
+	lt := loads[fastload.Target("qwen3.6:35b-a3b", "local")]
+	if lt.Runs != 2 || lt.ByTask["auto chat name"] != 1 || lt.ByTask["chat sections"] != 1 {
+		t.Errorf("local load = %+v, want 2 runs (1 name, 1 sections)", lt)
+	}
+	if rt := loads[fastload.Target(defaultPinSummaryModel, "openrouter")]; rt.Runs != 1 {
+		t.Errorf("openrouter load = %+v, want 1 run", rt)
+	}
+
+	// The endpoint is edited to need a key that is not set: the tasks on it
+	// stop, the pin label does not.
+	endpoints["local"] = config.EndpointConfig{Format: "openai", URL: localSrv.URL + "/v1", APIKey: "local.api_key"}
+	s.configure(app, endpoints)
+	if s.usable(useAutoName) || s.usable(useSections) {
+		t.Error("local tasks still usable with their key missing")
+	}
+	if !s.usable(useShared) {
+		t.Error("pin label stopped by an edit to another endpoint")
+	}
+	if p := s.problems(); len(p) != 1 || !strings.Contains(p[0], "local.api_key") {
+		t.Errorf("problems = %v, want one naming local.api_key", p)
+	}
+
+	// An endpoint that does not speak the OpenAI format is refused.
+	endpoints["local"] = config.EndpointConfig{Format: "anthropic", URL: localSrv.URL}
+	s.configure(app, endpoints)
+	if _, err := s.ask(context.Background(), name, "the chat", "", ""); err == nil || !strings.Contains(err.Error(), "OpenAI") {
+		t.Errorf("anthropic-format endpoint: err = %v, want the format refusal", err)
+	}
+	if n := len(local.requests()); n != 2 {
+		t.Errorf("local requests = %d after the refusals, want still 2", n)
+	}
+}
+
+// TestFastSummary_TargetTimeout: a call to a target with an endpoint timeout
+// of its own is bounded by it, not the task's, and the failure is recorded.
+func TestFastSummary_TargetTimeout(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() { close(release); srv.Close() })
+
+	app := &config.AppSpecific{AutoNameModel: "m", AutoNameEndpoint: "local"}
+	s := newPinSummariser(app, map[string]config.EndpointConfig{
+		"local": {Format: "openai", URL: srv.URL, HTTPTimeout: "50ms"},
+	}, nil)
+	s.load = fastload.New()
+	ask := summaryAsk{what: "auto chat name", use: useAutoName, system: "s", maxInputRunes: 10, maxTokens: 5, timeout: time.Hour}
+	guard, cancel := context.WithTimeout(context.Background(), 30*time.Second) // hang guard only
+	defer cancel()
+	_, err := s.ask(guard, ask, "x", "", "")
+	if err == nil {
+		t.Fatal("want a timeout error")
+	}
+	if guard.Err() != nil {
+		t.Fatal("the hang guard fired: the endpoint's timeout did not bound the call")
+	}
+	l := s.load.Loads(time.Hour)
+	if len(l) != 1 || l[0].Failed != 1 || l[0].InFlight != 0 {
+		t.Errorf("load = %+v, want one failed call, none in flight", l)
 	}
 }

@@ -14,6 +14,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/fap"
+	"foci/internal/fastload"
 	"foci/internal/session"
 )
 
@@ -183,8 +184,10 @@ func (s *sectioner) end(convID string, failed bool) (again bool) {
 // chatMessageStored is convBinding.onMessageStored: it runs, on a goroutine of
 // its own, after a chat message of b is in the frame store, and starts the
 // automatic chat name check (#2962) and the sections check (#2993), each on
-// its own goroutine so one slow model call does not hold the other.
+// its own goroutine so one slow model call does not hold the other. It also
+// marks the minute active for the fast-summary load figures (#3012).
 func (h *Hub) chatMessageStored(b *convBinding) {
+	fastload.Default.MarkActive()
 	safeGo("chat-sections", func() { h.sectionCheck(b) })
 	h.autoNameCheck(b)
 }
@@ -193,7 +196,7 @@ func (h *Hub) chatMessageStored(b *convBinding) {
 // comment.
 func (h *Hub) sectionCheck(b *convBinding) {
 	idx := h.deps.SessionIndex
-	if h.sections == nil || h.frames == nil || idx == nil || !h.pinSum.usable() {
+	if h.sections == nil || h.frames == nil || idx == nil || !h.pinSum.usable(useSections) {
 		return
 	}
 	for {
@@ -276,16 +279,16 @@ func (h *Hub) sectionRun(b *convBinding, idx *session.SessionIndex, set sectionS
 		return false
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), sectionTimeout)
-	defer cancel()
 	ask := summaryAsk{
 		what:          "chat sections",
+		use:           useSections,
+		timeout:       sectionTimeout,
 		system:        sectionSystemPrompt,
 		maxInputRunes: utf8.RuneCountInString(input),
 		maxTokens:     sectionMaxTokens,
 		raw:           true,
 	}
-	answer, err := h.pinSum.ask(ctx, ask, input, sessionKey, agentID)
+	answer, err := h.pinSum.ask(context.Background(), ask, input, sessionKey, agentID)
 	if err != nil {
 		appLog.Warnf("chat sections %s: %v", b.convID, err)
 		return true

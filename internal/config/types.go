@@ -958,21 +958,28 @@ type AppSpecific struct {
 	// Pin label summary (#2956): when the user pins a message, the app asks
 	// the server for a short summary to prefill the label field. The server
 	// calls OpenRouter with the openrouter.api_key secret.
-	PinSummaryModel    string `toml:"pin_summary_model"    hot:"event" desc:"OpenRouter model that writes the suggested label when a message is pinned in the app, and the six-word summary of each subagent's current step in the app's Stop view (default meta-llama/llama-3.1-8b-instruct; set to off to disable both, and the automatic chat name)"`
-	PinSummaryProvider string `toml:"pin_summary_provider" hot:"event" desc:"OpenRouter provider(s) the pin label and Stop-view summaries are sent to first, comma-separated, falling back to others if they fail (default groq; set to any to let OpenRouter choose)"`
+	PinSummaryModel    string `toml:"pin_summary_model"    hot:"event" desc:"Model, as pin_summary_endpoint knows it, that writes the suggested label when a message is pinned in the app, the six-word summary of each subagent's current step in the app's Stop view, and (unless auto_name_model / chat_sections_model are set) the automatic chat name and the chat sections. /status shows the load these calls put on each model (default meta-llama/llama-3.1-8b-instruct; set to off to disable them)"`
+	PinSummaryProvider string `toml:"pin_summary_provider" hot:"event" desc:"OpenRouter provider(s) the pin label and Stop-view summaries are sent to first, comma-separated, falling back to others if they fail (default groq; set to any to let OpenRouter choose). Sent only when the endpoint is OpenRouter"`
+	// #3012: the endpoint the fast-summary model is called on, and a model and
+	// endpoint of their own for the automatic chat name and the chat sections.
+	PinSummaryEndpoint string `toml:"pin_summary_endpoint" hot:"event" desc:"The [endpoints] entry pin_summary_model is called on; it must speak the OpenAI chat format, e.g. a local Ollama at http://localhost:11434/v1. The model id is sent as written. An endpoint other than OpenRouter that sets http_timeout gives each call that time limit instead of the task's own (15 s for the pin label and Stop-view summaries, 45 s for the chat name and sections) (default openrouter)"`
 	// Automatic chat name (#2962): an open app chat without a name set by the
-	// user or an agent is named from its conversation by the pin summary's
-	// model (pin_summary_model / pin_summary_provider, openrouter.api_key).
-	AutoName      *bool `toml:"auto_name"       hot:"event" desc:"Name open app chats that have no name set by the user or an agent, from the conversation, with the pin_summary_model model; the name is checked again as the chat goes on and changed only when it no longer fits. Runs only when that model can be called (not off, openrouter.api_key set) (default true)"`
-	AutoNameFirst *int  `toml:"auto_name_first" hot:"event" min:"1" desc:"How many messages a chat has before its first automatic name (default 10)"`
-	AutoNameEvery *int  `toml:"auto_name_every" hot:"event" min:"1" desc:"How many new messages after the last automatic name until the name is checked again; also the most messages the model reads (default 50)"`
-	AutoNameWords *int  `toml:"auto_name_words" hot:"event" min:"1" desc:"The most words the model is asked to use for an automatic chat name; an answer longer than 1.5 times this is not used (default 6)"`
+	// user or an agent is named from its conversation by the fast-summary
+	// model (auto_name_model, else pin_summary_model, #3012).
+	AutoName         *bool  `toml:"auto_name"       hot:"event" desc:"Name open app chats that have no name set by the user or an agent, from the conversation, with auto_name_model (default pin_summary_model); the name is checked again as the chat goes on and changed only when it no longer fits. Runs only when that model can be called (not off, its endpoint known and its key set) (default true)"`
+	AutoNameFirst    *int   `toml:"auto_name_first" hot:"event" min:"1" desc:"How many messages a chat has before its first automatic name (default 10)"`
+	AutoNameEvery    *int   `toml:"auto_name_every" hot:"event" min:"1" desc:"How many new messages after the last automatic name until the name is checked again; also the most messages the model reads (default 50)"`
+	AutoNameWords    *int   `toml:"auto_name_words" hot:"event" min:"1" desc:"The most words the model is asked to use for an automatic chat name; an answer longer than 1.5 times this is not used (default 6)"`
+	AutoNameModel    string `toml:"auto_name_model"    hot:"event" desc:"Model for the automatic chat name, as the endpoint knows it (set to off to turn the automatic name off) (default: pin_summary_model)"`
+	AutoNameEndpoint string `toml:"auto_name_endpoint" hot:"event" desc:"The [endpoints] entry auto_name_model is called on, OpenAI chat format; set it with auto_name_model (default: pin_summary_endpoint)"`
 	// Chat sections (#2993): each app chat's table of contents, found by the
-	// pin summary's model (pin_summary_model / pin_summary_provider,
-	// openrouter.api_key) as the chat goes.
-	ChatSections           *bool `toml:"chat_sections"             hot:"event" desc:"Find the sections of each app chat (a table of contents, shown from the chat's menu) with the pin_summary_model model as the chat goes; only messages sent after this is on are sectioned. Runs only when that model can be called (not off, openrouter.api_key set) (default true)"`
-	ChatSectionsEvery      *int  `toml:"chat_sections_every"       hot:"event" min:"1" desc:"How many new messages between two checks of a chat's sections (default 5)"`
-	ChatSectionsAfterBreak *int  `toml:"chat_sections_after_break" hot:"event" min:"1" desc:"How many new messages must pass after a check that found a new section before the next check (default 10)"`
+	// fast-summary model (chat_sections_model, else pin_summary_model, #3012)
+	// as the chat goes.
+	ChatSections           *bool  `toml:"chat_sections"             hot:"event" desc:"Find the sections of each app chat (a table of contents, shown from the chat's menu) with chat_sections_model (default pin_summary_model) as the chat goes; only messages sent after this is on are sectioned. Runs only when that model can be called (not off, its endpoint known and its key set) (default true)"`
+	ChatSectionsEvery      *int   `toml:"chat_sections_every"       hot:"event" min:"1" desc:"How many new messages between two checks of a chat's sections (default 5)"`
+	ChatSectionsAfterBreak *int   `toml:"chat_sections_after_break" hot:"event" min:"1" desc:"How many new messages must pass after a check that found a new section before the next check (default 10)"`
+	ChatSectionsModel      string `toml:"chat_sections_model"    hot:"event" desc:"Model for the chat sections, as the endpoint knows it (set to off to turn the sections off) (default: pin_summary_model)"`
+	ChatSectionsEndpoint   string `toml:"chat_sections_endpoint" hot:"event" desc:"The [endpoints] entry chat_sections_model is called on, OpenAI chat format; set it with chat_sections_model (default: pin_summary_endpoint)"`
 	// AllowedDevices: if non-empty, only these device IDs may pair (empty allows
 	// any). A slice → set in the TOML file, not via /config set, so no desc tag
 	// (mirrors AccessConfig.AllowedUsers).
@@ -1071,6 +1078,9 @@ func (p *PlatformConfig) ApplyDefaults(defaults PlatformConfig) {
 		}
 		if p.App.PinSummaryProvider == "" {
 			p.App.PinSummaryProvider = defaults.App.PinSummaryProvider
+		}
+		if p.App.PinSummaryEndpoint == "" {
+			p.App.PinSummaryEndpoint = defaults.App.PinSummaryEndpoint
 		}
 		if p.App.AutoName == nil {
 			p.App.AutoName = defaults.App.AutoName

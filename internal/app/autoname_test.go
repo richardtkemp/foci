@@ -381,12 +381,14 @@ func TestAutoName_Settings(t *testing.T) {
 
 	// Unusable summariser: no key, or the model off.
 	for name, sum := range map[string]*pinSummariser{
-		"no key":    newPinSummariser(nil, func() (string, bool) { return "", false }),
-		"model off": newPinSummariser(&config.AppSpecific{PinSummaryModel: "off"}, func() (string, bool) { return "k", true }),
+		"no key":           newPinSummariser(nil, nil, func(string) (string, bool) { return "", false }),
+		"model off":        newPinSummariser(&config.AppSpecific{PinSummaryModel: "off"}, nil, func(string) (string, bool) { return "k", true }),
+		"name model off":   newPinSummariser(&config.AppSpecific{AutoNameModel: "off"}, nil, func(string) (string, bool) { return "k", true }),
+		"unknown endpoint": newPinSummariser(&config.AppSpecific{AutoNameEndpoint: "nowhere"}, nil, func(string) (string, bool) { return "k", true }),
 	} {
 		stub2 := &nameStub{reply: "Name"}
 		h2, _, b2 := autoNameHub(t, stub2, nil)
-		sum.url = h2.pinSum.url
+		sum.openRouterURL = h2.pinSum.openRouterURL
 		h2.pinSum = sum
 		seedChat(t, h2, 0, 20, "x")
 		h2.autoNameCheck(b2)
