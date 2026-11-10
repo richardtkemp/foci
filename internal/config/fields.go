@@ -645,6 +645,7 @@ var mapObjectFieldSpecs = []MapObjectFieldSpec{
 		{Key: "api_key", Type: FieldString, Description: "Secret name for API key (e.g. openrouter.api_key)"},
 		{Key: "http_timeout", Type: FieldDuration, Description: "HTTP timeout for this endpoint (default 120s)"},
 		{Key: "instruction_role", Type: FieldString, Description: "OpenAI-format role for the system prompt: developer (default) or system (Ollama drops developer)"},
+		{Key: "max_in_flight", Type: FieldInt, Description: "Local model server: how many of foci's calls run at once; the rest wait in priority order. 0 = no dispatch (no cap, no priority). Match the server's parallel slots (OLLAMA_NUM_PARALLEL). Ignored for OpenRouter (default 0)"},
 	}},
 }
 

@@ -158,3 +158,46 @@ func TestLoads_PerHourAfterRestart(t *testing.T) {
 		t.Errorf("per hour = %.2f, want 6 (6 runs in the hour since start)", got)
 	}
 }
+
+// TestLoads_Held: held calls (#3019) are counted per window with their
+// typical and longest wait and the replaced ones; a target whose only calls
+// were replaced is still reported.
+func TestLoads_Held(t *testing.T) {
+	r, c := newTestRecorder()
+	tgt := Target("qwen3.8", "local")
+	other := Target("qwen3.6", "local")
+
+	r.Held(tgt, "auto chat name", 10*time.Second, false)
+	_, end := r.Begin(tgt, "auto chat name")
+	c.add(time.Second)
+	end(false)
+	r.Held(tgt, "chat sections", 30*time.Second, true)
+	r.Held(tgt, "chat sections", 2*time.Second, false)
+	r.Held(other, "chat sections", 5*time.Second, true)
+
+	l := loadFor(t, r, time.Hour, tgt)
+	if l.Held != 3 || l.Replaced != 1 || l.HoldP50 != 10*time.Second || l.HoldMax != 30*time.Second {
+		t.Errorf("held %d replaced %d p50 %v max %v, want 3, 1, 10s, 30s", l.Held, l.Replaced, l.HoldP50, l.HoldMax)
+	}
+	if o := loadFor(t, r, time.Hour, other); o.Runs != 0 || o.Held != 1 || o.Replaced != 1 {
+		t.Errorf("replaced-only target: %+v", o)
+	}
+	rep := r.Report()
+	if !strings.Contains(rep, "Held by foci: 3 | 3; wait typical 10s | 10s, max 30s | 30s; replaced 1 | 1") {
+		t.Errorf("report:\n%s", rep)
+	}
+
+	c.add(2 * time.Hour) // out of the hour window, still in the day
+	if l := loadFor(t, r, Retention, tgt); l.Held != 3 {
+		t.Errorf("24h held = %d, want 3", l.Held)
+	}
+	for _, l := range r.Loads(time.Hour) {
+		if l.Held != 0 {
+			t.Errorf("hour window still holds %d held calls of %s", l.Held, l.Target)
+		}
+	}
+	c.add(Retention)
+	if got := r.Loads(Retention); len(got) != 0 {
+		t.Errorf("after retention: %+v", got)
+	}
+}

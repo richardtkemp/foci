@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/epdispatch"
 	"foci/internal/fap"
 	"foci/internal/fastload"
 )
@@ -400,5 +403,179 @@ func TestFastSummary_TargetTimeout(t *testing.T) {
 	l := s.load.Loads(time.Hour)
 	if len(l) != 1 || l[0].Failed != 1 || l[0].InFlight != 0 {
 		t.Errorf("load = %+v, want one failed call, none in flight", l)
+	}
+}
+
+// TestFastSummary_DispatchTiers (#3019): on a local endpoint the chat name
+// (Medium) waits while the pin label (High) is in flight, a newer check of
+// the same chat replaces a waiting one (by a newer call, and by
+// replaceWaiting), and the holds reach the load figures.
+func TestFastSummary_DispatchTiers(t *testing.T) {
+	ep := fmt.Sprintf("dispatch-test-%d", time.Now().UnixNano()) // epdispatch is process-wide
+	unblock := make(chan struct{})
+	var mu sync.Mutex
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		n++
+		first := n == 1
+		mu.Unlock()
+		if first {
+			<-unblock
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model":   "m",
+			"choices": []map[string]any{{"message": map[string]any{"content": "A short answer"}}},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	var unblockOnce sync.Once
+	release := func() { unblockOnce.Do(func() { close(unblock) }) }
+	t.Cleanup(release) // runs before srv.Close: a failed test must not hang on the held request
+
+	app := &config.AppSpecific{PinSummaryModel: "m", PinSummaryEndpoint: ep}
+	s := newPinSummariser(app, map[string]config.EndpointConfig{
+		// 2: the cap leaves room, so the chat name waits by the tier rule.
+		ep: {Format: "openai", URL: srv.URL, HTTPTimeout: "10m", MaxInFlight: 2},
+	}, nil)
+	s.load = fastload.New()
+	d := epdispatch.For(ep)
+	waitFor := func(what string, ok func(epdispatch.Status) bool) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for !ok(d.Status()) {
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: dispatcher %+v", what, d.Status())
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	pinDone := make(chan error, 1)
+	go func() {
+		_, err := s.summarise(context.Background(), "pin this", "", "")
+		pinDone <- err
+	}()
+	waitFor("pin label in flight", func(st epdispatch.Status) bool { return st.InFlight[epdispatch.High] == 1 })
+
+	name := func(chat string) summaryAsk {
+		return summaryAsk{what: autoNameWhat, use: useAutoName, chat: chat, system: "s", maxInputRunes: 100, maxTokens: 10, timeout: time.Second}
+	}
+	type result struct {
+		label string
+		err   error
+	}
+	results := make(chan result, 3)
+	run := func(label, chat string) {
+		go func() {
+			_, err := s.ask(context.Background(), name(chat), "the chat", "", "")
+			results <- result{label, err}
+		}()
+	}
+	run("c1-old", "c1")
+	waitFor("c1-old waits", func(st epdispatch.Status) bool { return st.Waiting[epdispatch.Medium] == 1 })
+	run("c1-new", "c1")
+	if r := <-results; r.label != "c1-old" || !errors.Is(r.err, epdispatch.ErrReplaced) {
+		t.Fatalf("got %+v, want c1-old replaced by c1-new", r)
+	}
+	waitFor("c1-new waits", func(st epdispatch.Status) bool { return st.Waiting[epdispatch.Medium] == 1 })
+	s.replaceWaiting(useAutoName, autoNameWhat, "c1")
+	if r := <-results; r.label != "c1-new" || !errors.Is(r.err, epdispatch.ErrReplaced) {
+		t.Fatalf("got %+v, want c1-new replaced by replaceWaiting", r)
+	}
+	run("c2", "c2")
+	waitFor("c2 waits", func(st epdispatch.Status) bool { return st.Waiting[epdispatch.Medium] == 1 })
+
+	release()
+	if err := <-pinDone; err != nil {
+		t.Fatalf("pin label: %v", err)
+	}
+	if r := <-results; r.label != "c2" || r.err != nil {
+		t.Fatalf("got %+v, want c2 sent after the pin label", r)
+	}
+
+	var l fastload.Load
+	for _, x := range s.load.Loads(time.Hour) {
+		if x.Target == fastload.Target("m", ep) {
+			l = x
+		}
+	}
+	if l.Held != 3 || l.Replaced != 2 || l.Runs != 2 {
+		t.Errorf("load: held %d replaced %d runs %d, want 3, 2, 2 (%+v)", l.Held, l.Replaced, l.Runs, l)
+	}
+	if l.Queued != 0 {
+		t.Errorf("queued = %d: a held call must not also count as queued at the server", l.Queued)
+	}
+}
+
+// TestFastSummary_NoMaxInFlightHoldsNothing (#3019): an endpoint without
+// max_in_flight is not dispatched: a chat name goes out while a pin label is
+// in flight on it, and nothing is recorded as held.
+func TestFastSummary_NoMaxInFlightHoldsNothing(t *testing.T) {
+	ep := fmt.Sprintf("nodispatch-test-%d", time.Now().UnixNano())
+	unblock := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(unblock) }) }
+	var mu sync.Mutex
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		n++
+		first := n == 1
+		mu.Unlock()
+		if first {
+			<-unblock
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model":   "m",
+			"choices": []map[string]any{{"message": map[string]any{"content": "A short answer"}}},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(release)
+
+	app := &config.AppSpecific{PinSummaryModel: "m", PinSummaryEndpoint: ep}
+	s := newPinSummariser(app, map[string]config.EndpointConfig{
+		ep: {Format: "openai", URL: srv.URL, HTTPTimeout: "10m"},
+	}, nil)
+	s.load = fastload.New()
+
+	pinDone := make(chan error, 1)
+	go func() {
+		_, err := s.summarise(context.Background(), "pin this", "", "")
+		pinDone <- err
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for s.load.InFlight(fastload.Target("m", ep)) != 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("the pin label never went out")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	ask := summaryAsk{what: autoNameWhat, use: useAutoName, chat: "c1", system: "s", maxInputRunes: 100, maxTokens: 10, timeout: time.Second}
+	got := make(chan error, 1)
+	go func() {
+		_, err := s.ask(context.Background(), ask, "the chat", "", "")
+		got <- err
+	}()
+	select {
+	case err := <-got:
+		if err != nil {
+			t.Fatalf("chat name: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the chat name was held on an endpoint without max_in_flight")
+	}
+	release()
+	if err := <-pinDone; err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range s.load.Loads(time.Hour) {
+		if l.Held != 0 {
+			t.Errorf("%s: held %d, want 0", l.Target, l.Held)
+		}
+	}
+	if st := epdispatch.For(ep).Status(); st.Calls != [3]int{} {
+		t.Errorf("the dispatcher saw calls: %+v", st)
 	}
 }

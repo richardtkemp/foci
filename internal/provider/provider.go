@@ -42,6 +42,15 @@ type selfRetryingClient interface {
 //   - 529 overload: up to ~2h (configurable via OverloadMaxDuration)
 //   - 5xx server errors: up to ~5min (configurable via ServerErrorMaxDuration)
 func sendWithRetry(ctx context.Context, client Client, req *MessageRequest, handler *StreamHandler) (*MessageResponse, error) {
+	// A handle with a gate (a local endpoint, #3019) holds one of its slots
+	// for the whole call, retries included. A concrete client (the caller
+	// already admitted the call, or there is no gate) passes at once.
+	release, err := admitCall(ctx, client, req)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	// Pin a registry handle to its current client for the whole call (#2980):
 	// every retry below uses one concrete client, and the optional-interface
 	// checks see it rather than the wrapper.

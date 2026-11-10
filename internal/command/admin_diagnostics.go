@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"foci/internal/display"
+	"foci/internal/epdispatch"
 	"foci/internal/fastload"
 	"foci/internal/tools"
 )
@@ -166,6 +167,12 @@ func StatusCommand() *Command {
 			// call (#3012), for tuning how often they run. Process-wide, not
 			// per session; absent when none ran in 24 hours.
 			if rep := fastload.Default.Report(); rep != "" {
+				sb.WriteString("\n\n" + rep)
+			}
+			// The endpoints that set max_in_flight (#3019): calls in flight
+			// and waiting, and the held calls of every caller (agent turns
+			// too); absent when no such endpoint has had a call.
+			if rep := epdispatch.Report(); rep != "" {
 				sb.WriteString("\n\n" + rep)
 			}
 

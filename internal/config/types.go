@@ -1446,6 +1446,14 @@ type EndpointConfig struct {
 	// prompt and the call still succeeds (#2987). Ignored by the anthropic
 	// and gemini formats.
 	InstructionRole string `toml:"instruction_role"`
+
+	// MaxInFlight opts a local model server into priority dispatch (#3019,
+	// internal/epdispatch): at most this many of foci's calls to the endpoint
+	// run at once, and the rest wait in foci in priority order. 0 (the
+	// default) = not dispatched: no cap, no priority, no holds. Ignored for
+	// OpenRouter. Set it to the server's parallel slots
+	// (OLLAMA_NUM_PARALLEL), which Ollama does not report over its API.
+	MaxInFlight int `toml:"max_in_flight"`
 }
 
 // Instruction roles accepted by EndpointConfig.InstructionRole.

@@ -15,13 +15,22 @@
 //     which an app chat message was stored (MarkActive) or a call to the
 //     target was in flight.
 //   - Queued: the share of calls that started while another call to the same
-//     target was still in flight. foci does not limit how many calls run at
-//     once, so such a call waits in the model server's queue whenever the
-//     server runs one request at a time (a local Ollama by default); on a
-//     server that runs several at once it is the overlap, not a wait.
+//     target was still in flight. Unless the endpoint sets max_in_flight
+//     (#3019), foci does not limit how many calls run at once, so such a call
+//     waits in the model server's queue whenever the server runs one request
+//     at a time (a local Ollama by default); on a server that runs several at
+//     once it is the overlap, not a wait.
 //   - Queue length: for each queued call, how many calls to the target were
 //     in flight when it started. Typical is the median of those; max is the
 //     largest.
+//   - Held (#3019): on an endpoint that sets max_in_flight (a local model
+//     server), foci itself holds a call back (internal/epdispatch): a chat
+//     name or sections call waits for the higher-priority calls, and every
+//     call waits for a free slot. Held is how many calls waited there,
+//     with the typical (median) and longest wait, and how many of them a
+//     newer check of the same chat replaced before they were sent. A held
+//     call's run starts when it is sent, so its wait is not in the other
+//     figures.
 //
 // The record is in memory only, kept for 24 hours, and starts empty at each
 // start of the process.
@@ -43,6 +52,15 @@ const Retention = 24 * time.Hour
 // At 20,000 calls a day the oldest are dropped first.
 const maxCalls = 20000
 
+// hold is one call foci held back before sending it (#3019).
+type hold struct {
+	target   string
+	task     string
+	at       time.Time // when the wait ended
+	wait     time.Duration
+	replaced bool
+}
+
 type call struct {
 	target  string
 	task    string
@@ -57,6 +75,7 @@ type call struct {
 type Recorder struct {
 	mu       sync.Mutex
 	calls    []*call
+	holds    []hold
 	inFlight map[string]int   // target → calls in flight
 	active   map[int64]bool   // unix minute → an app chat message was stored
 	started  time.Time        // when the record began (process start)
@@ -124,6 +143,16 @@ func (r *Recorder) Begin(target, task string) (ahead int, end func(failed bool))
 	}
 }
 
+// Held records that a call of task to target waited wait in foci before it
+// was sent, or before a newer call replaced it (replaced).
+func (r *Recorder) Held(target, task string, wait time.Duration, replaced bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.clock()
+	r.prune(now)
+	r.holds = append(r.holds, hold{target: target, task: task, at: now, wait: wait, replaced: replaced})
+}
+
 // InFlight is the number of calls to target in flight now.
 func (r *Recorder) InFlight(target string) int {
 	r.mu.Lock()
@@ -145,6 +174,16 @@ func (r *Recorder) prune(now time.Time) {
 	r.calls = keep
 	if over := len(r.calls) - maxCalls; over > 0 {
 		r.calls = slices.Delete(r.calls, 0, over)
+	}
+	keepH := r.holds[:0]
+	for _, h := range r.holds {
+		if h.at.After(cut) {
+			keepH = append(keepH, h)
+		}
+	}
+	r.holds = keepH
+	if over := len(r.holds) - maxCalls; over > 0 {
+		r.holds = slices.Delete(r.holds, 0, over)
 	}
 	for m := range r.active {
 		if m < cut.Unix()/60 {
@@ -169,6 +208,11 @@ type Load struct {
 	QueueP50   int           // median calls ahead, over the queued calls
 	QueueMax   int
 	LatencyP50 time.Duration // over the finished calls
+
+	Held     int           // calls foci held back by priority or max_in_flight (#3019)
+	Replaced int           // of those, replaced by a newer check before being sent
+	HoldP50  time.Duration // median wait of the held calls
+	HoldMax  time.Duration
 }
 
 // InUsePct is Busy as a percentage of ActiveTime (0 with no active time).
@@ -209,7 +253,16 @@ func (r *Recorder) Loads(window time.Duration) []Load {
 		covered = now.Sub(r.started)
 	}
 
+	holdsBy := map[string][]hold{}
+	for _, h := range r.holds {
+		if !h.at.Before(from) {
+			holdsBy[h.target] = append(holdsBy[h.target], h)
+		}
+	}
 	byTarget := map[string][]*call{}
+	for target := range holdsBy {
+		byTarget[target] = nil // a target whose calls were all replaced still shows
+	}
 	for _, c := range r.calls {
 		end := c.end
 		if c.pending {
@@ -264,7 +317,20 @@ func (r *Recorder) Loads(window time.Duration) []Load {
 				lat = append(lat, c.end.Sub(c.start))
 			}
 		}
-		if l.Runs == 0 && l.InFlight == 0 {
+		var waits []time.Duration
+		for _, h := range holdsBy[target] {
+			l.Held++
+			if h.replaced {
+				l.Replaced++
+			}
+			waits = append(waits, h.wait)
+		}
+		if len(waits) > 0 {
+			slices.Sort(waits)
+			l.HoldP50 = waits[(len(waits)-1)/2]
+			l.HoldMax = waits[len(waits)-1]
+		}
+		if l.Runs == 0 && l.InFlight == 0 && l.Held == 0 {
 			continue
 		}
 		l.Busy = unionLength(spans)
@@ -329,6 +395,10 @@ func (r *Recorder) Report() string {
 			h.QueuedPct(), d.QueuedPct(), queueLen(h, d, false), queueLen(h, d, true))
 		fmt.Fprintf(&sb, "     Latency p50: %s | %s; failed %d | %d; in flight now %d\n",
 			roundDur(h.LatencyP50), roundDur(d.LatencyP50), h.Failed, d.Failed, d.InFlight)
+		if d.Held > 0 {
+			fmt.Fprintf(&sb, "     Held by foci: %d | %d; wait typical %s | %s, max %s | %s; replaced %d | %d\n",
+				h.Held, d.Held, roundDur(h.HoldP50), roundDur(d.HoldP50), roundDur(h.HoldMax), roundDur(d.HoldMax), h.Replaced, d.Replaced)
+		}
 	}
 	return strings.TrimRight(sb.String(), "\n")
 }

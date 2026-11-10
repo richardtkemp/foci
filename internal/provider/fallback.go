@@ -87,7 +87,8 @@ func stripUnsupportedParams(req *MessageRequest, apiErr *APIError, logf func(str
 // legs served). Read it through ServedTuple.
 func walkFallback(
 	ctx context.Context,
-	client Client,
+	handle Client, // the caller's client as passed (a gated handle, perhaps)
+	client Client, // the caller's client pinned
 	req *MessageRequest,
 	handler *StreamHandler,
 	fallbackFn FallbackFunc,
@@ -108,10 +109,11 @@ func walkFallback(
 		}
 
 		fbClient := client
+		gate := handle                          // a hop on the caller's pinned client is admitted by the caller's handle
 		hop := ServedReport{Model: fbCanonical} // legs apply only with the hop's own client
 		if clientProvider != nil {
 			if c := clientProvider.GetClient(endpoint, format); c != nil {
-				fbClient = c
+				fbClient, gate = c, nil // sendWithRetry admits a handle itself
 				hop.Endpoint, hop.Format = endpoint, format
 			}
 		}
@@ -131,7 +133,12 @@ func walkFallback(
 		if req.CacheFor != nil {
 			req.CacheStrategy, req.CacheTTL = req.CacheFor(fbCanonical)
 		}
+		release, err := admitCall(ctx, gate, req)
+		if err != nil {
+			return nil, err
+		}
 		resp, err := sendWithRetry(ctx, fbClient, req, handler)
+		release()
 		if err == nil {
 			if resp != nil {
 				resp.Served = hop
@@ -187,11 +194,21 @@ func Send(
 	clientProvider ClientProvider,
 	logf func(string, ...any),
 ) (*MessageResponse, error) {
+	// A local endpoint's handle admits the call through its gate (#3019).
+	// The primary attempt and the 400-strip retry hold one slot; it is freed
+	// before the fallback chain, whose hops are admitted on their own
+	// endpoints (a hop on the same endpoint would otherwise wait on itself).
+	handle := client
+	release, err := admitCall(ctx, handle, req)
+	if err != nil {
+		return nil, err
+	}
 	// Pin once so the 400-strip retry and a fallback hop that reuses the
 	// caller's client run on the client this call started with (#2980).
 	client = Pin(client)
 	resp, err := sendWithRetry(ctx, client, req, handler)
 	if err == nil {
+		release()
 		return resp, nil
 	}
 
@@ -201,14 +218,16 @@ func Send(
 		if stripUnsupportedParams(req, apiErr, logf) {
 			resp, err = sendWithRetry(ctx, client, req, handler)
 			if err == nil {
+				release()
 				return resp, nil
 			}
 		}
 	}
+	release()
 
 	// Step 3: walk fallback chain on transient errors.
 	if fallbackFn != nil && IsFallbackEligible(err) {
-		return walkFallback(ctx, client, req, handler, fallbackFn, clientProvider, logf, err)
+		return walkFallback(ctx, handle, client, req, handler, fallbackFn, clientProvider, logf, err)
 	}
 
 	return resp, err

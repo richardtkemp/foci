@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/delegator/accounting"
+	"foci/internal/epdispatch"
 	"foci/internal/fap"
 	"foci/internal/fastload"
 	"foci/internal/platform"
@@ -105,6 +107,9 @@ type summaryTarget struct {
 	// problem is why the target cannot be called ("" = it can): an unknown
 	// endpoint, or one that does not speak the OpenAI format.
 	problem string
+	// maxInFlight is the endpoint's max_in_flight (#3019): > 0 dispatches
+	// the target's calls by priority (dispatcher).
+	maxInFlight int
 }
 
 func (t summaryTarget) off() bool {
@@ -222,6 +227,7 @@ func resolveSummaryTarget(model, endpoint string, providers []string, endpoints 
 	}
 	t.url = strings.TrimRight(base, "/") + "/chat/completions"
 	t.secret = ec.APIKey
+	t.maxInFlight = ec.MaxInFlight
 	t.openRouter = endpoint == defaultPinSummaryEndpoint || strings.Contains(base, "openrouter.ai")
 	if t.openRouter {
 		t.providers = providers
@@ -398,6 +404,57 @@ type summaryAsk struct {
 	// are kept and it is not cleaned to one label line. For an answer in a
 	// form its caller parses (the chat sections, #2993).
 	raw bool
+	// chat names the chat a Medium task's call is for (its conversation
+	// id). On a dispatched endpoint (#3019) a waiting call of the same task
+	// and chat is replaced by a newer one (dispatchKey).
+	chat string
+}
+
+// dispatchTier is the priority of a's calls on a local endpoint (#3019): the
+// pin label and the Stop-view summaries are High, like a chat turn (Dick's
+// ruling Q59); the chat name and the sections are Medium.
+func (a summaryAsk) dispatchTier() epdispatch.Tier {
+	if a.use == useShared {
+		return epdispatch.High
+	}
+	return epdispatch.Medium
+}
+
+// dispatchKey names a Medium call's task and chat for replacement ("" = no
+// replacement).
+func dispatchKey(what, chat string) string {
+	if chat == "" {
+		return ""
+	}
+	return what + "|" + chat
+}
+
+// dispatcher returns the endpoint's dispatcher when t's calls go through
+// one: an [endpoints] entry with max_in_flight > 0 that is not OpenRouter
+// (epdispatch.Engage). nil = the call goes straight out.
+func (t summaryTarget) dispatcher() *epdispatch.Dispatcher {
+	if t.openRouter || t.url == "" {
+		return nil
+	}
+	return epdispatch.Engage(t.endpoint, t.maxInFlight, t.url)
+}
+
+// replaceWaiting replaces the call of task what for chat that waits on u's
+// endpoint, if one does (#3019, Dick's ruling Q61: "Keep only the newest per
+// chat (a newer check replaces an older held one)"). The chat's check loop
+// calls it when a newer message arrives: the waiting check returns
+// epdispatch.ErrReplaced, and the loop runs again on the newest messages.
+func (s *pinSummariser) replaceWaiting(u summaryUse, what, chat string) {
+	if s == nil {
+		return
+	}
+	t := s.target(u)
+	if t.off() || t.problem != "" {
+		return
+	}
+	if d := t.dispatcher(); d != nil {
+		d.Replace(dispatchKey(what, chat))
+	}
 }
 
 // summaryWordsOK reports whether summary is within 1.5 times maxWords words
@@ -427,6 +484,28 @@ func (s *pinSummariser) ask(ctx context.Context, a summaryAsk, text, session, ag
 	key, ok := s.key(t)
 	if !ok {
 		return "", fmt.Errorf("secret %s is not set", t.secret)
+	}
+	load := s.load
+	if load == nil {
+		load = fastload.Default
+	}
+	// A local endpoint that sets max_in_flight takes a limited number of
+	// foci's calls at a time, in priority order (#3019). The wait has no time
+	// limit (Q61) and comes before the task's timeout, which bounds only the
+	// call itself.
+	if d := t.dispatcher(); d != nil {
+		release, wait, err := d.Acquire(ctx, a.dispatchTier(), dispatchKey(a.what, a.chat))
+		replaced := errors.Is(err, epdispatch.ErrReplaced)
+		if wait > 0 || replaced {
+			load.Held(t.label(), a.what, wait, replaced)
+		}
+		if err != nil {
+			if replaced {
+				appLog.Infof("%s: session=%s target=%s: a newer check of the chat replaced this one while it waited", a.what, session, t.label())
+			}
+			return "", err
+		}
+		defer release()
 	}
 	timeout := a.timeout
 	if t.timeout > 0 {
@@ -470,10 +549,6 @@ func (s *pinSummariser) ask(ctx context.Context, a summaryAsk, text, session, ag
 	client := s.client
 	if client == nil {
 		client = http.DefaultClient
-	}
-	load := s.load
-	if load == nil {
-		load = fastload.Default
 	}
 	ahead, done := load.Begin(t.label(), a.what)
 	start := time.Now()

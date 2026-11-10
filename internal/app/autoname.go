@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"foci/internal/config"
+	"foci/internal/epdispatch"
 	"foci/internal/fap"
 	"foci/internal/session"
 )
@@ -35,6 +36,10 @@ import (
 // frame seq recorded in alias_summary_seq at the last naming, so it survives
 // a restart. A failed, slow or over-long answer changes nothing; the chat is
 // then not tried again for autoNameRetryGap.
+
+// autoNameWhat names the automatic chat name's calls in the log, the load
+// figures and the endpoint dispatcher's replacement key (#3019).
+const autoNameWhat = "auto chat name"
 
 const (
 	defaultAutoNameFirst = 10 // Dick: "First summary in a new session to run after ten messages"
@@ -164,6 +169,9 @@ func (h *Hub) autoNameCheck(b *convBinding) {
 	if h.autoName == nil || h.frames == nil || idx == nil || !h.pinSum.usable(useAutoName) {
 		return
 	}
+	// A newer message: a check of this chat still waiting for a local
+	// endpoint is out of date. Replace it; its loop runs again (#3019).
+	h.pinSum.replaceWaiting(useAutoName, autoNameWhat, b.convID)
 	for {
 		set, ok := h.autoName.begin(b.convID)
 		if !ok {
@@ -224,8 +232,9 @@ func (h *Hub) autoNameRun(b *convBinding, idx *session.SessionIndex, set autoNam
 	input := autoNameInput(msgs, prev, set.words)
 
 	ask := summaryAsk{
-		what:          "auto chat name",
+		what:          autoNameWhat,
 		use:           useAutoName,
+		chat:          b.convID,
 		timeout:       autoNameTimeout,
 		system:        autoNameSystemPrompt,
 		maxInputRunes: utf8.RuneCountInString(input),
@@ -233,6 +242,9 @@ func (h *Hub) autoNameRun(b *convBinding, idx *session.SessionIndex, set autoNam
 		maxWords:      set.words,
 	}
 	name, err := h.pinSum.ask(context.Background(), ask, input, sessionKey, agentID)
+	if errors.Is(err, epdispatch.ErrReplaced) {
+		return false // a newer check replaced it while it waited; it runs next
+	}
 	if err != nil {
 		appLog.Warnf("auto chat name %s: %v", b.convID, err)
 		return true

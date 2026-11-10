@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -13,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"foci/internal/config"
+	"foci/internal/epdispatch"
 	"foci/internal/fap"
 	"foci/internal/fastload"
 	"foci/internal/session"
@@ -47,6 +49,10 @@ import (
 //
 // A failed call or an answer that does not parse changes nothing and is
 // logged; the chat then waits sectionRetryGap before the next try.
+
+// sectionsWhat names the chat sections' calls in the log, the load figures
+// and the endpoint dispatcher's replacement key (#3019).
+const sectionsWhat = "chat sections"
 
 const (
 	defaultSectionsEvery      = 5  // Dick F43: "Run every 5 messages"
@@ -199,6 +205,9 @@ func (h *Hub) sectionCheck(b *convBinding) {
 	if h.sections == nil || h.frames == nil || idx == nil || !h.pinSum.usable(useSections) {
 		return
 	}
+	// A newer message: a run of this chat still waiting for a local endpoint
+	// is out of date. Replace it; its loop runs again (#3019).
+	h.pinSum.replaceWaiting(useSections, sectionsWhat, b.convID)
 	for {
 		set, ok := h.sections.begin(b.convID)
 		if !ok {
@@ -280,8 +289,9 @@ func (h *Hub) sectionRun(b *convBinding, idx *session.SessionIndex, set sectionS
 	}
 
 	ask := summaryAsk{
-		what:          "chat sections",
+		what:          sectionsWhat,
 		use:           useSections,
+		chat:          b.convID,
 		timeout:       sectionTimeout,
 		system:        sectionSystemPrompt,
 		maxInputRunes: utf8.RuneCountInString(input),
@@ -289,6 +299,9 @@ func (h *Hub) sectionRun(b *convBinding, idx *session.SessionIndex, set sectionS
 		raw:           true,
 	}
 	answer, err := h.pinSum.ask(context.Background(), ask, input, sessionKey, agentID)
+	if errors.Is(err, epdispatch.ErrReplaced) {
+		return false // a newer check replaced it while it waited; it runs next
+	}
 	if err != nil {
 		appLog.Warnf("chat sections %s: %v", b.convID, err)
 		return true

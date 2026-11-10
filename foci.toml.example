@@ -447,6 +447,7 @@ system_files = [
 # api_key = "myproxy.api_key"              # secret name in secrets.toml
 # http_timeout = "120s"
 # instruction_role = "developer"           # openai format: role for the system prompt, "developer" or "system" (Ollama drops "developer")
+# max_in_flight = 1                         # local model server: foci's calls that run at once, the rest wait in priority order (match OLLAMA_NUM_PARALLEL); 0 (default) = no dispatch
 
 # ─── Platforms ────────────────────────────────────────────────────────
 # Platforms are configured as [[platforms]] array entries. Each entry has

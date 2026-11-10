@@ -271,6 +271,31 @@ var unattendedTriggers = map[string]bool{
 	delegator.BatchPurposePromptDiff:      true,
 }
 
+// backgroundCallTriggers are the triggers of agent turns nobody waits for:
+// the lowest tier on a local endpoint (#3019, Dick's ruling Q60: "Lowest:
+// they wait behind summaries" for keepalive, reflection, memory
+// consolidation and similar background agent work). They are the periodic
+// self-maintenance passes (buildBranchFunc's branch types), the memory passes
+// and the nudge extraction batch. Not listed, so High: the user's messages
+// and everything else (HTTP sends, cron, wakes, webhooks, notifies,
+// redelivery, branch, depth, the compaction summary and prompt diff batches).
+var backgroundCallTriggers = map[string]bool{
+	TriggerKeepalive:                      true,
+	"background":                          true,
+	"reflection":                          true,
+	delegator.BatchPurposeConsolidation:   true,
+	"compaction_memory":                   true,
+	"session_end_memory":                  true,
+	delegator.BatchPurposeNudgeExtraction: true,
+}
+
+// BackgroundCall reports whether a model call made under ctx belongs to a
+// background agent turn (backgroundCallTriggers), which waits behind every
+// other call on a local endpoint (internal/epdispatch).
+func BackgroundCall(ctx context.Context) bool {
+	return backgroundCallTriggers[TriggerFromContext(ctx)]
+}
+
 // isUnattendedTrigger reports whether a turn with this trigger has nobody to
 // answer a permission ask (see unattendedTriggers).
 func isUnattendedTrigger(trigger string) bool {

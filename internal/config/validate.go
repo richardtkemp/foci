@@ -467,6 +467,9 @@ func (cfg *Config) Validate(knownBackends []string) error {
 		default:
 			return fmt.Errorf("[endpoints.%s] instruction_role = %q: must be \"developer\" or \"system\"", name, ep.InstructionRole)
 		}
+		if ep.MaxInFlight < 0 {
+			return fmt.Errorf("[endpoints.%s] max_in_flight = %d: must be 1 or more (0 or unset = 1)", name, ep.MaxInFlight)
+		}
 	}
 
 	// Sessions

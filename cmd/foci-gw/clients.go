@@ -6,7 +6,9 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/agent"
 	"foci/internal/config"
+	"foci/internal/epdispatch"
 	"foci/internal/gemini"
 	oai "foci/internal/openai"
 	"foci/internal/provider"
@@ -45,6 +47,7 @@ type clientEntry struct {
 var gwClients *clientRegistry
 
 func newClientRegistry(cfg *config.Config, store *secrets.Store, ctx context.Context) *clientRegistry {
+	epdispatch.SetLimits(endpointLimits(cfg))
 	return &clientRegistry{
 		entries: make(map[string]*clientEntry),
 		cfg:     cfg,
@@ -79,6 +82,7 @@ func (r *clientRegistry) GetClient(endpointName, format string) provider.Client 
 		cfg := r.config()
 		if c := r.build(cfg, endpointName, format); c != nil {
 			entry.live = provider.NewSwappableClient(c)
+			entry.live.SetGate(r.callGate(endpointName))
 			entry.endpoint = cfg.Endpoints[endpointName]
 		}
 	}
@@ -95,10 +99,14 @@ func (r *clientRegistry) GetClient(endpointName, format string) provider.Client 
 // against fresh. A rebuild that fails keeps the old client and logs an
 // error: the edit must not leave a working endpoint with no client.
 //
+// A change of max_in_flight alone rebuilds nothing: it sets the endpoint's
+// dispatcher limit (#3019).
+//
 // The old client is not closed: calls in flight still use it. A replaced
 // Gemini client's server-side caches therefore expire by their TTL rather
 // than being deleted at shutdown.
 func (r *clientRegistry) Reconfigure(fresh *config.Config) {
+	epdispatch.SetLimits(endpointLimits(fresh)) // max_in_flight applies live (#3019)
 	r.mu.Lock()
 	r.cfg = fresh
 	keys := make([]string, 0, len(r.entries))
@@ -130,7 +138,8 @@ func (r *clientRegistry) reconfigureEntry(e *clientEntry, fresh *config.Config, 
 		mainLog.Warnf("endpoint %q was removed from config; its %s client keeps the old settings until a restart", endpointName, format)
 		return
 	}
-	if epCfg == e.endpoint {
+	if sameClientConfig(epCfg, e.endpoint) {
+		e.endpoint = epCfg
 		return
 	}
 	c := r.build(fresh, endpointName, format)
@@ -142,6 +151,55 @@ func (r *clientRegistry) reconfigureEntry(e *clientEntry, fresh *config.Config, 
 	e.endpoint = epCfg
 	mainLog.Infof("endpoint %q (%s) reconfigured live: url=%s http_timeout=%s",
 		endpointName, format, epCfg.URLForFormat(format), parseDurationDefault(epCfg.HTTPTimeout, 120*time.Second))
+}
+
+// sameClientConfig reports whether a and b build the same client: they differ
+// at most in max_in_flight, which the call gate reads live (#3019).
+func sameClientConfig(a, b config.EndpointConfig) bool {
+	a.MaxInFlight, b.MaxInFlight = 0, 0
+	return a == b
+}
+
+// callGate is the gate of every client handle of endpointName (#3019). On an
+// endpoint that opted in (max_in_flight > 0, not OpenRouter: a local model
+// server), each call waits for one of its max_in_flight slots, in tier order:
+// a background agent turn (agent.BackgroundCall) is Low, every other agent or
+// spawn call High. At max_in_flight 0 (the default) the call goes straight
+// out. The setting is read at call time, so an [endpoints] edit applies to
+// the next call.
+func (r *clientRegistry) callGate(endpointName string) provider.CallGate {
+	return func(ctx context.Context, _ *provider.MessageRequest) (func(), error) {
+		ep, ok := r.config().Endpoints[endpointName]
+		if !ok {
+			return func() {}, nil
+		}
+		d := epdispatch.Engage(endpointName, ep.MaxInFlight, ep.URL, ep.AnthropicURL, ep.OpenAIURL, ep.GeminiURL)
+		if d == nil {
+			return func() {}, nil
+		}
+		tier := epdispatch.High
+		if agent.BackgroundCall(ctx) {
+			tier = epdispatch.Low
+		}
+		release, wait, err := d.Acquire(ctx, tier, "")
+		if err != nil {
+			return nil, err
+		}
+		if wait >= time.Second {
+			mainLog.Debugf("endpoint %q: %s call waited %s for a slot", endpointName, tier, wait.Round(time.Millisecond))
+		}
+		return release, nil
+	}
+}
+
+// endpointLimits is each [endpoints] entry's max_in_flight, for
+// epdispatch.SetLimits.
+func endpointLimits(cfg *config.Config) map[string]int {
+	out := make(map[string]int, len(cfg.Endpoints))
+	for name, ep := range cfg.Endpoints {
+		out[name] = ep.MaxInFlight
+	}
+	return out
 }
 
 // build creates the client for an endpoint:format pair from cfg, or returns

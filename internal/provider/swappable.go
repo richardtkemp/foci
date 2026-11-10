@@ -20,6 +20,38 @@ import (
 // see the concrete client, not this wrapper.
 type SwappableClient struct {
 	cur atomic.Pointer[clientBox]
+	// gate admits each call made through this handle (#3019); nil = none.
+	// Set once, before the handle is shared (SetGate).
+	gate CallGate
+}
+
+// CallGate admits one model call: it returns once the call may be sent, with
+// the function to call when the call has returned (a streamed call: when its
+// response has ended). An error means the call is not sent; the provider
+// layer returns it. The client registry sets one on the handle of a local
+// endpoint, which foci sends a limited number of calls at a time, in
+// priority order (internal/epdispatch).
+type CallGate func(ctx context.Context, req *MessageRequest) (release func(), err error)
+
+// SetGate makes every call through s pass gate first. Call it before s is
+// handed out; it is not synchronised with calls.
+func (s *SwappableClient) SetGate(gate CallGate) { s.gate = gate }
+
+// admitCall passes a call on c through c's gate, when c is a handle with one.
+// The release is never nil.
+func admitCall(ctx context.Context, c Client, req *MessageRequest) (release func(), err error) {
+	s, ok := c.(*SwappableClient)
+	if !ok || s.gate == nil {
+		return func() {}, nil
+	}
+	release, err = s.gate(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if release == nil {
+		release = func() {}
+	}
+	return release, nil
 }
 
 // clientBox lets an interface value live in an atomic.Pointer.
