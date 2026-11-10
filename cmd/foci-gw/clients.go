@@ -162,10 +162,11 @@ func sameClientConfig(a, b config.EndpointConfig) bool {
 
 // callGate is the gate of every client handle of endpointName (#3019). On an
 // endpoint that opted in (max_in_flight > 0, not OpenRouter: a local model
-// server), each call waits for one of its max_in_flight slots, in tier order:
-// a background agent turn (agent.BackgroundCall) is Low, every other agent or
-// spawn call High. At max_in_flight 0 (the default) the call goes straight
-// out. The setting is read at call time, so an [endpoints] edit applies to
+// server), each call waits for one of its max_in_flight slots, in tier order.
+// agent.CallTier gives the tier: a background agent turn is Low, an automated
+// one (cron/foci send, webhook, agent message, reminder wake) Medium, every
+// other agent or spawn call High. At max_in_flight 0 (the default) the call
+// goes straight out. The setting is read at call time, so an [endpoints] edit applies to
 // the next call.
 func (r *clientRegistry) callGate(endpointName string) provider.CallGate {
 	return func(ctx context.Context, _ *provider.MessageRequest) (func(), error) {
@@ -177,10 +178,8 @@ func (r *clientRegistry) callGate(endpointName string) provider.CallGate {
 		if d == nil {
 			return func() {}, nil
 		}
-		tier := epdispatch.High
-		if agent.BackgroundCall(ctx) {
-			tier = epdispatch.Low
-		}
+		// No key: an agent call is never replaced while it waits (#3023).
+		tier := agent.CallTier(ctx)
 		release, wait, err := d.Acquire(ctx, tier, "")
 		if err != nil {
 			return nil, err

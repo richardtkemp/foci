@@ -51,6 +51,11 @@ type httpDriver struct {
 	logTag  string
 }
 
+// HTTPSend implements agent.SendDriver: the turn is an HTTP /send, so it
+// runs at the /send's dispatch tier on a local endpoint like an injected
+// /send (#3023; a --human send keeps High through the human-source marker).
+func (d *httpDriver) HTTPSend() bool { return true }
+
 // Connection implements agent.Driver; always nil — see the type doc.
 func (d *httpDriver) Connection() platform.Connection { return nil }
 

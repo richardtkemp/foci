@@ -12,6 +12,7 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/command"
+	"foci/internal/epdispatch"
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/tools"
@@ -154,8 +155,14 @@ func TestSend_Queue_MidTurn_QueuesAsUserTurn(t *testing.T) {
 	mock.proceed <- struct{}{}
 
 	waitForCond(t, "both turns recorded", func() bool { return len(mock.snapshot()) == 2 })
-	if calls := mock.snapshot(); calls[1].trigger != "" {
+	calls := mock.snapshot()
+	if calls[1].trigger != "" {
 		t.Errorf("queued choice turn trigger = %q, want \"\" (non-interactive, like today's injected sends)", calls[1].trigger)
+	}
+	// Both /send turns, injected and choice-carrying, run at Medium on a
+	// local endpoint (#3023): a cron/foci send is not a person at a chat.
+	if calls[0].tier != epdispatch.Medium || calls[1].tier != epdispatch.Medium {
+		t.Errorf("tiers = %s, %s, want medium for both /send turns", calls[0].tier, calls[1].tier)
 	}
 }
 

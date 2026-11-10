@@ -131,6 +131,9 @@ func (a *Agent) RunTurn(
 	if batchHuman(batch) {
 		ctx = WithHumanSource(ctx)
 	}
+	if sd, ok := driver.(SendDriver); ok && sd.HTTPSend() {
+		ctx = withHTTPSend(ctx)
+	}
 	ctx = WithInputRefs(ctx, batchInputRefs(batch))
 	// The hidden resume line a usage hold folds in front of held messages
 	// (#2491) reaches the model but no client: the conversation record skips it.
@@ -183,6 +186,15 @@ func (a *Agent) RunTurn(
 	}
 
 	return turn.RunTurn(ctx, a, dispatchSink, steerer, sk, texts, allAttachments)
+}
+
+// SendDriver is implemented by the Driver of an HTTP /send with a delivery
+// choice (#1318). Such a turn runs as a user envelope with trigger "" rather
+// than the injected /send's "user", so RunTurn marks its ctx (withHTTPSend)
+// when HTTPSend reports true: CallTier then gives it the /send's Medium tier
+// on a local endpoint (#3023).
+type SendDriver interface {
+	HTTPSend() bool
 }
 
 // batchTrigger derives the turn's trigger label from the batch. Normally this

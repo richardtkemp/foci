@@ -7,6 +7,7 @@ import (
 
 	"foci/internal/convo"
 	"foci/internal/delegator"
+	"foci/internal/epdispatch"
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/tools"
@@ -276,9 +277,7 @@ var unattendedTriggers = map[string]bool{
 // they wait behind summaries" for keepalive, reflection, memory
 // consolidation and similar background agent work). They are the periodic
 // self-maintenance passes (buildBranchFunc's branch types), the memory passes
-// and the nudge extraction batch. Not listed, so High: the user's messages
-// and everything else (HTTP sends, cron, wakes, webhooks, notifies,
-// redelivery, branch, depth, the compaction summary and prompt diff batches).
+// and the nudge extraction batch.
 var backgroundCallTriggers = map[string]bool{
 	TriggerKeepalive:                      true,
 	"background":                          true,
@@ -289,11 +288,54 @@ var backgroundCallTriggers = map[string]bool{
 	delegator.BatchPurposeNudgeExtraction: true,
 }
 
-// BackgroundCall reports whether a model call made under ctx belongs to a
-// background agent turn (backgroundCallTriggers), which waits behind every
-// other call on a local endpoint (internal/epdispatch).
-func BackgroundCall(ctx context.Context) bool {
-	return backgroundCallTriggers[TriggerFromContext(ctx)]
+// mediumCallTriggers are the triggers of agent turns that automation, not a
+// person at a chat, started: the middle tier on a local endpoint (#3023,
+// Dick 2026-11-10: "Cron and webhook should be medium priority"; "Messages
+// and reminders: medium"). They are an HTTP /send (foci send, cron; trigger
+// "user"), an inbound webhook, an agent-to-agent message (send_to_session,
+// "session_notify") and a reminder wake (foci_remind wake,
+// "scheduled_wake"). A /send with a delivery choice runs with trigger "" and
+// is marked by withHTTPSend instead. A /send that declares a human sender (--human, the
+// human-source marker) stays High. A Medium agent call has no replacement
+// key: it is never dropped or replaced while it waits, unlike a chat-name or
+// section check.
+var mediumCallTriggers = map[string]bool{
+	"user":           true,
+	"webhook":        true,
+	"session_notify": true,
+	"scheduled_wake": true,
+}
+
+// CallTier is the dispatch tier of a model call made under ctx on a local
+// endpoint (internal/epdispatch): Low for a background agent turn
+// (backgroundCallTriggers), Medium for an automated one (mediumCallTriggers),
+// High for everything else: the user's messages (platform, voice, a
+// human-declared /send, an ask answer) and the triggers listed in neither
+// (async_notify, redelivery, branch, depth, autonomous runs, restart and
+// warning injections, the compaction summary and prompt diff batches, spawns).
+func CallTier(ctx context.Context) epdispatch.Tier {
+	trigger := TriggerFromContext(ctx)
+	switch {
+	case backgroundCallTriggers[trigger]:
+		return epdispatch.Low
+	case (mediumCallTriggers[trigger] || httpSendFromContext(ctx)) && !HumanSourceFromContext(ctx) && !UserInputFromContext(ctx):
+		return epdispatch.Medium
+	}
+	return epdispatch.High
+}
+
+// httpSendKey is the context key marking a turn as an HTTP /send that runs
+// as a user envelope (a delivery choice, #1318; RunTurn via SendDriver). Its
+// trigger is "", so CallTier reads this marker instead.
+type httpSendKey struct{}
+
+func withHTTPSend(ctx context.Context) context.Context {
+	return context.WithValue(ctx, httpSendKey{}, true)
+}
+
+func httpSendFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(httpSendKey{}).(bool)
+	return v
 }
 
 // isUnattendedTrigger reports whether a turn with this trigger has nobody to

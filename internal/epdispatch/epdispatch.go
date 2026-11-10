@@ -11,7 +11,9 @@
 //
 //	High   user-facing agent turns (a user's message and the turns it drives),
 //	       pin labels, Stop-view step summaries
-//	Medium automatic chat names, chat sections
+//	Medium automatic chat names, chat sections, agent turns automation
+//	       started (cron/foci send, webhooks, agent messages, reminder wakes;
+//	       #3023, never replaced: they have no key)
 //	Low    background agent turns (keepalive, reflection, consolidation, ...)
 //
 // The tier rules (Dick, 2026-11-10 19:45):

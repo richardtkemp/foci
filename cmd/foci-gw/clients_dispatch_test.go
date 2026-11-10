@@ -88,13 +88,13 @@ func TestClientRegistry_DispatchesLocalEndpoint(t *testing.T) {
 	}
 
 	errs := make(chan error, 4)
-	go send(agent.WithTrigger(context.Background(), "user"), "first", errs)
+	go send(agent.WithTrigger(context.Background(), "telegram"), "first", errs)
 	if got := <-entered; got != "first" {
 		t.Fatalf("first request = %q", got)
 	}
 	go send(agent.WithTrigger(context.Background(), agent.TriggerKeepalive), "keepalive", errs)
 	waitWaiting(1)
-	go send(agent.WithTrigger(context.Background(), "user"), "user", errs)
+	go send(agent.WithTrigger(context.Background(), "telegram"), "user", errs)
 	waitWaiting(2)
 	if s := d.Status(); s.Waiting[epdispatch.Low] != 1 || s.Waiting[epdispatch.High] != 1 {
 		t.Fatalf("tiers: %+v, want the keepalive Low and the user turn High", s)
@@ -124,6 +124,107 @@ func TestClientRegistry_DispatchesLocalEndpoint(t *testing.T) {
 	}
 	if provider.Pin(c) != before {
 		t.Error("a max_in_flight edit rebuilt the client")
+	}
+}
+
+// TestClientRegistry_AutomatedTurnsMedium (#3023): on an endpoint with
+// max_in_flight 1, turns that automation started (a cron/foci send = trigger
+// "user", a webhook, an agent message, a reminder wake) wait at Medium behind
+// a running user turn and behind a user turn that arrives after them, go
+// before a background turn, and are never replaced: two cron sends of the
+// same chat both reach the server, in arrival order.
+func TestClientRegistry_AutomatedTurnsMedium(t *testing.T) {
+	name := fmt.Sprintf("gate-medium-%d", time.Now().UnixNano()) // epdispatch is process-wide
+	var mu sync.Mutex
+	var order []string
+	entered := make(chan string, 8)
+	hold := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &body)
+		mu.Lock()
+		order = append(order, body.Model)
+		mu.Unlock()
+		entered <- body.Model
+		if body.Model == "first" {
+			<-hold
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"id":"x","object":"chat.completion","created":1,"model":%q,"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`, body.Model)
+	}))
+	var holdOnce sync.Once
+	unhold := func() { holdOnce.Do(func() { close(hold) }) }
+	t.Cleanup(srv.Close)
+	t.Cleanup(unhold)
+
+	cfg := &config.Config{Endpoints: map[string]config.EndpointConfig{
+		name: {Format: "openai", URL: srv.URL, APIKey: "gate.key", MaxInFlight: 1},
+	}}
+	r := newClientRegistry(cfg, testSecrets(t, "[gate]\nkey = \"k\"\n"), context.Background())
+	c := r.GetClient(name, "openai")
+	if c == nil {
+		t.Fatal("GetClient returned nil")
+	}
+	d := epdispatch.For(name)
+
+	errs := make(chan error, 8)
+	send := func(ctx context.Context, model string) {
+		req := &provider.MessageRequest{Model: model, MaxTokens: 10, Messages: []provider.Message{{Role: "user", Content: provider.TextContent("hi")}}}
+		_, err := provider.Send(ctx, c, req, nil, nil, nil, nil)
+		if err != nil {
+			err = fmt.Errorf("%s: %w", model, err)
+		}
+		errs <- err
+	}
+	waitTiers := func(high, medium, low int) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			s := d.Status()
+			if s.Waiting[epdispatch.High] == high && s.Waiting[epdispatch.Medium] == medium && s.Waiting[epdispatch.Low] == low {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("waiting never reached high=%d medium=%d low=%d: %+v", high, medium, low, s)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	ctxFor := func(trigger string) context.Context { return agent.WithTrigger(context.Background(), trigger) }
+
+	go send(ctxFor("telegram"), "first")
+	if got := <-entered; got != "first" {
+		t.Fatalf("first request = %q", got)
+	}
+	go send(ctxFor("user"), "cron1")
+	waitTiers(0, 1, 0)
+	go send(ctxFor("user"), "cron2")
+	waitTiers(0, 2, 0)
+	go send(ctxFor("webhook"), "webhook")
+	waitTiers(0, 3, 0)
+	go send(ctxFor("session_notify"), "agentmsg")
+	waitTiers(0, 4, 0)
+	go send(ctxFor("scheduled_wake"), "wake")
+	waitTiers(0, 5, 0)
+	go send(ctxFor(agent.TriggerKeepalive), "keepalive")
+	waitTiers(0, 5, 1)
+	go send(agent.WithHumanSource(ctxFor("user")), "human")
+	waitTiers(1, 5, 1)
+
+	unhold()
+	for range 8 {
+		if err := <-errs; err != nil {
+			t.Fatal(err) // ErrReplaced here = a Medium agent call was dropped
+		}
+	}
+	mu.Lock()
+	got := fmt.Sprint(order)
+	mu.Unlock()
+	if want := "[first human cron1 cron2 webhook agentmsg wake keepalive]"; got != want {
+		t.Errorf("server order = %s, want %s", got, want)
 	}
 }
 

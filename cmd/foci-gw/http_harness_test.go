@@ -12,6 +12,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/command"
 	"foci/internal/config"
+	"foci/internal/epdispatch"
 	"foci/internal/periodic"
 	"foci/internal/platform"
 	"foci/internal/provider"
@@ -28,9 +29,10 @@ const (
 
 // mockCall records one SendMessage invocation for assertions.
 type mockCall struct {
-	text     string   // last user message text in the request
-	trigger  string   // agent trigger label from ctx ("user", "branch", "webhook", ...)
-	allTexts []string // every message's "role:text" in the request, in order — the full history the provider saw
+	text     string          // last user message text in the request
+	trigger  string          // agent trigger label from ctx ("user", "branch", "webhook", ...)
+	tier     epdispatch.Tier // agent.CallTier(ctx): the call's tier on a local endpoint (#3023)
+	allTexts []string        // every message's "role:text" in the request, in order — the full history the provider saw
 }
 
 // mockClient is a minimal provider.Client for HTTP endpoint tests: it returns
@@ -63,7 +65,7 @@ func (m *mockClient) SendMessage(ctx context.Context, req *provider.MessageReque
 		allTexts = append(allTexts, msg.Role+":"+provider.TextOf(msg.Content))
 	}
 	m.mu.Lock()
-	m.calls = append(m.calls, mockCall{text: text, trigger: agent.TriggerFromContext(ctx), allTexts: allTexts})
+	m.calls = append(m.calls, mockCall{text: text, trigger: agent.TriggerFromContext(ctx), tier: agent.CallTier(ctx), allTexts: allTexts})
 	m.mu.Unlock()
 	if m.entered != nil {
 		m.entered <- text
