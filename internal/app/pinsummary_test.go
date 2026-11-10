@@ -117,6 +117,9 @@ func TestPinSummary_Request(t *testing.T) {
 	if stub.auth[0] != "Bearer sk-test" {
 		t.Errorf("Authorization = %q", stub.auth[0])
 	}
+	if body["reasoning_effort"] != "none" {
+		t.Errorf("reasoning_effort = %v, want \"none\" (#3026; OpenRouter ignores it for Llama)", body["reasoning_effort"])
+	}
 }
 
 // TestPinSummary_LiveConfigure proves a config change applies to the next

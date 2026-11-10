@@ -71,6 +71,15 @@ const (
 	// openAIDefaultBase is the base URL of an openai-format endpoint that sets
 	// no URL (the SDK default).
 	openAIDefaultBase = "https://api.openai.com/v1"
+
+	// summaryReasoningEffort is the reasoning_effort every fast-summary call
+	// sends (#3026). A thinking model (qwen3.8 on Ollama) otherwise spends the
+	// whole small answer budget on reasoning and returns no answer. Ollama's
+	// /v1 honours it (reasoning 0 tokens); OpenRouter takes it and ignores it
+	// for a model that does not reason (Llama 3.1 8B on Groq, measured
+	// 2026-11-10). An endpoint that refuses the field gets the call again
+	// without it (reasoningFieldRefused).
+	summaryReasoningEffort = "none"
 )
 
 // pinSummaryPrompt is the system prompt. Dick's ruling: "Prompt sets a strict
@@ -133,6 +142,11 @@ type pinSummariser struct {
 	client        *http.Client                     // nil = http.DefaultClient
 	secret        func(name string) (string, bool) // reads a secret at call time; nil = none
 	load          *fastload.Recorder               // nil = fastload.Default
+
+	// noEffort holds the targets (by label) whose endpoint refused
+	// reasoning_effort (#3026): their calls leave it out. Guarded by mu;
+	// configure clears it, since an edit can point the endpoint elsewhere.
+	noEffort map[string]bool
 }
 
 // endpointsOf returns cfg's [endpoints] entries (nil for a nil cfg).
@@ -200,6 +214,7 @@ func (s *pinSummariser) configure(app *config.AppSpecific, endpoints map[string]
 	}
 	s.mu.Lock()
 	s.targets = targets
+	s.noEffort = nil
 	s.mu.Unlock()
 }
 
@@ -235,6 +250,24 @@ func resolveSummaryTarget(model, endpoint string, providers []string, endpoints 
 		t.timeout = d
 	}
 	return t
+}
+
+// sendsEffort reports whether calls to t send reasoning_effort: true until
+// its endpoint refuses the field.
+func (s *pinSummariser) sendsEffort(t summaryTarget) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return !s.noEffort[t.label()]
+}
+
+// dropEffort records that t's endpoint refused reasoning_effort.
+func (s *pinSummariser) dropEffort(t summaryTarget) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.noEffort == nil {
+		s.noEffort = map[string]bool{}
+	}
+	s.noEffort[t.label()] = true
 }
 
 func (s *pinSummariser) target(u summaryUse) summaryTarget {
@@ -342,6 +375,9 @@ type openRouterChatRequest struct {
 	MaxTokens   int                     `json:"max_tokens"`
 	Temperature float64                 `json:"temperature"`
 	Provider    *openRouterProviderPref `json:"provider,omitempty"`
+	// ReasoningEffort asks a thinking model not to reason
+	// (summaryReasoningEffort); "" = not sent.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 type openRouterChatMsg struct {
@@ -363,6 +399,11 @@ type openRouterChatResponse struct {
 	Choices []struct {
 		Message struct {
 			Content string `json:"content"`
+			// Reasoning (Ollama, OpenRouter) or ReasoningContent (vLLM,
+			// DeepSeek) is a thinking model's reasoning text; read only to
+			// say why an answer is empty.
+			Reasoning        string `json:"reasoning"`
+			ReasoningContent string `json:"reasoning_content"`
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
@@ -517,42 +558,59 @@ func (s *pinSummariser) ask(ctx context.Context, a summaryAsk, text, session, ag
 		defer cancel()
 	}
 
-	body := openRouterChatRequest{
-		Model: t.model,
-		Messages: []openRouterChatMsg{
-			{Role: "system", Content: a.system},
-			{Role: "user", Content: truncateRunes(text, a.maxInputRunes)},
-		},
-		MaxTokens:   a.maxTokens,
-		Temperature: 0,
-	}
-	if t.openRouter && len(t.providers) > 0 {
-		body.Provider = &openRouterProviderPref{Order: t.providers, AllowFallbacks: true}
-	}
-	raw, err := json.Marshal(body)
-	if err != nil {
-		return "", err
-	}
 	url := t.url
 	if url == "" {
 		url = s.openRouterURL
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
-	if err != nil {
-		return "", err
-	}
-	if key != "" {
-		req.Header.Set("Authorization", "Bearer "+key)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
 	client := s.client
 	if client == nil {
 		client = http.DefaultClient
 	}
+	call := func(effort string) (openRouterChatResponse, error) {
+		body := openRouterChatRequest{
+			Model: t.model,
+			Messages: []openRouterChatMsg{
+				{Role: "system", Content: a.system},
+				{Role: "user", Content: truncateRunes(text, a.maxInputRunes)},
+			},
+			MaxTokens:       a.maxTokens,
+			Temperature:     0,
+			ReasoningEffort: effort,
+		}
+		if t.openRouter && len(t.providers) > 0 {
+			body.Provider = &openRouterProviderPref{Order: t.providers, AllowFallbacks: true}
+		}
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return openRouterChatResponse{}, err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
+		if err != nil {
+			return openRouterChatResponse{}, err
+		}
+		if key != "" {
+			req.Header.Set("Authorization", "Bearer "+key)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		return s.post(client, req, t.endpoint)
+	}
+
 	ahead, done := load.Begin(t.label(), a.what)
 	start := time.Now()
-	out, err := s.post(client, req, t.endpoint)
+	var out openRouterChatResponse
+	var err error
+	if s.sendsEffort(t) {
+		out, err = call(summaryReasoningEffort)
+		if reasoningFieldRefused(err) {
+			// The endpoint does not take the field (or its model must
+			// reason): ask again without it, and leave it out from now on.
+			appLog.Infof("%s: target=%s refused reasoning_effort, retrying without it from now on: %v", a.what, t.label(), err)
+			s.dropEffort(t)
+			out, err = call("")
+		}
+	} else {
+		out, err = call("")
+	}
 	duration := time.Since(start)
 	done(err != nil)
 	if err != nil {
@@ -565,20 +623,20 @@ func (s *pinSummariser) ask(ctx context.Context, a summaryAsk, text, session, ag
 	if out.Model != "" {
 		served = out.Model
 	}
-	appLog.Infof("%s: session=%s model=%s endpoint=%s input=%d output=%d duration=%s in_flight_at_start=%d",
-		a.what, session, served, t.endpoint, out.Usage.PromptTokens, out.Usage.CompletionTokens, duration.Round(time.Millisecond), ahead)
+	appLog.Infof("%s: session=%s model=%s endpoint=%s input=%d output=%d finish=%s duration=%s in_flight_at_start=%d",
+		a.what, session, served, t.endpoint, out.Usage.PromptTokens, out.Usage.CompletionTokens, out.Choices[0].FinishReason, duration.Round(time.Millisecond), ahead)
 	bookSummary(a.what, out, served, session, agentID, start, duration)
 
 	if a.raw {
 		answer := strings.TrimSpace(out.Choices[0].Message.Content)
 		if answer == "" {
-			return "", fmt.Errorf("%s: empty answer", t.endpoint)
+			return "", emptyAnswerError(t.endpoint, "empty answer", out, a.maxTokens)
 		}
 		return answer, nil
 	}
 	summary := cleanPinSummary(out.Choices[0].Message.Content)
 	if summary == "" {
-		return "", fmt.Errorf("%s: empty summary", t.endpoint)
+		return "", emptyAnswerError(t.endpoint, "empty summary", out, a.maxTokens)
 	}
 	if !summaryWordsOK(summary, a.maxWords) {
 		appLog.Warnf("%s: session=%s answer has %d words, more than 1.5x the %d asked for; not used: %q",
@@ -586,6 +644,48 @@ func (s *pinSummariser) ask(ctx context.Context, a summaryAsk, text, session, ag
 		return "", fmt.Errorf("answer too long: %d words, limit %d", len(strings.Fields(summary)), a.maxWords)
 	}
 	return summary, nil
+}
+
+// emptyAnswerError is the error for a reply with no answer text. When the
+// model stopped at the token cap (finish_reason length), it says so and how
+// much reasoning it wrote: a thinking model that spent the budget reasoning
+// (#3026) is then told apart from one that answered nothing.
+func emptyAnswerError(endpoint, what string, out openRouterChatResponse, maxTokens int) error {
+	c := out.Choices[0]
+	if c.FinishReason != "length" {
+		return fmt.Errorf("%s: %s", endpoint, what)
+	}
+	reasoning := utf8.RuneCountInString(c.Message.Reasoning) + utf8.RuneCountInString(c.Message.ReasoningContent)
+	return fmt.Errorf("%s: %s: the model hit the %d-token answer cap (finish_reason=length, %d output tokens) after %d chars of reasoning",
+		endpoint, what, maxTokens, out.Usage.CompletionTokens, reasoning)
+}
+
+// httpStatusError is a non-200 reply from a chat-completions endpoint.
+type httpStatusError struct {
+	endpoint string
+	status   int
+	body     string
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("%s HTTP %d: %s", e.endpoint, e.status, truncateRunes(e.body, 300))
+}
+
+// reasoningFieldRefused reports whether err is an endpoint refusing the
+// request because of the reasoning field: HTTP 400 or 422 whose body names
+// reasoning. OpenAI and Groq refuse an argument a model does not take this
+// way, and OpenRouter answers a model that must reason with 400 "Reasoning
+// is mandatory for this endpoint and cannot be disabled" (measured
+// 2026-11-10, openai/gpt-5-mini).
+func reasoningFieldRefused(err error) bool {
+	var he *httpStatusError
+	if !errors.As(err, &he) {
+		return false
+	}
+	if he.status != http.StatusBadRequest && he.status != http.StatusUnprocessableEntity {
+		return false
+	}
+	return strings.Contains(strings.ToLower(he.body), "reasoning")
 }
 
 // post sends req and decodes a chat-completions answer with at least one
@@ -602,7 +702,7 @@ func (s *pinSummariser) post(client *http.Client, req *http.Request, endpoint st
 		return out, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return out, fmt.Errorf("%s HTTP %d: %s", endpoint, resp.StatusCode, truncateRunes(string(respBody), 300))
+		return out, &httpStatusError{endpoint: endpoint, status: resp.StatusCode, body: string(respBody)}
 	}
 	if err := json.Unmarshal(respBody, &out); err != nil {
 		return out, fmt.Errorf("decode %s response: %w", endpoint, err)
