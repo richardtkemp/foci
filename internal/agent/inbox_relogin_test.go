@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"foci/internal/platform"
 	"foci/internal/relogin"
 )
 
@@ -88,13 +90,10 @@ func TestInbox_Relogin_InjectionNotCapturedAsCode(t *testing.T) {
 	a.DelegatedManager = &DelegatedManager{}
 
 	claimRelogin(t)
-	relogin.G.OpenCapture("clutch")
+	relogin.G.OpenCapture("clutch", "", "")
 	var ran atomic.Bool
 	if !a.Enqueue(Envelope{SessionKey: "test/s", Inject: &InjectMeta{Trigger: "user", Run: func() { ran.Store(true) }}}) {
 		t.Fatal("Enqueue rejected an injection during re-login")
-	}
-	if !relogin.G.ShouldCapture("clutch") {
-		t.Fatal("injection consumed the capture window; it must stay open for the user's code")
 	}
 	if !a.Enqueue(Envelope{SessionKey: "test/s", Text: "the-code"}) {
 		t.Fatal("capture should report the user's message as consumed")
@@ -167,7 +166,7 @@ func TestInbox_Relogin_CaptureStillDiverts(t *testing.T) {
 	a.DelegatedManager = &DelegatedManager{}
 
 	claimRelogin(t)
-	relogin.G.OpenCapture("clutch")
+	relogin.G.OpenCapture("clutch", "", "")
 	if !a.Enqueue(Envelope{SessionKey: "test/s", Text: "the-code"}) {
 		t.Fatal("capture should report the message as consumed")
 	}
@@ -176,5 +175,97 @@ func TestInbox_Relogin_CaptureStillDiverts(t *testing.T) {
 	}
 	if code, ok := relogin.G.AwaitCode(time.Second); !ok || code != "the-code" {
 		t.Fatalf("AwaitCode = %q,%v; want the-code,true", code, ok)
+	}
+}
+
+// linkRecorder is a ReloginLinkTarget that records each message sent, by
+// session.
+type linkRecorder struct {
+	mu   sync.Mutex
+	sent map[string][]string
+}
+
+func (r *linkRecorder) target(sk string) *relogin.LinkTarget {
+	return &relogin.LinkTarget{
+		Key:        "app|" + sk,
+		SessionKey: sk,
+		Send: func(text string) (string, error) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			if r.sent == nil {
+				r.sent = map[string][]string{}
+			}
+			r.sent[sk] = append(r.sent[sk], text)
+			return "", nil
+		},
+	}
+}
+
+func (r *linkRecorder) sentTo(sk string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.sent[sk]...)
+}
+
+// TestInbox_Relogin_OtherChatGetsLinkThenCode (#3011): the link went to one
+// chat. A user message in another chat (another session of the agent, or
+// another Claude Code agent) gets the same link repeated there and is held,
+// not taken as the code; the next user message there is the code. Background
+// sources (an injection, an automated send, an explicitly queued message)
+// never cause a repeat.
+func TestInbox_Relogin_OtherChatGetsLinkThenCode(t *testing.T) {
+	rec := &linkRecorder{}
+	clutch := newTestAgent(t)
+	clutch.AgentID = "clutch"
+	clutch.DelegatedManager = &DelegatedManager{}
+	clutch.ReloginLinkTarget = rec.target
+	scout := newTestAgent(t)
+	scout.AgentID = "scout"
+	scout.DelegatedManager = &DelegatedManager{}
+	scout.ReloginLinkTarget = rec.target
+
+	claimRelogin(t)
+	relogin.G.OpenCapture("clutch", "app/a", "LINK")
+
+	// Background sources in scout's chat: held, no repeat.
+	scout.Enqueue(Envelope{SessionKey: "app/c", Inject: &InjectMeta{Trigger: "cron", Run: func() {}}})
+	scout.Enqueue(Envelope{SessionKey: "app/c", Text: "auto", Automated: true})
+	scout.Enqueue(Envelope{SessionKey: "app/c", Text: "queued", Steer: platform.SteerNever})
+	if got := rec.sentTo("app/c"); len(got) != 0 {
+		t.Fatalf("background sources repeated the link: %q", got)
+	}
+	if inb := scout.lookupInbox("app/c"); inb != nil {
+		inb.drainAvailable() // the held background messages; the loop checks the user's own
+	}
+
+	for _, tc := range []struct {
+		ag *Agent
+		sk string
+	}{{clutch, "app/b"}, {scout, "app/c"}} {
+		if !tc.ag.Enqueue(Envelope{SessionKey: tc.sk, Text: "hello?"}) {
+			t.Fatalf("%s %s: message rejected during re-login", tc.ag.AgentID, tc.sk)
+		}
+		if got := rec.sentTo(tc.sk); len(got) != 1 || got[0] != "LINK" {
+			t.Fatalf("%s %s: sent %q, want the same link once", tc.ag.AgentID, tc.sk, got)
+		}
+		if inb := tc.ag.lookupInbox(tc.sk); inb == nil || len(inb.drainAvailable()) == 0 {
+			t.Fatalf("%s %s: the message that got the link was not held", tc.ag.AgentID, tc.sk)
+		}
+	}
+	if got := rec.sentTo("app/a"); len(got) != 0 {
+		t.Fatalf("the link's own chat got a repeat: %q", got)
+	}
+
+	if !scout.Enqueue(Envelope{SessionKey: "app/c", Text: "the-code"}) {
+		t.Fatal("code from the repeated chat was not consumed")
+	}
+	if inb := scout.lookupInbox("app/c"); inb != nil && len(inb.drainAvailable()) != 0 {
+		t.Fatal("captured code was also queued as a turn")
+	}
+	if code, ok := relogin.G.AwaitCode(time.Second); !ok || code != "the-code" {
+		t.Fatalf("AwaitCode = %q,%v; want the-code,true", code, ok)
+	}
+	if got := rec.sentTo("app/c"); len(got) != 1 {
+		t.Fatalf("the code's chat got the link again: %q", got)
 	}
 }

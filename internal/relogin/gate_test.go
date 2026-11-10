@@ -31,20 +31,20 @@ func TestGateCaptureWindow(t *testing.T) {
 	defer g.Release()
 
 	// No capture window open yet.
-	if g.ShouldCapture("clutch") {
+	if g.ShouldCapture("clutch", "test/s") {
 		t.Fatal("should not capture before OpenCapture")
 	}
-	g.OpenCapture("clutch")
-	if !g.ShouldCapture("clutch") {
+	g.OpenCapture("clutch", "", "")
+	if !g.ShouldCapture("clutch", "test/s") {
 		t.Fatal("should capture for the opened agent")
 	}
-	if g.ShouldCapture("scout") {
+	if g.ShouldCapture("scout", "test/s") {
 		t.Fatal("should not capture for a different agent")
 	}
 
 	// Submitting a code delivers it and closes the window.
 	g.SubmitCode("abc123")
-	if g.ShouldCapture("clutch") {
+	if g.ShouldCapture("clutch", "test/s") {
 		t.Fatal("capture window should close after SubmitCode")
 	}
 	code, ok := g.AwaitCode(time.Second)
@@ -69,7 +69,7 @@ func TestGateInactiveNoCapture(t *testing.T) {
 	if g.Active() {
 		t.Fatal("fresh gate should be inactive")
 	}
-	if g.ShouldCapture("clutch") {
+	if g.ShouldCapture("clutch", "test/s") {
 		t.Fatal("inactive gate should never capture")
 	}
 	// SubmitCode on inactive gate is a no-op (no panic on nil channel).
@@ -198,4 +198,12 @@ func TestGateStartAuto_FailureKeepsPending(t *testing.T) {
 	if !g.ClearPendingIf(attempt) {
 		t.Fatal("ClearPendingIf must clear after a turn with no auth failure")
 	}
+}
+
+// ShouldCapture reports whether a user message in the chat (agentID,
+// sessionKey) would be taken as the login code, without taking it.
+func (g *Gate) ShouldCapture(agentID, sessionKey string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.capturingChatLocked(agentID, sessionKey) != nil
 }

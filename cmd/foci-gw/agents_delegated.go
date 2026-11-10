@@ -212,6 +212,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		ag.ReloginTrigger = func(reason, sessionKey string) bool {
 			return startRelogin(reason, sessionKey, false)
 		}
+		ag.ReloginLinkTarget = func(sessionKey string) *relogin.LinkTarget {
+			return reloginLinkTarget(connMgr, agentID, sessionKey)
+		}
 	}
 
 	// PreToolUse rules (#2028): built-in defaults, then [cc_backend], then this

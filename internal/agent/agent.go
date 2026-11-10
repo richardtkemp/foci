@@ -18,6 +18,7 @@ import (
 	"foci/internal/nudge"
 	"foci/internal/platform"
 	"foci/internal/provider"
+	"foci/internal/relogin"
 	"foci/internal/session"
 	"foci/internal/skills"
 	"foci/internal/telemetry"
@@ -195,6 +196,11 @@ type Agent struct {
 	UsageHoldNotifyFunc           func(text string)                       // posts a usage-hold start/end notice in the agent's default chat (#2491); nil = none
 	UsageHoldChangeFunc           []func(usagehold.Change)                // further reactions to a usage-hold phase change (#2491)
 	usageHold                     usageHoldState
+
+	// ReloginLinkTarget is set with ReloginTrigger: where a sign-in link
+	// repeated in one of this agent's sessions goes (#3011). nil: the agent
+	// cannot carry the link, and its messages are only held.
+	ReloginLinkTarget func(sessionKey string) *relogin.LinkTarget
 
 	// Restart restore of held input (#2491, usage_hold_store.go).
 	// UsageHeldDriver drives a restored held message; UsageHeldInjectRestore

@@ -113,6 +113,13 @@ func Run(ctx context.Context, c Config) {
 			log.NewComponentLogger(comp).Errorf("send message to user failed (%q): %v", firstLineOf(text), err)
 		}
 	}
+	// notifyCodeChat also tells the chat the code came from, when that is not
+	// the chat the link was first sent to (#3011).
+	notifyCodeChat := func(text string) {
+		if err := g.notifyCodeChat(text); err != nil {
+			log.NewComponentLogger(comp).Errorf("send message to the chat the code came from failed (%q): %v", firstLineOf(text), err)
+		}
+	}
 	linkShown := false
 	fail := func(reason string) {
 		log.NewComponentLogger(comp).Errorf("re-login ABORTED: %s", reason)
@@ -124,6 +131,7 @@ func Run(ctx context.Context, c Config) {
 			}
 		}
 		notify(failText(reason))
+		notifyCodeChat(failText(reason))
 	}
 	// dumpScreen writes a captured TUI screen to the log on a failure path so the
 	// reason an anchor never appeared is diagnosable after the fact.
@@ -185,8 +193,12 @@ func Run(ctx context.Context, c Config) {
 
 	// Step 7: open the capture window and ask the user to sign in. A failure to
 	// relay the URL is fatal — the user can never complete login without it.
-	g.OpenCapture(c.AgentID)
 	linkText := signInLinkText(url)
+	linkSession := ""
+	if c.Link != nil {
+		linkSession = c.Link.SessionKey
+	}
+	g.OpenCapture(c.AgentID, linkSession, linkText)
 	if c.Link != nil {
 		if err := g.showLink(c.Link, linkText); err != nil {
 			fail("could not send the login URL to you: " + err.Error())
@@ -232,6 +244,7 @@ func Run(ctx context.Context, c Config) {
 	// the pending state so paused injections resume (#2384).
 	g.Complete()
 	notify(completedText)
+	notifyCodeChat(completedText)
 	log.NewComponentLogger(comp).Infof("re-login completed for agent %s", c.AgentID)
 }
 

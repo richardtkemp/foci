@@ -802,13 +802,22 @@ func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 	// unless the caller declared a human sender (#1130). An explicitly-queued
 	// message (SteerNever) is a turn, never the code — the same carve-out as
 	// plan-cancel and ask capture below.
+	// The code comes from a chat that has the sign-in link. A user message in
+	// any other chat gets the same link repeated there and is held; that
+	// chat's next user message is then the code (#3011). The same test of a
+	// user-typed message guards both, so background and system sources never
+	// cause a repeat.
 	reloginHold := false
 	if a.DelegatedManager != nil && relogin.G.Active() {
 		if env.Inject == nil && !env.Automated && env.Steer != platform.SteerNever &&
-			strings.TrimSpace(env.Text) != "" && relogin.G.ShouldCapture(a.AgentID) {
-			relogin.G.SubmitCode(env.Text)
-			a.logger().Infof("inbox: captured CC login code sk=%s", env.SessionKey)
-			return true
+			strings.TrimSpace(env.Text) != "" {
+			if relogin.G.CaptureCode(a.AgentID, env.SessionKey, env.Text) {
+				a.logger().Infof("inbox: captured CC login code sk=%s", env.SessionKey)
+				return true
+			}
+			if relogin.G.OfferLink(a.AgentID, env.SessionKey, a.ReloginLinkTarget) {
+				a.logger().Infof("inbox: repeated the CC sign-in link sk=%s", env.SessionKey)
+			}
 		}
 		reloginHold = true
 	}

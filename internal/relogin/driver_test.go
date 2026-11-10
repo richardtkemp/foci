@@ -91,7 +91,7 @@ func TestRunHappyPath(t *testing.T) {
 	done := make(chan struct{})
 	go func() { Run(context.Background(), cfg); close(done) }()
 
-	waitUntil(t, func() bool { return g.ShouldCapture("clutch") })
+	waitUntil(t, func() bool { return g.ShouldCapture("clutch", "test/s") })
 	g.SubmitCode("logincode")
 	<-done
 

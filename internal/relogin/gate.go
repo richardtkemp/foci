@@ -35,11 +35,19 @@ import (
 // not per-agent: the first 401 claims it (single-flight) and runs the driver;
 // concurrent 401s see it already active and no-op.
 type Gate struct {
-	mu             sync.Mutex
-	active         bool
-	captureAgentID string        // when non-empty, the agent whose next inbound message is the login code
-	codeCh         chan string   // buffered(1); delivers the captured code to the driver
-	released       chan struct{} // closed by Release; nil while inactive
+	mu       sync.Mutex
+	active   bool
+	codeCh   chan string   // buffered(1); delivers the captured code to the driver
+	released chan struct{} // closed by Release; nil while inactive
+
+	// The capture window of the running attempt (#3011). While open, a user
+	// message in a chat that has the sign-in link is the login code, and one
+	// in any other chat gets the same link repeated there. All reset by
+	// startLocked and Release.
+	captureOpen bool
+	linkText    string                // the link message text, repeated to another chat
+	chats       map[chatRef]*linkChat // chats that have (or are being sent) this attempt's link
+	codeChat    *linkChat             // the repeat chat the code came from; nil when it came from the first chat
 
 	pending    bool         // a login is owed: set by Start, cleared by Complete / ClearPendingIf
 	attempt    uint64       // incremented by every successful Start, and by an auth failure StartAuto refuses
@@ -86,10 +94,19 @@ func (g *Gate) startLocked() bool {
 	g.active = true
 	g.pending = true
 	g.attempt++
-	g.captureAgentID = ""
+	g.resetCaptureLocked()
 	g.codeCh = make(chan string, 1)
 	g.released = make(chan struct{})
 	return true
+}
+
+// resetCaptureLocked closes the capture window and forgets its chats; mu must
+// be held.
+func (g *Gate) resetCaptureLocked() {
+	g.captureOpen = false
+	g.linkText = ""
+	g.chats = nil
+	g.codeChat = nil
 }
 
 // Pending reports whether a login is owed: an attempt is running, or the last
@@ -178,20 +195,47 @@ func (g *Gate) Released() <-chan struct{} {
 	return g.released
 }
 
-// OpenCapture opens the code-capture window for agentID: the next inbound
-// message from that agent is taken as the login code (step 7).
-func (g *Gate) OpenCapture(agentID string) {
+// OpenCapture opens the code-capture window. agentID and sessionKey name the
+// chat the sign-in link is sent to (an empty sessionKey: the chat is not
+// known, so any chat of agentID counts as that chat), and linkText is the
+// link message, which OfferLink repeats in any other chat (#3011).
+func (g *Gate) OpenCapture(agentID, sessionKey, linkText string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.captureAgentID = agentID
+	g.captureOpen = true
+	g.linkText = linkText
+	g.chats = map[chatRef]*linkChat{{agentID, sessionKey}: {shown: true}}
+	g.codeChat = nil
 }
 
-// ShouldCapture reports whether an inbound message from agentID should be
-// diverted as the login code rather than dropped.
-func (g *Gate) ShouldCapture(agentID string) bool {
+// capturingChatLocked returns the chat (agentID, sessionKey) when a user
+// message there is the login code: the capture window is open and that chat
+// has the sign-in link. nil otherwise; mu must be held.
+func (g *Gate) capturingChatLocked(agentID, sessionKey string) *linkChat {
+	c := g.chatLocked(agentID, sessionKey)
+	if !g.active || !g.captureOpen || c == nil || !c.shown {
+		return nil
+	}
+	return c
+}
+
+// CaptureCode takes text as the login code when the chat (agentID,
+// sessionKey) has the sign-in link and the capture window is open, and
+// reports whether it did. The code from any chat that has the link completes
+// the login (#3011).
+func (g *Gate) CaptureCode(agentID, sessionKey, text string) bool {
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.active && g.captureAgentID != "" && g.captureAgentID == agentID
+	c := g.capturingChatLocked(agentID, sessionKey)
+	if c == nil {
+		g.mu.Unlock()
+		return false
+	}
+	if c.target != nil {
+		g.codeChat = c
+	}
+	g.mu.Unlock()
+	g.SubmitCode(text)
+	return true
 }
 
 // SubmitCode delivers a captured login code to the waiting driver and closes
@@ -200,7 +244,7 @@ func (g *Gate) ShouldCapture(agentID string) bool {
 func (g *Gate) SubmitCode(code string) {
 	g.mu.Lock()
 	ch := g.codeCh
-	g.captureAgentID = ""
+	g.captureOpen = false
 	g.mu.Unlock()
 	if ch == nil {
 		return
@@ -237,7 +281,7 @@ func (g *Gate) Release() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.active = false
-	g.captureAgentID = ""
+	g.resetCaptureLocked()
 	g.codeCh = nil
 	if g.released != nil {
 		close(g.released)

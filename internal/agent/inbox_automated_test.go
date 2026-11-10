@@ -80,12 +80,9 @@ func TestInbox_Relogin_AutomatedNotCapturedAsCode(t *testing.T) {
 	a.DelegatedManager = &DelegatedManager{}
 
 	claimRelogin(t)
-	relogin.G.OpenCapture("clutch")
+	relogin.G.OpenCapture("clutch", "", "")
 	if !a.Enqueue(Envelope{SessionKey: "test/s", Text: "not-the-code", Steer: platform.SteerAlways, Automated: true}) {
 		t.Fatal("Enqueue rejected an automated send during re-login; it must be held")
-	}
-	if !relogin.G.ShouldCapture("clutch") {
-		t.Fatal("automated send consumed the capture window; it must stay open for the user's code")
 	}
 	if inb := a.lookupInbox("test/s"); inb == nil || len(inb.ch) != 1 {
 		t.Fatal("automated send was not held on the session channel")
@@ -163,14 +160,18 @@ func TestInbox_Relogin_QueuedNotCapturedAsCode(t *testing.T) {
 	a.DelegatedManager = &DelegatedManager{}
 
 	claimRelogin(t)
-	relogin.G.OpenCapture("clutch")
+	relogin.G.OpenCapture("clutch", "", "")
 	if !a.Enqueue(Envelope{SessionKey: "test/s", Text: "queued turn", Steer: platform.SteerNever}) {
 		t.Fatal("Enqueue rejected a queued message during re-login; it must be held")
 	}
-	if !relogin.G.ShouldCapture("clutch") {
-		t.Fatal("a SteerNever message consumed the capture window; it must stay open for the code")
-	}
 	if inb := a.lookupInbox("test/s"); inb == nil || len(inb.ch) != 1 {
 		t.Fatal("queued message was not held on the session channel")
+	}
+	// The window stays open for the code.
+	if !a.Enqueue(Envelope{SessionKey: "test/s", Text: "the-code"}) {
+		t.Fatal("capture should report the user's message as consumed")
+	}
+	if code, ok := relogin.G.AwaitCode(time.Second); !ok || code != "the-code" {
+		t.Fatalf("AwaitCode = %q,%v; want the-code,true: a SteerNever message consumed the capture window", code, ok)
 	}
 }
