@@ -215,3 +215,75 @@ func TestMintFacetConversation_FirstMessageNoAgent(t *testing.T) {
 		t.Errorf("a refused mint bound conversation %s", b.convID)
 	}
 }
+
+// TestMintFacetConversation_FirstReplyReachesConnectedClient (#3051): the
+// agent's reply to a facet's first message must reach a device that is already
+// connected, live. The minted binding used to start with no sockets attached,
+// and nothing attached one: the device mirrors the server's openSync without
+// sending its own open-set back (so the open-set attach pass never ran), and it
+// had sent nothing in the new chat. The echo was recovered by HTTP backfill off
+// the roster, but the reply streamed into a binding with no fan-out target, so
+// the first reply never showed; the user's next send attached the socket and
+// every later reply showed.
+func TestMintFacetConversation_FirstReplyReachesConnectedClient(t *testing.T) {
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+	registerFakeAgent(h, "ag")
+	c := fakeClient()
+	h.clients[c] = struct{}{}
+
+	convID, err := h.mintFacetConversation("ag", "ag/cbranch", command.FirstMessage{Text: "check the deploy", UserID: "dev1"})
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	b := h.bindingForSession("ag/cbranch")
+	if b == nil || b.convID != convID {
+		t.Fatalf("binding for ag/cbranch = %v, want convID %s", b, convID)
+	}
+	drain(t, c) // roster, openSync, echo: not what this test is about
+
+	// The turn's reply, as the driver streams it into the new chat.
+	final := "the deploy is fine"
+	b.send(fap.TextEnd{ConversationID: convID, TurnID: "t1", MessageID: "m1", FinalText: &final})
+
+	var sawReply bool
+	for _, d := range drain(t, c) {
+		if d.t == fap.TypeTextEnd && d.d["conversationId"] == convID {
+			sawReply = true
+		}
+	}
+	if !sawReply {
+		t.Fatal("the connected device did not receive the facet's first reply live")
+	}
+}
+
+// TestDeliverBinding_ServerCreatedReachesConnectedClient (#3051): the same
+// shape on the other server-minted conversation — a session-blind send to an
+// agent with no conversations mints one, and the send itself must reach a
+// device that is connected now, not only after its next reconnect.
+func TestDeliverBinding_ServerCreatedReachesConnectedClient(t *testing.T) {
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+	registerBareAgent(h, "ag")
+	c := fakeClient()
+	h.clients[c] = struct{}{}
+
+	b, via := h.deliverBinding("ag")
+	if via != "server-created" {
+		t.Fatalf("deliverBinding rung = %q, want server-created", via)
+	}
+	drain(t, c)
+	b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: "m1", Role: "assistant", Text: "good morning"})
+
+	var saw bool
+	for _, d := range drain(t, c) {
+		if d.t == fap.TypeMessage && d.d["conversationId"] == b.convID {
+			saw = true
+		}
+	}
+	if !saw {
+		t.Fatal("the connected device did not receive the first send into a server-created conversation")
+	}
+}

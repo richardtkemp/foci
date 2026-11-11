@@ -740,7 +740,8 @@ func (h *Hub) handleConversationOpenSet(client *wsClient, f fap.ConversationOpen
 	// learned AFTER the socket's hello — minted on another device and mirrored via
 	// conversation.openSync, then rendered from durable HTTP backfill — never joined
 	// its binding's client set (attach otherwise happens only via connect-time
-	// resumeConversations, a self-minted ConversationOpen, or an active send), so it
+	// resumeConversations, a self-minted ConversationOpen, an active send, or a
+	// server-side ensureBinding creating it while the socket is connected), so it
 	// missed live fan-out until the socket's next reconnect/resume. Seed the ack to
 	// the current high-water: the socket backfilled history over HTTP and needs only
 	// future frames, and the seed keeps a fresh reader from pinning the replay-buffer

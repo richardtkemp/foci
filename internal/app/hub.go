@@ -1622,7 +1622,9 @@ func (h *Hub) sessionKeyForChat(agentID string, chatID int64) string {
 // ensureBinding resolves the durable conversation state for (agent, convID),
 // (re)attaching it to the calling socket. The state is keyed by conversationId
 // and outlives sockets, so a reconnect resumes the same seq stream + replay
-// buffer rather than starting fresh.
+// buffer rather than starting fresh. A binding this call CREATES with no calling
+// socket (client == nil, a server-side mint) is attached to every connected
+// socket instead (#3051).
 func (h *Hub) ensureBinding(client *wsClient, agentID, convID string) *convBinding {
 	h.mu.RLock()
 	b := h.convs[convID]
@@ -1671,6 +1673,17 @@ func (h *Hub) ensureBinding(client *wsClient, agentID, convID string) *convBindi
 	h.bySession[sk] = b
 	h.mu.Unlock()
 
+	if client == nil {
+		// A binding created server-side (a /facet mint, a session-blind send
+		// minting a chat, a resurrected default chat) joins every connected
+		// socket, as a hello's attachUnresumed would have had it existed then.
+		// Nothing else attaches it: a device mirrors the openSync without
+		// sending its own open-set back, and has sent nothing in the new chat,
+		// so its first reply would reach no live socket (#3051). At startup no
+		// socket is connected, so a restore attaches nothing.
+		h.attachConnected(b)
+		return b
+	}
 	b.attach(client)
 	return b
 }

@@ -2976,7 +2976,14 @@ bounded it can no longer decide who gets live frames, so **attach and replay are
 fully separated**: `attachUnresumed` attaches the socket to every binding it isn't
 already on, seeded at that binding's current high-water, and replay is the only half
 that consumes a resume point. Attaching all is not a widening — `agentRoster`
-advertises the same `h.convs` to the same socket in the same hello. A conversation
+advertises the same `h.convs` to the same socket in the same hello. The same contract
+covers a binding the server creates AFTER a socket's hello (`ensureBinding` with no
+calling socket: `mintFacetConversation`, `deliverBinding`'s server-created rung, a
+resurrected default chat, a depth leaf): it attaches every connected socket at
+creation (`attachConnected`, seeded at the current seq). Before #3051 nothing
+attached it — the device mirrors the openSync without echoing its open-set, and
+has sent nothing in the new chat — so a facet's first reply reached no live
+socket. A conversation
 omitted from the hello therefore still gets live fan-out (so it still badges as
 unread), still gets its `lastSeq`/`lastPreview`/`lastActivityTs` from that roster and
 its watermark from `pushReads`, and backfills its missed tail over `GET /app/replay`
