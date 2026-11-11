@@ -178,9 +178,12 @@ git diff | foci_send_to_chat "diff for review" --file - --filename review.diff
 ```
 
 #### `foci_todo <action> [args...]`
-Manage the todo list. `list` shows active items only (excludes done/dropped); use `list-all` or `list --status all` to see everything.
+Manage the todo list. `list` shows active items only (excludes done/dropped); use `list-all` or `list --status all` to see everything. `add` reads piped stdin as the body when neither `--text` nor `--body` is given; bare words then become the title, as with `--body`. Piped stdin beside `--text`/`--body` is refused, not dropped.
 ```bash
 foci_todo add "Review PR #42"
+foci_todo add --title "Fix the thing" <<'EOF'
+Body text, as many lines as needed.
+EOF
 foci_todo list                    # active items only
 foci_todo list --status all       # include done/dropped
 foci_todo list-all                # shorthand for --status all

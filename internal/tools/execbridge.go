@@ -933,7 +933,7 @@ var todoActions = []struct {
 	// positional is deliberately out of #2306's scope.
 	PositionalID bool
 }{
-	{"add", "add <text> | --text TEXT | [<title>] --body TEXT  [--title TEXT] [--priority high|medium|low] [--tag TAGS]   (alias: create; with --body, bare words are the title; the title is prepended in bold)", "--text --body --title --priority --tag", false},
+	{"add", "add <text> | --text TEXT | [<title>] --body TEXT  [--title TEXT] [--priority high|medium|low] [--tag TAGS]   (alias: create; piped stdin is the body when --text and --body are absent; with --body or stdin, bare words are the title; the title is prepended in bold)", "--text --body --title --priority --tag", false},
 	{"list", "list [--tag T] [--status active|open|started|closed|done|dropped|all] [--priority P] [--sort F] [--reverse] [--limit N] [--truncate N] [--format jsonl|md]", "--tag --status --priority --sort --reverse --limit --truncate --format", false},
 	{"list-all", "list-all [--tag T] [--priority P] [--sort F] [--reverse] [--limit N] [--truncate N] [--format jsonl|md]", "--tag --priority --sort --reverse --limit --truncate --format", false},
 	{"search", "search <query> [--status S] [--sort F] [--reverse] [--limit N] [--truncate N] [--format jsonl|md]   (query may also be given as --query TEXT; --status takes the list values and defaults to all; a double-quoted phrase matches those words in order and ranks first; --truncate: chars per item, default 300 unpiped / none piped, 0 = none)", "--query --status --sort --reverse --limit --truncate --format", false},
@@ -1284,7 +1284,20 @@ func generateShellFunc(t *Tool) string {
   # are the TITLE (add "<title>" --body "<text>"); without it they are the text.
   # Every combination that would drop one value is refused. The tool composes
   # the bold title line, so a direct tool call gets the same result.
-  if [ "$action" = add ]; then
+  #
+  # #3013: piped stdin IS the body when neither --text nor --body is given
+  # (Dick's ruling, 2026-11-11), so a heredoc no longer files a title-only item
+  # with exit 0. It is read into body, so bare words become the title exactly
+  # as with --body. With --text or --body set, piped content would be dropped:
+  # refuse instead (the generic StdinParam guard's rule and bound, see
+  # generateGenericShellFunc). Both waits are bounded; stdinReadSnippet says why.
+  if [ "$action" = add ] && [ -n "$text$body" ] && [ ! -t 0 ]; then
+    if [ "$(timeout "${FOCI_STDIN_GUARD_WAIT:-5}" head -c 1 | wc -c)" -gt 0 ]; then
+      echo "error: add: the body was given with --text/--body, but stdin has piped content that would be discarded. Omit --text/--body to use stdin as the body." >&2
+      return 1
+    fi
+  fi
+%s  if [ "$action" = add ]; then
     add_words="${add_words# }"
     if [ -n "$body" ]; then
       if [ -n "$text" ]; then
@@ -1449,7 +1462,8 @@ func generateShellFunc(t *Tool) string {
 }
 `, name, todoHelpCheck, guard, todoActionAliasesBashCase(), todoActionsBashCase(),
 			todoIDActionsPattern(), todoRejectSecondID("2"),
-			todoIDActionsPattern(), todoRejectSecondID("1"), name)
+			todoIDActionsPattern(), todoRejectSecondID("1"),
+			stdinReadSnippet("body", ` && [ "$action" = add ] && [ -z "$text" ]`, "body"), name)
 
 	case "summary":
 		// Prompt as argument; content from --file or stdin
