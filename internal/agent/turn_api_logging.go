@@ -20,7 +20,7 @@ import (
 // hop that served it: the ledger row, its cost and the payload log all name it.
 func (a *Agent) logAPIResponse(ts *TurnState, served provider.ModelTuple, start time.Time, duration time.Duration, req *provider.MessageRequest, resp *provider.MessageResponse, msgCount int) float64 {
 	sessionKey := ts.SessionKey
-	cost, _ := modelinfo.CostAsOf(served.Model, time.Now(), resp.Usage.Tokens())
+	cost, _ := modelinfo.CostOnEndpoint(served.Endpoint, served.Model, time.Now(), resp.Usage.Tokens())
 
 	a.logger().Infof("session=%s stop_reason=%s input=%d output=%d cache_read=%d cache_write=%d cost=$%.4f",
 		sessionKey, resp.StopReason, resp.Usage.InputTokens, resp.Usage.OutputTokens,
@@ -39,7 +39,7 @@ func (a *Agent) logAPIResponse(ts *TurnState, served provider.ModelTuple, start 
 		turn.TurnID, turn.StartedAt = accounting.MintTurnID(sessionKey, accounting.KindCall, start), start
 	}
 	if err := accounting.Record(turn, accounting.APIResponse{
-		ID: resp.ID, Kind: accounting.KindCall, Provider: served.Format, Model: served.Model,
+		ID: resp.ID, Kind: accounting.KindCall, Provider: served.Format, Model: served.Model, Endpoint: served.Endpoint,
 		Session: sessionKey, AgentID: turn.AgentID, TurnID: turn.TurnID,
 		Start: start, Duration: duration, Tokens: resp.Usage.Tokens(), StopReason: resp.StopReason,
 		SessionFile: sessionFile,

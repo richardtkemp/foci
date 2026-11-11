@@ -16,8 +16,11 @@ type APIResponse struct {
 	ID string
 	// Kind is KindCall for a conversation turn's own call, else KindCompaction,
 	// KindSummary or KindSpawn.
-	Kind                     string
-	Provider, Model          string
+	Kind            string
+	Provider, Model string
+	// Endpoint is the [endpoints] entry that served the call, "" when
+	// unknown. A call on a zero_cost endpoint is booked at $0 (#3035).
+	Endpoint                 string
 	Session, AgentID, TurnID string
 	Start                    time.Time
 	Duration                 time.Duration
@@ -53,6 +56,9 @@ func (r APIResponse) Call() Call {
 	if r.PreMessages > 0 {
 		detail["pre_messages"] = r.PreMessages
 	}
+	if r.Endpoint != "" {
+		detail["endpoint"] = r.Endpoint
+	}
 	provider := r.Provider
 	if provider == "" {
 		provider = inferProvider(r.Model)
@@ -63,6 +69,7 @@ func (r APIResponse) Call() Call {
 		Kind: r.Kind, Finality: FinalityCompleted, ClassMethod: ClassMethodBackendRule,
 		BilledAt: r.Start, Tokens: r.Tokens, StopReason: r.StopReason,
 		SessionFile: r.SessionFile, SessionLine: r.SessionLine, Detail: detail,
+		ZeroCost: modelinfo.ZeroCostEndpoint(r.Endpoint),
 	}
 }
 

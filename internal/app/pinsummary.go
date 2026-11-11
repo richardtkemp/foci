@@ -625,7 +625,7 @@ func (s *pinSummariser) ask(ctx context.Context, a summaryAsk, text, session, ag
 	}
 	appLog.Infof("%s: session=%s model=%s endpoint=%s input=%d output=%d finish=%s duration=%s in_flight_at_start=%d",
 		a.what, session, served, t.endpoint, out.Usage.PromptTokens, out.Usage.CompletionTokens, out.Choices[0].FinishReason, duration.Round(time.Millisecond), ahead)
-	bookSummary(a.what, out, served, session, agentID, start, duration)
+	bookSummary(a.what, out, served, t.endpoint, session, agentID, start, duration)
 
 	if a.raw {
 		answer := strings.TrimSpace(out.Choices[0].Message.Content)
@@ -717,8 +717,9 @@ func (s *pinSummariser) post(client *http.Client, req *http.Request, endpoint st
 }
 
 // bookSummary books the call in the cost ledger as a summary call, on a
-// system turn of its own in the session it was made for.
-func bookSummary(what string, out openRouterChatResponse, model, session, agentID string, start time.Time, duration time.Duration) {
+// system turn of its own in the session it was made for. endpoint is the
+// [endpoints] entry it went to: a zero_cost one books it at $0 (#3035).
+func bookSummary(what string, out openRouterChatResponse, model, endpoint, session, agentID string, start time.Time, duration time.Duration) {
 	turn := accounting.OwnTurn(
 		accounting.MintTurnID(session, accounting.KindSummary, start),
 		session, agentID, accounting.SourceSystem, start, start.Add(duration))
@@ -728,7 +729,7 @@ func bookSummary(what string, out openRouterChatResponse, model, session, agentI
 		stop = out.Choices[0].FinishReason
 	}
 	if err := accounting.Record(turn, accounting.APIResponse{
-		ID: out.ID, Kind: accounting.KindSummary, Provider: "openai", Model: model,
+		ID: out.ID, Kind: accounting.KindSummary, Provider: "openai", Model: model, Endpoint: endpoint,
 		Session: session, AgentID: agentID, TurnID: turn.TurnID,
 		Start: start, Duration: duration, Tokens: usage.Tokens(), StopReason: stop,
 	}.Call()); err != nil {

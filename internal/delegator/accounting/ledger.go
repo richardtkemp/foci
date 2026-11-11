@@ -195,6 +195,12 @@ type Call struct {
 	// CostBasis is CostBasisCounts (the default, "") or, for a legacy call
 	// only, CostBasisRecorded.
 	CostBasis string
+
+	// ZeroCost books the call on modelinfo.ZeroCostRateModel: every class
+	// at $0, whatever its model (#3035). Set for a call on an [endpoints]
+	// entry configured zero_cost, a local model server. Its model is not
+	// looked up, so no unpriced-model warning or invModelNotInTable fires.
+	ZeroCost bool
 }
 
 // Report is a backend's own reported totals at its native grain (R5): CC's
@@ -361,7 +367,9 @@ func (tx *Tx) Book(c Call) (Booked, error) {
 	// any message named it, #1290) is unresolved without asking modelinfo,
 	// whose unpriced-model warning is for a model it does not know.
 	var rateModel sql.NullString
-	if c.Model != "" {
+	if c.ZeroCost {
+		rateModel = sql.NullString{String: modelinfo.ZeroCostRateModel, Valid: true}
+	} else if c.Model != "" {
 		if rm, ok := modelinfo.ResolveRateModel(c.Model, c.BilledAt, c.PricingPrompt()); ok {
 			rateModel = sql.NullString{String: rm, Valid: true}
 		}
@@ -617,6 +625,9 @@ func (c Call) validate() error {
 func (c Call) cost() *float64 {
 	if c.basis() == CostBasisRecorded {
 		return c.LegacyCalculatedCostUSD
+	}
+	if c.ZeroCost {
+		return new(float64)
 	}
 	if c.Model == "" {
 		if len(c.Tokens.NonZero()) == 0 {

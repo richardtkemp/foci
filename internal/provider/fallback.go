@@ -111,10 +111,12 @@ func walkFallback(
 		fbClient := client
 		gate := handle                          // a hop on the caller's pinned client is admitted by the caller's handle
 		hop := ServedReport{Model: fbCanonical} // legs apply only with the hop's own client
+		servedBy := endpointNameOf(handle)
 		if clientProvider != nil {
 			if c := clientProvider.GetClient(endpoint, format); c != nil {
 				fbClient, gate = c, nil // sendWithRetry admits a handle itself
 				hop.Endpoint, hop.Format = endpoint, format
+				servedBy = endpoint
 			}
 		}
 
@@ -143,6 +145,7 @@ func walkFallback(
 			if resp != nil {
 				resp.Served = hop
 			}
+			stampEndpoint(resp, servedBy)
 			if logf != nil {
 				logf("fallback succeeded on %s", fbCanonical)
 			}
@@ -199,6 +202,7 @@ func Send(
 	// before the fallback chain, whose hops are admitted on their own
 	// endpoints (a hop on the same endpoint would otherwise wait on itself).
 	handle := client
+	servedBy := endpointNameOf(handle)
 	release, err := admitCall(ctx, handle, req)
 	if err != nil {
 		return nil, err
@@ -209,6 +213,7 @@ func Send(
 	resp, err := sendWithRetry(ctx, client, req, handler)
 	if err == nil {
 		release()
+		stampEndpoint(resp, servedBy)
 		return resp, nil
 	}
 
@@ -219,6 +224,7 @@ func Send(
 			resp, err = sendWithRetry(ctx, client, req, handler)
 			if err == nil {
 				release()
+				stampEndpoint(resp, servedBy)
 				return resp, nil
 			}
 		}

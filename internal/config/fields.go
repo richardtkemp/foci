@@ -557,7 +557,7 @@ var objectFieldSpecs = []ObjectFieldSpec{
 		{Key: "local_speed_control", Type: FieldBool, Description: "foci applies the rate itself by stretching the WAV, for an endpoint that ignores speed (openai format, wav only)"},
 		{Key: "replacements", Type: FieldStringMap, Description: "Word replacements applied before synthesis (e.g. foci = foki)"},
 	}},
-	{Section: "modelinfo", Description: "Model registry overrides — pricing, capabilities, and context window for models not in the built-in registry, or partial overrides of existing ones", Live: true, Fields: []ObjectSubField{
+	{Section: "modelinfo", Description: "Model registry overrides — pricing, capabilities, and context window for models not in the built-in registry, or partial overrides of existing ones", Live: true, Fields: []ObjectSubField{ //nolint:dupl // same row shape as [endpoints]' sub-fields, by design
 		{Key: "id", Type: FieldString, Description: "Bare model ID (e.g. 'claude-haiku-4-5'). Overrides existing entry if present, creates new one if not"},
 		{Key: "context_window", Type: FieldInt, Description: "Context window in tokens (required for new models)"},
 		{Key: "can_effort", Type: FieldBool, Description: "Supports output_config.effort"},
@@ -636,7 +636,7 @@ var mapObjectFieldSpecs = []MapObjectFieldSpec{
 		{Key: "cache_ttl", Type: FieldDuration, Description: "Cache TTL (Go duration, empty = auto-detect)"},
 		{Key: "cache_strategy", Type: FieldString, Description: "Cache marker strategy: auto or explicit"},
 	}},
-	{Section: "endpoints", Description: "Named API endpoint definitions", Live: true, Fields: []ObjectSubField{
+	{Section: "endpoints", Description: "Named API endpoint definitions", Live: true, Fields: []ObjectSubField{ //nolint:dupl // same row shape as [[modelinfo]]'s sub-fields, by design
 		{Key: "format", Type: FieldString, Description: "Wire format: anthropic, openai, or gemini"},
 		{Key: "url", Type: FieldString, Description: "Base URL (empty = SDK default)"},
 		{Key: "anthropic_url", Type: FieldString, Description: "Anthropic-format URL override"},
@@ -646,6 +646,7 @@ var mapObjectFieldSpecs = []MapObjectFieldSpec{
 		{Key: "http_timeout", Type: FieldDuration, Description: "HTTP timeout for this endpoint (default 120s)"},
 		{Key: "instruction_role", Type: FieldString, Description: "OpenAI-format role for the system prompt: developer (default) or system (Ollama drops developer)"},
 		{Key: "max_in_flight", Type: FieldInt, Description: "Local model server: how many of foci's calls run at once; the rest wait in priority order. 0 = no dispatch (no cap, no priority). Match the server's parallel slots (OLLAMA_NUM_PARALLEL). Ignored for OpenRouter (default 0)"},
+		{Key: "zero_cost", Type: FieldBool, Description: "Local model server: book every call on this endpoint at $0, not as unpriced, and do not warn that its models have no pricing (default false)"},
 	}},
 }
 

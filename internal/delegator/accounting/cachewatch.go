@@ -476,6 +476,10 @@ func checkCache(b Booking, base *cacheLineage, source, prompt string, read, writ
 	case b.Tokens[modelinfo.ClassCacheWrite] > 0:
 		writeClass = modelinfo.ClassCacheWrite
 	}
+	if b.ZeroCost { // a zero_cost endpoint's bust costs nothing (#3035)
+		r.Priced = true
+		return r, true
+	}
 	rw, ok1 := modelinfo.CostAsOf(b.Model, b.BilledAt, modelinfo.Tokens{writeClass: lost})
 	rd, ok2 := modelinfo.CostAsOf(b.Model, b.BilledAt, modelinfo.Tokens{modelinfo.ClassCacheRead: lost})
 	r.RewriteUSD, r.ReadUSD, r.Priced = rw, rd, ok1 && ok2

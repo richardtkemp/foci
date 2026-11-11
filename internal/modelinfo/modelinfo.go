@@ -1285,8 +1285,9 @@ func rowAsOf(rows []historyRow, at time.Time) historyRow {
 // than a special case in each pricer, so Go and the SQL views agree on it.
 var syntheticGroup = rateGroup{leaf: syntheticModel, key: provKey("", "")}
 
-// syntheticRates prices every class in the vocabulary at zero.
-func syntheticRates() map[Class]float64 {
+// zeroRates prices every class in the vocabulary at zero (the synthetic and
+// zero-cost groups).
+func zeroRates() map[Class]float64 {
 	r := make(map[Class]float64, len(vocabulary))
 	for c := range vocabulary {
 		r[c] = 0
@@ -1344,6 +1345,57 @@ func resolveGroup(model string, at time.Time, prompt int) (rateGroup, bool) {
 	return g, ok
 }
 
+// zeroCostModel is the leaf of the rate group a call on a zero-cost endpoint
+// is booked on (#3035). Angle brackets keep it from colliding with any real
+// model id, as with the synthetic sentinel.
+const zeroCostModel = "<zero-cost>"
+
+// zeroCostGroup prices every class at $0, like syntheticGroup: a real group in
+// token_rates, so the SQL views price these calls at $0 and not NULL.
+var zeroCostGroup = rateGroup{leaf: zeroCostModel, key: provKey("", "")}
+
+// ZeroCostRateModel is the rate_model of a call on a zero-cost endpoint.
+var ZeroCostRateModel = zeroCostGroup.String()
+
+var (
+	zeroCostMu        sync.RWMutex
+	zeroCostEndpoints = map[string]bool{}
+)
+
+// SetZeroCostEndpoints replaces the set of endpoint names whose calls cost
+// nothing ([endpoints.*] zero_cost, #3035). The client registry sets it at
+// startup and on every live [endpoints] edit.
+func SetZeroCostEndpoints(names []string) {
+	m := make(map[string]bool, len(names))
+	for _, n := range names {
+		m[n] = true
+	}
+	zeroCostMu.Lock()
+	zeroCostEndpoints = m
+	zeroCostMu.Unlock()
+}
+
+// ZeroCostEndpoint reports whether endpoint is configured zero_cost. The
+// empty name (an unknown endpoint) is never zero-cost.
+func ZeroCostEndpoint(endpoint string) bool {
+	if endpoint == "" {
+		return false
+	}
+	zeroCostMu.RLock()
+	defer zeroCostMu.RUnlock()
+	return zeroCostEndpoints[endpoint]
+}
+
+// CostOnEndpoint is CostAsOf for a call sent to the named endpoint: $0, and
+// priced, on a zero-cost endpoint — without asking the rate table, so the
+// unpriced-model warning does not fire for a local model — else CostAsOf.
+func CostOnEndpoint(endpoint, model string, at time.Time, t Tokens) (usd float64, priced bool) {
+	if ZeroCostEndpoint(endpoint) {
+		return 0, true
+	}
+	return CostAsOf(model, at, t)
+}
+
 // RatesAsOf returns the class rates in effect for rateModel (a
 // ResolveRateModel result) at `at`. ok is false for a rate_model that names no
 // group — one resolved under a different models.jsonl.
@@ -1352,8 +1404,8 @@ func RatesAsOf(rateModel string, at time.Time) (map[Class]float64, bool) {
 	if !ok {
 		return nil, false
 	}
-	if g == syntheticGroup {
-		return syntheticRates(), true
+	if g == syntheticGroup || g == zeroCostGroup {
+		return zeroRates(), true
 	}
 	historyMu.RLock()
 	defer historyMu.RUnlock()
@@ -1509,8 +1561,10 @@ func RateTable() []RateRow {
 		}
 	}
 	zero := 0.0
-	for _, c := range classes {
-		out = append(out, RateRow{RateModel: syntheticGroup.String(), Class: c, USDPerUnit: &zero})
+	for _, g := range []rateGroup{syntheticGroup, zeroCostGroup} {
+		for _, c := range classes {
+			out = append(out, RateRow{RateModel: g.String(), Class: c, USDPerUnit: &zero})
+		}
 	}
 	return out
 }

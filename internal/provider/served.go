@@ -37,11 +37,19 @@ type ServedReport struct {
 //     hop's model on the caller's endpoint and format.
 //
 // The empty-means-primary rule lives here alone; callers never re-derive it.
+//
+// A tuple left with no endpoint leg takes resp.Endpoint, the endpoint whose
+// registry handle Send served through: callers that know only the model and
+// format (compaction, summaries) still learn which endpoint served (#3035).
 func ServedTuple(primary ModelTuple, resp *MessageResponse) ModelTuple {
 	if resp == nil {
 		return primary
 	}
-	return tupleFor(primary, resp.Served)
+	t := tupleFor(primary, resp.Served)
+	if t.Endpoint == "" {
+		t.Endpoint = resp.Endpoint
+	}
+	return t
 }
 
 // FailedHop is the error-side twin of MessageResponse.Served: it labels a

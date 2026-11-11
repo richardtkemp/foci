@@ -39,6 +39,8 @@ type jsonlLine struct {
 	SessionFile string         `json:"session_file,omitempty"`
 	SessionLine int            `json:"session_line,omitempty"`
 	Detail      map[string]any `json:"detail,omitempty"`
+	// ZeroCost is a call on a zero_cost endpoint (#3035), priced at $0.
+	ZeroCost bool `json:"zero_cost,omitempty"`
 }
 
 // appendJSONL writes one booking to api.jsonl.
@@ -50,7 +52,7 @@ func appendJSONL(b Booking) {
 		Kind: b.Kind, Finality: b.Finality, ClassMethod: b.ClassMethod, CostBasis: b.basis(),
 		Tokens: b.Tokens.NonZero(), CostUSD: b.CostUSD, ContextFill: b.Fill, Purpose: b.Purpose,
 		StopReason: b.StopReason, SessionFile: b.SessionFile, SessionLine: b.SessionLine,
-		Detail: b.Detail,
+		Detail: b.Detail, ZeroCost: b.ZeroCost,
 	})
 }
 
@@ -81,14 +83,16 @@ func ReadJSONL(path string) []CallRow {
 		// Priced at read time, as the views price a call: its counts at the
 		// rates in effect when it was billed, or its recorded figure. The
 		// line's cost_usd is what Book priced then, kept for line readers.
-		c := Call{Model: l.Model, BilledAt: l.TS, Tokens: l.Tokens, CostBasis: l.CostBasis}
+		c := Call{Model: l.Model, BilledAt: l.TS, Tokens: l.Tokens, CostBasis: l.CostBasis, ZeroCost: l.ZeroCost}
 		if l.CostBasis == CostBasisRecorded {
 			c.LegacyCalculatedCostUSD = l.CostUSD
 		}
 		r.CostUSD = c.cost()
 		for class, n := range l.Tokens {
 			cc := ClassCost{Count: n}
-			if r.CostBasis != CostBasisRecorded && l.Model != "" {
+			if l.ZeroCost && r.CostBasis != CostBasisRecorded {
+				cc.CostUSD = new(float64)
+			} else if r.CostBasis != CostBasisRecorded && l.Model != "" {
 				if usd, ok := modelinfo.CostAsOfPrompt(l.Model, l.TS, modelinfo.Tokens{class: n}, c.PricingPrompt()); ok {
 					cc.CostUSD = &usd
 				}

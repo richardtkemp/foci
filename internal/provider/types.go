@@ -400,6 +400,13 @@ type MessageResponse struct {
 	// fallback-served success, read through ServedTuple. Like WireRequest
 	// and KeySuffix it is process-local and never serialised.
 	Served ServedReport `json:"-"`
+
+	// Endpoint is the [endpoints] entry whose client served this response,
+	// "" when the client was not a named registry handle. Set by Send;
+	// ServedTuple fills a tuple's missing endpoint leg from it, so a caller
+	// that knew only the model and format still learns the endpoint (a
+	// zero_cost endpoint's calls are free, #3035). Process-local.
+	Endpoint string `json:"-"`
 }
 
 // TextContent creates a single text content block.

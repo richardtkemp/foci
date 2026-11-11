@@ -1263,7 +1263,7 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (answer string, runErr e
 		served := provider.ServedTuple(primary, resp)
 		lastModel = served.Model
 		emit(turnevent.ModelKnown{Model: served.Model})
-		cost, _ := modelinfo.CostAsOf(served.Model, time.Now(), resp.Usage.Tokens())
+		cost, _ := modelinfo.CostOnEndpoint(served.Endpoint, served.Model, time.Now(), resp.Usage.Tokens())
 
 		spawnLog.Infof("session=%s model=%s input=%d output=%d cost=$%.4f stop=%s",
 			sessionKey, served.Model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, resp.StopReason)
@@ -1292,7 +1292,7 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (answer string, runErr e
 		}
 		if err := accounting.Record(turn,
 			accounting.APIResponse{
-				ID: resp.ID, Kind: accounting.KindSpawn, Provider: served.Format, Model: served.Model,
+				ID: resp.ID, Kind: accounting.KindSpawn, Provider: served.Format, Model: served.Model, Endpoint: served.Endpoint,
 				Session: bookKey, AgentID: agentID, TurnID: turn.TurnID,
 				Start: start, Duration: duration, Tokens: resp.Usage.Tokens(), StopReason: resp.StopReason,
 				SessionFile: sessionFile,

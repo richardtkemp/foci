@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"foci/internal/config"
+	"foci/internal/modelinfo"
 	"foci/internal/provider"
 	"foci/internal/secrets"
 )
@@ -268,5 +269,41 @@ func TestClientRegistry_InstructionRoleAppliesLive(t *testing.T) {
 	r.Reconfigure(endpointsCfg(config.EndpointConfig{Format: "openai", URL: f.srv.URL, InstructionRole: "system"}))
 	if got := send(held); got != "system" {
 		t.Fatalf("after instruction_role = system: first message role = %q, want system (edit did not apply live)", got)
+	}
+}
+
+// TestClientRegistry_ZeroCostEndpoint (#3035): an [endpoints] entry set
+// zero_cost is in modelinfo's zero-cost set from startup, its handle stamps
+// its name on each response (so the call is priced against it), and a live
+// edit of zero_cost alone moves the set without rebuilding the client.
+func TestClientRegistry_ZeroCostEndpoint(t *testing.T) {
+	t.Cleanup(func() { modelinfo.SetZeroCostEndpoints(nil) })
+	f := newFakeOpenAI(t, "A")
+	ep := config.EndpointConfig{Format: "openai", URL: f.srv.URL, APIKey: "local.key", ZeroCost: true}
+	r := newClientRegistry(endpointsCfg(ep), testSecrets(t, "[local]\nkey = \"k\"\n"), context.Background())
+	if !modelinfo.ZeroCostEndpoint("local") {
+		t.Fatal("local is not zero-cost after startup")
+	}
+	c := r.GetClient("local", "openai")
+	if c == nil {
+		t.Fatal("GetClient returned nil")
+	}
+	req := &provider.MessageRequest{Model: "m", MaxTokens: 10, Messages: []provider.Message{{Role: "user", Content: provider.TextContent("hi")}}}
+	resp, err := provider.Send(context.Background(), c, req, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if resp.Endpoint != "local" {
+		t.Errorf("resp.Endpoint = %q, want local", resp.Endpoint)
+	}
+
+	before := provider.Pin(c)
+	ep.ZeroCost = false
+	r.Reconfigure(endpointsCfg(ep))
+	if modelinfo.ZeroCostEndpoint("local") {
+		t.Error("local still zero-cost after the live edit turned it off")
+	}
+	if provider.Pin(c) != before {
+		t.Error("a zero_cost-only edit rebuilt the client")
 	}
 }

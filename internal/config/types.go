@@ -1454,6 +1454,14 @@ type EndpointConfig struct {
 	// OpenRouter. Set it to the server's parallel slots
 	// (OLLAMA_NUM_PARALLEL), which Ollama does not report over its API.
 	MaxInFlight int `toml:"max_in_flight"`
+
+	// ZeroCost marks every model on this endpoint as free (#3035): a local
+	// model server, which bills nothing. Its calls are booked at $0 in the
+	// cost ledger (rate group modelinfo.ZeroCostRateModel), not as unpriced,
+	// and the no-pricing warning and invModelNotInTable do not fire for
+	// them. Applies to the direct-API calls foci itself sends to the
+	// endpoint; the delegated backends do not use [endpoints].
+	ZeroCost bool `toml:"zero_cost"`
 }
 
 // Instruction roles accepted by EndpointConfig.InstructionRole.

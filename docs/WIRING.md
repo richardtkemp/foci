@@ -130,7 +130,10 @@ procx.PassOpenFileLimitToChildren()                       ← internal/procx, ri
   →   Reconfigure(fresh) — [endpoints] live applier (liveapply.go, #2980): rebuilds each changed
        endpoint's client and Swaps it behind the handle; provider.Send/sendWithRetry Pin the
        handle at entry, so an in-flight call keeps its client. A max_in_flight change alone
-       (sameClientConfig) rebuilds nothing: SetLimits applies it to the dispatcher
+       (sameClientConfig) rebuilds nothing: SetLimits applies it to the dispatcher. Nor does a
+       zero_cost change alone: modelinfo.SetZeroCostEndpoints (construction and Reconfigure,
+       #3035) applies it to pricing. Each handle also gets SetEndpointName(endpoint), which
+       provider.Send stamps on its responses (MessageResponse.Endpoint)
   →   PeekClient(endpoint, format) — no-init check, returns nil if not yet created
   →   ResolveEndpointClient(endpoint, format) — validates format against endpoint support, calls GetClient
 
@@ -1983,7 +1986,26 @@ call and its non-zero counts, and on a duplicate key compares counts
 figures, and `ledger-shadow` re-runs CC's offline); `Tx.RecordTurn` upserts a turn, a zero field leaving the
 stored value alone. A call whose model is not known yet (`""`, #1290) is unresolved
 without asking modelinfo, so it alarms invModelNotInTable but never trips the
-unpriced-model warning.
+unpriced-model warning. A call with `Call.ZeroCost` (#3035: a direct-API call on an
+`[endpoints]` entry set `zero_cost`, a local model server) is booked on
+`modelinfo.ZeroCostRateModel` (`"<zero-cost>||"`, every class at $0, rendered into
+`token_rates` beside `<synthetic>`) without asking modelinfo: it costs $0 in the views, Go
+and api.jsonl (`zero_cost` on the line), and neither alarm nor the warning fires. Its
+`model` column keeps the real model.
+
+**Zero-cost endpoints (#3035).** `modelinfo.SetZeroCostEndpoints` holds the names of the
+`[endpoints]` entries set `zero_cost`; the client registry sets it in `newClientRegistry`
+and in `Reconfigure` (live). Each registry handle carries its endpoint name
+(`SwappableClient.SetEndpointName`); `provider.Send` stamps it on a successful response
+(`MessageResponse.Endpoint`: the caller's handle for the primary and a hop on the caller's
+client, the hop's endpoint for a hop on its own client), and `provider.ServedTuple` fills a
+tuple's empty endpoint leg from it. The direct-API booking sites pass the served endpoint
+in `accounting.APIResponse.Endpoint` (`APIResponse.Call` sets `ZeroCost` from it): the turn
+call (`agent/turn_api_logging.go`), compaction, the tool summariser, spawns, and the app's
+fast summaries (`bookSummary`, the target's endpoint). Their log-line cost uses
+`modelinfo.CostOnEndpoint` (also the auto-summary in `agent/guard.go`), which returns $0 on
+a zero-cost endpoint without the rate lookup. The delegated backends do not use
+`[endpoints]`, so the setting does not reach them.
 
 **Observers** (`live.go`, `jsonl.go`). Every call Book inserts becomes a `Booking` — the
 call, its id, its cost priced exactly as `call_costs` prices it, its turn's purpose, and

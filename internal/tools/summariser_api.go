@@ -105,7 +105,7 @@ func (s *APISummariser) Summarise(ctx context.Context, content []byte, prompt, f
 	// a fallback, the hop's model (on its own format when it had its own
 	// client).
 	served := provider.ServedTuple(provider.ModelTuple{Model: model, Format: format}, resp)
-	cost, _ := modelinfo.CostAsOf(served.Model, time.Now(), resp.Usage.Tokens())
+	cost, _ := modelinfo.CostOnEndpoint(served.Endpoint, served.Model, time.Now(), resp.Usage.Tokens())
 
 	sessionKey := SessionKeyFromContext(ctx)
 	summaryLog.Infof("session=%s model=%s input=%d output=%d cost=$%.4f duration=%s",
@@ -123,7 +123,7 @@ func (s *APISummariser) Summarise(ctx context.Context, content []byte, prompt, f
 		sessionKey, agentID, accounting.SourceSystem, start, start.Add(duration)))
 	if err := accounting.Record(turn,
 		accounting.APIResponse{
-			ID: resp.ID, Kind: accounting.KindSummary, Provider: providerFormat, Model: served.Model,
+			ID: resp.ID, Kind: accounting.KindSummary, Provider: providerFormat, Model: served.Model, Endpoint: served.Endpoint,
 			Session: sessionKey, AgentID: agentID, TurnID: turn.TurnID,
 			Start: start, Duration: duration, Tokens: resp.Usage.Tokens(), StopReason: resp.StopReason,
 		}.Call()); err != nil {

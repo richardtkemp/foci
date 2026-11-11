@@ -23,6 +23,32 @@ type SwappableClient struct {
 	// gate admits each call made through this handle (#3019); nil = none.
 	// Set once, before the handle is shared (SetGate).
 	gate CallGate
+	// endpoint is the [endpoints] entry this handle serves, "" when unnamed.
+	// Send stamps it on the responses it gets through the handle
+	// (MessageResponse.Endpoint, #3035). Set once, before the handle is
+	// shared (SetEndpointName).
+	endpoint string
+}
+
+// SetEndpointName names the [endpoints] entry s serves. Call it before s is
+// handed out; it is not synchronised with calls.
+func (s *SwappableClient) SetEndpointName(name string) { s.endpoint = name }
+
+// endpointNameOf is the endpoint a registry handle serves, "" for any other
+// client (a concrete client, a test double).
+func endpointNameOf(c Client) string {
+	if s, ok := c.(*SwappableClient); ok {
+		return s.endpoint
+	}
+	return ""
+}
+
+// stampEndpoint records on a successful response the endpoint that served
+// it, unless something closer to the call already did.
+func stampEndpoint(resp *MessageResponse, endpoint string) {
+	if resp != nil && resp.Endpoint == "" {
+		resp.Endpoint = endpoint
+	}
 }
 
 // CallGate admits one model call: it returns once the call may be sent, with

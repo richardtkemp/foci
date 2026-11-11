@@ -10,6 +10,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/epdispatch"
 	"foci/internal/gemini"
+	"foci/internal/modelinfo"
 	oai "foci/internal/openai"
 	"foci/internal/provider"
 	"foci/internal/secrets"
@@ -48,6 +49,7 @@ var gwClients *clientRegistry
 
 func newClientRegistry(cfg *config.Config, store *secrets.Store, ctx context.Context) *clientRegistry {
 	epdispatch.SetLimits(endpointLimits(cfg))
+	modelinfo.SetZeroCostEndpoints(zeroCostEndpoints(cfg))
 	return &clientRegistry{
 		entries: make(map[string]*clientEntry),
 		cfg:     cfg,
@@ -83,6 +85,7 @@ func (r *clientRegistry) GetClient(endpointName, format string) provider.Client 
 		if c := r.build(cfg, endpointName, format); c != nil {
 			entry.live = provider.NewSwappableClient(c)
 			entry.live.SetGate(r.callGate(endpointName))
+			entry.live.SetEndpointName(endpointName)
 			entry.endpoint = cfg.Endpoints[endpointName]
 		}
 	}
@@ -100,13 +103,15 @@ func (r *clientRegistry) GetClient(endpointName, format string) provider.Client 
 // error: the edit must not leave a working endpoint with no client.
 //
 // A change of max_in_flight alone rebuilds nothing: it sets the endpoint's
-// dispatcher limit (#3019).
+// dispatcher limit (#3019). Nor does a change of zero_cost alone: it sets the
+// zero-cost endpoint set the next call is priced against (#3035).
 //
 // The old client is not closed: calls in flight still use it. A replaced
 // Gemini client's server-side caches therefore expire by their TTL rather
 // than being deleted at shutdown.
 func (r *clientRegistry) Reconfigure(fresh *config.Config) {
-	epdispatch.SetLimits(endpointLimits(fresh)) // max_in_flight applies live (#3019)
+	epdispatch.SetLimits(endpointLimits(fresh))              // max_in_flight applies live (#3019)
+	modelinfo.SetZeroCostEndpoints(zeroCostEndpoints(fresh)) // zero_cost applies live (#3035)
 	r.mu.Lock()
 	r.cfg = fresh
 	keys := make([]string, 0, len(r.entries))
@@ -154,9 +159,11 @@ func (r *clientRegistry) reconfigureEntry(e *clientEntry, fresh *config.Config, 
 }
 
 // sameClientConfig reports whether a and b build the same client: they differ
-// at most in max_in_flight, which the call gate reads live (#3019).
+// at most in max_in_flight, which the call gate reads live (#3019), and
+// zero_cost, which pricing reads live (#3035).
 func sameClientConfig(a, b config.EndpointConfig) bool {
 	a.MaxInFlight, b.MaxInFlight = 0, 0
+	a.ZeroCost, b.ZeroCost = false, false
 	return a == b
 }
 
@@ -197,6 +204,18 @@ func endpointLimits(cfg *config.Config) map[string]int {
 	out := make(map[string]int, len(cfg.Endpoints))
 	for name, ep := range cfg.Endpoints {
 		out[name] = ep.MaxInFlight
+	}
+	return out
+}
+
+// zeroCostEndpoints names each [endpoints] entry set zero_cost, for
+// modelinfo.SetZeroCostEndpoints (#3035).
+func zeroCostEndpoints(cfg *config.Config) []string {
+	var out []string
+	for name, ep := range cfg.Endpoints {
+		if ep.ZeroCost {
+			out = append(out, name)
+		}
 	}
 	return out
 }

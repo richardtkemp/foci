@@ -426,7 +426,7 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 		sessionKey, c.AgentID, accounting.SourceCompaction, start, start.Add(duration)))
 	if err := accounting.Record(turn,
 		accounting.APIResponse{
-			ID: resp.ID, Kind: accounting.KindCompaction, Provider: served.Format, Model: served.Model,
+			ID: resp.ID, Kind: accounting.KindCompaction, Provider: served.Format, Model: served.Model, Endpoint: served.Endpoint,
 			Session: sessionKey, AgentID: c.AgentID, TurnID: turn.TurnID,
 			Start: start, Duration: duration, Tokens: resp.Usage.Tokens(), StopReason: resp.StopReason,
 			PreMessages: len(messages),
