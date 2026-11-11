@@ -223,7 +223,7 @@ func TestHandlePinSummarize(t *testing.T) {
 	h.pinSum = testSummariser(srv.URL, nil)
 
 	c := fakeClient()
-	h.handlePinSummarize(c, fap.PinSummarize{RequestID: "r1", ConversationID: "c1", MessageID: "m1", Text: "a message"})
+	h.handlePinSummarize(c, fap.PinSummarize{RequestID: "r1", ConversationID: "c1", MessageID: "m1", Text: "a message long enough to go to the model for its label"})
 	f := awaitPinSummary(t, c)
 	if f["requestId"] != "r1" || f["messageId"] != "m1" || f["summary"] != "Pinned thing" {
 		t.Errorf("answer = %v, want r1/m1/Pinned thing", f)
@@ -232,7 +232,7 @@ func TestHandlePinSummarize(t *testing.T) {
 	stub.mu.Lock()
 	stub.status = http.StatusBadGateway
 	stub.mu.Unlock()
-	h.handlePinSummarize(c, fap.PinSummarize{RequestID: "r2", MessageID: "m1", Text: "a message"})
+	h.handlePinSummarize(c, fap.PinSummarize{RequestID: "r2", MessageID: "m1", Text: "a message long enough to go to the model for its label"})
 	if f := awaitPinSummary(t, c); f["requestId"] != "r2" || f["summary"] != nil {
 		t.Errorf("failed answer = %v, want r2 with no summary", f)
 	}
@@ -242,6 +242,43 @@ func TestHandlePinSummarize(t *testing.T) {
 	bare.handlePinSummarize(c, fap.PinSummarize{RequestID: "r3", MessageID: "m1", Text: "x"})
 	if f := awaitPinSummary(t, c); f["requestId"] != "r3" || f["summary"] != nil {
 		t.Errorf("no-summariser answer = %v, want r3 with no summary", f)
+	}
+}
+
+// TestHandlePinSummarize_ShortTextIsOwnLabel (#3054): a message of fewer
+// than ten words is its own label, on one line, and the model is not called;
+// ten words or more still go to the model; the feature turned off still
+// suggests nothing.
+func TestHandlePinSummarize_ShortTextIsOwnLabel(t *testing.T) {
+	stub := &openRouterStub{reply: "Model label"}
+	srv := stub.serve(t)
+	h := newTestHub()
+	h.pinSum = testSummariser(srv.URL, nil)
+	c := fakeClient()
+
+	nine := "one two three four five six seven  eight\n nine"
+	h.handlePinSummarize(c, fap.PinSummarize{RequestID: "r1", MessageID: "m1", Text: nine})
+	if f := awaitPinSummary(t, c); f["requestId"] != "r1" || f["summary"] != "one two three four five six seven eight nine" {
+		t.Errorf("nine words: answer = %v, want the text itself on one line", f)
+	}
+	if n := len(stub.requests()); n != 0 {
+		t.Fatalf("nine words: model called %d times, want 0", n)
+	}
+
+	ten := "one two three four five six seven eight nine ten"
+	h.handlePinSummarize(c, fap.PinSummarize{RequestID: "r2", MessageID: "m1", Text: ten})
+	if f := awaitPinSummary(t, c); f["summary"] != "Model label" {
+		t.Errorf("ten words: answer = %v, want the model's label", f)
+	}
+	if n := len(stub.requests()); n != 1 {
+		t.Errorf("ten words: model called %d times, want 1", n)
+	}
+
+	off := newTestHub()
+	off.pinSum = testSummariser(srv.URL, &config.AppSpecific{PinSummaryModel: pinSummaryOff})
+	off.handlePinSummarize(c, fap.PinSummarize{RequestID: "r3", MessageID: "m1", Text: "short one"})
+	if f := awaitPinSummary(t, c); f["requestId"] != "r3" || f["summary"] != nil {
+		t.Errorf("feature off: answer = %v, want no summary", f)
 	}
 }
 

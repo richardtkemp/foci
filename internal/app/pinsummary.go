@@ -65,6 +65,11 @@ const (
 	// pinSummaryMaxWords is the limit the prompt states (Dick: "a strict ten
 	// word limit"); summaryWordsOK accepts up to 1.5 times it.
 	pinSummaryMaxWords = 10
+	// pinLabelOwnTextWords: a message of fewer words than this is its own
+	// pin label, with no model call (#3054, Dick 2026-11-11: "if the text is
+	// less than 10 words, just use the text as the suggestion without
+	// calling an API to summarise").
+	pinLabelOwnTextWords = 10
 
 	openRouterChatURL = "https://openrouter.ai/api/v1/chat/completions"
 	pinSummarySecret  = "openrouter.api_key"
@@ -786,6 +791,15 @@ func (h *Hub) handlePinSummarize(client *wsClient, f fap.PinSummarize) {
 		client.sendRaw(fap.PinSummary{RequestID: f.RequestID, MessageID: f.MessageID})
 		return
 	}
+	if label, ok := shortPinLabel(f.Text); ok {
+		// The feature turned off (pin_summary_model = "off") still means no
+		// suggestion; otherwise a short message is its own label.
+		if h.pinSum.target(useShared).off() {
+			label = ""
+		}
+		client.sendRaw(fap.PinSummary{RequestID: f.RequestID, MessageID: f.MessageID, Summary: label})
+		return
+	}
 	var session, agentID string
 	if b := h.convForReliability(f.ConversationID); b != nil {
 		session, agentID = b.key(), b.agent()
@@ -809,4 +823,18 @@ func (h *Hub) handlePinSummarize(client *wsClient, f fap.PinSummarize) {
 		}
 		client.sendRaw(fap.PinSummary{RequestID: f.RequestID, MessageID: f.MessageID, Summary: summary})
 	}()
+}
+
+// shortPinLabel returns text as its own pin label when it has fewer than
+// pinLabelOwnTextWords words (#3054): words are counted as strings.Fields
+// counts them (runs of non-space), the same count summaryWordsOK uses, and
+// the label is the text on one line, its whitespace runs collapsed to one
+// space. Markdown is kept as written. ok is false for a longer or a blank
+// text, which goes to the model as before.
+func shortPinLabel(text string) (string, bool) {
+	words := strings.Fields(text)
+	if len(words) == 0 || len(words) >= pinLabelOwnTextWords {
+		return "", false
+	}
+	return strings.Join(words, " "), true
 }
