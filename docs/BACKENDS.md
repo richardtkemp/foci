@@ -179,6 +179,7 @@ Every delegated backend declares every capability in its `delegator.Spec` (`inte
 | `command_approval_allowlist` | auto-approves prompts matching foci's [permissions] allowlist (StartOptions.AutoApproveRules) | ✓ | ✓ | ✓ |
 | `plan_mode` | has a /plan delivery (Spec.PlanDelivery) | ✓ | ✗ | ✓ |
 | `usage_query` | reports plan usage for /mana (Spec.UsageQuery) | ✓ | ✓ | ✗ |
+| `limit_reset` | /limit-reset force-lifts the rate-limit gate and usage hold, and a /usage read that finds usage available lifts them (its UsageQuery reports rate-limit availability) | ✓ | ✗ | ✗ |
 
 Why not:
 
@@ -214,6 +215,7 @@ Why not:
 - `relogin`: codex: the re-login driver logs Claude Code in; opencode: the re-login driver logs Claude Code in.
 - `plan_mode`: codex: no /plan delivery.
 - `usage_query`: opencode: no plan usage to report.
+- `limit_reset`: codex: Dick 2026-11-11: /limit-reset and the /usage unblock are Claude Code only; opencode: no usage hold or plan usage to reset.
 
 <!-- END GENERATED CAPABILITIES -->
 
@@ -317,6 +319,7 @@ grepped for each ✗. Row IDs are not renumbered, so the gaps are the removed ro
 | U6 | Utilisation notice | Rate-limit utilisation notice to the human's chat | ✓ | ✗ | ✓ |
 | U7 | Limit gate | Usage/session limit engages `Agent.EngageRateLimit` | ✓ [49] | ✓ [49] | ✓ [34] |
 | U9 | Turn usage | Token usage on `TurnResult` | ✓ | ✓ | ✓ |
+| U10 | Forced lift | `/limit-reset`, and `/usage` when it finds usage available, lift the limit gate and usage hold (`CapLimitReset`, #3043) | ✓ [49] | ✗ | ✗ [49] |
 
 ### 8. Models and effort
 
@@ -613,6 +616,12 @@ Notes:
     and codex hold work at `[usage_hold] threshold` (default 98%) before the limit, account-wide
     (`HostHooks.OnUsageWindow` → `Agent.ObserveUsage` → `internal/usagehold`, #2491); opencode
     does not, as it reports no usage percentage (open gap).
+    The gate and the hold clear on their own clock or a new event; in a usage stop nothing
+    runs that could bring one. On ccstream, `/limit-reset` lifts both at once, in memory and in
+    the stored state, and so does `/usage` when its read shows every reported window under the
+    threshold (`Agent.ResetLimits`, `usagehold.Registry.Clear`, #3043). The hold is account-wide,
+    so the lift reaches every Claude Code agent. codex declares No (Dick 2026-11-11: "Both
+    ccstream only").
 
 
 ### Parity evidence
@@ -702,6 +711,7 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - U7: `cc/handlers.go:OnAssistant` (`syntheticSessionLimitText`) and `cc/handlers.go:OnRateLimit` (`status=rejected`, `rejectedWindowSignal`) → `HostHooks.EngageRateLimit` | `oc/ratelimit.go:handleRateLimitRetry` → `HostHooks.EngageRateLimit` | `cx/ratelimits.go:onRateLimitsUpdated` → `gateSignal` → `HostHooks.EngageRateLimit`
 - `usage_query`: `cc/usage_oneshot.go:QueryUsage`, `cc/spec.go` `UsageQuery` | ✗ `oc/spec.go` declares `usage_query` No | `cx/ratelimits.go:QueryUsage` (fresh `account/rateLimits/read` on the agent's running app-server, else the last pushed numbers), `cx/spec.go` `UsageQuery`
 - U9: `cc/handlers.go:OnResult` | `oc/handlers.go:onMessageUpdated` | `cx/handlers.go:onTokenUsage`
+- U10: `cc/usage_oneshot.go:parseUsagePayload` (`RateLimitsAvailable`, `UsageWindow.Reported`) → `command/mana.go` and `command/limit_reset.go` → `agent/limit_reset.go:ResetLimits` | ✗ (`Spec.Caps[CapLimitReset]` = No) | ✗ (`Spec.Caps[CapLimitReset]` = No)
 
 **Models**
 - M1: `cc/lifecycle.go:Start` (`--model`) | `oc/backend_lifecycle.go:Start` (`resolveModelFn`) | `cx/lifecycle.go:prepareConfiguredModel`

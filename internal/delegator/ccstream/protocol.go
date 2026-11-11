@@ -254,8 +254,8 @@ type usagePayload struct {
 }
 
 type usageRateLimits struct {
-	FiveHour usageWindowRaw `json:"five_hour"`
-	SevenDay usageWindowRaw `json:"seven_day"`
+	FiveHour *usageWindowRaw `json:"five_hour"` // nil: CC sent null
+	SevenDay *usageWindowRaw `json:"seven_day"`
 }
 
 // usageWindowRaw is one rate-limit window (five_hour == "session", seven_day

@@ -284,8 +284,19 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	// reports only its own backend's account, for this agent: no agent is
 	// shown another backend's numbers, and a backend with no usage source
 	// gets no /mana (#1543).
+	//
+	// A backend declaring CapLimitReset (claude-code, #3043) also gets
+	// /limit-reset, and its /usage lifts the rate-limit gate and usage hold
+	// when the read shows usage available.
+	limitReset := false
+	if spec, ok := delegator.SpecFor(p.acfg.Backend); ok {
+		limitReset = spec.Supports(delegator.CapLimitReset)
+	}
 	if query, ok := delegator.UsageQueryFor(p.acfg.Backend); ok {
-		cmds.Register(command.ManaCommand(query, p.acfg.ID))
+		cmds.Register(command.ManaCommand(query, p.acfg.ID, limitReset))
+	}
+	if limitReset {
+		cmds.Register(command.LimitResetCommand())
 	}
 
 	// Tmux command (only if tool is available)

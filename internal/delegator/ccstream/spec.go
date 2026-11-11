@@ -99,6 +99,7 @@ var spec = delegator.Spec{
 		delegator.CapCommandApprovalAllowlist: delegator.Yes(),
 		delegator.CapPlanMode:                 delegator.Yes(),
 		delegator.CapUsageQuery:               delegator.Yes(),
+		delegator.CapLimitReset:               delegator.Yes(),
 	},
 
 	DefaultModel:       "opus",

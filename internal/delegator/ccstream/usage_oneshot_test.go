@@ -256,3 +256,30 @@ func TestOneshotRoundTrip_Success(t *testing.T) {
 		t.Errorf("payload = %s, want {\"ok\":true}", raw)
 	}
 }
+
+// TestParseUsagePayload_UsageAvailability is the proof for CapLimitReset
+// (#3043): a read carries what /usage needs to decide whether usage is
+// available — rate_limits_available, and which windows were reported. CC
+// sends null for a window it has no figure for (seen live 2026-11-11 for
+// seven_day_opus and others); a null must not read as a 0% window.
+func TestParseUsagePayload_UsageAvailability(t *testing.T) {
+	info, err := parseUsagePayload(json.RawMessage(`{"subscription_type":"max","rate_limits_available":true,"rate_limits":{"five_hour":{"utilization":8,"resets_at":"2026-11-11T13:59:59.722132+00:00"},"seven_day":null}}`))
+	if err != nil {
+		t.Fatalf("parseUsagePayload: %v", err)
+	}
+	if !info.RateLimitsAvailable || !info.FiveHour.Reported || info.SevenDay.Reported {
+		t.Fatalf("available=%v five_hour.reported=%v seven_day.reported=%v, want true true false",
+			info.RateLimitsAvailable, info.FiveHour.Reported, info.SevenDay.Reported)
+	}
+	if !info.Available(98) {
+		t.Error("five_hour at 8% with seven_day null: Available(98) = false, want true")
+	}
+
+	info, err = parseUsagePayload(json.RawMessage(`{"rate_limits_available":false,"rate_limits":{"five_hour":null,"seven_day":null}}`))
+	if err != nil {
+		t.Fatalf("parseUsagePayload: %v", err)
+	}
+	if info.Available(98) {
+		t.Error("a read with no rate limits: Available(98) = true, want false")
+	}
+}

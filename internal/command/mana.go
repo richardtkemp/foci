@@ -25,18 +25,30 @@ import (
 // identity precisely so an alias never gets its own listing: both "mana" and
 // "usage" map to this same struct, so it surfaces exactly once, under its
 // canonical Name ("mana").
-func ManaCommand(query delegator.UsageQuery, agentID string) *Command {
+//
+// liftOnAvailable (a backend declaring CapLimitReset: Claude Code, #3043):
+// when the read shows usage available (Agent.UsageAvailable), the command
+// also lifts the agent's rate-limit gate and its account's usage hold
+// (Agent.ResetLimits), as /limit-reset does. A read that does not show usage
+// available changes nothing.
+func ManaCommand(query delegator.UsageQuery, agentID string, liftOnAvailable bool) *Command {
 	return &Command{
 		Name:        "mana",
 		Aliases:     []string{"usage"},
 		Description: "Show the backend's plan usage (windows used %, resets, limits)",
 		Category:    "observability",
-		Execute: func(ctx context.Context, _ Request, _ CommandContext) (Response, error) {
+		Execute: func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
 			info, err := query(ctx, agentID)
 			if err != nil {
 				return Response{}, fmt.Errorf("query usage: %w", err)
 			}
-			return Response{Text: formatUsage(info)}, nil
+			text := formatUsage(info)
+			if liftOnAvailable && cc.Agent != nil && cc.Agent.UsageAvailable(info) {
+				if res := cc.Agent.ResetLimits("/usage found usage available"); res.Cleared() {
+					text += "\n\n▶️ Usage is available. " + res.Summary()
+				}
+			}
+			return Response{Text: text}, nil
 		},
 	}
 }

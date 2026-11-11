@@ -127,3 +127,42 @@ func TestSubscribersSeeEachChangeOnce(t *testing.T) {
 		}
 	}
 }
+
+// TestClear_LiftsAndPersists is the forced lift (#3043): it clears every
+// window at once, tells the subscribers, and the cleared state survives a
+// restart.
+func TestClear_LiftsAndPersists(t *testing.T) {
+	now := time.Now()
+	store := &memStore{m: map[string]string{}}
+	r := New()
+	r.SetStore(store)
+	var changes []Change
+	r.Subscribe("ccstream", func(c Change) { changes = append(changes, c) })
+	r.Observe("ccstream", util("seven_day", 0.98, now.Add(12*time.Hour)), now)
+	r.Observe("ccstream", Event{Window: "five_hour", Reached: true, ResetAt: now.Add(2 * time.Hour)}, now)
+
+	from, st := r.Clear("ccstream", now)
+	if from != Stop || st.Phase != Open || len(st.Windows) != 0 {
+		t.Fatalf("Clear = (%v, %+v), want (stop, open with no windows)", from, st)
+	}
+	if n := len(changes); n == 0 || changes[n-1].To.Phase != Open || changes[n-1].From != Stop {
+		t.Fatalf("subscribers saw %+v, want a last change stop -> open", changes)
+	}
+	if v := store.m["ccstream"]; v != "" {
+		t.Errorf("stored state after Clear = %q, want empty", v)
+	}
+	restarted := New()
+	restarted.SetStore(store)
+	if st := restarted.State("ccstream", now); st.Phase != Open {
+		t.Errorf("after a restart: phase %v, want open", st.Phase)
+	}
+
+	// Clearing an open account changes nothing and tells nobody.
+	n := len(changes)
+	if from, st := r.Clear("ccstream", now); from != Open || st.Phase != Open {
+		t.Errorf("Clear of an open account = (%v, %v), want (open, open)", from, st.Phase)
+	}
+	if len(changes) != n {
+		t.Errorf("Clear of an open account notified subscribers: %+v", changes[n:])
+	}
+}

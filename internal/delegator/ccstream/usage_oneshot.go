@@ -209,19 +209,23 @@ func parseUsagePayload(raw json.RawMessage) (*delegator.UsageInfo, error) {
 		return nil, fmt.Errorf("ccstream: usage oneshot: unmarshal get_usage payload: %w", err)
 	}
 	return &delegator.UsageInfo{
-		Backend:          displayName,
-		SubscriptionType: p.SubscriptionType,
-		FiveHour:         parseUsageWindow(p.RateLimits.FiveHour),
-		SevenDay:         parseUsageWindow(p.RateLimits.SevenDay),
-		SessionCostUSD:   p.Session.TotalCostUSD,
-		Day:              parseUsageBehaviorWindow(p.Behaviors.Day),
-		Week:             parseUsageBehaviorWindow(p.Behaviors.Week),
-		Raw:              raw,
+		Backend:             displayName,
+		SubscriptionType:    p.SubscriptionType,
+		RateLimitsAvailable: p.RateLimitsAvailable,
+		FiveHour:            parseUsageWindow(p.RateLimits.FiveHour),
+		SevenDay:            parseUsageWindow(p.RateLimits.SevenDay),
+		SessionCostUSD:      p.Session.TotalCostUSD,
+		Day:                 parseUsageBehaviorWindow(p.Behaviors.Day),
+		Week:                parseUsageBehaviorWindow(p.Behaviors.Week),
+		Raw:                 raw,
 	}, nil
 }
 
-func parseUsageWindow(w usageWindowRaw) delegator.UsageWindow {
-	out := delegator.UsageWindow{Percent: w.Utilization}
+func parseUsageWindow(w *usageWindowRaw) delegator.UsageWindow {
+	if w == nil {
+		return delegator.UsageWindow{}
+	}
+	out := delegator.UsageWindow{Percent: w.Utilization, Reported: true}
 	if w.ResetsAt != "" {
 		if t, err := time.Parse(time.RFC3339, w.ResetsAt); err == nil {
 			out.ResetsAt = t

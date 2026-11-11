@@ -28,12 +28,15 @@ type UsageInfo struct {
 	Backend          string // display name, e.g. "Claude Code", "Codex"
 	Allowance        *Allowance
 	SubscriptionType string
-	FiveHour         UsageWindow // CC's "session" limit
-	SevenDay         UsageWindow // CC's "week (all models)" limit
-	SessionCostUSD   float64
-	Day              UsageBehaviorWindow
-	Week             UsageBehaviorWindow
-	Raw              json.RawMessage // full get_usage response payload, for anything not modeled above
+	// RateLimitsAvailable is CC's rate_limits_available: the read carries
+	// the account's rate-limit windows.
+	RateLimitsAvailable bool
+	FiveHour            UsageWindow // CC's "session" limit
+	SevenDay            UsageWindow // CC's "week (all models)" limit
+	SessionCostUSD      float64
+	Day                 UsageBehaviorWindow
+	Week                UsageBehaviorWindow
+	Raw                 json.RawMessage // full get_usage response payload, for anything not modeled above
 }
 
 // UsageWindow is one rate-limit window's utilization. Percent is 0-100
@@ -42,6 +45,32 @@ type UsageInfo struct {
 type UsageWindow struct {
 	Percent  int
 	ResetsAt time.Time
+	// Reported is true when the read carried this window (CC sends null for
+	// a window it has no figure for, which reads as 0%).
+	Reported bool
+}
+
+// Available reports whether this read shows usage available at a hold
+// threshold of thresholdPct (#3043): it is a Claude Code read (no
+// Allowance) that carries its rate-limit windows, reports at least one, and
+// every one it reports is under the threshold. A read that cannot show it
+// (no windows, a codex allowance) is not available: the caller must not
+// lift a gate on it.
+func (u *UsageInfo) Available(thresholdPct int) bool {
+	if u == nil || u.Allowance != nil || !u.RateLimitsAvailable {
+		return false
+	}
+	seen := false
+	for _, w := range []UsageWindow{u.FiveHour, u.SevenDay} {
+		if !w.Reported {
+			continue
+		}
+		if w.Percent >= thresholdPct {
+			return false
+		}
+		seen = true
+	}
+	return seen
 }
 
 // UsageBehaviorWindow is one window ("last 24h"/"last 7d") of what's

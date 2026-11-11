@@ -55,6 +55,7 @@ var proofs = map[string]map[delegator.Capability]string{
 		delegator.CapCommandApprovalAllowlist: "TestHandlePermissionRequest_AutoApprove",
 		delegator.CapIsolatedBatch:            "TestStart_AccessLaunchArgs",
 		delegator.CapReadOnlyBatch:            "TestStart_AccessLaunchArgs",
+		delegator.CapLimitReset:               "TestParseUsagePayload_UsageAvailability",
 	},
 	"codex": {
 		delegator.CapEphemeralSessions:        "TestEphemeralForkAdoptsLiveThread",

@@ -81,6 +81,7 @@ var spec = delegator.Spec{
 		delegator.CapCommandApprovalAllowlist: delegator.Yes(),
 		delegator.CapPlanMode:                 delegator.Yes(),
 		delegator.CapUsageQuery:               delegator.No("no plan usage to report"),
+		delegator.CapLimitReset:               delegator.No("no usage hold or plan usage to reset"),
 	},
 
 	// DefaultModel is empty: opencode takes its model from opencode.json

@@ -14,7 +14,8 @@
 //
 // Each window clears on its own: at its reset time, or when a usage event for
 // THAT window reports less than the threshold and not reached. The account
-// lifts when no window holds or stops it. The state survives a restart
+// lifts when no window holds or stops it. Clear lifts it at once (#3043: the
+// /limit-reset command, or a /usage read that finds usage available). The state survives a restart
 // through a Store.
 //
 // The package is a leaf: it knows nothing of agents. Agents subscribe to an
@@ -222,6 +223,20 @@ func (r *Registry) Observe(acct string, ev Event, now time.Time) State {
 		delete(a.windows, ev.Window)
 	}
 	return r.settleLocked(acct, a, now, true)
+}
+
+// Clear lifts acct at once, whatever its windows say (#3043, /limit-reset
+// and a /usage read that finds usage available): every window is dropped,
+// the empty state is persisted, and subscribers see the change to Open as
+// at a natural lift. It returns the phase before and the state after. A
+// later usage event at or above the threshold holds the account again.
+func (r *Registry) Clear(acct string, now time.Time) (Phase, State) {
+	r.mu.Lock()
+	a := r.accountLocked(acct)
+	from := a.phase
+	changed := len(a.windows) > 0
+	a.windows = map[string]Window{}
+	return from, r.settleLocked(acct, a, now, changed)
 }
 
 // Tick expires windows whose reset time has passed, on every account, and
