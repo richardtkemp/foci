@@ -144,13 +144,18 @@ func (r Result) ReplyText() string {
 	return "```\n" + r.chatText(head(r.Command, commandDisplayChars)) + "\n```"
 }
 
-// APITimeout is the limit for a command on an API agent: [tools]
-// exec_default_timeout seconds; <=0 is the shell tool's built-in 30 s
-// (shell.execCommand). A delegated agent's limit comes from its backend's spec
-// (delegator.Spec.BashDefaultTimeout).
-func APITimeout(execDefaultSec int) time.Duration {
-	if execDefaultSec <= 0 {
-		execDefaultSec = 30
+// DefaultTimeout is the limit for a command when [tools] user_command_timeout
+// is unset (#3045). It is the same on every backend: it does not follow the
+// agent's own shell tool default.
+const DefaultTimeout = 15 * time.Minute
+
+// Timeout is the limit for a command given the [tools] user_command_timeout
+// setting, a Go duration. Empty, unparsable or non-positive is DefaultTimeout:
+// config validation rejects the last two, so they reach here only from a
+// config that skipped it, and a command must never run with no limit.
+func Timeout(setting string) time.Duration {
+	if d, err := time.ParseDuration(strings.TrimSpace(setting)); err == nil && d > 0 {
+		return d
 	}
-	return time.Duration(execDefaultSec) * time.Second
+	return DefaultTimeout
 }

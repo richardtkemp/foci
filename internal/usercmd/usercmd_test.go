@@ -33,13 +33,22 @@ func TestParse(t *testing.T) {
 	}
 }
 
-func TestAPITimeout(t *testing.T) {
+func TestTimeout(t *testing.T) {
 	t.Parallel()
-	if got := APITimeout(2); got != 2*time.Second {
-		t.Errorf("configured = %s", got)
-	}
-	if got := APITimeout(0); got != 30*time.Second {
-		t.Errorf("built-in = %s", got)
+	for _, tc := range []struct {
+		setting string
+		want    time.Duration
+	}{
+		{"2h", 2 * time.Hour},
+		{" 90s ", 90 * time.Second},
+		{"", 15 * time.Minute},
+		{"bogus", 15 * time.Minute},
+		{"0", 15 * time.Minute},
+		{"-5m", 15 * time.Minute},
+	} {
+		if got := Timeout(tc.setting); got != tc.want {
+			t.Errorf("Timeout(%q) = %s, want %s", tc.setting, got, tc.want)
+		}
 	}
 }
 

@@ -133,6 +133,10 @@ var (
 	// config into the process-wide usagehold.Default.
 	liveApplyUsageHoldAddrs = []string{"usage_hold.threshold"}
 
+	// The chat "!" command limit (#3045): global only, read from the raw
+	// config into the process-wide userCommandTimeoutNs at each run.
+	liveApplyUserCommandTimeoutAddrs = []string{"tools.user_command_timeout"}
+
 	// Extra skill dirs (#2657): a derived handle — each agent's
 	// *skills.LiveDirs, read at every skill reload (session start) and every
 	// reflection snapshot. The shared dir and skills_dir stay restart-only.
@@ -335,6 +339,11 @@ func registerLiveAppliers(la *liveApply, agents *agentRegistry) {
 
 	la.register(liveApplyUsageHoldAddrs, func(fresh *config.Config) error {
 		applyUsageHoldThreshold(fresh)
+		return nil
+	})
+
+	la.register(liveApplyUserCommandTimeoutAddrs, func(fresh *config.Config) error {
+		applyUserCommandTimeout(fresh)
 		return nil
 	})
 

@@ -319,6 +319,7 @@ Subcommands:
 	si := initSessions(cfg)
 	app.SetSessionChats(appMediaChats(si.sessionIndex))
 	setupUsageHold(cfg, si.sessionIndex)
+	applyUserCommandTimeout(cfg)
 	defer si.cleanup()
 
 	// ========== Memory system ==========

@@ -806,6 +806,7 @@ Tool behavior settings (global-only fields). Fields that can be overridden per-a
 | `tmux_cols` | int | `300` | Window width (columns) applied via `resize-window` after `tmux new-session`. |
 | `tmux_rows` | int | `30` | Window height (rows) applied via `resize-window` after `tmux new-session`. |
 | `exec_default_timeout` | int | `30` | Default timeout for exec commands in seconds. |
+| `user_command_timeout` | string | `"15m"` | How long a shell command the user runs from chat (a `!` message, or a code block's run button in the app) may run before it is stopped. Go duration (e.g. `"2h"`); must be positive (an invalid or non-positive value is rejected at load). Same on every backend. Applies live to the next command. |
 | `summary_context_turns` | int | `5` | Number of recent conversation turns included as context when auto-summarising oversized tool results. |
 | `summary_context_chars` | int | `6000` | Max characters of conversation context sent to the cheap model for auto-summary. |
 | `tmux_memory_check_interval` | string | `"5m"` | How often to check tmux server RSS. Go duration format. `"0"` disables monitoring. |

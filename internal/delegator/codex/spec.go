@@ -24,9 +24,6 @@ const cacheTTL = time.Hour
 // spec declares the Codex backend: what it can do and its static data
 // (#2154, internal/delegator/capabilities.go).
 var spec = delegator.Spec{
-	// codex-rs/core/src/exec.rs, DEFAULT_EXEC_COMMAND_TIMEOUT_MS = 10_000, read at
-	// tag rust-v0.145.0. No environment override.
-	BashTimeout: 10 * time.Second,
 	Name:        backendName,
 	DisplayName: "Codex CLI",
 	New:         newFromConfig,

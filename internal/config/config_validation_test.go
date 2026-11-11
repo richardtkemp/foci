@@ -287,6 +287,49 @@ func TestValidateWarningWindowDuration(t *testing.T) {
 	}
 }
 
+// TestValidateUserCommandTimeout is #3045: [tools] user_command_timeout loads
+// unset (15m) and as a positive duration, and an unparsable or non-positive
+// value is rejected at load, naming the key.
+func TestValidateUserCommandTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		value, want string // want "" = loads
+	}{
+		{"", ""},
+		{"2h", ""},
+		{"bogus", "user_command_timeout"},
+		{"0", "must be positive"},
+		{"-1m", "must be positive"},
+	} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		body := "[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n"
+		if tc.value != "" {
+			body += "[tools]\nuser_command_timeout = \"" + tc.value + "\"\n"
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(path, nil)
+		if tc.want == "" {
+			if err != nil {
+				t.Errorf("%q: %v", tc.value, err)
+				continue
+			}
+			want := tc.value
+			if want == "" {
+				want = "15m"
+			}
+			if cfg.Tools.UserCommandTimeout != want {
+				t.Errorf("%q loads as %q, want %q", tc.value, cfg.Tools.UserCommandTimeout, want)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%q: error %v, want one containing %q", tc.value, err, tc.want)
+		}
+	}
+}
+
 func TestValidateMemorySourceWeight(t *testing.T) {
 	// Proves that a memory source with weight > 1.0 is rejected with a validation
 	// error mentioning "weight".

@@ -1,8 +1,6 @@
 package ccstream
 
 import (
-	"time"
-
 	"foci/internal/delegator"
 	"foci/internal/delegator/accounting"
 	"foci/internal/modelcaps"
@@ -30,10 +28,6 @@ const spawnSteerNotice = "Your spawner (the session that started you) can send y
 // spec declares the Claude Code backend: what it can do and its static data
 // (#2154, internal/delegator/capabilities.go).
 var spec = delegator.Spec{
-	// CC's documented default; see bashMaxTimeoutMS and
-	// https://code.claude.com/docs/en/env-vars.
-	BashTimeout:      120 * time.Second,
-	BashTimeoutEnv:   "BASH_DEFAULT_TIMEOUT_MS",
 	Name:             backendName,
 	DisplayName:      displayName,
 	New:              newFromConfig,

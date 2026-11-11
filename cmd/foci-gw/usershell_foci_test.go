@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"foci/internal/agent"
 	"foci/internal/secrets"
@@ -37,7 +36,7 @@ func TestUserCommand_FociFunctionRunsOnProductionWiring(t *testing.T) {
 	}
 	ag := &agent.Agent{}
 	registry := buildExecRegistry(p, stubWakeFn, nil, func() *agent.Agent { return ag })
-	setupUserShell(ag, p, registry, 20*time.Second)
+	setupUserShell(ag, p, registry)
 
 	if !ag.UserCommandRunnable("foci_whoami") {
 		t.Error("foci_whoami gets no button")

@@ -665,6 +665,16 @@ func (cfg *Config) Validate(knownBackends []string) error {
 	if err := validateDurations(durations); err != nil {
 		return err
 	}
+	// A chat "!" command needs a limit (#3045): "0" parses, so reject it here.
+	if v := strings.TrimSpace(cfg.Tools.UserCommandTimeout); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("[tools] user_command_timeout = %q: %w", v, err)
+		}
+		if d <= 0 {
+			return fmt.Errorf("[tools] user_command_timeout = %q: must be positive", v)
+		}
+	}
 
 	// Model fallbacks: validate keys/values resolve and chains don't exceed depth
 	if err := validateFallbacks("groups.fallbacks", cfg.Groups.Fallbacks, cfg.Models); err != nil {

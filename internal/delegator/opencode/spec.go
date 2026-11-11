@@ -1,8 +1,6 @@
 package opencode
 
 import (
-	"time"
-
 	"foci/internal/delegator"
 	"foci/internal/delegator/accounting"
 )
@@ -13,14 +11,10 @@ const backendName = "opencode"
 // spec declares the OpenCode backend: what it can do and its static data
 // (#2154, internal/delegator/capabilities.go).
 var spec = delegator.Spec{
-	// The opencode 1.17.15 binary's ShellTool: `bashDefaultTimeoutMs ?? 120000`,
-	// where the flag reads this variable.
-	BashTimeout:    120 * time.Second,
-	BashTimeoutEnv: "OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS",
-	Name:           backendName,
-	DisplayName:    "OpenCode",
-	New:            newFromConfig,
-	Prototype:      (*Backend)(nil),
+	Name:        backendName,
+	DisplayName: "OpenCode",
+	New:         newFromConfig,
+	Prototype:   (*Backend)(nil),
 	PermissionModes: []delegator.PermissionMode{
 		{Name: "normal", Value: "default", Description: "ask for tool permissions"},
 		{Name: "accept", Value: "acceptEdits", Description: "allow edits; ask for commands", Aliases: []string{"edits"}},

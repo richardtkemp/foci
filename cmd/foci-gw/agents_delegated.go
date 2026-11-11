@@ -77,7 +77,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// what's actually wired in (no hand-list to drift).
 	agLazy := func() *agent.Agent { return ag }
 	registry := buildExecRegistry(p, shared.wakeScheduleFn, shared.wakeCancelFn, agLazy)
-	setupUserShell(ag, p, registry, spec.BashDefaultTimeout(backendConfig.Env))
+	setupUserShell(ag, p, registry)
 	ag.ResultSummariser = newBatchSummariser(p, agLazy)
 
 	// Build auto-approve rules from resolved config. bakedPerms is the same

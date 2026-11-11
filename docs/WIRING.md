@@ -2608,14 +2608,7 @@ A typed `!cmd` runs a shell command as the agent, and the output starts the agen
 
 **Running (`shell.UserRunner`).** `Run` calls `runForeground`, the one function that also runs the shell tool's foreground commands: operator user, the agent's workspace, process-group kill on cancel or timeout, `spill.Writer` capture, secret scrubbing. Set up by `setupUserShell` for every backend. Differences from the shell tool, by Dick's ruling: blocked paths are not checked and `sleep` is not refused; the `{{secret:}}` refusal (`checkSecretTemplates`) stays. A spilled file is rewritten scrubbed (`scrubFile`, bounded memory, 64 KiB overlap). **Known gap: codex's own sandbox is not applied to `!` commands.**
 
-**Timeout (`usercmd.APITimeout`, `delegator.Spec.BashDefaultTimeout`), the default foreground timeout of the agent's own Bash tool:**
-
-| Backend | Timeout |
-|---|---|
-| API | `[tools] exec_default_timeout` (built-in 30 s) |
-| Claude Code | `BASH_DEFAULT_TIMEOUT_MS` from `backend_config.env`, else 120 s |
-| codex | 10 s (`DEFAULT_EXEC_COMMAND_TIMEOUT_MS`, codex-rs `core/src/exec.rs`) |
-| opencode | `OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS` from `backend_config.env`, else 120 s |
+**Timeout (#3045).** `[tools] user_command_timeout`, a Go duration, default 15 minutes, the same on every backend (it does not follow the agent's own shell tool default). `usercmd.Timeout` parses it; `applyUserCommandTimeout` stores it in the process-wide `userCommandTimeoutNs` at startup and from its live applier (`liveApplyUserCommandTimeoutAddrs`), and every agent's `UserRunner.Timeout` reads it at each run, so an edit reaches the next command without a restart. A run already going keeps the limit it started with. Validation rejects an unparsable or non-positive value. Nothing else limits a run: the app hub runs it under the gateway's context (a client disconnect does not stop it), and the app has no timer of its own.
 
 **What the agent gets (`Agent.RunUserCommand`, `EnqueueUserCommandResult`).** Output under `max_result_chars` in full; over it, `guardToolResult` (the API shell tool's code) gives the saved path plus a summary, or the pointer fallback. A delegated agent has no API client, so its summary runs on its own backend (`Agent.ResultSummariser`, the batch summariser `foci_summary` uses). The message is an ordinary `Enqueue`, so mid-turn it joins the context like any queued message. `Automated` keeps it out of the typed-answer captures: a command's output never answers a pending ask.
 
