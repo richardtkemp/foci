@@ -765,9 +765,12 @@ type ProviderDeps struct {
 	SecretStore  *secrets.Store
 	Sessions     *session.Store
 	SessionIndex *session.SessionIndex
-	STTMap       map[string]voice.STT
 	Ctx          context.Context
-	ResolveSTT   func(map[string]voice.STT, []config.STTConfig, string, map[string]string) voice.STT
+	// ResolveSTT returns the transcriber for an [[stt]] id ("" = the default)
+	// with the given word replacements. It resolves the live [[stt]] build at
+	// every transcription (#3042), so it is never nil itself: ask
+	// voice.STTConfigured whether it can transcribe now.
+	ResolveSTT func(sttID string, replacements map[string]string) voice.STT
 
 	// SpeechSources lists the voices the app may ask for by name, and SpeechTTS
 	// returns one of them, with no fallback chain, for an agent (#2858). nil = no

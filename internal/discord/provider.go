@@ -75,7 +75,6 @@ func (p *discordProvider) SetupAgentConnection(params platform.AgentConnectionPa
 		SessionIndex:      p.deps.SessionIndex,
 		ToolDetailStore:   p.toolDetailStore,
 		STT:               params.STT,
-		STTMap:            p.deps.STTMap,
 		Ctx:               p.deps.Ctx,
 		ResolveSTT:        p.deps.ResolveSTT,
 		ReclaimHook:       params.ReclaimHook,

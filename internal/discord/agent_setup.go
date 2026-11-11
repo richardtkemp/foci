@@ -75,7 +75,6 @@ type AgentSetupParams struct {
 	SessionIndex    *session.SessionIndex
 	ToolDetailStore *tooldetail.Store
 	STT             voice.STT
-	STTMap          map[string]voice.STT
 	Ctx             context.Context //nolint:containedctx
 
 	// ReclaimHook is called when a facet session is reclaimed.
@@ -84,8 +83,9 @@ type AgentSetupParams struct {
 	// DisplayOverrideFn returns per-session display overrides.
 	DisplayOverrideFn func(sessionKey string) platform.DisplaySettings
 
-	// ResolveSTT resolves the STT provider for a given agent config.
-	ResolveSTT func(sttMap map[string]voice.STT, sttEntries []config.STTConfig, agentSTT string, replacements map[string]string) voice.STT
+	// ResolveSTT returns the live transcriber for an [[stt]] id (see
+	// platform.ProviderDeps.ResolveSTT).
+	ResolveSTT func(sttID string, replacements map[string]string) voice.STT
 
 	// Resolved holds the pre-merged agent+global config.
 	Resolved *config.ResolvedAgentConfig

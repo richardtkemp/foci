@@ -428,12 +428,13 @@ func TestLiveApply_RestartRequiredWarns(t *testing.T) {
 // TestLiveApplyCoversLiveObjectSections is TestLiveApplyCoversHotFields for
 // object-list sections: an ObjectFieldSpec marked Live tells the app editor
 // "no restart needed", so it must have an applier at its bare section address,
-// and a restart-required one must not. main registers the [[tts]] applier
-// beside registerLiveAppliers, so this does too.
+// and a restart-required one must not. main registers the [[tts]] and [[stt]]
+// appliers beside registerLiveAppliers, so this does too.
 func TestLiveApplyCoversLiveObjectSections(t *testing.T) {
 	la := newLiveApply("", nil)
 	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{}))
 	registerTTSLiveApplier(la, newTTSRegistry(&config.Config{}, newTestStore(t, nil)), nil)
+	registerSTTLiveApplier(la, newSTTRegistry(&config.Config{}, newTestStore(t, nil)), nil)
 	for _, spec := range config.ObjectFields() {
 		has := la.appliers[spec.Section] != nil
 		if spec.Live && !has {

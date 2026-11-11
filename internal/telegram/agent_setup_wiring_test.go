@@ -55,7 +55,7 @@ func setupAgentFixture(t *testing.T) AgentSetupParams {
 		SecretStore:  store,
 		Ctx:          context.Background(),
 		Resolved:     config.Resolve(cfg, acfg),
-		ResolveSTT: func(map[string]voice.STT, []config.STTConfig, string, map[string]string) voice.STT {
+		ResolveSTT: func(string, map[string]string) voice.STT {
 			return fakeSTT{}
 		},
 	}

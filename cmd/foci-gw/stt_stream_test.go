@@ -16,7 +16,8 @@ func TestInitSTT_StreamingEntryIsNotBatch(t *testing.T) {
 		{ID: "groq", Format: "openai", Endpoint: "https://api.groq.com/openai/v1/audio/transcriptions", Replacements: map[string]string{"x": "groq-repl"}},
 	}}
 	store := newTestStore(t, map[string]string{"groq.api_key": "g", "deepgram.api_key": "d"})
-	m := initSTT(cfg, store)
+	b := newSTTRegistry(cfg, store).current()
+	m := b.batch
 	if _, ok := m["flux"]; ok {
 		t.Error("the flux entry is in the batch map")
 	}
@@ -29,7 +30,7 @@ func TestInitSTT_StreamingEntryIsNotBatch(t *testing.T) {
 		t.Errorf("default replacements = %+v, want the groq entry's", r)
 	}
 
-	sp := initSTTStream(cfg, store)
+	sp := b.stream
 	if sp == nil {
 		t.Fatal("no stream provider from a flux entry with deepgram.api_key")
 	}
@@ -41,10 +42,10 @@ func TestInitSTT_StreamingEntryIsNotBatch(t *testing.T) {
 
 func TestInitSTTStream_NoKeyIsOff(t *testing.T) {
 	cfg := &config.Config{STT: []config.STTConfig{{ID: "flux", Format: config.STTFormatDeepgramFlux}}}
-	if sp := initSTTStream(cfg, newTestStore(t, nil)); sp != nil {
+	if sp := newSTTRegistry(cfg, newTestStore(t, nil)).Stream(); sp != nil {
 		t.Errorf("stream provider built with no key: %+v", sp)
 	}
-	if sp := initSTTStream(&config.Config{}, newTestStore(t, nil)); sp != nil {
+	if sp := newSTTRegistry(&config.Config{}, newTestStore(t, nil)).Stream(); sp != nil {
 		t.Error("stream provider built with no streaming entry")
 	}
 }

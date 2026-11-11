@@ -84,7 +84,6 @@ func (p *telegramProvider) SetupAgentConnection(params platform.AgentConnectionP
 		SessionIndex:      p.deps.SessionIndex,
 		ToolDetailStore:   p.toolDetailStore,
 		STT:               params.STT,
-		STTMap:            p.deps.STTMap,
 		Ctx:               p.deps.Ctx,
 		ResolveSTT:        p.deps.ResolveSTT,
 		ReclaimHook:       params.ReclaimHook,
@@ -104,7 +103,7 @@ func (p *telegramProvider) SetupSharedFacet(params platform.SharedFacetParams) {
 
 	cmds, _ := params.FirstCommands.(*command.Registry)
 	firstACfg := params.FirstAgentConfig
-	sharedSTT := p.deps.ResolveSTT(p.deps.STTMap, cfg.STT, config.DerefStr(firstACfg.Voice.STT), voice.MergeReplacements(cfg.Voice.STTReplacements, firstACfg.Voice.STTReplacements))
+	sharedSTT := p.deps.ResolveSTT(config.DerefStr(firstACfg.Voice.STT), voice.MergeReplacements(cfg.Voice.STTReplacements, firstACfg.Voice.STTReplacements))
 
 	for _, botName := range tgPlat.FacetBots {
 		facetToken := config.ResolveBotToken(botName, "", p.deps.SecretStore)

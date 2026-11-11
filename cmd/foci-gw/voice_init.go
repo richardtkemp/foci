@@ -44,11 +44,10 @@ func voiceHTTPOpts(cfg *config.Config) voice.HTTPOpts {
 }
 
 // initVoice sets up the TTS voices and the STT providers from the [[tts]] and
-// [[stt]] config arrays. The STT map is keyed by entry ID, the first entry also
-// keyed as "" (default). The TTS voices live in a registry that a [[tts]] edit
-// rebuilds (#2942).
-func initVoice(cfg *config.Config, store *secrets.Store) (*ttsRegistry, map[string]voice.STT) {
-	return newTTSRegistry(cfg, store), initSTT(cfg, store)
+// [[stt]] config arrays. Each lives in a registry that an edit to its section
+// rebuilds ([[tts]] #2942, [[stt]] #3042).
+func initVoice(cfg *config.Config, store *secrets.Store) (*ttsRegistry, *sttRegistry) {
+	return newTTSRegistry(cfg, store), newSTTRegistry(cfg, store)
 }
 
 // buildTTSProviders builds one provider per [[tts]] entry, keyed by entry ID.
@@ -81,16 +80,15 @@ func buildTTSProviders(entries []config.TTSConfig, store *secrets.Store, httpOpt
 	return ttsMap
 }
 
-// initSTT builds the batch STT providers from [[stt]]. They are restart-only.
-// A streaming entry (deepgram-flux, #3018) is not a batch provider: it is
-// left out here and built by initSTTStream, and the default ("") is the first
-// batch entry.
-func initSTT(cfg *config.Config, store *secrets.Store) map[string]voice.STT {
+// buildSTTBatch builds the batch STT providers from [[stt]] entries, keyed by
+// entry id; the first batch entry is also keyed "" (the default). A streaming
+// entry (deepgram-flux, #3018) is not a batch provider: it is left out here
+// and built by buildSTTStream.
+func buildSTTBatch(entries []config.STTConfig, store *secrets.Store, httpOpts voice.HTTPOpts) map[string]voice.STT {
 	sttMap := make(map[string]voice.STT)
-	httpOpts := voiceHTTPOpts(cfg)
 
 	first := true
-	for i, entry := range cfg.STT {
+	for i, entry := range entries {
 		if entry.Streaming() {
 			continue
 		}
@@ -112,19 +110,19 @@ func initSTT(cfg *config.Config, store *secrets.Store) map[string]voice.STT {
 }
 
 // sttStreamProvider is the streaming STT for hands-free voice input (#3018):
-// the first streaming [[stt]] entry that built. The provider is restart-only
-// like every [[stt]] entry; its end-of-turn settings are read from the
+// the first streaming [[stt]] entry that built. It is part of an [[stt]]
+// build (sttRegistry, #3042); its end-of-turn settings are read from the
 // agent's live voice config each time a stream opens.
 type sttStreamProvider struct {
 	entry config.STTConfig
 	stt   voice.StreamingSTT
 }
 
-// initSTTStream builds the streaming provider from the first streaming [[stt]]
-// entry, or returns nil when there is none or it cannot build (one startup
-// warning, e.g. a missing deepgram.api_key).
-func initSTTStream(cfg *config.Config, store *secrets.Store) *sttStreamProvider {
-	for i, entry := range cfg.STT {
+// buildSTTStream builds the streaming provider from the first streaming [[stt]]
+// entry, or returns nil when there is none or it cannot build (one warning per
+// build, e.g. a missing deepgram.api_key).
+func buildSTTStream(entries []config.STTConfig, store *secrets.Store) *sttStreamProvider {
+	for i, entry := range entries {
 		if !entry.Streaming() {
 			continue
 		}
@@ -288,7 +286,7 @@ func resolveSTT(sttMap map[string]voice.STT, sttEntries []config.STTConfig, sttI
 		return stt
 	}
 	// Find entry replacements. The default is the first batch entry: a
-	// streaming entry is never the batch default (initSTT).
+	// streaming entry is never the batch default (buildSTTBatch).
 	var entryRepls map[string]string
 	if sttID == "" {
 		for _, e := range sttEntries {
@@ -307,31 +305,6 @@ func resolveSTT(sttMap map[string]voice.STT, sttEntries []config.STTConfig, sttI
 	}
 	merged := voice.MergeReplacements(entryRepls, replacements)
 	return voice.WrapSTT(stt, merged)
-}
-
-// lazySTT re-resolves the underlying voice.STT on every call instead of once
-// at setup, so voice.stt changes propagate without a restart (unlike
-// resolveSTT's normal callers, which bake the result in at connection setup —
-// see setupPlatformConnections's STT/TTS wiring, #1224).
-type lazySTT struct {
-	resolve func() voice.STT
-}
-
-func (l *lazySTT) Transcribe(ctx context.Context, audioData []byte, filename string) (string, error) {
-	stt := l.resolve()
-	if stt == nil {
-		return "", fmt.Errorf("no STT provider configured")
-	}
-	return stt.Transcribe(ctx, audioData, filename)
-}
-
-// STTCredential resolves the live provider and delegates, so /app/stt issues a
-// snapshot of exactly the provider the NEXT Transcribe would use — including
-// after a hot voice.stt change. A resolution that currently has no provider
-// yields the zero credential (CredentialOf reports nothing to issue).
-func (l *lazySTT) STTCredential() voice.STTCredential {
-	cred, _ := voice.CredentialOf(l.resolve())
-	return cred
 }
 
 // lazyTTS re-resolves the underlying voice.TTS on every call instead of once

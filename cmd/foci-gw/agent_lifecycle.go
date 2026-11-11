@@ -22,7 +22,6 @@ import (
 	"foci/internal/provision"
 	"foci/internal/session"
 	"foci/internal/skills"
-	"foci/internal/voice"
 )
 
 // agentEnv is everything one agent's build needs from the running gateway.
@@ -37,8 +36,7 @@ type agentEnv struct {
 	sec             secretsResult
 	mem             *memorySystem
 	tts             *ttsRegistry
-	sttMap          map[string]voice.STT
-	sttStream       *sttStreamProvider
+	stt             *sttRegistry
 	braveKey        string
 	gwSocketPath    string
 	skillLoader     *skills.Loader
@@ -113,8 +111,7 @@ func (e *agentEnv) buildAgent(acfg config.AgentConfig) *agentInstance {
 		taskListStore:   am.taskList,
 		sessionIndex:    e.si.sessionIndex,
 		tts:             e.tts,
-		sttMap:          e.sttMap,
-		sttStream:       e.sttStream,
+		stt:             e.stt,
 		braveKey:        e.braveKey,
 		gwSocketPath:    e.gwSocketPath,
 		skillLoader:     e.skillLoader,

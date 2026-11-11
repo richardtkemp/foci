@@ -17,6 +17,7 @@ import (
 	"foci/internal/session"
 	"foci/internal/tools"
 	"foci/internal/usercmd"
+	"foci/internal/voice"
 )
 
 // sendRaw queues a socket-level (non-conversation-scoped) server frame, such as
@@ -1272,7 +1273,7 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 // transport's default (#1436). False when there was nothing to transcribe, no
 // transcriber, or the transcription failed/errored.
 func (h *Hub) transcribeVoice(conn *appConn, text string, atts []platform.Attachment) (string, []platform.Attachment, bool) {
-	if conn.stt == nil || len(atts) == 0 {
+	if len(atts) == 0 || !voice.STTConfigured(conn.stt) {
 		return text, atts, false
 	}
 	ctx := h.deps.Ctx

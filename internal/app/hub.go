@@ -476,7 +476,7 @@ func (h *Hub) caps() fap.Caps {
 	}
 	h.mu.RLock()
 	for _, conn := range h.agents {
-		if conn.stt != nil {
+		if voice.STTConfigured(conn.stt) {
 			c.Features = append(c.Features, "voice")
 			break
 		}

@@ -33,7 +33,7 @@ type httpHandlerDeps struct {
 	cfg               *config.Config
 	ctx               context.Context
 	tts               *ttsRegistry
-	sttMap            map[string]voice.STT
+	stt               *sttRegistry
 	connMgr           platform.ConnectionManager
 	reloadCredentials func() error
 	pprofGate         *atomic.Bool // live-toggle gate for /debug/pprof/*
@@ -196,8 +196,19 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 	))
 
 	endpointList := "/send, /status, /command, /todo/done, /branch, /webhook/{agent}/{hookid}, /config/request"
-	if d.cfg.HTTP.WSEnabled && len(d.sttMap) > 0 {
-		mux.HandleFunc("/voice", voice.Handler(buildVoiceConfig(d)))
+	if d.cfg.HTTP.WSEnabled && d.stt != nil {
+		// Registered whenever the WebSocket is on: [[stt]] is live (#3042),
+		// so an STT provider can appear or go after startup. Each connection
+		// is refused while none is configured.
+		voiceCfg := buildVoiceConfig(d)
+		voiceWS := voice.Handler(voiceCfg)
+		mux.HandleFunc("/voice", func(w http.ResponseWriter, r *http.Request) {
+			if !voice.STTConfigured(voiceCfg.STT) {
+				http.Error(w, "no speech-to-text configured", http.StatusServiceUnavailable)
+				return
+			}
+			voiceWS(w, r)
+		})
 		endpointList += ", /voice (ws)"
 		httpLog.Infof("/voice WebSocket endpoint enabled")
 	}

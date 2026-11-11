@@ -358,21 +358,14 @@ func setupPlatformConnections(
 	// (tts_replacements/stt_replacements) stay static — map-field addressability
 	// for them is a separate follow-up.
 	//
-	// sttMap is built once at startup from [[stt]] entries (restart-only), so
-	// the lazy STT adapter is installed only when a provider exists: a
-	// voice.STT interface holding a non-nil *lazySTT is itself non-nil even
-	// when resolve() would return nil, which would break the `transcriber ==
-	// nil` "no provider configured" checks downstream.
-	//
-	// The [[tts]] voices are live (#2942): a [[tts]] edit can add the first
-	// voice or remove the last one. So the lazy TTS adapter is always installed,
-	// and its consumer asks voice.Configured instead of comparing with nil.
+	// The [[tts]] voices (#2942) and the [[stt]] providers (#3042) are live:
+	// an edit can add the first one or remove the last one. So both lazy
+	// adapters are always installed, and their consumers ask voice.Configured
+	// / voice.STTConfigured instead of comparing with nil.
 	var sttParam voice.STT
-	if len(p.sttMap) > 0 {
-		sttParam = &lazySTT{resolve: func() voice.STT {
-			vc := p.resolvedLive.Load().Voice
-			return resolveSTT(p.sttMap, p.cfg.STT, vc.STT, voice.MergeReplacements(p.cfg.Voice.STTReplacements, acfg.Voice.STTReplacements))
-		}}
+	if p.stt != nil {
+		sttParam = p.stt.Live(func() string { return p.resolvedLive.Load().Voice.STT },
+			voice.MergeReplacements(p.cfg.Voice.STTReplacements, acfg.Voice.STTReplacements))
 	}
 	var ttsParam voice.TTS
 	if p.tts != nil {
@@ -381,12 +374,14 @@ func setupPlatformConnections(
 			return p.tts.Resolve(vc.TTSPreference(), vc.TTSRate, ttsRepls)
 		}}
 	}
-	// Hands-free voice input (#3018): resolved per stream, so the stream_*
-	// end-of-turn settings and voice.stt_replacements apply live.
+	// Hands-free voice input (#3018): resolved per stream, so the provider
+	// ([[stt]], #3042), the stream_* end-of-turn settings and
+	// voice.stt_replacements apply live. A build with no streaming provider
+	// resolves to an empty setup (hands-free off).
 	var sttStreamParam func() voice.StreamSetup
-	if p.sttStream != nil {
+	if p.stt != nil {
 		sttStreamParam = func() voice.StreamSetup {
-			return p.sttStream.setup(p.resolvedLive.Load().Voice, voice.MergeReplacements(p.cfg.Voice.STTReplacements, acfg.Voice.STTReplacements))
+			return p.stt.Stream().setup(p.resolvedLive.Load().Voice, voice.MergeReplacements(p.cfg.Voice.STTReplacements, acfg.Voice.STTReplacements))
 		}
 	}
 	results := p.plat.SetupAgentConnection(platform.AgentConnectionParams{

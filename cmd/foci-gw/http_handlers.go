@@ -871,7 +871,7 @@ func buildVoiceConfig(d httpHandlerDeps) voice.HandlerConfig {
 			msgs, err := d.sessions.Load(key)
 			return err == nil && msgs != nil
 		},
-		STT: resolveSTT(d.sttMap, d.cfg.STT, "", d.cfg.Voice.STTReplacements),
+		STT: d.stt.Live(nil, d.cfg.Voice.STTReplacements),
 		AgentTTS: func(agentID string) voice.TTS {
 			inst, ok := d.agents.Get(agentID)
 			if !ok {

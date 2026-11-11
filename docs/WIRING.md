@@ -153,10 +153,10 @@ procx.PassOpenFileLimitToChildren()                       ← internal/procx, ri
 
 → warnMissingSecrets(cfg, sec.store) / warnStreamOutputWithoutStreaming(cfg)   ← warn_secrets.go / warn_streaming.go; startup config-sanity WARNs, non-fatal
 
-→ initVoice(cfg, sec.store)                              ← voice_init.go; builds the STT provider map (restart-only) and the `*ttsRegistry` of live [[tts]] voices (tts_registry.go, #2942: every speaking path reads the current build once per request; `registerTTSLiveApplier` rebuilds it on a `tts` edit), shared by voice WS + send_to_chat TTS + app voice-mode replies, plus the built-in `edge-tts` provider every chain ends at (#1808; chains are in priority order since #2974) (#1439: a trigger=voice app turn's reply is TTS'd into a fap.Media{VoiceMode:true} attachment, bundled with the text. #1444: synthesized PER user-facing text block — one clip per app bubble, not one per turn — since a turn's FinalText is the ccstream backend's whole-turn accumulation; text passes through voice.NormalizeForSpeech first to strip markdown/symbols that mangle TTS. #2985: each clip is sent AFTER the text segment it reads, carrying that segment's messageId as `textMessageId` (appBackend.Deliver records it in `lastMsgID`; appSink clears it before forwarding a text event and reads it after), so the app draws the clip inside that text's bubble; an unlinked clip, e.g. from an older server, stays its own row. #1809: a failed synthesis stages a short reason on appBackend.voiceUnavailable, which Deliver carries as `voiceUnavailable` on that bubble's text.end/message frame so the client can mark it — rate-limit wait or generic "TTS provider error", never the raw error)
+→ initVoice(cfg, sec.store)                              ← voice_init.go; builds the `*sttRegistry` of live [[stt]] providers (stt_registry.go, #3042: batch and hands-free, resolved per transcription/stream; `registerSTTLiveApplier` rebuilds it on an `stt` edit, and a changed secrets key rebuilds it at the next use) and the `*ttsRegistry` of live [[tts]] voices (tts_registry.go, #2942: every speaking path reads the current build once per request; `registerTTSLiveApplier` rebuilds it on a `tts` edit), shared by voice WS + send_to_chat TTS + app voice-mode replies, plus the built-in `edge-tts` provider every chain ends at (#1808; chains are in priority order since #2974) (#1439: a trigger=voice app turn's reply is TTS'd into a fap.Media{VoiceMode:true} attachment, bundled with the text. #1444: synthesized PER user-facing text block — one clip per app bubble, not one per turn — since a turn's FinalText is the ccstream backend's whole-turn accumulation; text passes through voice.NormalizeForSpeech first to strip markdown/symbols that mangle TTS. #2985: each clip is sent AFTER the text segment it reads, carrying that segment's messageId as `textMessageId` (appBackend.Deliver records it in `lastMsgID`; appSink clears it before forwarding a text event and reads it after), so the app draws the clip inside that text's bubble; an unlinked clip, e.g. from an older server, stays its own row. #1809: a failed synthesis stages a short reason on appBackend.voiceUnavailable, which Deliver carries as `voiceUnavailable` on that bubble's text.end/message frame so the client can mark it — rate-limit wait or generic "TTS provider error", never the raw error)
 → newSpeechCatalog(cfg, ttsVoices, sec.store, agents)            ← cmd/foci-gw/speech.go (#2858); reads the live [[tts]] build per call (#2942); read-to-me voices for the app: `ProviderDeps.SpeechSources` feeds `hello.caps.speech` (names and kinds only, in `[[tts]]` priority order via `config.TTSOrder`, built-in last, so the app's default ladder matches the server's order; per-agent `voice.tts`/`tts_order` do not apply, the list is per connection), `ProviderDeps.SpeechTTS` gives POST /app/speech ONE provider per request, with no fallback chain. The app's own per-device ladder picks the next voice. No turn, no model, no message
 
-→ gwLiveApply = newLiveApply(configPath)                 ← liveapply.go; hot-config-reload registry (created early, appliers registered later via registerLiveAppliers after agent setup — see below; the [[tts]] applier, registerTTSLiveApplier, is registered right here, #2942). Apply re-reads foci.toml through loadGatewayConfig = config.Load + config.ApplyProviderDefaults, the same platform-default layer startup applies, so a live edit resolves platform fields (e.g. the app's `show_tool_calls` default `off`) exactly as boot does (#2749)
+→ gwLiveApply = newLiveApply(configPath)                 ← liveapply.go; hot-config-reload registry (created early, appliers registered later via registerLiveAppliers after agent setup — see below; the [[tts]] and [[stt]] appliers, registerTTSLiveApplier and registerSTTLiveApplier, are registered right here, #2942/#3042). Apply re-reads foci.toml through loadGatewayConfig = config.Load + config.ApplyProviderDefaults, the same platform-default layer startup applies, so a live edit resolves platform fields (e.g. the app's `show_tool_calls` default `off`) exactly as boot does (#2749)
 
    Shared resources (created once in main.go):
    → platform.InitMessaging(cfg, deps)                      ← initialises all registered providers (telegram, discord, slack via blank imports)
@@ -3254,11 +3254,13 @@ frames, so it refreshes whenever the roster does; no dedicated frame type.
 **Hands-free voice relay (`GET /app/stt/stream?agentId=<id>`, WebSocket, #3018):**
 the app streams its microphone (raw PCM16 LE mono 16 kHz, binary frames) and
 foci relays it to the agent's streaming STT, so the provider key never leaves
-the server. Startup: `initSTTStream` (`cmd/foci-gw/voice_init.go`) builds a
+the server. `buildSTTStream` (`cmd/foci-gw/voice_init.go`) builds a
 `voice.FluxSTT` from the first `[[stt]]` entry with `format = "deepgram-flux"`
-(`initSTT` leaves streaming entries out of the batch map and its default);
+(`buildSTTBatch` leaves streaming entries out of the batch map and its default),
+as part of each `sttRegistry` build (live [[stt]], #3042, below);
 `setupPlatformConnections` passes `AgentConnectionParams.STTStream`, a closure
-that resolves a `voice.StreamSetup` per stream: the entry's and the agent's
+that resolves a `voice.StreamSetup` per stream from `sttRegistry.Stream()` (an
+empty setup when the current build has no streaming provider): the entry's and the agent's
 `stt_replacements` (`voice.WrapStreamingSTT`) and the `[voice] stream_*`
 end-of-turn settings read from `resolvedLive`, so those apply live. The hub
 stores it as `appConn.sttStream`; `hello.caps.features` carries `sttStream`
@@ -3294,10 +3296,10 @@ one is refused). `ServeSTT` (hub.go) answers `200 application/json` with
 `STTCredentialer` capability (`internal/voice/credential.go`), delegated by
 `ReplacingSTT` and the gateway's `lazySTT`, never re-read from config — so the
 client and `transcribeVoice` can never disagree on endpoint, model or key, and
-a hot `voice.stt` change reaches the next fetch. The key is the one
-`resolveVoiceAPIKey` resolved at startup (identical to the server's own
-transcription key), so a `secrets.toml` rotation reaches `/app/stt` only after
-a restart — exactly when it reaches the server's own calls. `format` names the
+a hot `voice.stt` or `[[stt]]` change reaches the next fetch. The key is the one
+`resolveVoiceAPIKey` resolved for the current `sttRegistry` build (identical to
+the server's own transcription key); a `secrets.toml` rotation rebuilds it at the
+next use (#3042), so `/app/stt` and the server's own calls change key together. `format` names the
 request shape the client must build; `openai-multipart` (multipart POST, audio
 in `fileField`=`file`, model in `modelField`=`model`, Bearer key) is the only
 shape `NewSTT` can build today — the constants `OpenAISTT.Transcribe` itself
@@ -3486,6 +3488,8 @@ Telegram voice note → downloadFile(voice.FileID) → voice.Transcriber.Transcr
 
 API key resolved via `secret` field in `[[stt]]` config or auto-detected from endpoint hostname.
 
+**Live [[stt]] (#3042).** The providers are one immutable build (`sttBuild`: the entries, the API key each resolved to, the batch providers keyed by id with `""` the first batch entry, and the hands-free stream provider) held in `sttRegistry` (`cmd/foci-gw/stt_registry.go`), built by `initVoice`. Like `[[tts]]`, `[[stt]]` applies at the bare section address `stt` (`liveApplySTTAddrs`, an `objectFieldSpecs` entry marked Live, so the app editor edits it too); `registerSTTLiveApplier` `Configure`s a new build from the fresh config, swaps it in and calls `app.NotifySpeechSourcesChanged` so connected apps get a `hello` whose `voice`/`sttStream` features match. Every transcribing path resolves the current build once per transcription or stream: the bot-connection `lazySTT` from `sttRegistry.Live` (app uploads, `/app/stt`, telegram/discord through `ProviderDeps.ResolveSTT` = `sttRegistry.LiveFor`), the voice WS `HandlerConfig.STT`, and the `STTStream` closure. `lazySTT` is installed even with no `[[stt]]` and answers `voice.STTConfigured`, which the hub's `voice` feature, `transcribeVoice` and telegram's voice-note branch check instead of `== nil`; `/voice` is registered whenever `ws_enabled` and refuses a connection (503) while none is configured. `sttRegistry.current` compares each entry's key now (`resolveVoiceAPIKey`; the secrets store re-reads a changed file) with the one it built with and rebuilds on a difference, so a secrets.toml key edit applies at the next use; that path sends no `hello`. The `[voice]` HTTP timeout/cap are read once at startup and reused by every rebuild (restart-only).
+
 **Outbound (TTS):**
 TTS via send_to_chat — the agent can call `send_to_chat(text="...", send_as="voice")` to synthesize speech and send a voice note.
 
@@ -3542,7 +3546,7 @@ audio_start{sample_rate} → binary frames (raw PCM) → audio_end
 
 **Write failures (#2761):** every write goes through `conn.writeFailed` on error: the first failure logs at Warn and closes the socket, which ends the read loop, cancels in-flight work and lets the client reconnect. A failure on `transcription` or `response_start` drops the turn before the agent call; a failure on `response_text` logs `reply lost` and skips TTS. A write the kernel accepted for a peer that is already gone cannot be seen here; the 60s pong deadline catches that case.
 
-**Wiring in `main.go`:** Callback-based (`HandlerConfig`) — `ListAgents` reads the agent registry (`agentRegistry.All`, so a hot-added agent is listed), `HandleMessage` calls `inst.ag.HandleMessage` with `voice` trigger, `AgentTTS` resolves per-agent TTS via `ttsRegistry.Resolve(vc.TTSPreference(), agentRate, replacements)` over the live [[tts]] build which also wraps with word replacements (entry → `[voice]` → per-agent `[voice]`, merged). Gate: `cfg.HTTP.WSEnabled && len(sttMap) > 0`.
+**Wiring in `main.go`:** Callback-based (`HandlerConfig`) — `ListAgents` reads the agent registry (`agentRegistry.All`, so a hot-added agent is listed), `HandleMessage` calls `inst.ag.HandleMessage` with `voice` trigger, `AgentTTS` resolves per-agent TTS via `ttsRegistry.Resolve(vc.TTSPreference(), agentRate, replacements)` over the live [[tts]] build which also wraps with word replacements (entry → `[voice]` → per-agent `[voice]`, merged). Gate: `cfg.HTTP.WSEnabled` registers the route; each connection is refused (503) while `voice.STTConfigured(HandlerConfig.STT)` is false (live [[stt]], #3042).
 
 ## Facet (`platform/botpool.go`, `telegram/manager.go`, `telegram/bot.go`)
 

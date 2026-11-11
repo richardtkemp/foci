@@ -470,7 +470,7 @@ func mapKeys(m map[string]voice.TTS) []string {
 }
 
 // mustTTSMap is the provider map of initVoice's current [[tts]] build.
-func mustTTSMap(reg *ttsRegistry, _ map[string]voice.STT) map[string]voice.TTS {
+func mustTTSMap(reg *ttsRegistry, _ *sttRegistry) map[string]voice.TTS {
 	return reg.Voices().providers
 }
 

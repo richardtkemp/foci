@@ -13,6 +13,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/timeutil"
 	"foci/internal/usercmd"
+	"foci/internal/voice"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -200,7 +201,8 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 
 	// Handle voice notes: download, transcribe, tag with [voice]
 	isVoice := false
-	if msg.Voice != nil && b.transcriber != nil {
+	hasSTT := voice.STTConfigured(b.transcriber)
+	if msg.Voice != nil && hasSTT {
 		if data, err := b.downloadFile(msg.Voice.FileId); err != nil {
 			b.logger().Errorf("download voice: %s", b.sanitizeError(err))
 			if b.handler == nil || b.handler.Warnings() == nil || !b.handler.Warnings().Enabled() {
@@ -217,7 +219,7 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 			text = "[voice] " + transcript
 			isVoice = true
 		}
-	} else if msg.Voice != nil && b.transcriber == nil {
+	} else if msg.Voice != nil && !hasSTT {
 		b.sendReply(msg, "Voice notes require an STT provider. Set groq.api_key in secrets.toml or configure [voice] stt_endpoint.")
 		return queuedMessage{}, false
 	}

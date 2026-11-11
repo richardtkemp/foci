@@ -327,7 +327,7 @@ Subcommands:
 
 	// ========== Voice providers ==========
 	braveKey, _ := sec.store.Get("brave.api_key")
-	ttsVoices, sttMap := initVoice(cfg, sec.store)
+	ttsVoices, sttProviders := initVoice(cfg, sec.store)
 
 	// ========== Live config-apply ==========
 	// Routes config edits to hot fields into the running process; appliers are
@@ -335,6 +335,7 @@ Subcommands:
 	// are file-only like any restart-required field.
 	gwLiveApply = newLiveApply(configPath, gwConfigProtect)
 	registerTTSLiveApplier(gwLiveApply, ttsVoices, app.NotifySpeechSourcesChanged)
+	registerSTTLiveApplier(gwLiveApply, sttProviders, app.NotifySpeechSourcesChanged)
 
 	// The agent registry is empty until agent setup below; it is made here
 	// because the speech catalog reads each agent's live voice.tts_rate from it.
@@ -347,9 +348,8 @@ Subcommands:
 		SecretStore:   sec.store,
 		Sessions:      si.sessions,
 		SessionIndex:  si.sessionIndex,
-		STTMap:        sttMap,
 		Ctx:           ctx,
-		ResolveSTT:    resolveSTT,
+		ResolveSTT:    sttProviders.LiveFor,
 		SpeechSources: speech.Sources,
 		SpeechTTS:     speech.Provider,
 		ApplyLive:     gwLiveApply.Apply,
@@ -409,8 +409,7 @@ Subcommands:
 		sec:          sec,
 		mem:          mem,
 		tts:          ttsVoices,
-		sttMap:       sttMap,
-		sttStream:    initSTTStream(cfg, sec.store),
+		stt:          sttProviders,
 		braveKey:     braveKey,
 		gwSocketPath: gwSocketPath,
 		// One skill loader shared across every agent so the shared skills
@@ -647,7 +646,7 @@ Subcommands:
 		cfg:               cfg,
 		ctx:               ctx,
 		tts:               ttsVoices,
-		sttMap:            sttMap,
+		stt:               sttProviders,
 		connMgr:           connMgr,
 		reloadCredentials: reloadCreds,
 		pprofGate:         &pprofGate,

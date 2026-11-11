@@ -33,7 +33,6 @@ type AgentSetupParams struct {
 	SessionIndex    *session.SessionIndex
 	ToolDetailStore *tooldetail.Store
 	STT             voice.STT
-	STTMap          map[string]voice.STT
 	Ctx             context.Context //nolint:containedctx
 
 	// ReclaimHook is called when a facet session is reclaimed.
@@ -43,8 +42,9 @@ type AgentSetupParams struct {
 	// See platform.AgentConnectionParams for details.
 	DisplayOverrideFn func(sessionKey string) platform.DisplaySettings
 
-	// ResolveSTT resolves the STT provider for a given agent config.
-	ResolveSTT func(sttMap map[string]voice.STT, sttEntries []config.STTConfig, agentSTT string, replacements map[string]string) voice.STT
+	// ResolveSTT returns the live transcriber for an [[stt]] id (see
+	// platform.ProviderDeps.ResolveSTT).
+	ResolveSTT func(sttID string, replacements map[string]string) voice.STT
 
 	// Resolved holds the pre-merged agent+global config.
 	Resolved *config.ResolvedAgentConfig
@@ -265,7 +265,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 			telegramAPIBaseOf(tg))
 		facetBot.SetAllowedUsersOnly(resolveAllowedUsersOnly(acfg, cfg))
 		ConfigureFacetBot(facetBot, FacetBotConfig{
-			STTProvider:     p.ResolveSTT(p.STTMap, cfg.STT, config.DerefStr(acfg.Voice.STT), voice.MergeReplacements(cfg.Voice.STTReplacements, acfg.Voice.STTReplacements)),
+			STTProvider:     p.ResolveSTT(config.DerefStr(acfg.Voice.STT), voice.MergeReplacements(cfg.Voice.STTReplacements, acfg.Voice.STTReplacements)),
 			AgentConfig:     acfg,
 			GlobalConfig:    cfg,
 			Resolved:        p.Resolved, // static-cfg:ignore: plumbing — see comment on the ConfigureFacetConn call above

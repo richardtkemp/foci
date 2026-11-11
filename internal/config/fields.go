@@ -557,6 +557,14 @@ var objectFieldSpecs = []ObjectFieldSpec{
 		{Key: "local_speed_control", Type: FieldBool, Description: "foci applies the rate itself by stretching the WAV, for an endpoint that ignores speed (openai format, wav only)"},
 		{Key: "replacements", Type: FieldStringMap, Description: "Word replacements applied before synthesis (e.g. foci = foki)"},
 	}},
+	{Section: "stt", Description: "Speech-to-text providers. The first openai-format entry transcribes voice notes by default; the first deepgram-flux entry with a key turns on hands-free voice input", Live: true, Fields: []ObjectSubField{
+		{Key: "id", Type: FieldString, Description: "Provider id, used by per-agent voice.stt"},
+		{Key: "format", Type: FieldString, Description: "openai (transcribes a recording) or deepgram-flux (streams, for hands-free voice input)"},
+		{Key: "endpoint", Type: FieldString, Description: "API URL (deepgram-flux: empty = Deepgram's own)"},
+		{Key: "model", Type: FieldString, Description: "Model name (deepgram-flux: empty = flux-general-en)"},
+		{Key: "secret", Type: FieldString, Description: "Secret name in secrets.toml holding the API key (empty = derived from the endpoint's host)"},
+		{Key: "replacements", Type: FieldStringMap, Description: "Word replacements applied after transcription (e.g. foki = foci)"},
+	}},
 	{Section: "modelinfo", Description: "Model registry overrides — pricing, capabilities, and context window for models not in the built-in registry, or partial overrides of existing ones", Live: true, Fields: []ObjectSubField{ //nolint:dupl // same row shape as [endpoints]' sub-fields, by design
 		{Key: "id", Type: FieldString, Description: "Bare model ID (e.g. 'claude-haiku-4-5'). Overrides existing entry if present, creates new one if not"},
 		{Key: "context_window", Type: FieldInt, Description: "Context window in tokens (required for new models)"},
