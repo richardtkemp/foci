@@ -697,7 +697,7 @@ func (s *Spawner) runDirect(ctx context.Context, host *Spawner, mode, name, prom
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	info := RunningSpawn{ID: newSpawnID(), Name: name, Description: spawnDescription(prompt), Started: time.Now(), Mode: mode, Direct: true,
+	info := RunningSpawn{ID: spawnIDFor(ctx), Name: name, Description: spawnDescription(prompt), Started: time.Now(), Mode: mode, Direct: true,
 		CallerShell: callerShell(CallerPIDFromContext(ctx)), SpawnerUnattended: s.deps.turnUnattended(parent)}
 	owner := parent
 	if host != s {
@@ -1452,7 +1452,7 @@ func (s *Spawner) launchBackground(ctx context.Context, agent SpawnAgent, parent
 	// once still finds it (#2139).
 	spawnCtx, cancel := s.runContext(ctx, running, true)
 	noteSpawnBooking(ctx, running.BranchKey, "", false) // its branch holds its spend (#2992)
-	running.ID = newSpawnID()
+	running.ID = spawnIDFor(ctx)
 	running.Description = spawnDescription(prompt)
 	running.Started = time.Now()
 	if running.Mode == "" {

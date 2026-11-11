@@ -36,6 +36,18 @@ func (s *Spawner) recordSpawnLink(ctx context.Context, caller, name, mode string
 	return context.WithValue(ctx, spawnRecordKey{}, id)
 }
 
+// spawnIDFor returns the id of the spawn link ctx carries, so the running
+// spawn takes the same id as its record (#2996): the app's transcript of a
+// spawn is keyed by the running id (its subagent group key), and Message info
+// names a spawn by its link id, so a finished spawn's row can open its
+// transcript only when the two are one. With no recorded link it mints one.
+func spawnIDFor(ctx context.Context) string {
+	if id, _ := ctx.Value(spawnRecordKey{}).(string); id != "" {
+		return id
+	}
+	return newSpawnID()
+}
+
 // noteSpawnBooking records where the spend of the spawn ctx carries is
 // booked: its own session, its own ledger turn, or the parent turn itself
 // (inParent). No-op for a spawn with no recorded link.
