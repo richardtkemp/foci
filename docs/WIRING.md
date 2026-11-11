@@ -2048,8 +2048,10 @@ carries `originNote`'s "From session …" line. A session whose platform confine
 (Slack) is offered only its own chat.
 
 **Direct API adapter** (`apicall.go`, the backend switched in P2). `APIResponse.Call()`
-makes one response one call: `backend='api'`, key = the provider's response id (else
-`<kind>:<session>@<start nanos>`), `finality='completed'`, cache writes `cache_write_1h`
+makes one response one call: `backend='api'`, key = `<kind>:<session>@<start nanos>`,
+prefixed `<provider response id>@` when the response has one. The provider id alone is not
+unique (#3034: Ollama mints `chatcmpl-<rand.Intn(999)>`, so local calls collided and were
+dropped as duplicates); kept first, a call is still found by `call_key LIKE '<id>@%'`. `finality='completed'`, cache writes `cache_write_1h`
 by the backend rule (`provider.Usage.Tokens`, `class_method='backend_rule'`), billed at
 the request's start, `duration_ms` (and a compaction's `pre_messages`) in detail, provider
 inferred from the model when the caller named none. `accounting.Record(turn, call)`

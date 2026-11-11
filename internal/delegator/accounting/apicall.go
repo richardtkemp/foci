@@ -40,17 +40,21 @@ type APIResponse struct {
 const NoSession = "(none)"
 
 // Call is the response as a ledger call. It is billed at its start, as the
-// pre-ledger rows were stamped. A response with no id — a provider or test
-// double that sets none — is keyed by its session, kind and start instant,
-// which is unique: one session sends one request of a kind at a time.
+// pre-ledger rows were stamped. Its key is foci's own identity for the call —
+// its kind, session and start instant, unique because one session sends one
+// request of a kind at a time — after the provider's response id when there
+// is one. The provider id alone is not unique (#3034): Ollama's
+// OpenAI-compatible server mints chatcmpl-<rand.Intn(999)>, so different
+// calls shared a key and the ledger dropped the later ones. The id stays
+// first, so a call is still found by it (call_key LIKE '<id>@%').
 func (r APIResponse) Call() Call {
 	session := r.Session
 	if session == "" {
 		session = NoSession
 	}
-	key := r.ID
-	if key == "" {
-		key = fmt.Sprintf("%s:%s@%d", r.Kind, session, r.Start.UnixNano())
+	key := fmt.Sprintf("%s:%s@%d", r.Kind, session, r.Start.UnixNano())
+	if r.ID != "" {
+		key = r.ID + "@" + key
 	}
 	detail := map[string]any{"duration_ms": r.Duration.Milliseconds()}
 	if r.PreMessages > 0 {

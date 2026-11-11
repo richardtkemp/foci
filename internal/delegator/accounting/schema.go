@@ -14,7 +14,8 @@ var schemaStmts = []string{
 	// api_calls: one row per API call, on every backend (R3). No cost column:
 	// counts live in call_tokens and cost is computed by the views (R5).
 	//
-	// call_key is the provider's message id, or a stable id the adapter builds;
+	// call_key is the provider's message id, or a stable id the adapter builds
+	// (the direct API's is foci's own call identity after the response id, #3034);
 	// the unique index on (backend, call_key) IS the dedup. It is NULL only on
 	// legacy rows, which sit outside that index. turn_id is NULL only on
 	// overhead calls (R6), which no turn can own.

@@ -48,7 +48,7 @@ func TestZeroCostEndpointBooksAtZero(t *testing.T) {
 		t.Errorf("alarms on a zero_cost endpoint: %+v", *alarms)
 	}
 	var rateModel string
-	if err := l.db.QueryRow(`SELECT rate_model FROM api_calls WHERE call_key = 'local_1'`).Scan(&rateModel); err != nil || rateModel != modelinfo.ZeroCostRateModel {
+	if err := l.db.QueryRow(`SELECT rate_model FROM api_calls WHERE call_key LIKE 'local_1@%'`).Scan(&rateModel); err != nil || rateModel != modelinfo.ZeroCostRateModel {
 		t.Errorf("rate_model = %q (%v), want %q", rateModel, err, modelinfo.ZeroCostRateModel)
 	}
 	rows, err := l.Calls(time.Time{})
@@ -71,7 +71,7 @@ func TestZeroCostEndpointBooksAtZero(t *testing.T) {
 		}
 	}
 	var cost *float64
-	if err := l.db.QueryRow(`SELECT cost_usd FROM call_costs WHERE call_key = 'local_1'`).Scan(&cost); err != nil || cost == nil || *cost != 0 {
+	if err := l.db.QueryRow(`SELECT cost_usd FROM call_costs WHERE call_key LIKE 'local_1@%'`).Scan(&cost); err != nil || cost == nil || *cost != 0 {
 		t.Errorf("call_costs.cost_usd = %v (%v), want 0", cost, err)
 	}
 

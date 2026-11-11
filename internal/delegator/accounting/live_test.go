@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -110,7 +111,7 @@ func TestRecordWithoutALedger(t *testing.T) {
 	if err := Record(apiTurn("gil/c1@1"), c); err != nil {
 		t.Fatal(err)
 	}
-	if len(*seen) != 1 || (*seen)[0].Key != "msg_01" {
+	if len(*seen) != 1 || (*seen)[0].Key != c.Key {
 		t.Errorf("hook saw %+v, want the call", *seen)
 	}
 	bad := c
@@ -149,6 +150,40 @@ func TestAPIResponseCall(t *testing.T) {
 	}
 	if got := apiResponse("x", nil).Call().Provider; got != "anthropic" {
 		t.Errorf("an explicit provider was overridden: %q", got)
+	}
+}
+
+// TestAPIResponseKeyIsUniqueWhenTheServerIDRepeats is #3034: a local
+// OpenAI-compatible server (Ollama mints chatcmpl-<rand.Intn(999)>) reuses
+// response ids, so two different calls with the same server id must get
+// different keys, both be booked, and raise no invSameIDDifferentUsage. The
+// server id stays first in the key, so a lookup by it still works.
+func TestAPIResponseKeyIsUniqueWhenTheServerIDRepeats(t *testing.T) {
+	l, alarms := openLedger(t)
+	useLive(t, l)
+	first := apiResponse("chatcmpl-616", modelinfo.Tokens{modelinfo.ClassInput: 27832, modelinfo.ClassOutput: 884})
+	second := apiResponse("chatcmpl-616", modelinfo.Tokens{modelinfo.ClassInput: 431, modelinfo.ClassOutput: 40})
+	second.Start = t0.Add(48 * time.Hour)
+	other := apiResponse("chatcmpl-616", modelinfo.Tokens{modelinfo.ClassInput: 7})
+	other.Session = "gil/c2"
+	for _, r := range []APIResponse{first, second, other} {
+		c := r.Call()
+		if !strings.HasPrefix(c.Key, "chatcmpl-616@") {
+			t.Errorf("key = %q, want the server id first", c.Key)
+		}
+		if err := Record(apiTurn("gil/c1@1"), c); err != nil {
+			t.Fatalf("Record: %v", err)
+		}
+	}
+	rows, err := l.Calls(time.Time{})
+	if err != nil || len(rows) != 3 {
+		t.Fatalf("calls = %d (%v), want 3: a reused server id must not drop a call", len(rows), err)
+	}
+	if len(*alarms) != 0 {
+		t.Errorf("alarms = %+v, want none", *alarms)
+	}
+	if want := "chatcmpl-616@call:gil/c1@" + itoa(t0.UnixNano()); first.Call().Key != want {
+		t.Errorf("key = %q, want %q", first.Call().Key, want)
 	}
 }
 
