@@ -166,6 +166,7 @@ func TestInbox_InjectGateReleasedByShutdown(t *testing.T) {
 func TestInbox_InjectionRefusedWhenCtxEndsInReloginGate(t *testing.T) {
 	a, cancel := startedAgent(t)
 	a.DelegatedManager = &DelegatedManager{}
+	onCCLogin(a)
 	claimRelogin(t)
 	const sk = "test/s"
 
@@ -252,6 +253,7 @@ func TestInbox_InjectionRefusedWhenCtxEndsInInjectGate(t *testing.T) {
 func TestInbox_HeldInjectRefusedWhenCtxEndsInPostBatchGate(t *testing.T) {
 	a, cancel := startedAgent(t)
 	a.DelegatedManager = &DelegatedManager{} // the re-login hold is delegated-only
+	onCCLogin(a)
 	const sk = "test/s"
 
 	releaseTurn := make(chan struct{})

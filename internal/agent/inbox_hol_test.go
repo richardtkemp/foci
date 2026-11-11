@@ -493,6 +493,7 @@ func TestInbox_HeldInjectRefusedOnceWhenCtxEndsMidRelease(t *testing.T) {
 	be := &mockBackendDT{sessionFile: "/tmp/s.jsonl"}
 	be.setAwaiting(true)
 	a.DelegatedManager = newMockDelegatedManager(t, be)
+	onCCLogin(a)
 
 	// A session key no other test uses, so the worker-exit log line below is
 	// this test's worker's and nobody else's.

@@ -8,7 +8,12 @@ import (
 	"foci/internal/log"
 )
 
-const logComponent = "relogin"
+// LogComponent is the log component of the login's lines: "relogin", and
+// "relogin/<agent>" for an agent's attempt. The gateway routes and drops the
+// login's warnings by it (#2384, #3014).
+const LogComponent = "relogin"
+
+const logComponent = LogComponent
 
 // maxScreenDump caps how much of a captured TUI screen we write to the log on a
 // failure path. Enough to diagnose which state the login screen was actually in

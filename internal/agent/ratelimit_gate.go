@@ -263,9 +263,9 @@ func (a *Agent) SessionRateLimited(sessionKey string) (limited bool, reason stri
 // included: on the dead credential each run would only 401 (#2384 pauses
 // injections the same way; periodic work forks its own backend and passed
 // that pause). It resumes when the login completes. Agents on other backends
-// do not use the login (ReloginTrigger is set only for CapRelogin).
+// do not use the login (UsesCCLogin).
 func (a *Agent) reloginBlocksBackground() (bool, string) {
-	if a.ReloginTrigger == nil || a.DelegatedManager == nil {
+	if !a.UsesCCLogin() {
 		return false, ""
 	}
 	if relogin.G.Active() || relogin.G.Pending() {

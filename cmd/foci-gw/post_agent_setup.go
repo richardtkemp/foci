@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
+	"foci/internal/agent"
 	"foci/internal/app"
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/procx"
+	"foci/internal/relogin"
 	"foci/internal/resources"
 	"foci/internal/tools/tmux"
 	"foci/internal/warnings"
@@ -58,16 +61,35 @@ func (h *warningHook) install() {
 	agents := h.agents
 	log.SetWarnHook(func(level log.Level, component string, msg string) {
 		for _, inst := range agents.All() {
-			if w := inst.ag.Warnings(); w != nil {
-				w.Push(level.String(), component, msg)
-			}
-			if w := inst.ag.ChatWarnings(); w != nil {
-				w.Push(level.String(), component, msg)
-			}
+			pushLogWarning(inst.ag, level, component, msg)
 		}
 	})
 	h.installed = true
 	mainLog.Infof("warning injection enabled")
+}
+
+// pushLogWarning queues one WARN/ERROR log line on ag's agent and chat
+// warning queues. The Claude Code login's own warnings ("relogin",
+// "relogin/<agent>") go only to agents on that login (#3014): those hold them
+// while it is pending and drop them when it succeeds (periodic_setup.go). An
+// agent on another backend is not held by the login and cannot act on them.
+func pushLogWarning(ag *agent.Agent, level log.Level, component, msg string) {
+	if !ag.UsesCCLogin() && isReloginComponent(component) {
+		return
+	}
+	if w := ag.Warnings(); w != nil {
+		w.Push(level.String(), component, msg)
+	}
+	if w := ag.ChatWarnings(); w != nil {
+		w.Push(level.String(), component, msg)
+	}
+}
+
+// isReloginComponent reports whether a log component is the Claude Code
+// login's: "relogin" or "relogin/<agent>", the same match as the drop on
+// success (warnings.Queue.DropComponent).
+func isReloginComponent(component string) bool {
+	return component == relogin.LogComponent || strings.HasPrefix(component, relogin.LogComponent+"/")
 }
 
 // setupTmuxMemoryMonitor starts the tmux memory monitor if tmux is available.

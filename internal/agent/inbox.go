@@ -808,7 +808,7 @@ func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 	// user-typed message guards both, so background and system sources never
 	// cause a repeat.
 	reloginHold := false
-	if a.DelegatedManager != nil && relogin.G.Active() {
+	if a.UsesCCLogin() && relogin.G.Active() {
 		if env.Inject == nil && !env.Automated && env.Steer != platform.SteerNever &&
 			strings.TrimSpace(env.Text) != "" {
 			if relogin.G.CaptureCode(a.AgentID, env.SessionKey, env.Text) {
@@ -1220,18 +1220,30 @@ func (a *Agent) resolveSessionBackend(ctx context.Context, sk string) (delegator
 	return nil, nil
 }
 
-// reloginHoldClosed reports whether a CC re-login is in progress on a
-// delegated agent (#843/#1932): the shared OAuth credential is dead until it
-// completes, so dispatching now would only 401 again. API agents (no
-// DelegatedManager) are never held.
-func (a *Agent) reloginHoldClosed() bool {
-	return a.DelegatedManager != nil && relogin.G.Active()
+// UsesCCLogin reports whether this agent runs on the Claude Code credential
+// that relogin.G guards: a delegated agent whose backend declares CapRelogin
+// (ReloginTrigger is set only then). Only these agents are held by a Claude
+// Code login (#3014, Dick 2026-11-10): API agents and the codex and opencode
+// backends do not use that credential, so a CC login neither holds their
+// messages, pauses their injections, marks them unavailable, nor blocks their
+// background work, and their turns say nothing about whether it works again.
+func (a *Agent) UsesCCLogin() bool {
+	return a.DelegatedManager != nil && a.ReloginTrigger != nil
 }
 
-// reloginPendingAttempt reports, for a delegated agent, the current re-login
-// attempt number and whether a login is pending (#2384). API agents: false.
+// reloginHoldClosed reports whether a CC re-login is in progress on an agent
+// that uses the CC login (#843/#1932): the shared OAuth credential is dead
+// until it completes, so dispatching now would only 401 again. Other agents
+// are never held (UsesCCLogin).
+func (a *Agent) reloginHoldClosed() bool {
+	return a.UsesCCLogin() && relogin.G.Active()
+}
+
+// reloginPendingAttempt reports, for an agent that uses the CC login, the
+// current re-login attempt number and whether a login is pending (#2384).
+// Other agents: false, so their turns never end the pending state (#3014).
 func (a *Agent) reloginPendingAttempt() (uint64, bool) {
-	if a.DelegatedManager == nil {
+	if !a.UsesCCLogin() {
 		return 0, false
 	}
 	return relogin.G.PendingAttempt()
@@ -1261,7 +1273,8 @@ const reloginHeldBy = "\x00relogin"
 
 // DrainReloginDeferred re-enqueues every injection paused while a CC login was
 // pending, on all of this agent's sessions (#2384). Registered with
-// relogin.G.OnComplete for each delegated agent.
+// relogin.G.OnComplete by each agent that uses the CC login, on its first
+// paused injection.
 func (a *Agent) DrainReloginDeferred() {
 	a.inboxesMu.Lock()
 	keys := make([]string, 0, len(a.inboxes))
@@ -1274,13 +1287,13 @@ func (a *Agent) DrainReloginDeferred() {
 	}
 }
 
-// waitReloginGate blocks while a CC re-login is in progress for a delegated
-// agent (#843/#1932). The shared OAuth credential is dead until it completes,
+// waitReloginGate blocks while a CC re-login is in progress for an agent that
+// uses the CC login (#843/#1932, #3014). The shared OAuth credential is dead until it completes,
 // so dispatching now would only 401 again; the envelope is held instead and
 // runs once the gate releases (success or abort — the driver always releases).
 // Event-driven via relogin.G.Released. Returns false if ctx ends while waiting.
 func (a *Agent) waitReloginGate(ctx context.Context, sk string) bool {
-	if a.DelegatedManager == nil {
+	if !a.UsesCCLogin() {
 		return true
 	}
 	if relogin.G.Active() {
@@ -1973,7 +1986,7 @@ func (a *Agent) runInject(inb *sessionInbox, env Envelope) {
 	// still dead. Running this would 401 and start another attempt with a new
 	// sign-in link. Every injection is paused, control ones included (they
 	// drive the same backend); DrainReloginDeferred resumes them.
-	if a.DelegatedManager != nil && relogin.G.Pending() {
+	if a.UsesCCLogin() && relogin.G.Pending() {
 		a.reloginDrainOnce.Do(func() { relogin.G.OnComplete(a.DrainReloginDeferred) })
 		inb.injMu.Lock()
 		inb.deferredInjects = append(inb.deferredInjects, deferredInject{env: env, heldBy: reloginHeldBy})

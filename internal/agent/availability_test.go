@@ -12,6 +12,7 @@ import (
 func TestUnavailable(t *testing.T) {
 	reg := usagehold.New()
 	a := holdAgent(reg, "claude-code")
+	onCCLogin(a)
 	if why, un := a.Unavailable(); un {
 		t.Fatalf("open account: unavailable %q", why)
 	}

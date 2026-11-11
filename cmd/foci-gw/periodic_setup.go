@@ -208,10 +208,11 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 			return sk != "" && inst.ag.IsTurnInFlight(sk)
 		},
 		// A dispatch runs a turn; none may begin once shutdown drains (#2059),
-		// nor on a delegated agent while a CC login is pending (#2384): the
-		// turn would 401 and start another attempt. Warnings stay queued.
+		// nor on an agent on the CC login while that login is pending (#2384):
+		// the turn would 401 and start another attempt. Warnings stay queued.
+		// Agents on other backends do not use the login (#3014).
 		HoldFn: func() bool {
-			return inst.ag.ShuttingDown() || (inst.ag.DelegatedManager != nil && relogin.G.Pending())
+			return inst.ag.ShuttingDown() || (inst.ag.UsesCCLogin() && relogin.G.Pending())
 		},
 		FormatFn: func(body string) string {
 			return prompts.FormatInjectedMessage("PROACTIVE WARNINGS", time.Now(), body)
@@ -233,11 +234,12 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 
 	// Once the login succeeds, the held re-login abort errors are moot: drop
 	// them, and let every other held warning dispatch as normal (Dick's
-	// ruling on #2384). Only delegated agents hold, so only they register.
-	if inst.ag.DelegatedManager != nil {
+	// ruling on #2384). Only agents on the CC login hold, so only they
+	// register (#3014).
+	if inst.ag.UsesCCLogin() {
 		relogin.G.OnComplete(func() {
 			if q := inst.ag.Warnings(); q != nil {
-				if n := q.DropComponent("relogin"); n > 0 {
+				if n := q.DropComponent(relogin.LogComponent); n > 0 {
 					warningLog.Infof("[%s] dropped %d held re-login warning(s): login completed", agentID, n)
 				}
 			}

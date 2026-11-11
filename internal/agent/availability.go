@@ -9,13 +9,14 @@ import (
 
 // Unavailable reports why this agent cannot run a turn now, for a sender that
 // must be told (#2892): a usage hold or stop on its account, or a backend that
-// needs a login. Both are waits: what is queued runs when they end. A dead
-// backend is not here: it shows only when a turn fails.
+// needs a login (only an agent on the Claude Code login, UsesCCLogin, #3014).
+// Both are waits: what is queued runs when they end. A dead backend is not
+// here: it shows only when a turn fails.
 func (a *Agent) Unavailable() (reason string, unavailable bool) {
 	if blocked, why := a.UsageHoldBlocks(false); blocked {
 		return why, true
 	}
-	if a.DelegatedManager != nil && (relogin.G.Active() || relogin.G.Pending()) {
+	if a.UsesCCLogin() && (relogin.G.Active() || relogin.G.Pending()) {
 		return "its backend needs a new login", true
 	}
 	return "", false

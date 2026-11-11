@@ -10,6 +10,15 @@ import (
 	"foci/internal/relogin"
 )
 
+// onCCLogin marks a test agent as one on the Claude Code login, as
+// configureDelegated does for a backend declaring CapRelogin: only such an
+// agent is held by relogin.G (#3014).
+func onCCLogin(a *Agent) {
+	if a.ReloginTrigger == nil {
+		a.ReloginTrigger = func(string, string) bool { return true }
+	}
+}
+
 // claimRelogin claims the process-wide re-login gate for one test and releases
 // it on cleanup, so a failing assertion can never leave it active (or a login
 // pending, #2384) for the next test in the package.
@@ -33,6 +42,7 @@ func TestInbox_Relogin_EnqueueAcceptsAndHolds(t *testing.T) {
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.DelegatedManager = &DelegatedManager{}
+	onCCLogin(a)
 
 	d := &recordingDriver{}
 	a.SetTurnObserver(d.recordBatch)
@@ -61,6 +71,7 @@ func TestInbox_Relogin_HoldsInjection(t *testing.T) {
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.DelegatedManager = &DelegatedManager{}
+	onCCLogin(a)
 
 	claimRelogin(t)
 	var ran atomic.Bool
@@ -88,6 +99,7 @@ func TestInbox_Relogin_InjectionNotCapturedAsCode(t *testing.T) {
 	defer cancel()
 	a.AgentID = "clutch"
 	a.DelegatedManager = &DelegatedManager{}
+	onCCLogin(a)
 
 	claimRelogin(t)
 	relogin.G.OpenCapture("clutch", "", "")
@@ -114,6 +126,7 @@ func TestInbox_Relogin_AbortKeepsInjectionsPaused(t *testing.T) {
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.DelegatedManager = &DelegatedManager{}
+	onCCLogin(a)
 
 	claimRelogin(t)
 	var ran atomic.Bool
@@ -135,6 +148,7 @@ func TestInbox_Relogin_UserTurnEndsPending(t *testing.T) {
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.DelegatedManager = &DelegatedManager{}
+	onCCLogin(a)
 
 	d := &recordingDriver{}
 	a.SetTurnObserver(d.recordBatch)
@@ -164,6 +178,7 @@ func TestInbox_Relogin_CaptureStillDiverts(t *testing.T) {
 	a := newTestAgent(t)
 	a.AgentID = "clutch"
 	a.DelegatedManager = &DelegatedManager{}
+	onCCLogin(a)
 
 	claimRelogin(t)
 	relogin.G.OpenCapture("clutch", "", "")
@@ -218,10 +233,12 @@ func TestInbox_Relogin_OtherChatGetsLinkThenCode(t *testing.T) {
 	clutch := newTestAgent(t)
 	clutch.AgentID = "clutch"
 	clutch.DelegatedManager = &DelegatedManager{}
+	onCCLogin(clutch)
 	clutch.ReloginLinkTarget = rec.target
 	scout := newTestAgent(t)
 	scout.AgentID = "scout"
 	scout.DelegatedManager = &DelegatedManager{}
+	onCCLogin(scout)
 	scout.ReloginLinkTarget = rec.target
 
 	claimRelogin(t)
@@ -279,6 +296,7 @@ func TestInbox_Relogin_UserMessageAfterExpiryStartsOneAttempt(t *testing.T) {
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.DelegatedManager = &DelegatedManager{}
+	onCCLogin(a)
 
 	claimRelogin(t)
 	relogin.G.Release() // nobody pasted the code: the link expired

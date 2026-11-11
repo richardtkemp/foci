@@ -78,6 +78,7 @@ func TestInbox_Relogin_AutomatedNotCapturedAsCode(t *testing.T) {
 	a := newTestAgent(t)
 	a.AgentID = "clutch"
 	a.DelegatedManager = &DelegatedManager{}
+	onCCLogin(a)
 
 	claimRelogin(t)
 	relogin.G.OpenCapture("clutch", "", "")
@@ -158,6 +159,7 @@ func TestInbox_Relogin_QueuedNotCapturedAsCode(t *testing.T) {
 	a := newTestAgent(t)
 	a.AgentID = "clutch"
 	a.DelegatedManager = &DelegatedManager{}
+	onCCLogin(a)
 
 	claimRelogin(t)
 	relogin.G.OpenCapture("clutch", "", "")
