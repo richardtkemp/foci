@@ -448,6 +448,7 @@ system_files = [
 # http_timeout = "120s"
 # instruction_role = "developer"           # openai format: role for the system prompt, "developer" or "system" (Ollama drops "developer")
 # max_in_flight = 1                         # local model server: foci's calls that run at once, the rest wait in priority order (match OLLAMA_NUM_PARALLEL); 0 (default) = no dispatch
+# keepalive.enabled = false                # no keepalive for sessions on this endpoint, whatever [keepalive] says (a local server has no paid cache); unset = agent/global decide
 
 # ─── Platforms ────────────────────────────────────────────────────────
 # Platforms are configured as [[platforms]] array entries. Each entry has

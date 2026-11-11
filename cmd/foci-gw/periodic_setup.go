@@ -28,6 +28,9 @@ type periodicParams struct {
 	todoStore             *memory.TodoStore
 	ctx                   context.Context
 	resolveEndpointClient func(endpoint, format string) provider.Client
+	// endpoints returns the live [endpoints] config (the client registry's,
+	// replaced by the [endpoints] live applier). nil = cfg.Endpoints.
+	endpoints func() map[string]config.EndpointConfig
 }
 
 // setupPeriodic creates and starts a periodic runner for an agent instance.
@@ -264,6 +267,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 			d, _ := inst.ag.SessionCacheTTL(sk)
 			return d
 		},
+		KeepaliveOffFor:  endpointKeepaliveOffFor(inst, p),
 		Maintenance:      maint,
 		PromptSearchDirs: inst.promptSearchDirs,
 		TodoStore:        p.todoStore,
@@ -360,5 +364,27 @@ func chatWarningConfig(connMgr platform.ConnectionManager, agentID string, chat,
 			}
 			conn.SendNotification(warningText)
 		},
+	}
+}
+
+// endpointKeepaliveOffFor returns the runner's per-session endpoint keepalive
+// gate (#3020): true when the session's model runs on an endpoint whose
+// keepalive.enabled is false. It reads the session's endpoint (its own model
+// override, else its root's, else the agent default: SessionModelTuple) and
+// the live [endpoints] config at every check, so an endpoint edit and a
+// /model switch both apply on the next tick. nil for a delegated agent: its
+// backend (Claude Code, opencode, codex) runs the model itself, not through a
+// foci [endpoints] entry.
+func endpointKeepaliveOffFor(inst *agentInstance, p periodicParams) func(string) bool {
+	if inst.ag.DelegatedManager != nil {
+		return nil
+	}
+	endpoints := p.endpoints
+	if endpoints == nil {
+		static := p.cfg.Endpoints
+		endpoints = func() map[string]config.EndpointConfig { return static }
+	}
+	return func(sk string) bool {
+		return config.EndpointKeepaliveOff(endpoints(), inst.ag.SessionModelTuple(sk).Endpoint)
 	}
 }

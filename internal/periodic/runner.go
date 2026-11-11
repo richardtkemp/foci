@@ -144,6 +144,7 @@ type Runner struct {
 	tickInterval     time.Duration // poll cadence for the timer loop (resolved from config)
 	cacheTTL         time.Duration // backend/model prompt-cache lifetime; keepalive upper bound (0 = unknown)
 	cacheTTLFor      func(sessionKey string) time.Duration
+	keepaliveOffFor  func(sessionKey string) bool
 	promptSearchDirs []string
 	// keepaliveScriptTimeout bounds one run of a keepalive prompt script
 	// (#1351); 0 = defaultKeepaliveScriptTimeout. Tests shorten it.
@@ -351,6 +352,13 @@ type RunnerConfig struct {
 	// resolution the app's warmth indicator uses — returning 0 when unknown.
 	CacheTTLFor func(sessionKey string) time.Duration
 
+	// KeepaliveOffFor, when set, reports whether keepalive is turned off for
+	// one session (#3020): its model runs on an endpoint whose
+	// keepalive.enabled is false. Such a session is never warmed, and
+	// keepaliveWillRewarm says so. cmd/foci-gw wires it to the session's
+	// endpoint and the live [endpoints] config. nil = never off.
+	KeepaliveOffFor func(sessionKey string) bool
+
 	// EphemeralRetentionDays is the age (days) beyond which ephemeral (branch/
 	// fork) backend transcripts are deleted by the daily cleanup. 0 = disabled.
 	EphemeralRetentionDays int
@@ -438,6 +446,7 @@ func New(cfg RunnerConfig) *Runner {
 		maintCfg:         cfg.Maintenance,
 		cacheTTL:         cfg.CacheTTL,
 		cacheTTLFor:      cfg.CacheTTLFor,
+		keepaliveOffFor:  cfg.KeepaliveOffFor,
 		promptSearchDirs: cfg.PromptSearchDirs,
 		todoStore:        cfg.TodoStore,
 		sessionIndex:     cfg.SessionIndex,

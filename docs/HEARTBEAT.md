@@ -48,6 +48,7 @@ Every candidate is filtered to `is_root = 1`, so branches, children, facets, and
 ```
 if keepalive.enabled
    AND caching available (Anthropic model, or per-model cachingOverride)
+   AND the session's endpoint does not set keepalive.enabled = false (#3020)
    AND time_since(last_cache_warm) >= keepalive.interval
    AND no keepalive already running
    AND a default session exists
@@ -61,11 +62,11 @@ if keepalive.enabled
 
 ### When keepalive stops: pre-cold compaction
 
-Keepalive stops warming a session in two cases: keepalive is off for the agent, or `max_user_idle` has run out (no human touched the session within that window). The session's cache then goes cold, and the next turn pays a cache write of the whole prefix. The opt-in `[sessions] compaction_precold` (default off) compacts such a session shortly before its cache expires, so that write is smaller. See [CONFIG.md](CONFIG.md#compaction--sessions) for its settings.
+Keepalive stops warming a session in three cases: keepalive is off for the agent, the session's model runs on an endpoint with `keepalive.enabled = false` (#3020), or `max_user_idle` has run out (no human touched the session within that window). The session's cache then goes cold, and the next turn pays a cache write of the whole prefix. The opt-in `[sessions] compaction_precold` (default off) compacts such a session shortly before its cache expires, so that write is smaller. See [CONFIG.md](CONFIG.md#compaction--sessions) for its settings.
 
-It fires only when keepalive will **not** warm the session again before the cache expires. The runner answers that question with keepalive's own per-session rules (`keepaliveWillRewarm`, sharing its helpers with `keepaliveTargets`): keepalive enabled with caching available, the session among the sessions keepalive warms (the default session, or the open app chats with `warm_open_app_chats`), and the `max_user_idle` gate still open at the next moment keepalive could fire (`last_cache_touch + interval`, or now if that has passed) and before the cache expires. So:
+It fires only when keepalive will **not** warm the session again before the cache expires. The runner answers that question with keepalive's own per-session rules (`keepaliveWillRewarm`, sharing its helpers with `keepaliveTargets`): keepalive enabled with caching available, the session's endpoint not turning keepalive off, the session among the sessions keepalive warms (the default session, or the open app chats with `warm_open_app_chats`), and the `max_user_idle` gate still open at the next moment keepalive could fire (`last_cache_touch + interval`, or now if that has passed) and before the cache expires. So:
 
-- keepalive off: pre-cold compaction can fire;
+- keepalive off (for the agent, or by the session's endpoint): pre-cold compaction can fire;
 - keepalive on with `max_user_idle = 0` (no limit): it never fires for a session keepalive warms, and config load warns if both are set;
 - keepalive on with a limit: it fires only in the last cache lifetime after the limit runs out;
 - a session keepalive does not warm (an open app chat while `warm_open_app_chats` is off) can be pre-cold compacted whatever `max_user_idle` is.

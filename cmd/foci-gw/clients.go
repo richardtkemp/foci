@@ -65,6 +65,12 @@ func (r *clientRegistry) config() *config.Config {
 	return r.cfg
 }
 
+// Endpoints returns the registry's current [endpoints] config: the live
+// one, as the [endpoints] applier replaces it through Reconfigure.
+func (r *clientRegistry) Endpoints() map[string]config.EndpointConfig {
+	return r.config().Endpoints
+}
+
 // GetClient returns the client for an endpoint:format pair, initializing it on first use.
 // A failed build returns nil until a config edit lets Reconfigure retry it.
 func (r *clientRegistry) GetClient(endpointName, format string) provider.Client {
@@ -159,11 +165,14 @@ func (r *clientRegistry) reconfigureEntry(e *clientEntry, fresh *config.Config, 
 }
 
 // sameClientConfig reports whether a and b build the same client: they differ
-// at most in max_in_flight, which the call gate reads live (#3019), and
-// zero_cost, which pricing reads live (#3035).
+// at most in max_in_flight, which the call gate reads live (#3019), zero_cost,
+// which pricing reads live (#3035), and the keepalive switch, which the
+// keepalive scheduler reads live (#3020) and no client uses. Keepalive is also
+// a pointer, so == would see every reload as a change.
 func sameClientConfig(a, b config.EndpointConfig) bool {
 	a.MaxInFlight, b.MaxInFlight = 0, 0
 	a.ZeroCost, b.ZeroCost = false, false
+	a.Keepalive, b.Keepalive = config.EndpointKeepaliveConfig{}, config.EndpointKeepaliveConfig{}
 	return a == b
 }
 

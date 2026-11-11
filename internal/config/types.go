@@ -1462,6 +1462,39 @@ type EndpointConfig struct {
 	// them. Applies to the direct-API calls foci itself sends to the
 	// endpoint; the delegated backends do not use [endpoints].
 	ZeroCost bool `toml:"zero_cost"`
+
+	// Keepalive is the endpoint's keepalive switch (#3020), a
+	// [endpoints.<name>.keepalive] sub-table (or a "keepalive.enabled" key
+	// in [endpoints.<name>]). Its one key has the same name as the
+	// agent/global [keepalive] enabled.
+	Keepalive EndpointKeepaliveConfig `toml:"keepalive"`
+}
+
+// EndpointKeepaliveConfig is an endpoint's keepalive setting (#3020).
+type EndpointKeepaliveConfig struct {
+	// Enabled = false turns keepalive off for every session whose model
+	// runs on this endpoint, whatever the agent and global [keepalive]
+	// settings say (and whatever [models.*] enable_keepalive says): for a
+	// local model server, which has no billed prompt cache to keep warm.
+	// Unset or true = the agent/global settings decide; true does not turn
+	// keepalive on.
+	Enabled *bool `toml:"enabled"`
+}
+
+// KeepaliveOff reports whether the endpoint turns keepalive off (#3020):
+// keepalive.enabled is set to false.
+func (e EndpointConfig) KeepaliveOff() bool {
+	return e.Keepalive.Enabled != nil && !*e.Keepalive.Enabled
+}
+
+// EndpointKeepaliveOff reports whether the named endpoint in endpoints turns
+// keepalive off (#3020). An unknown or empty name does not.
+func EndpointKeepaliveOff(endpoints map[string]EndpointConfig, name string) bool {
+	if name == "" {
+		return false
+	}
+	ep, ok := endpoints[name]
+	return ok && ep.KeepaliveOff()
 }
 
 // Instruction roles accepted by EndpointConfig.InstructionRole.

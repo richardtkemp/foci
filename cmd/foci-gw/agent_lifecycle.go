@@ -161,6 +161,7 @@ func (e *agentEnv) buildAgent(acfg config.AgentConfig) *agentInstance {
 		todoStore:             am.todos,
 		ctx:                   actx,
 		resolveEndpointClient: e.clients.ResolveEndpointClient,
+		endpoints:             e.clients.Endpoints,
 	})
 
 	// Wire lifecycle callbacks to the periodic runner. OnUserMessage is a

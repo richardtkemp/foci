@@ -199,7 +199,7 @@ func MapObjectFileEntries(path string, spec MapObjectFieldSpec) (map[string]map[
 		}
 		entry := map[string]string{}
 		for _, sf := range spec.Fields {
-			if raw, set := m[sf.Key]; set {
+			if raw, set := lookupDotted(m, sf.Key); set {
 				if s, ok := renderScalar(raw); ok {
 					entry[sf.Key] = s
 				}
@@ -208,6 +208,22 @@ func MapObjectFileEntries(path string, spec MapObjectFieldSpec) (map[string]map[
 		out[name] = entry
 	}
 	return out, nil
+}
+
+// lookupDotted reads a sub-field key from a decoded entry table. A dotted key
+// ("keepalive.enabled", #3020) walks the nested tables TOML decodes it into,
+// whether the file wrote it as a dotted key or as a sub-table.
+func lookupDotted(m map[string]any, key string) (any, bool) {
+	head, rest, nested := strings.Cut(key, ".")
+	v, ok := m[head]
+	if !ok || !nested {
+		return v, ok
+	}
+	sub, ok := v.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	return lookupDotted(sub, rest)
 }
 
 // flattenScalars walks nested TOML tables, writing "prefix.key" → rendered

@@ -168,7 +168,7 @@ func (r *Runner) holdPausedKeepaliveTargets(interval time.Duration, now time.Tim
 	}
 	var out []string
 	for sk := range rep.UsageHoldPaused() {
-		if have[sk] || r.keepaliveRunningFor(sk) {
+		if have[sk] || r.keepaliveRunningFor(sk) || r.keepaliveOff(sk) {
 			continue
 		}
 		if skip := r.checkKeepaliveRateLimit(sk); skip != "" {

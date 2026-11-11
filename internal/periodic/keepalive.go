@@ -259,6 +259,10 @@ func (r *Runner) keepaliveTargetsAt(interval time.Duration, now time.Time) (read
 	maxIdle := r.keepaliveMaxUserIdle()
 
 	for _, sk := range candidates {
+		if r.keepaliveOff(sk) {
+			why = "keepalive off for the endpoint of " + sk
+			continue // the session's endpoint turns keepalive off (#3020)
+		}
 		if r.keepaliveRunningFor(sk) {
 			why = "already running on " + sk
 			continue // one keepalive per session at a time (#2487)
@@ -311,6 +315,13 @@ func (r *Runner) cachingAvailable() bool {
 		return r.client.IsCachingAvailable()
 	}
 	return true
+}
+
+// keepaliveOff reports whether keepalive is turned off for sk (#3020): its
+// endpoint's keepalive.enabled is false. This overrides the agent and global
+// keepalive settings, so it is checked per session, not folded into kaCfg.
+func (r *Runner) keepaliveOff(sk string) bool {
+	return r.keepaliveOffFor != nil && r.keepaliveOffFor(sk)
 }
 
 // keepaliveCandidates returns the sessions keepalive considers: the open app
@@ -378,7 +389,7 @@ func (r *Runner) keepaliveWillRewarm(sk string, now time.Time) bool {
 	if !r.kaCfg.Enabled || !r.cachingAvailable() || r.sessionIndex == nil {
 		return false
 	}
-	if !slices.Contains(r.keepaliveCandidates(), sk) {
+	if !slices.Contains(r.keepaliveCandidates(), sk) || r.keepaliveOff(sk) {
 		return false
 	}
 	interval, err := time.ParseDuration(r.kaCfg.Interval)
