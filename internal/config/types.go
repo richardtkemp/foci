@@ -11,10 +11,13 @@ import (
 	"foci/internal/provider"
 )
 
-// NEW CONFIG KEYS MUST BE HOT-RELOADABLE IF AT ALL POSSIBLE (Dick, 2026-10-28,
+// CONFIG KEYS MUST BE HOT-RELOADABLE IF AT ALL POSSIBLE (Dick, 2026-10-28,
 // #2603). A key added to this package, to any struct reachable from Config, or
 // to a [[...]] rule list, should take effect on a foci.toml edit or /config set
-// without a foci restart. How:
+// without a foci restart. This covers an EXISTING key too (Dick, 2026-11-11:
+// "anytime we touch a config value, we convert it to hot-reloaded"): a change
+// that adds a value, a format, an entry kind or a consumer to a restart-only
+// key makes that key live in the same change (#3018 → #3042). How:
 //   - tag the field hot:"<when>" (immediate | turn | session | event: how soon
 //     a change is seen) and give it a desc: (an undescribed field has no
 //     registry row, so the hot tag is not seen);
