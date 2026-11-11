@@ -76,16 +76,17 @@ func TestRouteUserTurn_EnqueuesEnvelope(t *testing.T) {
 	}
 }
 
-// A voice attachment that STT actually transcribes must tag the enqueued
-// envelope Voice=true, so RunTurn tags the turn's trigger "voice" instead of
-// the app's default platform trigger — the [meta] via= header then reads
-// "voice" instead of "app" (#1436).
+// A voice attachment that STT actually transcribes, sent from a device with the
+// chat in voice mode, must tag the enqueued envelope Voice=true, so RunTurn
+// tags the turn's trigger "voice" instead of the app's default platform
+// trigger — the [meta] via= header then reads "voice" instead of "app" (#1436).
 func TestRouteUserTurn_VoiceTranscribedEnvelopeTaggedVoice(t *testing.T) {
 	h := newTestHub()
 	fa := registerFakeAgent(h, "ag")
 	h.agents["ag"].stt = fakeSTT{text: "hello world"}
 	c := fakeClientFor(h)
 	c.deviceID = "dev-1"
+	h.handleVoiceModePut(c, fap.VoiceModePut{ConversationIDs: []string{"conv-1"}})
 
 	voiceAtt := []platform.Attachment{{Type: fap.MediaVoice, Data: []byte("audio"), MimeType: "audio/mp4"}}
 	h.routeUserTurn(c, "conv-1", "ag", "", voiceAtt, nil, "env-1", 1, platform.SteerDefault, false, false)
@@ -95,6 +96,33 @@ func TestRouteUserTurn_VoiceTranscribedEnvelopeTaggedVoice(t *testing.T) {
 	}
 	if !fa.env.Voice {
 		t.Error("env.Voice = false, want true (text came from a transcribed voice attachment)")
+	}
+	if fa.env.Text != "hello world" {
+		t.Errorf("env.Text = %q, want the transcript", fa.env.Text)
+	}
+}
+
+// A one-off voice note (a device NOT in voice mode) is transcribed and sent as a
+// plain text turn, not a voice turn (#3048, Dick 2026-11-11: "One off voice
+// notes should no longer start voice mode. They are transcribed and sent, end
+// of. Reply is text-only"). Another device in voice mode does not change it.
+func TestRouteUserTurn_OneOffVoiceNoteIsPlainText(t *testing.T) {
+	h := newTestHub()
+	fa := registerFakeAgent(h, "ag")
+	h.agents["ag"].stt = fakeSTT{text: "hello world"}
+	c := fakeClientFor(h)
+	c.deviceID = "dev-1"
+	other := deviceClient(h, "mac")
+	h.handleVoiceModePut(other, fap.VoiceModePut{ConversationIDs: []string{"conv-1"}})
+
+	voiceAtt := []platform.Attachment{{Type: fap.MediaVoice, Data: []byte("audio"), MimeType: "audio/mp4"}}
+	h.routeUserTurn(c, "conv-1", "ag", "", voiceAtt, nil, "env-1", 1, platform.SteerDefault, false, false)
+
+	if fa.env == nil {
+		t.Fatal("no envelope enqueued")
+	}
+	if fa.env.Voice {
+		t.Error("env.Voice = true for a one-off voice note, want a plain text turn")
 	}
 	if fa.env.Text != "hello world" {
 		t.Errorf("env.Text = %q, want the transcript", fa.env.Text)

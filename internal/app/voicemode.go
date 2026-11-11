@@ -15,6 +15,10 @@ import "foci/internal/fap"
 // voiceMode clip and queues it behind the audio and voice input in progress
 // (#3022, #3031, #3029), so nothing new is needed to play it.
 //
+// The sending socket's report also decides whether a voice note or spoken text
+// it sends is a voice turn (wsClient.inVoiceMode, #3048): a one-off voice note
+// from a device not in voice mode is a plain transcribed text turn.
+//
 // The report is socket state, not durable, exactly like viewing presence: a
 // closed socket stops counting at once (removeClient drops the wsClient), and a
 // reconnecting client re-sends its report after the hello.
@@ -48,4 +52,16 @@ func (h *Hub) voiceModeOn(convID string) bool {
 		}
 	}
 	return false
+}
+
+// inVoiceMode reports whether this socket's device has convID in voice mode.
+// Only such a device's voice note or spoken text is a voice turn (#3048).
+func (c *wsClient) inVoiceMode(convID string) bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, on := c.voiceMode[convID]
+	return on
 }

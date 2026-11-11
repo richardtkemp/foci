@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"foci/internal/agent"
@@ -160,5 +163,87 @@ func TestAppConn_SendToSessionSpokenInVoiceMode(t *testing.T) {
 		if clips != want || !linked {
 			t.Errorf("voice mode %v: clips = %d (linked %v), want %d linked", on, clips, linked, want)
 		}
+	}
+}
+
+// A file the agent sends to a chat in voice mode is announced aloud (#3048,
+// Dick 2026-11-11: "File sends should say something like 'received file
+// $name'"): a voiceMode clip after the file, reading its name and caption.
+// Outside voice mode a file stays silent.
+func TestAppConn_FileSendAnnouncedInVoiceMode(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		h := newTestHub()
+		b := h.ensureBinding(nil, "arnix", "conv-1")
+		client := deviceClient(h, "phone")
+		b.attach(client)
+		if on {
+			h.handleVoiceModePut(client, fap.VoiceModePut{ConversationIDs: []string{b.convID}})
+		}
+		tts := &mockVoiceTTS{data: []byte("synth")}
+		conn := &appConn{hub: h, agentID: "arnix", tts: tts, bound: b.key()}
+		path := filepath.Join(t.TempDir(), "report.pdf")
+		if err := os.WriteFile(path, []byte("%PDF"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := conn.SendDocumentOwnChat(path, "the tax summary"); err != nil {
+			t.Fatal(err)
+		}
+		var kinds []string
+		for _, f := range drain(t, client) {
+			if f.t != fap.TypeMedia {
+				continue
+			}
+			if vm, _ := f.d["voiceMode"].(bool); vm {
+				kinds = append(kinds, "clip")
+			} else {
+				kinds = append(kinds, "file")
+			}
+		}
+		if !on {
+			if len(kinds) != 1 || len(tts.got) != 0 {
+				t.Errorf("voice mode off: media %v, spoken %q; want the file alone, nothing spoken", kinds, tts.got)
+			}
+			continue
+		}
+		if len(kinds) != 2 || kinds[0] != "file" || kinds[1] != "clip" {
+			t.Fatalf("voice mode on: media %v, want [file clip]", kinds)
+		}
+		if len(tts.got) != 1 || !strings.Contains(tts.got[0], "Received file report.pdf") || !strings.Contains(tts.got[0], "the tax summary") {
+			t.Errorf("spoken %q, want 'Received file report.pdf' and the caption", tts.got)
+		}
+	}
+}
+
+// The rendered PNG that follows a mermaid source (send_to_chat, #2195) is a
+// second view of a file already announced: SendRenderedPhoto sends it without a
+// second announcement (#3048: "announce a mermaid send once").
+func TestAppConn_RenderedPhotoNotAnnounced(t *testing.T) {
+	h := newTestHub()
+	b := h.ensureBinding(nil, "arnix", "conv-1")
+	client := deviceClient(h, "phone")
+	b.attach(client)
+	h.handleVoiceModePut(client, fap.VoiceModePut{ConversationIDs: []string{b.convID}})
+	tts := &mockVoiceTTS{data: []byte("synth")}
+	conn := &appConn{hub: h, agentID: "arnix", tts: tts, bound: b.key()}
+	path := filepath.Join(t.TempDir(), "flow.png")
+	if err := os.WriteFile(path, []byte("\x89PNG"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.SendRenderedPhoto(0, path); err != nil {
+		t.Fatal(err)
+	}
+	files, clips := 0, 0
+	for _, f := range drain(t, client) {
+		if f.t != fap.TypeMedia {
+			continue
+		}
+		if vm, _ := f.d["voiceMode"].(bool); vm {
+			clips++
+		} else {
+			files++
+		}
+	}
+	if files != 1 || clips != 0 || len(tts.got) != 0 {
+		t.Errorf("files %d, clips %d, spoken %q; want the photo alone, unannounced", files, clips, tts.got)
 	}
 }

@@ -1078,7 +1078,8 @@ func inboundConvID(frame any) string {
 //
 // spoken marks the text as a transcript the app streamed through /app/stt/stream
 // (fap.ClientMessage.Voice, #3018). A spoken text is treated like a
-// transcribed voice note: the turn is tagged voice (Envelope.Voice), and it is
+// transcribed voice note: the turn is tagged voice (Envelope.Voice) when the
+// sending device has the chat in voice mode (#3048), and it is
 // never a "!cmd", a command or a message transform, which a voice note's
 // transcript never reaches either (it is transcribed after them).
 func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts []platform.Attachment, echoRefs []fap.AttachmentRef, inID string, inSeq int64, steer platform.SteerPreference, transcribeOnly, spoken bool) {
@@ -1204,7 +1205,12 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 		return
 	}
 	text, atts, voiceTranscribed := h.transcribeVoice(conn, text, atts)
-	voiceTranscribed = voiceTranscribed || spoken
+	// Only a device in voice mode sends voice turns (#3048, Dick 2026-11-11:
+	// "One off voice notes should no longer start voice mode. They are
+	// transcribed and sent, end of. Reply is text-only"). A one-off voice note
+	// from a device not in voice mode is a plain text turn: no via=voice, no
+	// low effort, no spoken reply.
+	voiceTranscribed = (voiceTranscribed || spoken) && client.inVoiceMode(convID)
 	if transcribeOnly {
 		// Return the transcript for the user to edit; don't echo or run a turn.
 		// Ephemeral (sendRaw, no seq/durability) to the recording device only: it's a

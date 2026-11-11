@@ -480,6 +480,21 @@ func (c *appConn) SendVoiceData(audioData []byte) error {
 	return c.sendMediaBytes(c.SessionKey(), audioData, fap.MediaVoice, "voice.mp3", "audio/mpeg")
 }
 
+// SendRenderedPhoto implements platform.RenderedPhotoSender: the photo is sent
+// like SendPhoto / SendPhotoToChat, but not announced in voice mode, as it
+// shows a file whose own send was announced (#3048). chatID 0 = own session.
+func (c *appConn) SendRenderedPhoto(chatID int64, path string) error {
+	key := c.SessionKey()
+	if chatID != 0 {
+		key = c.SessionKeyForChat(chatID)
+	}
+	b, note, err := c.mediaBinding(key)
+	if err != nil {
+		return err
+	}
+	return c.emitMediaFile(b, path, delegator.PrependOrigin(note, ""), fap.MediaPhoto, false)
+}
+
 func (c *appConn) SendDocumentToChat(chatID int64, path, caption string) error {
 	return c.sendMediaFile(c.SessionKeyForChat(chatID), path, caption, fap.MediaDocument)
 }
@@ -510,7 +525,7 @@ func (c *appConn) SendDocumentOwnChat(path, caption string) error {
 	if b == nil {
 		return errNoBinding
 	}
-	return c.emitMediaFile(b, path, caption, fap.MediaDocument)
+	return c.emitMediaFile(b, path, caption, fap.MediaDocument, true)
 }
 
 // mediaBinding resolves the conversation a media send for sessionKey lands in
@@ -537,15 +552,17 @@ func (c *appConn) sendMediaFile(sessionKey, path, caption, kind string) error {
 	if err != nil {
 		return err
 	}
-	return c.emitMediaFile(b, path, delegator.PrependOrigin(note, caption), kind)
+	return c.emitMediaFile(b, path, delegator.PrependOrigin(note, caption), kind, true)
 }
 
-func (c *appConn) emitMediaFile(b *convBinding, path, caption, kind string) error {
+// emitMediaFile stores path and sends it as a file; announce = say it aloud in
+// voice mode (#3048).
+func (c *appConn) emitMediaFile(b *convBinding, path, caption, kind string, announce bool) error {
 	meta, err := c.hub.blobs.putFile(path, kind)
 	if err != nil {
 		return err
 	}
-	c.emitMedia(b, meta, caption)
+	c.emitMedia(b, meta, caption, announce)
 	return nil
 }
 
@@ -558,11 +575,11 @@ func (c *appConn) sendMediaBytes(sessionKey string, data []byte, kind, name, mim
 	if err != nil {
 		return err
 	}
-	c.emitMedia(b, meta, note)
+	c.emitMedia(b, meta, note, true)
 	return nil
 }
 
-func (c *appConn) emitMedia(b *convBinding, meta *blobMeta, caption string) {
+func (c *appConn) emitMedia(b *convBinding, meta *blobMeta, caption string, announce bool) {
 	b.send(fap.Media{
 		ConversationID: b.convID,
 		MessageID:      fap.NewULID(),
@@ -572,6 +589,32 @@ func (c *appConn) emitMedia(b *convBinding, meta *blobMeta, caption string) {
 		Caption:        caption,
 		Size:           meta.size,
 	})
+	// In persistent voice mode a file is announced aloud (#3048, Dick
+	// 2026-11-11: "File sends should say something like 'received file
+	// $name'"). The clip goes out unlinked: a file's row cannot carry a voice
+	// clip (#2985 links only to a text row), so it is its own presentation row.
+	if announce {
+		c.speakInVoiceMode(b, "", fileAnnouncement(meta, caption))
+	}
+}
+
+// fileAnnouncement is what persistent voice mode says for a file the agent
+// sent (#3048): "Received file <name>." (a voice note: "Received voice
+// note."), then the caption, which is the agent's text with the file.
+func fileAnnouncement(meta *blobMeta, caption string) string {
+	var text string
+	switch {
+	case meta.kind == fap.MediaVoice:
+		text = "Received voice note."
+	case meta.name == "":
+		text = "Received file."
+	default:
+		text = "Received file " + meta.name + "."
+	}
+	if caption = strings.TrimSpace(caption); caption != "" {
+		text += " " + caption
+	}
+	return text
 }
 
 // sendVoiceModeAttachment uploads synthesized reply audio (#1439) and emits it

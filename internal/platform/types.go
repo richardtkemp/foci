@@ -429,6 +429,15 @@ type OwnChatDocumentSender interface {
 	SendDocumentOwnChat(path, caption string) error
 }
 
+// RenderedPhotoSender is optionally implemented by connections that treat a
+// photo rendered from a file just sent (send_to_chat's mermaid PNG, #2195) as
+// part of that send, not as a file of its own: the app, whose persistent voice
+// mode announces each file the agent sends, announces the diagram once (#3048).
+// chatID 0 means the connection's own session.
+type RenderedPhotoSender interface {
+	SendRenderedPhoto(chatID int64, path string) error
+}
+
 // DetailAttacher is optionally implemented by connections that can attach a
 // large supplementary payload (e.g. a compaction summary) to an
 // already-sent message, addressable by its platform message ID. Only the

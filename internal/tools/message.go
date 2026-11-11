@@ -348,7 +348,14 @@ func sendMermaidRender(ctx context.Context, target messageTarget, r *mermaid.Ren
 		return "", err
 	}
 	defer cleanup()
-	if _, err := target.file("photo", named, ""); err != nil {
+	// A connection that announces files (app voice mode) gets the render as part
+	// of the diagram's send, so the diagram is announced once (#3048).
+	if rp, ok := target.bot.(platform.RenderedPhotoSender); ok {
+		err = rp.SendRenderedPhoto(target.chatID, named)
+	} else {
+		_, err = target.file("photo", named, "")
+	}
+	if err != nil {
 		return "", fmt.Errorf("send rendered image: %w", err)
 	}
 	return name, nil

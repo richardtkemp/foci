@@ -20,6 +20,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"foci/internal/config"
+	"foci/internal/fap"
 	"foci/internal/platform"
 	"foci/internal/voice"
 	"foci/internal/voice/fluxfake"
@@ -303,6 +304,7 @@ func TestRouteUserTurn_SpokenTaggedVoiceAndNeverACommand(t *testing.T) {
 			fa := registerFakeAgent(h, "ag")
 			c := fakeClientFor(h)
 			c.deviceID = "dev-1"
+			h.handleVoiceModePut(c, fap.VoiceModePut{ConversationIDs: []string{"conv-1"}})
 			h.routeUserTurn(c, "conv-1", "ag", text, nil, nil, "env-1", 1, platform.SteerDefault, false, true)
 			if fa.env == nil {
 				t.Fatal("no envelope enqueued: the spoken text was diverted")

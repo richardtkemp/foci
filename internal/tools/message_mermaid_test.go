@@ -137,3 +137,32 @@ func TestSendToChat_NonMermaidOrExplicitSendAsIsNotRendered(t *testing.T) {
 		t.Errorf("renders = %d, want 0", n)
 	}
 }
+
+// renderedPhotoSender implements platform.RenderedPhotoSender: the render goes
+// through it, so a connection that announces files does not announce the
+// render as a second file (#3048).
+type renderedPhotoSender struct {
+	*photoReadingSender
+	rendered []string
+}
+
+func (s *renderedPhotoSender) SendRenderedPhoto(chatID int64, filePath string) error {
+	s.rendered = append(s.rendered, filepath.Base(filePath))
+	return nil
+}
+
+func TestSendToChat_MermaidRenderSentAsRenderedPhoto(t *testing.T) {
+	t.Parallel()
+	cmd, _ := mermaidtest.FakeCmd(t)
+	r := mermaid.New(t.TempDir(), cmd, "/no/browser")
+	src := writeDiagram(t, "flow.mmd", "graph TD\n A-->B\n")
+	s := &renderedPhotoSender{photoReadingSender: &photoReadingSender{mockSender: &mockSender{}}}
+	tool := NewSendToChatTool(func(string) platform.Sender { return s }, nil, nil, r)
+	raw, _ := json.Marshal(map[string]any{"file": src})
+	if _, err := tool.Execute(context.Background(), raw); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.rendered) != 1 || s.rendered[0] != "flow.png" || len(s.photoNames) != 0 {
+		t.Errorf("rendered %v, plain photos %v; want flow.png through SendRenderedPhoto only", s.rendered, s.photoNames)
+	}
+}
