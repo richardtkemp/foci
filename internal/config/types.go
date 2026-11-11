@@ -967,7 +967,7 @@ type AppSpecific struct {
 	// Pin label summary (#2956): when the user pins a message, the app asks
 	// the server for a short summary to prefill the label field. The server
 	// calls OpenRouter with the openrouter.api_key secret.
-	PinSummaryModel    string `toml:"pin_summary_model"    hot:"event" desc:"Model, as pin_summary_endpoint knows it, that writes the suggested label when a message is pinned in the app, the six-word summary of each subagent's current step in the app's Stop view, and (unless auto_name_model / chat_sections_model are set) the automatic chat name and the chat sections. /status shows the load these calls put on each model (default meta-llama/llama-3.1-8b-instruct; set to off to disable them)"`
+	PinSummaryModel    string `toml:"pin_summary_model"    hot:"event" desc:"Model, as pin_summary_endpoint knows it, that writes the suggested label when a message is pinned in the app, the six-word summary of each subagent's current step in the app's Stop view, the one sentence spoken in voice mode in place of each diagram, table and code block, and (unless auto_name_model / chat_sections_model are set) the automatic chat name and the chat sections. /status shows the load these calls put on each model (default meta-llama/llama-3.1-8b-instruct; set to off to disable them)"`
 	PinSummaryProvider string `toml:"pin_summary_provider" hot:"event" desc:"OpenRouter provider(s) the pin label and Stop-view summaries are sent to first, comma-separated, falling back to others if they fail (default groq; set to any to let OpenRouter choose). Sent only when the endpoint is OpenRouter"`
 	// #3012: the endpoint the fast-summary model is called on, and a model and
 	// endpoint of their own for the automatic chat name and the chat sections.

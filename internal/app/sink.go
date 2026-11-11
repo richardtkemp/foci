@@ -92,6 +92,11 @@ type appSink struct {
 	// turn's trigger. nil = never (a sink built without a hub).
 	voiceModeOn func() bool
 
+	// speechText prepares a bubble's text for its clip (#3050): each diagram,
+	// table and code block becomes a fast-model sentence or its marker
+	// (Hub.voiceSpeechText). nil = markers only (a sink built without a hub).
+	speechText func(ctx context.Context, text string) string
+
 	// toolCalls sends this turn's tool calls as tool.call transcript frames
 	// (#999). nil = the session's resolved show_tool_calls is off (the app
 	// default): only the transient activity frame is sent, as before #999.
@@ -332,10 +337,16 @@ func (s *appSink) speaks(ctx context.Context) bool {
 	return agent.TriggerFromContext(ctx) == "voice" || (s.voiceModeOn != nil && s.voiceModeOn())
 }
 
-// synthesize speaks text through s.tts, noting which voice spoke and how long
+// synthesize speaks text through s.tts, its diagrams, tables and code blocks
+// first replaced by a spoken sentence or marker (speechText, #3050), noting which voice spoke and how long
 // it took for the clip's Message info (#2992); attachVoiceClip files the note
 // under the message the clip reads.
 func (s *appSink) synthesize(ctx context.Context, text string) ([]byte, error) {
+	if s.speechText != nil {
+		text = s.speechText(ctx, text)
+	} else {
+		text = voice.SpeakBlocks(ctx, text, nil, 0)
+	}
 	var served string
 	start := time.Now()
 	audio, err := s.tts.Synthesize(voice.WithServedRecorder(ctx, func(id string) { served = id }), voice.NormalizeForSpeech(text))

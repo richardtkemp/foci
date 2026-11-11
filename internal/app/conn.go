@@ -252,7 +252,7 @@ const sendSpeakTimeout = time.Minute
 // speakInVoiceMode sends the voiceMode clip of an agent message that went out
 // through SendToSession rather than a turn sink (a broadcast /send reply),
 // when a device has b's chat in persistent voice mode (#3047). Same clip as a
-// sink bubble's (#1439, #2985): text normalised for speech, sent after the
+// sink bubble's (#1439, #2985): blocks summarised (#3050) and text normalised for speech, sent after the
 // text and naming it. Synchronous, so a later message cannot overtake its
 // clip. A failure is logged; the text already went out.
 func (c *appConn) speakInVoiceMode(b *convBinding, textMessageID, text string) {
@@ -261,7 +261,7 @@ func (c *appConn) speakInVoiceMode(b *convBinding, textMessageID, text string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), sendSpeakTimeout)
 	defer cancel()
-	audio, err := c.tts.Synthesize(ctx, voice.NormalizeForSpeech(text))
+	audio, err := c.tts.Synthesize(ctx, voice.NormalizeForSpeech(c.hub.voiceSpeechText(ctx, text, b.key(), b.agent())))
 	if err != nil {
 		appLog.Warnf("voice-mode: TTS of a sent message (conv=%s): %v", b.convID, err)
 		return
@@ -923,6 +923,9 @@ func (c *appConn) NewTurnSink(env agent.Envelope) (turnevent.Sink, func()) {
 	// Persistent voice mode (#3047): read live at each bubble, so turning it
 	// on or off mid-turn applies from the next bubble.
 	sink.voiceModeOn = func() bool { return c.hub.voiceModeOn(b.convID) }
+	sink.speechText = func(ctx context.Context, text string) string {
+		return c.hub.voiceSpeechText(ctx, text, b.key(), b.agent())
+	}
 	sink.afterTurn = func() { c.hub.finishTurnRead(b) }
 	if mode := c.toolCallMode(env.SessionKey); mode != "" {
 		sink.toolCalls = newToolCallEmitter(b, mode, c.redact)
