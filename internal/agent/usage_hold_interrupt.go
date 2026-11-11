@@ -148,11 +148,32 @@ func (a *Agent) UsageHoldPaused() map[string]string {
 // before the agent's other reactions (the hold's compaction) run; only the
 // backend interrupts, which write to a backend, go on in the background.
 func (a *Agent) interruptForUsageHold() {
+	a.interruptTurns(nil, false)
+}
+
+// interruptTurns sorts and interrupts the running turns as a hold start does
+// (the file comment), limited to the sessions only accepts (nil: every
+// session). With forReset (a limit reset waking turns asleep in a rate-limit
+// retry, #3044) a keepalive is stopped without a resume rather than left to
+// run: it only keeps a cache warm, and its sleep would hold its session. It
+// returns how many turns it interrupted or stopped. A reset runs it with the
+// account open, so the interrupted turns resume at once: the inbox runs the
+// parked resume line straight away, and a paused owner's WaitUsageLift
+// returns.
+func (a *Agent) interruptTurns(only func(key string) bool, forReset bool) int {
+	what := "usage hold"
+	if forReset {
+		what = "limit reset"
+	}
+	want := func(key string) bool { return only == nil || only(key) }
 	var stops []string
 	a.usageHold.mu.Lock()
 	registered := map[string]bool{}
 	var hit []*holdTurn
 	for ht := range a.usageHold.turns {
+		if !want(ht.key) {
+			continue
+		}
 		ht.hit = true
 		registered[ht.key] = true
 		hit = append(hit, ht)
@@ -163,15 +184,15 @@ func (a *Agent) interruptForUsageHold() {
 	}
 	a.usageHold.mu.Unlock()
 	for _, ht := range hit {
-		a.logger().Infof("usage hold: interrupting %s %s (it pauses and resumes at lift)", ht.kind, ht.key)
+		a.logger().Infof("%s: interrupting %s %s (it pauses and resumes at lift)", what, ht.kind, ht.key)
 		ht.cancel(ErrUsageHoldInterrupted)
 		stops = append(stops, ht.key)
 	}
 
 	done := map[string]bool{}
-	chat := func(key, what string) {
+	chat := func(key, trigger string) {
 		done[key] = true
-		a.logger().Infof("usage hold: interrupting the %s turn on %s; it resumes at lift", what, key)
+		a.logger().Infof("%s: interrupting the %s turn on %s; it resumes at lift", what, trigger, key)
 		a.parkUsageResume(key)
 		a.cancelInboxTurn(key)
 		stops = append(stops, key)
@@ -179,18 +200,22 @@ func (a *Agent) interruptForUsageHold() {
 	// A user batch the inbox is running is a chat turn, whether or not it has
 	// reached the turn registry yet.
 	for _, key := range a.inboxTurnsRunning() {
-		if !registered[key] && !a.IsCompacting(key) {
+		if want(key) && !registered[key] && !a.IsCompacting(key) {
 			chat(key, "user")
 		}
 	}
 	for _, d := range a.ProcessingDetails() {
 		key := d.SessionKey
-		if key == "" || registered[key] || done[key] || usageHoldRunToCompletion[d.Trigger] || a.IsCompacting(key) {
+		if key == "" || !want(key) || registered[key] || done[key] || a.IsCompacting(key) {
 			continue
 		}
-		if _, isSpawn := tools.SpawnOfSession(key); isSpawn || usageHoldStopOnly[d.Trigger] {
+		stopOnly := usageHoldStopOnly[d.Trigger] || (forReset && d.Trigger == TriggerKeepalive)
+		if usageHoldRunToCompletion[d.Trigger] && !stopOnly {
+			continue
+		}
+		if _, isSpawn := tools.SpawnOfSession(key); isSpawn || stopOnly {
 			done[key] = true
-			a.logger().Infof("usage hold: stopping %s turn on %s (no resume)", d.Trigger, key)
+			a.logger().Infof("%s: stopping %s turn on %s (no resume)", what, d.Trigger, key)
 			stops = append(stops, key)
 			continue
 		}
@@ -203,6 +228,7 @@ func (a *Agent) interruptForUsageHold() {
 			}
 		}()
 	}
+	return len(stops)
 }
 
 // inboxTurnsRunning lists the sessions whose inbox worker runs a user batch.

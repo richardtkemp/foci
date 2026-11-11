@@ -220,6 +220,7 @@ func (a *Agent) markInFlight(key string, delivering bool) func() {
 		a.inFlight[base]--
 		if a.inFlight[base] <= 0 {
 			delete(a.inFlight, base)
+			delete(a.rateLimitRetry, base) // a retry sleep ends with its turn (#3044)
 			// Record the turn-END moment (the counterpart to recordTurnActivity's
 			// turn-ENTRY receipt) so the activity gate can measure
 			// CONTINUOUS dead time. Without this, a turn that started >window ago

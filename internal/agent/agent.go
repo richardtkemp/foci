@@ -251,6 +251,7 @@ type Agent struct {
 	inFlightChanged    map[string]chan struct{}  // per-session-base close-and-replace channel; closes on each state change so waiters wake — see InFlightWaitCh
 	lastTurnEndAt      map[string]time.Time      // per-session-base wall-clock moment the last turn ended (inFlight→0) — see LastTurnEnd; in-memory turn-END activity signal; last_cache_touch is the durable warmth signal (model-response evidence, #2509)
 	unattendedTurns    map[string]int32          // per-session count of in-flight turns that are unattended (turnUnattended) — see TurnUnattended; under inFlightMu
+	rateLimitRetry     map[string]time.Time      // per-session end of the rate-limit (429) retry sleep its backend reported last, cleared by progress or the turn's end — see InRateLimitRetry (#3044); under inFlightMu
 	injectGatePoll     time.Duration             // test seam: the inject gate's poll backstop; zero = injectGatePollInterval (#2537)
 	pendingHoldMax     time.Duration             // test seam: how long background work may hold a system inject; zero = maxPendingHold (#2792)
 	askHoldMax         time.Duration             // test seam: how long an open foci_ask may hold a system inject; zero = maxAskHold (#2828)

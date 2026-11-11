@@ -137,6 +137,7 @@ type Registry struct {
 	mu        sync.Mutex
 	accounts  map[string]*account
 	subs      map[string]map[int]func(Change)
+	resetSubs map[string]map[int]func()
 	nextSub   int
 	threshold float64 // fraction, e.g. 0.98
 	store     Store
@@ -147,6 +148,7 @@ func New() *Registry {
 	return &Registry{
 		accounts:  map[string]*account{},
 		subs:      map[string]map[int]func(Change){},
+		resetSubs: map[string]map[int]func(){},
 		threshold: DefaultThresholdPercent / 100.0,
 	}
 }
@@ -201,6 +203,29 @@ func (r *Registry) Subscribe(acct string, fn func(Change)) func() {
 	}
 }
 
+// SubscribeReset calls fn on every Clear of acct, after the phase change
+// Clear causes (if any) has reached the Subscribe subscribers, outside the
+// registry's lock and in Clear's goroutine. A Clear is the operator saying
+// the account's limit was reset (#3044): each agent on the account reacts
+// (opens its own rate-limit gate, wakes turns sleeping in a rate-limit
+// retry) even when no hold was in force. It returns the function that ends
+// the subscription.
+func (r *Registry) SubscribeReset(acct string, fn func()) func() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.resetSubs[acct] == nil {
+		r.resetSubs[acct] = map[int]func(){}
+	}
+	id := r.nextSub
+	r.nextSub++
+	r.resetSubs[acct][id] = fn
+	return func() {
+		r.mu.Lock()
+		delete(r.resetSubs[acct], id)
+		r.mu.Unlock()
+	}
+}
+
 // Observe records one usage event for acct at now and returns the account's
 // state after it.
 func (r *Registry) Observe(acct string, ev Event, now time.Time) State {
@@ -230,13 +255,24 @@ func (r *Registry) Observe(acct string, ev Event, now time.Time) State {
 // the empty state is persisted, and subscribers see the change to Open as
 // at a natural lift. It returns the phase before and the state after. A
 // later usage event at or above the threshold holds the account again.
+// Then every SubscribeReset subscriber of acct is called, hold or not.
 func (r *Registry) Clear(acct string, now time.Time) (Phase, State) {
 	r.mu.Lock()
 	a := r.accountLocked(acct)
 	from := a.phase
 	changed := len(a.windows) > 0
 	a.windows = map[string]Window{}
-	return from, r.settleLocked(acct, a, now, changed)
+	st := r.settleLocked(acct, a, now, changed)
+	r.mu.Lock()
+	var resets []func()
+	for _, fn := range r.resetSubs[acct] {
+		resets = append(resets, fn)
+	}
+	r.mu.Unlock()
+	for _, fn := range resets {
+		fn()
+	}
+	return from, st
 }
 
 // Tick expires windows whose reset time has passed, on every account, and

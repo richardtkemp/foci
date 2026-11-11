@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"foci/internal/delegator"
@@ -35,6 +36,11 @@ type usageHoldState struct {
 	storeMu sync.Mutex
 	mu      sync.Mutex
 	unsub   func()
+	// unsubReset ends the account's reset subscription (onAccountLimitReset);
+	// resetting is set while this agent's own ResetLimits clears the account,
+	// so its subscriber leaves the work to ResetLimits (#3044).
+	unsubReset func()
+	resetting  atomic.Bool
 	// lifted is closed and replaced on every phase change, so an inbox worker
 	// can wait for the next one.
 	changed chan struct{}
@@ -103,6 +109,7 @@ func (a *Agent) StartUsageHold() {
 		return
 	}
 	a.usageHold.unsub = a.usageRegistry().Subscribe(acct, a.onUsageHoldChange)
+	a.usageHold.unsubReset = a.usageRegistry().SubscribeReset(acct, a.onAccountLimitReset)
 	a.usageHold.mu.Unlock()
 	if st := a.UsageHold(); st.Phase != usagehold.Open {
 		a.logger().Infof("usage hold (%s) restored: %s until %s", acct, st.Phase, formatLift(st.LiftAt))
@@ -116,6 +123,10 @@ func (a *Agent) StopUsageHold() {
 	if a.usageHold.unsub != nil {
 		a.usageHold.unsub()
 		a.usageHold.unsub = nil
+	}
+	if a.usageHold.unsubReset != nil {
+		a.usageHold.unsubReset()
+		a.usageHold.unsubReset = nil
 	}
 }
 

@@ -2425,6 +2425,7 @@ func (a *Agent) AttachDelivery(be delegator.Delegator, sk string) {
 		tally := a.toolTallyLocked(sk)
 		se = &delegator.SessionEvents{
 			OnText: func(text string) {
+				a.noteBackendProgress(sk)
 				router.Emit(context.Background(), turnevent.TextBlock{Text: text, Phase: turnevent.PhaseIntermediate})
 			},
 			OnSubagentStart: func(groupKey, label, prompt string, runIndex int) {
@@ -2447,13 +2448,16 @@ func (a *Agent) AttachDelivery(be delegator.Delegator, sk string) {
 				router.Emit(context.Background(), turnevent.SubagentPrompt{GroupKey: groupKey, Prompt: prompt, RunIndex: runIndex})
 			},
 			OnTextDelta: func(delta string) {
+				a.noteBackendProgress(sk)
 				router.Emit(context.Background(), turnevent.TextDelta{Delta: delta})
 			},
 			OnThinkingDelta: func(delta string) {
+				a.noteBackendProgress(sk)
 				router.Emit(context.Background(), turnevent.ThinkingDelta{Delta: delta})
 				buf.WriteString(delta)
 			},
 			OnToolStart: func(id, name, input string) {
+				a.noteBackendProgress(sk)
 				tally.start(id, name)
 				router.Emit(context.Background(), turnevent.ToolCall{ID: id, Name: name, Args: []byte(input)})
 			},
@@ -2462,6 +2466,7 @@ func (a *Agent) AttachDelivery(be delegator.Delegator, sk string) {
 				router.Emit(context.Background(), turnevent.ToolResult{ID: id, Name: name, Output: output, IsError: isError})
 			},
 			OnAPIRetry: func(r delegator.APIRetry) {
+				a.noteBackendRetry(sk, r)
 				// A BackendRetry, never a RetryNotice: only the app shows it (#2260).
 				router.Emit(context.Background(), turnevent.BackendRetry{Endpoint: r.Endpoint, Attempt: r.Attempt,
 					MaxRetries: r.MaxRetries, Delay: r.Delay, Status: r.Status, Category: r.Category})

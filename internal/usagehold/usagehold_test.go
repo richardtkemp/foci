@@ -166,3 +166,31 @@ func TestClear_LiftsAndPersists(t *testing.T) {
 		t.Errorf("Clear of an open account notified subscribers: %+v", changes[n:])
 	}
 }
+
+// TestClear_CallsResetSubscribers (#3044): every Clear reaches the reset
+// subscribers of that account, hold or not, after the lift; another
+// account's are not called.
+func TestClear_CallsResetSubscribers(t *testing.T) {
+	now := time.Now()
+	r := New()
+	var calls int
+	var phaseAtCall Phase
+	r.SubscribeReset("ccstream", func() { calls++; phaseAtCall = r.State("ccstream", now).Phase })
+	other := 0
+	r.SubscribeReset("codex", func() { other++ })
+	r.Observe("ccstream", Event{Window: "five_hour", Reached: true, ResetAt: now.Add(time.Hour)}, now)
+	r.Clear("ccstream", now)
+	if calls != 1 || phaseAtCall != Open {
+		t.Fatalf("after a Clear of a stop: calls=%d phase seen=%v, want 1 call seeing open", calls, phaseAtCall)
+	}
+	r.Clear("ccstream", now)
+	if calls != 2 {
+		t.Errorf("a Clear of an open account: calls=%d, want 2", calls)
+	}
+	if other != 0 {
+		t.Errorf("codex reset subscriber called %d times, want 0", other)
+	}
+	unsub := r.SubscribeReset("ccstream", func() { t.Error("ended subscription called") })
+	unsub()
+	r.Clear("ccstream", now)
+}
