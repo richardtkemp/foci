@@ -234,13 +234,41 @@ func (c *appConn) SendToSession(sessionKey, text string) error {
 	if fellBack {
 		clean = misdeliveryBanner(sessionKey, b.convID, clean)
 	}
+	msgID := fap.NewULID()
 	b.send(fap.ServerMessage{
 		ConversationID: b.convID,
-		MessageID:      fap.NewULID(),
+		MessageID:      msgID,
 		Role:           "agent",
 		Text:           clean,
 	})
+	c.speakInVoiceMode(b, msgID, clean)
 	return nil
+}
+
+// sendSpeakTimeout bounds the synthesis of a message sent outside a turn
+// (speakInVoiceMode): there is no turn context to cancel it.
+const sendSpeakTimeout = time.Minute
+
+// speakInVoiceMode sends the voiceMode clip of an agent message that went out
+// through SendToSession rather than a turn sink (a broadcast /send reply),
+// when a device has b's chat in persistent voice mode (#3047). Same clip as a
+// sink bubble's (#1439, #2985): text normalised for speech, sent after the
+// text and naming it. Synchronous, so a later message cannot overtake its
+// clip. A failure is logged; the text already went out.
+func (c *appConn) speakInVoiceMode(b *convBinding, textMessageID, text string) {
+	if !voice.Configured(c.tts) || !c.hub.voiceModeOn(b.convID) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), sendSpeakTimeout)
+	defer cancel()
+	audio, err := c.tts.Synthesize(ctx, voice.NormalizeForSpeech(text))
+	if err != nil {
+		appLog.Warnf("voice-mode: TTS of a sent message (conv=%s): %v", b.convID, err)
+		return
+	}
+	if err := c.sendVoiceModeAttachment(b, audio, textMessageID); err != nil {
+		appLog.Warnf("voice-mode: attach synthesized audio (conv=%s): %v", b.convID, err)
+	}
 }
 
 // SendEditableInjected sends a system message like SendInjectedMessage and
@@ -849,6 +877,9 @@ func (c *appConn) NewTurnSink(env agent.Envelope) (turnevent.Sink, func()) {
 	sink.attachVoice = func(audio []byte, textMessageID string) error {
 		return c.sendVoiceModeAttachment(b, audio, textMessageID)
 	}
+	// Persistent voice mode (#3047): read live at each bubble, so turning it
+	// on or off mid-turn applies from the next bubble.
+	sink.voiceModeOn = func() bool { return c.hub.voiceModeOn(b.convID) }
 	sink.afterTurn = func() { c.hub.finishTurnRead(b) }
 	if mode := c.toolCallMode(env.SessionKey); mode != "" {
 		sink.toolCalls = newToolCallEmitter(b, mode, c.redact)

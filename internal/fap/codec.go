@@ -156,6 +156,8 @@ func decodeClient(t string, d json.RawMessage) (any, error) {
 		dst = &CheckboxPut{}
 	case TypeViewingPut:
 		dst = &ViewingPut{}
+	case TypeVoiceModePut:
+		dst = &VoiceModePut{}
 	case TypeConfigGet:
 		dst = &ConfigGet{}
 	case TypeConfigPut:
@@ -247,6 +249,8 @@ func derefClient(dst any) any {
 	case *CheckboxPut:
 		return *v
 	case *ViewingPut:
+		return *v
+	case *VoiceModePut:
 		return *v
 	case *ConfigGet:
 		return *v

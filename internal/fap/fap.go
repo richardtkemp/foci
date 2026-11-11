@@ -215,6 +215,10 @@ const (
 	// a conversation any device is viewing.
 	TypeViewingPut  = "viewing.put"
 	TypeViewingSync = "viewing.sync"
+	// TypeVoiceModePut (app->server) reports the conversations this device has
+	// in persistent voice mode (#3047): every agent message delivered to one of
+	// them is spoken as a voiceMode clip, not only the reply to a voice turn.
+	TypeVoiceModePut = "voicemode.put"
 	// TypeTyping is the app->server "user is typing" signal (ClientTyping). It is
 	// distinct from the server->app agent activity indicator, which is now the
 	// unified Activity frame (TypeActivity) with an "typing" ActivityKind.
@@ -1718,6 +1722,18 @@ func (CheckboxSync) Type() string { return TypeCheckboxSync }
 // closes. Fire-and-forget, not conversation-reliability-scoped.
 type ViewingPut struct {
 	ConversationID string `json:"conversationId,omitempty"`
+}
+
+// VoiceModePut reports the conversations this device has in persistent voice
+// mode (app->server, #3047): the user tapped the voice-mode button left of the
+// composer and has not left it. A full replace: an empty list means none. While
+// any live socket names a conversation, every agent message the server
+// delivers to it carries a voiceMode clip (the #1439 per-bubble TTS path),
+// not only the replies to voice turns. Sent on every change and after each
+// hello; the server holds it per socket and forgets it when the socket closes.
+// Fire-and-forget, not conversation-reliability-scoped.
+type VoiceModePut struct {
+	ConversationIDs []string `json:"conversationIds,omitempty"`
 }
 
 // AskgwResponse answers one askgw prompt (app->server, #2707). Data is the

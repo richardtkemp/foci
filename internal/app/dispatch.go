@@ -152,6 +152,9 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 	case fap.ViewingPut:
 		h.handleViewingPut(client, f)
 
+	case fap.VoiceModePut:
+		h.handleVoiceModePut(client, f)
+
 	case fap.ConversationList:
 		h.pushRoster(client)
 

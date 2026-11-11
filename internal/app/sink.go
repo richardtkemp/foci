@@ -76,8 +76,9 @@ type appSink struct {
 	// a test without it still behaves like "no TTS".
 	attachVoice func(audio []byte, textMessageID string) error
 
-	// voiceBlockDelivered is set once a voice clip has been synthesized for a
-	// delivered intermediate TextBlock this turn (#1444). It gates the
+	// voiceBlockDelivered is set once an intermediate TextBlock has been
+	// delivered as a bubble this turn, spoken or not (#1444; "or not" since
+	// #3047, whose persistent voice mode can start mid-turn). It gates the
 	// TurnComplete synthesis: a backend (e.g. ccstream) may accumulate
 	// FinalText as the concatenation of EVERY assistant message across
 	// tool-call boundaries, even though each one was already delivered — and
@@ -85,6 +86,11 @@ type appSink struct {
 	// this gate, TurnComplete would re-synthesize that whole accumulation as
 	// one clip, reading past the bubble it belongs to and into the next.
 	voiceBlockDelivered bool
+
+	// voiceModeOn reports, at each bubble, whether a device has this chat in
+	// persistent voice mode (#3047): then every bubble is spoken, whatever the
+	// turn's trigger. nil = never (a sink built without a hub).
+	voiceModeOn func() bool
 
 	// toolCalls sends this turn's tool calls as tool.call transcript frames
 	// (#999). nil = the session's resolved show_tool_calls is off (the app
@@ -192,6 +198,12 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 			// bubble this block is about to render as (renderer.OnReply), one
 			// clip per delivered app bubble rather than one clip per turn.
 			audio = s.synthesizeVoiceModeBlock(ctx, tb.Text)
+			if platform.StripSilencingSuffix(platform.StripSpuriousPrefix(tb.Text)) != "" {
+				// Delivered as a bubble, spoken or not. Persistent voice
+				// mode can start mid-turn (#3047): the turn-end FinalText
+				// repeats this bubble, so it must not be spoken then.
+				s.voiceBlockDelivered = true
+			}
 		}
 		s.backend.lastMsgID = ""
 		s.inner.Emit(ctx, ev)
@@ -276,9 +288,9 @@ func (s *appSink) ttsFailed(err error) {
 
 // synthesizeVoiceMode returns synthesized reply audio for a voice-triggered
 // app turn (#1439), or nil when bundling doesn't apply: no TTS configured
-// (graceful text-only degradation), the turn errored, the turn's trigger isn't
-// "voice" (gated so a normal typed app turn never gets an unsolicited voice
-// note), or the reply has no real content to speak (cleaned the same way the
+// (graceful text-only degradation), the turn errored, the turn is not spoken
+// (speaks: neither a voice turn nor a chat in persistent voice mode, #3047 —
+// so a normal typed app turn never gets an unsolicited voice note), or the reply has no real content to speak (cleaned the same way the
 // renderer cleans delivered text — an empty/fully-silent, e.g. [[NO_RESPONSE]],
 // reply is never synthesized). Text is run through voice.NormalizeForSpeech
 // (#1444) before synthesis so markdown/symbol-heavy tokens (a "#1443" ticket
@@ -289,7 +301,7 @@ func (s *appSink) synthesizeVoiceMode(ctx context.Context, e turnevent.TurnCompl
 	if !voice.Configured(s.tts) || e.Err != nil {
 		return nil
 	}
-	if agent.TriggerFromContext(ctx) != "voice" {
+	if !s.speaks(ctx) {
 		return nil
 	}
 	if s.voiceBlockDelivered {
@@ -310,6 +322,14 @@ func (s *appSink) synthesizeVoiceMode(ctx context.Context, e turnevent.TurnCompl
 		return nil
 	}
 	return audio
+}
+
+// speaks reports whether this bubble is spoken: the turn is a voice turn
+// (#1439: trigger "voice", the reply to spoken input), or a device has the
+// chat in persistent voice mode right now (#3047), which speaks every agent
+// message, background turns included.
+func (s *appSink) speaks(ctx context.Context) bool {
+	return agent.TriggerFromContext(ctx) == "voice" || (s.voiceModeOn != nil && s.voiceModeOn())
 }
 
 // synthesize speaks text through s.tts, noting which voice spoke and how long
@@ -350,23 +370,22 @@ func (s *appSink) attachVoiceClip(audio []byte) {
 // synthesizeVoiceModeBlock synthesizes the voice clip for ONE intermediate
 // text block about to be delivered (#1444) — the per-bubble counterpart to
 // synthesizeVoiceMode. Same gating as synthesizeVoiceMode (TTS configured,
-// trigger=="voice", non-silent after stripping), minus the e.Err check (a
-// mid-turn TextBlock never carries a turn error). Marks voiceBlockDelivered
-// so the terminal TurnComplete does not also speak the whole-turn
-// accumulation this block is part of. Text is run through
+// speaks, non-silent after stripping), minus the e.Err check (a mid-turn
+// TextBlock never carries a turn error). The caller marks voiceBlockDelivered
+// for every delivered block, spoken or not, so the terminal TurnComplete does
+// not also speak the whole-turn accumulation this block is part of. Text is run through
 // voice.NormalizeForSpeech (#1444) before synthesis, same as
 // synthesizeVoiceMode. A synthesis error is logged and swallowed, matching
 // synthesizeVoiceMode's graceful degrade. The caller attaches the returned
 // audio after the block is delivered, so the clip can name its bubble (#2985).
 func (s *appSink) synthesizeVoiceModeBlock(ctx context.Context, rawText string) []byte {
-	if !voice.Configured(s.tts) || agent.TriggerFromContext(ctx) != "voice" {
+	if !voice.Configured(s.tts) || !s.speaks(ctx) {
 		return nil
 	}
 	text := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(rawText))
 	if text == "" {
 		return nil
 	}
-	s.voiceBlockDelivered = true
 	audio, err := s.synthesize(ctx, text)
 	if err != nil {
 		s.ttsFailed(err)

@@ -3564,6 +3564,7 @@ type wsClient struct {
 	helloAt   time.Time               // when the hello arrived; device-tool routing prefers the newest (#1079)
 	convByID  map[string]*convBinding // conversationId → binding
 	viewing   string                  // conversation the device has on screen, "" = none (ViewingPut, #2202)
+	voiceMode map[string]struct{}     // conversations this device has in persistent voice mode (VoiceModePut, #3047)
 	// unknownTypes: inbound frame types this socket sent that the server does
 	// not recognise, so each is logged once per socket, not per frame (#1884).
 	unknownTypes map[string]struct{}

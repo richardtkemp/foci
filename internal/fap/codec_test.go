@@ -924,6 +924,26 @@ func TestDecode_ViewingPut(t *testing.T) {
 	}
 }
 
+// TestDecode_VoiceModePut pins the app->server persistent voice-mode report's
+// field name (#3047); an absent list is the "no chat in voice mode" report.
+func TestDecode_VoiceModePut(t *testing.T) {
+	in, err := Decode(`{"t":"voicemode.put","id":"i1","d":{"conversationIds":["c1","c2"]}}`)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	f, ok := in.Frame.(VoiceModePut)
+	if !ok || len(f.ConversationIDs) != 2 || f.ConversationIDs[0] != "c1" || f.ConversationIDs[1] != "c2" {
+		t.Fatalf("frame = %#v, want VoiceModePut{[c1 c2]}", in.Frame)
+	}
+	in, err = Decode(`{"t":"voicemode.put","id":"i2","d":{}}`)
+	if err != nil {
+		t.Fatalf("decode empty: %v", err)
+	}
+	if f := in.Frame.(VoiceModePut); len(f.ConversationIDs) != 0 {
+		t.Errorf("empty put decoded as %+v, want none", f)
+	}
+}
+
 // TestToolCall_RoundTrip pins the tool.call wire (#999): field names the
 // client decodes by, omitted-when-empty optionals, and an encode→decode round
 // trip of both halves of a call.
