@@ -83,14 +83,40 @@ func (a *Agent) recordCacheEvidence(sessionKey string, cacheRead, cacheWrite int
 	// The branch carries its source's whole conversation, so its first call
 	// read the source's prefix, which starts with the root's. Stamp both: the
 	// source differs from the root when it is itself a branch (a facet open as
-	// an app chat, which keepalive may warm).
+	// an app chat, which keepalive may warm). A key is empty when that session
+	// was reset after the branch was made (forgetBranchRootWarmsFor, #2967).
 	warmed := []string{pending.root}
 	if pending.source != pending.root {
 		warmed = append(warmed, pending.source)
 	}
 	for _, k := range warmed {
+		if k == "" {
+			continue
+		}
 		a.SessionIndex.TouchCacheTouch(k, now)
 		a.emitCacheExpiry(k)
+	}
+}
+
+// forgetBranchRootWarmsFor stops every pending branch stamp from warming
+// sessionKey, which was just reset (#2967). A branch made before the reset
+// (the reset's own session-end-memory branch, or a keepalive fork in flight)
+// carries the discarded conversation, so its first call reads that
+// conversation's cache. The reset session has no conversation and no cache
+// until its next real turn writes one; stamping it would make keepalive warm
+// a session that does not exist. The branch itself and any other session the
+// pending stamp names (a facet source under a reset root) are still stamped.
+func (a *Agent) forgetBranchRootWarmsFor(sessionKey string) {
+	a.branchRootMu.Lock()
+	defer a.branchRootMu.Unlock()
+	for k, v := range a.branchRootWarms {
+		if v.root == sessionKey {
+			v.root = ""
+		}
+		if v.source == sessionKey {
+			v.source = ""
+		}
+		a.branchRootWarms[k] = v
 	}
 }
 

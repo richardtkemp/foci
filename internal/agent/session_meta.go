@@ -979,6 +979,8 @@ func (a *Agent) ClearSessionState(sessionKey string) {
 		a.SessionIndex.ClearCacheTouch(sessionKey)
 		a.emitCacheExpiry(sessionKey) // emits 0 (no cache) → client shows WARM, nothing to re-warm
 	}
+	// A branch made before the reset must not stamp it warm again (#2967).
+	a.forgetBranchRootWarmsFor(sessionKey)
 
 	a.logger().Infof("session state cleared %s", sessionKey)
 }

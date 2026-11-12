@@ -261,3 +261,61 @@ func TestNoteBranchInheritsRoot_BaselineSurvivesARestart(t *testing.T) {
 		t.Fatal("after a restart, a fork that read its source's cache did not stamp the root")
 	}
 }
+
+// TestClearSessionState_MemoryBranchDoesNotRewarmResetSession is #2967. A
+// reset makes its session-end-memory branch BEFORE it clears the session
+// (ResetSession: PrepareSessionEndMemory, then ClearSessionState). The
+// branch's first call then reads the discarded conversation's cache. That is
+// no evidence for the reset session, which has no conversation and no cache
+// yet. Stamping the root kept keepalive firing 55 min after polaris's 04:30
+// reset (8-11 Nov): an in-place turn, then an hourly fork miss and alert.
+func TestClearSessionState_MemoryBranchDoesNotRewarmResetSession(t *testing.T) {
+	t.Parallel()
+	a, idx := newCacheEvidenceTestAgent(t)
+	a.Sessions = session.NewStore(t.TempDir())
+	if err := a.Sessions.TestAppend(orchestratorTestKey, provider.Message{Role: "user", Content: provider.TextContent("hi")}); err != nil {
+		t.Fatal(err)
+	}
+	a.recordCacheEvidence(orchestratorTestKey, 100000, 500)
+
+	// The order ResetSession uses.
+	branchKey, ok := a.createMemoryBranch(orchestratorTestKey, "session-end-memory", "")
+	if !ok {
+		t.Fatal("createMemoryBranch failed")
+	}
+	seedCacheTestRow(idx, branchKey)
+	a.ClearSessionState(orchestratorTestKey)
+	if _, ok := idx.LastCacheTouch(orchestratorTestKey); ok {
+		t.Fatal("ClearSessionState left last_cache_touch set")
+	}
+
+	// The memory branch's first call: a full read of the old lineage.
+	a.recordCacheEvidence(branchKey, 104712, 10378)
+	if at, ok := idx.LastCacheTouch(orchestratorTestKey); ok {
+		t.Fatalf("the reset session was stamped warm at %s by its memory branch's call; it has no cache to keep alive", at)
+	}
+	if _, ok := idx.LastCacheTouch(branchKey); !ok {
+		t.Error("the memory branch's own call did not stamp the branch")
+	}
+}
+
+// TestClearSessionState_ResetRootStillLetsFacetBeWarmed: a reset clears only
+// the session that was reset. A fork pending on an open facet (source) whose
+// root is reset still read the facet's prefix, so the facet is stamped; the
+// root is not.
+func TestClearSessionState_ResetRootStillLetsFacetBeWarmed(t *testing.T) {
+	t.Parallel()
+	a, idx := newCacheEvidenceTestAgent(t)
+	grandchild := orchestratorTestKey + "/b1700000003"
+	seedCacheTestRow(idx, grandchild)
+
+	a.NoteBranchInheritsRoot(grandchild, orchestratorTestBranchKey)
+	a.ClearSessionState(orchestratorTestKey)
+	a.recordCacheEvidence(grandchild, 100, 0)
+	if _, ok := idx.LastCacheTouch(orchestratorTestKey); ok {
+		t.Error("the reset root was stamped by a fork made before the reset")
+	}
+	if _, ok := idx.LastCacheTouch(orchestratorTestBranchKey); !ok {
+		t.Error("the facet source was not stamped; only the root was reset")
+	}
+}
