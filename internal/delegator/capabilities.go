@@ -182,7 +182,7 @@ var capabilityTable = [numCapabilities]CapabilityInfo{
 	CapCommandApprovalAllowlist: {Name: "command_approval_allowlist", Kind: KindBehaviour, Doc: "auto-approves prompts matching foci's [permissions] allowlist (StartOptions.AutoApproveRules)"},
 	CapPlanMode:                 {Name: "plan_mode", Kind: KindData, Doc: "has a /plan delivery (Spec.PlanDelivery)"},
 	CapUsageQuery:               {Name: "usage_query", Kind: KindData, Doc: "reports plan usage for /mana (Spec.UsageQuery)"},
-	CapLimitReset:               {Name: "limit_reset", Kind: KindBehaviour, Requires: []Capability{CapUsageQuery}, Doc: "/limit-reset force-lifts the rate-limit gate and usage hold, and a /usage read that finds usage available lifts them (its UsageQuery reports rate-limit availability)"},
+	CapLimitReset:               {Name: "limit_reset", Kind: KindBehaviour, Requires: []Capability{CapUsageQuery}, Doc: "/limit_reset force-lifts the rate-limit gate and usage hold, and a /usage read that finds usage available lifts them (its UsageQuery reports rate-limit availability)"},
 }
 
 // AllCapabilities returns every capability in declaration order.

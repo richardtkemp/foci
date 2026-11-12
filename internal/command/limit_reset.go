@@ -4,7 +4,7 @@ import (
 	"context"
 )
 
-// LimitResetCommand returns /limit-reset (#3043, Dick 2026-11-11: "/limit-reset
+// LimitResetCommand returns /limit_reset (#3043, Dick 2026-11-11: "/limit_reset
 // cmd, force removes the gate"). It lifts the agent's rate-limit gate and its
 // account's usage hold at once (Agent.ResetLimits), for the case where the
 // operator has reset the account's limit and foci cannot see it: in a usage
@@ -15,7 +15,7 @@ import (
 // Registered only for a backend declaring CapLimitReset (Claude Code).
 func LimitResetCommand() *Command {
 	return &Command{
-		Name:        "limit-reset",
+		Name:        "limit_reset",
 		Description: "Force-lift the rate-limit gate and usage hold (after the account's limit was reset)",
 		Category:    "operations",
 		Requires:    RequiresBackend,
@@ -23,7 +23,7 @@ func LimitResetCommand() *Command {
 			if cc.Agent == nil {
 				return Response{Text: "No agent to reset."}, nil
 			}
-			res := cc.Agent.ResetLimits("/limit-reset")
+			res := cc.Agent.ResetLimits("/limit_reset")
 			if !res.Cleared() {
 				return Response{Text: res.Summary()}, nil
 			}

@@ -9,7 +9,7 @@ import (
 	"foci/internal/usagehold"
 )
 
-// The forced lift of the usage gates (#3043, Dick 2026-11-11: "/limit-reset
+// The forced lift of the usage gates (#3043, Dick 2026-11-11: "/limit_reset
 // cmd, force removes the gate. Also /usage to unblock IFF it finds available
 // usage. Both ccstream only").
 //

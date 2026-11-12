@@ -29,7 +29,7 @@ import (
 // liftOnAvailable (a backend declaring CapLimitReset: Claude Code, #3043):
 // when the read shows usage available (Agent.UsageAvailable), the command
 // also lifts the agent's rate-limit gate and its account's usage hold
-// (Agent.ResetLimits), as /limit-reset does. A read that does not show usage
+// (Agent.ResetLimits), as /limit_reset does. A read that does not show usage
 // available changes nothing.
 func ManaCommand(query delegator.UsageQuery, agentID string, liftOnAvailable bool) *Command {
 	return &Command{

@@ -286,7 +286,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	// gets no /mana (#1543).
 	//
 	// A backend declaring CapLimitReset (claude-code, #3043) also gets
-	// /limit-reset, and its /usage lifts the rate-limit gate and usage hold
+	// /limit_reset, and its /usage lifts the rate-limit gate and usage hold
 	// when the read shows usage available.
 	limitReset := false
 	if spec, ok := delegator.SpecFor(p.acfg.Backend); ok {

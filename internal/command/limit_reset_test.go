@@ -25,7 +25,7 @@ func TestLimitResetCommand_LiftsHold(t *testing.T) {
 		t.Fatal(err)
 	}
 	if a.UsageHold().Phase != usagehold.Open {
-		t.Errorf("phase after /limit-reset = %v, want open", a.UsageHold().Phase)
+		t.Errorf("phase after /limit_reset = %v, want open", a.UsageHold().Phase)
 	}
 	if !strings.Contains(resp.Text, "Lifted") || !strings.Contains(resp.Text, "stop") {
 		t.Errorf("reply = %q, want it to name the lifted stop", resp.Text)

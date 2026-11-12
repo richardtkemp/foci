@@ -179,7 +179,7 @@ Every delegated backend declares every capability in its `delegator.Spec` (`inte
 | `command_approval_allowlist` | auto-approves prompts matching foci's [permissions] allowlist (StartOptions.AutoApproveRules) | ✓ | ✓ | ✓ |
 | `plan_mode` | has a /plan delivery (Spec.PlanDelivery) | ✓ | ✗ | ✓ |
 | `usage_query` | reports plan usage for /mana (Spec.UsageQuery) | ✓ | ✓ | ✗ |
-| `limit_reset` | /limit-reset force-lifts the rate-limit gate and usage hold, and a /usage read that finds usage available lifts them (its UsageQuery reports rate-limit availability) | ✓ | ✗ | ✗ |
+| `limit_reset` | /limit_reset force-lifts the rate-limit gate and usage hold, and a /usage read that finds usage available lifts them (its UsageQuery reports rate-limit availability) | ✓ | ✗ | ✗ |
 
 Why not:
 
@@ -215,7 +215,7 @@ Why not:
 - `relogin`: codex: the re-login driver logs Claude Code in; opencode: the re-login driver logs Claude Code in.
 - `plan_mode`: codex: no /plan delivery.
 - `usage_query`: opencode: no plan usage to report.
-- `limit_reset`: codex: Dick 2026-11-11: /limit-reset and the /usage unblock are Claude Code only; opencode: no usage hold or plan usage to reset.
+- `limit_reset`: codex: Dick 2026-11-11: /limit_reset and the /usage unblock are Claude Code only; opencode: no usage hold or plan usage to reset.
 
 <!-- END GENERATED CAPABILITIES -->
 
@@ -319,7 +319,7 @@ grepped for each ✗. Row IDs are not renumbered, so the gaps are the removed ro
 | U6 | Utilisation notice | Rate-limit utilisation notice to the human's chat | ✓ | ✗ | ✓ |
 | U7 | Limit gate | Usage/session limit engages `Agent.EngageRateLimit` | ✓ [49] | ✓ [49] | ✓ [34] |
 | U9 | Turn usage | Token usage on `TurnResult` | ✓ | ✓ | ✓ |
-| U10 | Forced lift | `/limit-reset`, and `/usage` when it finds usage available, lift the limit gate and usage hold (`CapLimitReset`, #3043) | ✓ [49] | ✗ | ✗ [49] |
+| U10 | Forced lift | `/limit_reset`, and `/usage` when it finds usage available, lift the limit gate and usage hold (`CapLimitReset`, #3043) | ✓ [49] | ✗ | ✗ [49] |
 
 ### 8. Models and effort
 
@@ -617,7 +617,7 @@ Notes:
     (`HostHooks.OnUsageWindow` → `Agent.ObserveUsage` → `internal/usagehold`, #2491); opencode
     does not, as it reports no usage percentage (open gap).
     The gate and the hold clear on their own clock or a new event; in a usage stop nothing
-    runs that could bring one. On ccstream, `/limit-reset` lifts both at once, in memory and in
+    runs that could bring one. On ccstream, `/limit_reset` lifts both at once, in memory and in
     the stored state, and so does `/usage` when its read shows every reported window under the
     threshold (`Agent.ResetLimits`, `usagehold.Registry.Clear`, #3043). The hold is account-wide,
     so the lift reaches every Claude Code agent: each opens its own gate, and a turn whose CC is
