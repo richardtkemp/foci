@@ -166,6 +166,7 @@ type Agent struct {
 	NudgeReloadFunc               func()                                  // called after bootstrap reload to refresh nudge rules; nil disables
 	FirstRunMessage               atomic.Value                            // string; prepended as separate content block on first HandleMessage, then cleared
 	OnFirstRunConsumed            func()                                  // fired once when FirstRunMessage is actually consumed into a delivered turn (nil disables); marks onboarding complete
+	FirstRunAddendum              func() string                           // called once, on the consume that wins FirstRunMessage; a non-empty result is appended to the onboarding text (the install's one-time import, #3049). nil disables
 	TurnLockWarnThreshold         time.Duration                           // warn if turn lock wait exceeds this (default 3m)
 	ShowToolCalls                 string                                  // agent-level default: "off"/"preview"/"full" (per-session overrides via /display)
 	Statusline                    string                                  // per-agent [meta]/[state] header template; "" = DefaultStatuslineTemplate (#831)

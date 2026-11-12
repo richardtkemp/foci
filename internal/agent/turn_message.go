@@ -30,6 +30,14 @@ func (a *Agent) consumeFirstRunMessage() string {
 	if !a.FirstRunMessage.CompareAndSwap(frm, "") {
 		return "" // another turn consumed it first
 	}
+	// The addendum is decided at delivery, not at arming: the gateway's hook
+	// claims the install-level import marker, so of several fresh agents only
+	// the first one actually delivered gets the import (#3049).
+	if a.FirstRunAddendum != nil {
+		if add := a.FirstRunAddendum(); add != "" {
+			frm += "\n\n" + add
+		}
+	}
 	if a.OnFirstRunConsumed != nil {
 		a.OnFirstRunConsumed()
 	}

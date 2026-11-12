@@ -202,19 +202,28 @@ func (e *agentEnv) buildAgent(acfg config.AgentConfig) *agentInstance {
 // still pending — silently losing onboarding on claude-code agents (#853).
 // Boot arms every agent (handleRestartAndFirstRun); a hot-add arms the new
 // agent before it can take a turn.
+//
+// It also records the install-level import marker the first time it runs on
+// an install, and gives every armed agent the FirstRunAddendum hook: the first
+// of them whose onboarding is delivered gets the one-time import from other AI
+// tools (#3049, first_run_import.go).
 func armFirstRun(inst *agentInstance, sessionIndex *session.SessionIndex) {
+	initFirstRunImportMarker(sessionIndex)
 	msg := checkFirstRun(sessionIndex, inst.agentCfg)
 	if msg == "" {
 		return
 	}
-	inst.ag.FirstRunMessage.Store(msg)
 	agentID := inst.id
+	// The hooks are set BEFORE the message is stored: a turn that loads the
+	// message (atomic) then sees them (happens-before on the atomic Store).
+	inst.ag.FirstRunAddendum = firstRunImportAddendum(sessionIndex, agentID, inst.ag.IsDelegated)
 	inst.ag.OnFirstRunConsumed = func() {
 		if err := sessionIndex.SetAgentMetadata(agentID, "first_run_completed", "true"); err != nil {
 			mainLog.Errorf("set first_run_completed for %s: %v", agentID, err)
 		}
 		mainLog.Infof("first-run onboarding completed for %s", agentID)
 	}
+	inst.ag.FirstRunMessage.Store(msg)
 }
 
 // agentRestorePhases are the per-agent restores that need the agent's chats

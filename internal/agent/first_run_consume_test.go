@@ -44,3 +44,29 @@ func TestConsumeFirstRunMessage_NonePending(t *testing.T) {
 		t.Fatal("OnFirstRunConsumed fired with no pending onboarding")
 	}
 }
+
+// TestConsumeFirstRunMessage_Addendum verifies the FirstRunAddendum hook runs
+// only on the winning consume and its result is appended to the onboarding,
+// so the install-level import is decided at delivery (#3049).
+func TestConsumeFirstRunMessage_Addendum(t *testing.T) {
+	t.Parallel()
+	a := &Agent{}
+	calls := 0
+	a.FirstRunAddendum = func() string { calls++; return "[IMPORT] extra" }
+	a.FirstRunMessage.Store("[FIRST RUN] hello")
+
+	if got := a.consumeFirstRunMessage(); got != "[FIRST RUN] hello\n\n[IMPORT] extra" {
+		t.Fatalf("consume = %q; want onboarding plus addendum", got)
+	}
+	if got := a.consumeFirstRunMessage(); got != "" || calls != 1 {
+		t.Fatalf("second consume = %q, addendum calls = %d; want empty and 1", got, calls)
+	}
+
+	// An empty addendum leaves the onboarding text exactly as stored.
+	b := &Agent{}
+	b.FirstRunAddendum = func() string { return "" }
+	b.FirstRunMessage.Store("[FIRST RUN] hello")
+	if got := b.consumeFirstRunMessage(); got != "[FIRST RUN] hello" {
+		t.Fatalf("consume with empty addendum = %q; want the onboarding unchanged", got)
+	}
+}

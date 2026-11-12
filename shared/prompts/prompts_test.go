@@ -166,3 +166,38 @@ func TestResolvePromptExplicitPathOverridesSearchDirs(t *testing.T) {
 		t.Errorf("explicit path: got %q, want %q", got, "explicit-content")
 	}
 }
+
+// TestFirstRunImportTextCarriesRequirements checks the import text (#3049)
+// carries the points of the spec a test can read, and names no install.
+func TestFirstRunImportTextCarriesRequirements(t *testing.T) {
+	text := FirstRunImport("ask")
+	lower := strings.ToLower(text)
+	for _, want := range []string{
+		"claude code", "cursor", "codex", // named tools
+		"one `ask` call",                                           // one ask
+		"one yes/no question per item",                             // one question per item
+		"most impactful to least impactful",                        // ordering
+		"stop at any time by pressing submit",                      // stop early
+		"never name a destination file",                            // no destination named
+		"never copy a credential",                                  // credentials
+		"weave it into the existing text",                          // weave
+		"remove any old content that an approved item contradicts", // drop contradicted
+		"only after the basic introduction",                        // order in the interview
+		"which other ai tools they use",                            // ask about other tools
+		"only read",                                                // read-only
+		"never use sudo",                                           // no elevated privileges
+		"foci's own files are not a source",                        // foci files excluded
+		"left unanswered, is not approved",                         // unanswered = no
+		"send no ask",                                              // nothing found
+	} {
+		if !strings.Contains(lower, want) {
+			t.Errorf("import text lacks %q", want)
+		}
+	}
+	// Generic: no person, host or user name of this install.
+	for _, bad := range []string{"dick", "rich", "/home/", "nuc", "foci@"} {
+		if strings.Contains(lower, bad) {
+			t.Errorf("import text names something install-specific: %q", bad)
+		}
+	}
+}

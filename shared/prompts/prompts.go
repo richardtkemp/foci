@@ -95,6 +95,14 @@ func MemoryConsolidation() string { return read("memory-consolidation.md") }
 // FirstRun returns the onboarding prompt injected on an agent's first session.
 func FirstRun() string { return read("first-run.md") }
 
+// FirstRunImport returns the instructions appended to the onboarding of the
+// first agent on a new install (#3049): find the human's rules in other AI
+// tools and offer them through one ask. askTool is the ask tool's name as this
+// agent sees it ("ask" on API agents, "foci_ask" on delegated ones).
+func FirstRunImport(askTool string) string {
+	return strings.ReplaceAll(read("first-run-import.md"), "{{ask_tool}}", askTool)
+}
+
 // WeeklyCharacterReview returns the default weekly character review prompt.
 func WeeklyCharacterReview() string { return read("weekly-character-review.md") }
 

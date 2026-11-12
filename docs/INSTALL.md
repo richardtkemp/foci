@@ -360,7 +360,7 @@ Older versions emitted a `foci setup` call in the generated root-install script,
 
 ### First message
 
-Open Telegram and message your bot. On first run, the agent will introduce itself, ask your name and communication preferences, and learn about you — interests, work, style. It updates its character files based on what you share. Take a few minutes to help it understand who you are.
+Open Telegram and message your bot. On first run, the agent will introduce itself, ask your name and communication preferences, and learn about you — interests, work, style. It updates its character files based on what you share. The first agent on a new install also offers to learn from the AI tools you already use: after its introduction it looks for the personal instructions you gave Claude Code, Cursor, Codex and similar tools, asks which other tools you use, and shows you the rules it found, most important first, one yes-or-no question each. You can stop at any time by pressing Submit. Anything you approve becomes part of its own character. Take a few minutes to help it understand who you are.
 
 ### Character files
 

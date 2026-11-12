@@ -1657,6 +1657,32 @@ func (idx *SessionIndex) DeleteSystemState(key string) error {
 	return idx.metaDelete(systemStateTable, key)
 }
 
+// SwapSystemState sets key to newValue only if its current value is oldValue,
+// and reports whether it did. An oldValue of "" means "only if the key is
+// absent". The check and the write are one statement under idx.mu, so of
+// several concurrent callers with the same oldValue exactly one wins.
+func (idx *SessionIndex) SwapSystemState(key, oldValue, newValue string) (bool, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	var (
+		res sql.Result
+		err error
+	)
+	if oldValue == "" {
+		res, err = idx.db.Exec(`INSERT INTO system_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING`, key, newValue)
+	} else {
+		res, err = idx.db.Exec(`UPDATE system_state SET value = ? WHERE key = ? AND value = ?`, newValue, key, oldValue)
+	}
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
 // SetDefaultChat marks a chat as the default for an agent on a specific platform.
 // Clears any previous default for that agent on the same platform, then sets
 // the new one via an is_default=true row in chat_metadata.
@@ -2059,6 +2085,19 @@ func (idx *SessionIndex) SessionKeysWithMetadata(key string) ([]string, error) {
 	return idx.querySessionKeysLocked(
 		`SELECT session_key FROM session_metadata WHERE key = ?`, key,
 	)
+}
+
+// AnyAgentMetadataEquals reports whether any agent has metadata key set to
+// value (e.g. whether any agent on this install has ever completed onboarding).
+func (idx *SessionIndex) AnyAgentMetadataEquals(key, value string) (bool, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	var one int
+	err := idx.db.QueryRow(`SELECT 1 FROM agent_metadata WHERE key = ? AND value = ? LIMIT 1`, key, value).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // AgentMetadataByPrefix returns all metadata entries for an agent whose key starts with prefix.
