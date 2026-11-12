@@ -1624,13 +1624,18 @@ func (h *Hub) sessionKeyForChat(agentID string, chatID int64) string {
 // and outlives sockets, so a reconnect resumes the same seq stream + replay
 // buffer rather than starting fresh. A binding this call CREATES with no calling
 // socket (client == nil, a server-side mint) is attached to every connected
-// socket instead (#3051).
+// socket instead (#3051). With no calling socket, an EXISTING binding is
+// returned as it is: a server-side lookup (a pre-restart ask's durable
+// fallback, a default-chat or depth-leaf re-resolve) must never detach the
+// devices already attached to it (#3052).
 func (h *Hub) ensureBinding(client *wsClient, agentID, convID string) *convBinding {
 	h.mu.RLock()
 	b := h.convs[convID]
 	h.mu.RUnlock()
 	if b != nil {
-		b.attach(client)
+		if client != nil {
+			b.attach(client)
+		}
 		return b
 	}
 
@@ -1650,7 +1655,9 @@ func (h *Hub) ensureBinding(client *wsClient, agentID, convID string) *convBindi
 	h.mu.Lock()
 	if existing := h.convs[convID]; existing != nil {
 		h.mu.Unlock()
-		existing.attach(client)
+		if client != nil {
+			existing.attach(client)
+		}
 		return existing
 	}
 	b = &convBinding{convID: convID, chatID: chatID, replayDepth: h.replayDepth, replayTTL: h.replayTTL, store: h.frames, seq: h.frames.MaxSeq(convID), seen: make(map[string]struct{}), notifyOffline: h.pushNotify, onMessageStored: h.chatMessageStored}
@@ -2704,8 +2711,10 @@ func (b *convBinding) setIdent(agentID, sessionKey string) {
 // model silently shadowed the displaced socket, leaving it deaf; this design
 // keeps both live.
 //
-// attach(nil) is the socketless restore path (startup binding reconstruction):
-// it clears the live set without touching the durable buffer.
+// attach(nil) clears the live set without touching the durable buffer. No
+// production path calls it: ensureBinding skips attach when it has no calling
+// socket, because clearing an existing binding's live set detached every
+// connected device from it (#3052).
 func (b *convBinding) attach(client *wsClient) {
 	b.mu.Lock()
 	if b.clients == nil {
