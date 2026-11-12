@@ -77,6 +77,10 @@ func TestL2_Egress_AssistantReplyReachesTelegram(t *testing.T) {
 // run_turn.go), then emits a SECOND assistant message. With no
 // per-turn sink registered, the session router forwards to its
 // late-delivery fallback, which should send via SendToSession.
+// Since #3055 the stub emits session-state events, so the late text comes
+// as a run of its own (running/assistant/result/idle) and ccstream adopts
+// it as an autonomous turn with its own sink, as production does; the
+// assertion (it reaches Telegram) is the same.
 //
 // Should FAIL until the late-delivery path is verified working — this
 // is the test for clutch's "lost top-20 report" hypothesis, where a

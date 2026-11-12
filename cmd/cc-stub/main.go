@@ -39,6 +39,13 @@
 //	CCSTUB_COMPACT_PRE_TOKENS — pre_tokens reported in compact_boundary
 //	                        (default 50000); only meaningful with the above.
 //	CCSTUB_RESPONSE       — assistant reply text; default echoes the user prompt
+//	CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS — read as real CC reads it: when
+//	                        truthy (foci sets it at every launch), each run is
+//	                        bracketed by system/session_state_changed "running"
+//	                        and "idle", so ccstream completes turns on idle and
+//	                        adopts a run it did not open (production's path,
+//	                        #3055). A per-agent backend_config.env setting it to
+//	                        "0" runs the legacy complete-on-result path instead.
 //	CCSTUB_SCRIPT_DIR     — directory holding per-workdir scripts; the file
 //	                        named after the basename of $CWD (e.g. "fotini.json")
 //	                        is read on the next user message and its three
@@ -598,6 +605,9 @@ func main() {
 				fmt.Fprintf(os.Stderr, "panic: cc-stub forced crash on user message matching %q\n\ngoroutine 1 [running]:\nmain.main()\n\t/cc-stub/main.go:0 +0x0\n", panicOnMatch)
 				os.Exit(2)
 			}
+			// A user message starts a run. Real CC emits "running" first,
+			// before even the run's system/init (probed on CC 2.1.314, #3055).
+			emitSessionState(out, sessionID, "running")
 			// CCSTUB_EMIT_COMPACT_BOUNDARY: a "/compact ..." user message is
 			// CC's compaction trigger (foci injects it via SourceCompact). Emit
 			// the same system envelopes real CC produces — status "compacting"
@@ -631,6 +641,7 @@ func main() {
 						"output_tokens": 0,
 					},
 				})
+				emitSessionState(out, sessionID, "idle")
 				_ = out.Flush()
 				turnCount++
 				continue
@@ -856,6 +867,10 @@ func main() {
 				resultEnv["session_id"] = sessionID
 			}
 			emit(out, resultEnv)
+			// The run ends: real CC emits "idle" right after the result; it
+			// is ccstream's turn-completion signal. Scripted permission
+			// requests and late text below come after it, outside the run.
+			emitSessionState(out, sessionID, "idle")
 			_ = out.Flush()
 			// Emit any scripted can_use_tool control_requests AFTER the
 			// assistant + result envelopes. Foci processes them on its
@@ -920,8 +935,14 @@ func main() {
 			// reach the platform. Simulates CC-harness-internal injections
 			// (task-notifications, system reminders) that produce
 			// assistant text outside any foci-side user message.
+			//
+			// With session-state events on, the late text is what real CC
+			// sends for such an injection: a run of its own (running,
+			// assistant, result, idle), which ccstream adopts as an
+			// autonomous turn with its own sink.
 			if script != nil && script.LateText != "" {
 				time.Sleep(200 * time.Millisecond)
+				emitSessionState(out, sessionID, "running")
 				emit(out, map[string]any{
 					"type": "assistant",
 					"message": map[string]any{
@@ -932,6 +953,19 @@ func main() {
 					},
 					"session_id": sessionID,
 				})
+				if sessionStateEvents {
+					emit(out, map[string]any{
+						"type":       "result",
+						"result":     script.LateText,
+						"session_id": sessionID,
+						"usage": map[string]any{
+							"input_tokens":            0,
+							"output_tokens":           0,
+							"cache_read_input_tokens": stubCacheReadTokens,
+						},
+					})
+				}
+				emitSessionState(out, sessionID, "idle")
 				_ = out.Flush()
 			}
 			// CCSTUB_EXIT_AFTER_N_TURNS: bookend the turn loop so a
@@ -1106,6 +1140,29 @@ const stubCacheReadTokens = 1000
 // it as user_message_uuids on assistant and result envelopes, as real CC does
 // on the records of the API response that consumed it (#2050).
 var ackUUID string
+
+// sessionStateEvents mirrors real CC's opt-in: CC emits
+// system/session_state_changed only when CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS
+// is truthy (a bool env in CC 2.1.314, same truthy set as isTruthy).
+var sessionStateEvents = isTruthy(os.Getenv("CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS"))
+
+// emitSessionState emits CC's run-boundary event when the opt-in is on. Shape
+// copied from a live CC 2.1.314 stream (#3055):
+// {"type":"system","subtype":"session_state_changed","state":"running","uuid":…,"session_id":…}.
+// Real CC also emits "requires_action" while a permission prompt waits; the
+// stub's permission requests come after the run's idle, so it never does.
+func emitSessionState(w *bufio.Writer, sessionID, state string) {
+	if !sessionStateEvents {
+		return
+	}
+	emit(w, map[string]any{
+		"type":       "system",
+		"subtype":    "session_state_changed",
+		"state":      state,
+		"uuid":       fmt.Sprintf("stub-state-%d", time.Now().UnixNano()),
+		"session_id": sessionID,
+	})
+}
 
 // emit writes one NDJSON line. Errors are silent because the stub is
 // best-effort — if foci has already closed stdout, there's nowhere to log.
@@ -1703,6 +1760,8 @@ Env vars (all optional):
   CCSTUB_EMIT_COMPACT_BOUNDARY  if truthy, "/compact" emits status+compact_boundary
   CCSTUB_COMPACT_PRE_TOKENS     pre_tokens in compact_boundary (default 50000)
   CCSTUB_RESPONSE       assistant reply text (default echoes user prompt)
+  CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS  if truthy (foci sets it), bracket
+                        each run with session_state_changed running/idle
 
 Flags accepted (most ignored — stub only cares about --resume, --model):
   --print --input-format --output-format --permission-prompt-tool
