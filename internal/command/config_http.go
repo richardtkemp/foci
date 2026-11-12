@@ -83,8 +83,12 @@ func approvalReply(st configapprove.Status) string {
 	if st.Outcome == configapprove.Failed {
 		return "Config change refused, nothing written: " + st.Reason
 	}
-	return fmt.Sprintf("Config change sent to the user for approval (request %s): %s, current %s, new %s. Nothing changes unless they approve. Follow it with: foci config wait %s",
-		st.ID, st.Path, st.Old, st.New, st.ID)
+	warning := ""
+	if st.Warning != "" {
+		warning = " " + st.Warning
+	}
+	return fmt.Sprintf("Config change sent to the user for approval (request %s): %s, current %s, new %s.%s Nothing changes unless they approve. Follow it with: foci config wait %s",
+		st.ID, st.Path, st.Old, st.New, warning, st.ID)
 }
 
 // configWriteReply turns an HTTP-mode writer's approvalRequested error into

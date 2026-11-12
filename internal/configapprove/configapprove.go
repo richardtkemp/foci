@@ -8,9 +8,12 @@
 // A request is validated BEFORE any prompt and again before any write: the
 // edit must change the file only at the requested path (config.PlanSetPath /
 // PlanUnsetPath, verified by config.VerifyPathEdit) and the result must pass
-// the same check as `foci check config` (configcheck.CheckContent). On
-// Approve the file is re-read: if the value at the path is no longer the old
-// value shown, or any check fails, nothing is written.
+// the same check as `foci check config` (configcheck.CheckContentAllowUnknown),
+// except that a key this binary does not know does not fail it (#3046): the
+// prompt warns about each unknown key the change writes, and the user
+// decides (a typo, or a key for a later version written ahead of a deploy).
+// On Approve the file is re-read: if the value at the path is no longer the
+// old value shown, or any check fails, nothing is written.
 //
 // Requests live in memory only: after a gateway restart a waiting client
 // gets "unknown request" and reports the request failed.
@@ -77,6 +80,9 @@ type Status struct {
 	Path    string  `json:"path,omitempty"`
 	Old     string  `json:"old,omitempty"`
 	New     string  `json:"new,omitempty"`
+	// Warning names the keys the change writes that this binary does not
+	// know (#3046); the approval prompt shows the same text. Empty when none.
+	Warning string `json:"warning,omitempty"`
 }
 
 // Prompt is what the presenter shows the user.
@@ -100,8 +106,10 @@ type Deps struct {
 	// CheckProtected judges the file's ownership before a write; nil skips it
 	// (skip_security_checks, or a platform without the protection model).
 	CheckProtected func(path string) error
-	// CheckContent is the foci check config verdict on candidate content.
-	CheckContent func(content, path string) error
+	// CheckContent is the foci check config verdict on candidate content,
+	// with unknown keys returned instead of failed
+	// (configcheck.CheckContentAllowUnknown). unknown is read even with err.
+	CheckContent func(content, path string) (unknown []string, err error)
 	// Present shows the prompt; an error means no chat could show it.
 	Present func(p Prompt) error
 	// Close edits a shown prompt to finalText and removes its buttons.
@@ -182,31 +190,80 @@ func plan(cur string, p config.KeyPath, op Op, value string) (string, error) {
 }
 
 // validate plans the edit on the current file and runs every check that
-// does not need the user. It returns the current and planned content and
-// the old value.
-func (s *Service) validate(sub Submission, p config.KeyPath) (cur, next string, old any, oldSet bool, err error) {
+// does not need the user. It returns the current and planned content, the
+// old value and the unknown keys the change writes (for the warning).
+func (s *Service) validate(sub Submission, p config.KeyPath) (cur, next string, old any, oldSet bool, unknown []string, err error) {
 	data, err := os.ReadFile(s.d.ConfigPath)
 	if err != nil {
-		return "", "", nil, false, fmt.Errorf("read config: %w", err)
+		return "", "", nil, false, nil, fmt.Errorf("read config: %w", err)
 	}
 	cur = string(data)
 	if sub.Op == OpAdd && p.Elem != nil {
-		return "", "", nil, false, fmt.Errorf("add appends to an array: name the array without a selector (%s), not %s", p.Array(), p)
+		return "", "", nil, false, nil, fmt.Errorf("add appends to an array: name the array without a selector (%s), not %s", p.Array(), p)
 	}
 	old, oldSet, err = lookupOld(cur, p, sub.Op)
 	if err != nil {
-		return "", "", nil, false, err
+		return "", "", nil, false, nil, err
 	}
 	next, err = plan(cur, p, sub.Op, sub.Value)
 	if err != nil {
-		return "", "", nil, false, err
+		return "", "", nil, false, nil, err
 	}
 	if s.d.CheckContent != nil {
-		if err := s.d.CheckContent(next, s.d.ConfigPath); err != nil {
-			return "", "", nil, false, fmt.Errorf("the changed config would not pass the config check: %w", err)
+		nextUnknown, err := s.d.CheckContent(next, s.d.ConfigPath)
+		if err != nil {
+			return "", "", nil, false, nil, fmt.Errorf("the changed config would not pass the config check: %w", err)
+		}
+		if len(nextUnknown) > 0 {
+			// The current file's unknown keys tell a key this change writes
+			// from one already there; its own verdict does not matter.
+			curUnknown, _ := s.d.CheckContent(cur, s.d.ConfigPath)
+			unknown = unknownWritten(p, curUnknown, nextUnknown)
 		}
 	}
-	return cur, next, old, oldSet, nil
+	return cur, next, old, oldSet, unknown, nil
+}
+
+// unknownWritten is the unknown keys of the changed file that the change
+// writes: a key at, under or above the requested path (an unknown key set
+// again is still warned about), or one the current file does not have (an
+// added element or table value carrying an unknown field). Keys are the
+// decoder's dotted form, where an array element's selector is absent
+// (agents[main].model is agents.model), so a key of another element of the
+// same array also counts: an over-warning, never a missed one. Unknown keys
+// already in the file elsewhere are not this change's and are not named.
+func unknownWritten(p config.KeyPath, curUnknown, nextUnknown []string) []string {
+	var segs []string
+	if p.AgentID != "" {
+		segs = append(segs, "agents")
+	}
+	segs = append(segs, p.Keys...)
+	segs = append(segs, p.Sub...)
+	rel := strings.Join(segs, ".")
+	had := make(map[string]bool, len(curUnknown))
+	for _, k := range curUnknown {
+		had[k] = true
+	}
+	var out []string
+	for _, k := range nextUnknown {
+		if !had[k] || k == rel || strings.HasPrefix(k, rel+".") || strings.HasPrefix(rel, k+".") {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// unknownWarning is the prompt's warning for keys this binary does not know.
+func unknownWarning(keys []string) string {
+	if len(keys) == 0 {
+		return ""
+	}
+	what := "this key"
+	if len(keys) > 1 {
+		what = "these keys"
+	}
+	return fmt.Sprintf("⚠️ This foci binary does not know %s: %s. A typo, or a key from a later version? If you approve, it is written, and this binary ignores it until a version that knows it runs.",
+		what, strings.Join(keys, ", "))
 }
 
 // lookupOld is the value the request changes, as the prompt shows it and the
@@ -240,7 +297,7 @@ func (s *Service) Submit(sub Submission) Status {
 	if err != nil {
 		return Status{Outcome: Failed, Reason: err.Error()}
 	}
-	cur, next, old, oldSet, err := s.validate(sub, p)
+	cur, next, old, oldSet, unknown, err := s.validate(sub, p)
 	if err != nil {
 		return Status{Outcome: Failed, Path: p.String(), Reason: err.Error()}
 	}
@@ -273,7 +330,8 @@ func (s *Service) Submit(sub Submission) Status {
 		oldSet:     oldSet,
 		done:       make(chan struct{}),
 	}
-	r.status = Status{ID: r.id, Outcome: Pending, Path: shownPath, Old: oldText, New: newText}
+	warning := unknownWarning(unknown)
+	r.status = Status{ID: r.id, Outcome: Pending, Path: shownPath, Old: oldText, New: newText, Warning: warning}
 	s.mu.Lock()
 	s.reqs[r.id] = r
 	s.mu.Unlock()
@@ -283,7 +341,7 @@ func (s *Service) Submit(sub Submission) Status {
 		AgentID:    sub.AgentID,
 		SessionKey: sub.SessionKey,
 		Summary:    "config change " + shownPath,
-		Text:       promptText(sub.SessionKey, shownPath, oldText, newText),
+		Text:       promptText(sub.SessionKey, shownPath, oldText, newText, warning),
 		OnAnswer:   func(approve bool) string { return s.answer(r.id, approve) },
 		OnExpire:   func() { s.timeout(r.id) },
 	})
@@ -292,6 +350,9 @@ func (s *Service) Submit(sub Submission) Status {
 		return s.statusOf(r)
 	}
 	r.stop = s.d.AfterFunc(ClampTimeout(sub.Timeout), func() { s.timeout(r.id) })
+	if len(unknown) > 0 {
+		logger.Infof("config change %s (%s) writes key(s) this binary does not know: %s", p, r.id, strings.Join(unknown, ", "))
+	}
 	logger.Infof("config change %s requested by %s (%s): %s -> %s", p, sub.SessionKey, r.id, oldText, newText)
 	return s.statusOf(r)
 }
@@ -299,10 +360,14 @@ func (s *Service) Submit(sub Submission) Status {
 // promptText is the approval prompt's markdown. Each value goes on its own
 // lines in a fenced code block (#2936): monospace on the app, Telegram and
 // Discord, and a long value (an array of tables) cannot run into its label or
-// the other value.
-func promptText(sessionKey, p string, oldText, newText string) string {
-	return fmt.Sprintf("🔧 Config change requested\n\nSession: %s\nSetting: %s\n\nCurrent value:\n%s\n\nNew value:\n%s\n\nNothing changes unless you approve.",
-		sessionKey, p, fenced(oldText), fenced(newText))
+// the other value. A non-empty warning (unknownWarning) goes just above the
+// closing line, where it is read before the buttons.
+func promptText(sessionKey, p string, oldText, newText, warning string) string {
+	if warning != "" {
+		warning += "\n\n"
+	}
+	return fmt.Sprintf("🔧 Config change requested\n\nSession: %s\nSetting: %s\n\nCurrent value:\n%s\n\nNew value:\n%s\n\n%sNothing changes unless you approve.",
+		sessionKey, p, fenced(oldText), fenced(newText), warning)
 }
 
 // fenced wraps a rendered value in a fenced code block. RenderTOMLValue
@@ -438,7 +503,7 @@ func (s *Service) apply(r *request) error {
 		return err
 	}
 	if s.d.CheckContent != nil {
-		if err := s.d.CheckContent(next, s.d.ConfigPath); err != nil {
+		if _, err := s.d.CheckContent(next, s.d.ConfigPath); err != nil {
 			return fmt.Errorf("the changed config would not pass the config check: %w", err)
 		}
 	}

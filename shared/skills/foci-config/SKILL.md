@@ -77,7 +77,7 @@ A set of a whole array replaces every entry: list all the entries you want to ke
 
 ## What the user sees
 
-A message in their chat with **Approve** and **Deny** buttons: the session asking, the setting, its current value and the new value. Nothing changes unless they approve. Before the prompt is shown, foci checks that the change touches only that setting and that the changed file passes `foci check config`; a change that fails either check is refused at once and the user never sees it.
+A message in their chat with **Approve** and **Deny** buttons: the session asking, the setting, its current value and the new value. Nothing changes unless they approve. Before the prompt is shown, foci checks that the change touches only that setting and that the changed file passes `foci check config`; a change that fails either check is refused at once and the user never sees it. One exception: a key the running binary does not know (a typo, or a key for a version not yet deployed) is not refused. The prompt warns about it, the command prints the same `warning:` line, and the user decides. A pre-seeded key is ignored until a binary that knows it runs, and `foci check config` (the deploy gate) still fails on it while it is unknown.
 
 ## Outcomes
 

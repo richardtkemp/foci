@@ -40,7 +40,7 @@ func newConfigApproveService(cfg *config.Config, configPath string, agents *agen
 		ConfigPath:     configPath,
 		FileMode:       mode,
 		CheckProtected: gwConfigProtect,
-		CheckContent:   configcheck.CheckContent,
+		CheckContent:   configcheck.CheckContentAllowUnknown,
 		Present: func(p configapprove.Prompt) error {
 			inst, _ := agents.Get(p.AgentID)
 			if inst == nil {

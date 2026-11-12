@@ -200,13 +200,13 @@ func TestConfigRequestHTTP_FileChanged(t *testing.T) {
 }
 
 // TestConfigRequestHTTP_InvalidNoPrompt proves a request failing validation
-// — an unknown key, a wrong type, an edit that would change a second key —
-// answers failed at once and shows no prompt. The shared config check
-// (configcheck.CheckContent) is wired as in production.
+// — a wrong type, an edit that would change a second key — answers failed
+// at once and shows no prompt. The shared config check
+// (configcheck.CheckContentAllowUnknown) is wired as in production. An
+// unknown key is not here: it prompts with a warning (#3046).
 func TestConfigRequestHTTP_InvalidNoPrompt(t *testing.T) {
 	t.Parallel()
 	for name, body := range map[string]string{
-		"unknown key":  `{"session":"test-agent/app/1","op":"set","path":"agent_loop.no_such_key","value":"1"}`,
 		"wrong type":   `{"session":"test-agent/app/1","op":"set","path":"agent_loop.max_tool_loops","value":"\"many\""}`,
 		"inside value": `{"session":"test-agent/app/1","op":"set","path":"agent_loop.max_tool_loops.x","value":"1"}`,
 	} {
@@ -214,7 +214,7 @@ func TestConfigRequestHTTP_InvalidNoPrompt(t *testing.T) {
 			r := newApproveRig(t)
 			r.svc = configapprove.New(configapprove.Deps{
 				ConfigPath:   r.path,
-				CheckContent: configcheck.CheckContent,
+				CheckContent: configcheck.CheckContentAllowUnknown,
 				Present: func(configapprove.Prompt) error {
 					t.Error("prompted for an invalid request")
 					return nil
@@ -240,11 +240,88 @@ func TestConfigRequestHTTP_ValidPassesCheck(t *testing.T) {
 	prompted := false
 	r.svc = configapprove.New(configapprove.Deps{
 		ConfigPath:   r.path,
-		CheckContent: configcheck.CheckContent,
+		CheckContent: configcheck.CheckContentAllowUnknown,
 		Present:      func(configapprove.Prompt) error { prompted = true; return nil },
 	})
 	if st := r.submit(t, setLoops); st.Outcome != configapprove.Pending || !prompted {
 		t.Fatalf("status = %+v prompted=%v", st, prompted)
+	}
+}
+
+// newCheckedApproveRig is newApproveRig with the production content check
+// and base as the config file.
+func newCheckedApproveRig(t *testing.T, base string) *approveRig {
+	t.Helper()
+	r := newApproveRig(t)
+	if err := os.WriteFile(r.path, []byte(base), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.svc = configapprove.New(configapprove.Deps{
+		ConfigPath:   r.path,
+		FileMode:     0o600,
+		CheckContent: configcheck.CheckContentAllowUnknown,
+		Present: func(p configapprove.Prompt) error {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			r.prompts = append(r.prompts, p)
+			return nil
+		},
+		Close:     func(string, string) {},
+		AfterFunc: func(time.Duration, func()) func() bool { return func() bool { return true } },
+	})
+	return r
+}
+
+const setFutureKey = `{"session":"test-agent/app/1","op":"set","path":"tools.future_key","value":"\"2h\""}`
+
+// TestConfigRequestHTTP_UnknownKeyWarnsAndWrites is #3046: a key the running
+// binary does not know (a key for a later version, set ahead of its deploy)
+// does not block the request. The prompt and the status warn, naming the
+// key, and Approve writes it.
+func TestConfigRequestHTTP_UnknownKeyWarnsAndWrites(t *testing.T) {
+	t.Parallel()
+	r := newCheckedApproveRig(t, approveTestConfig)
+	st := r.submit(t, setFutureKey)
+	if st.Outcome != configapprove.Pending {
+		t.Fatalf("status = %+v, want pending", st)
+	}
+	p := r.prompt(t)
+	for _, want := range []string{"does not know this key: tools.future_key", "later version"} {
+		if !strings.Contains(p.Text, want) {
+			t.Errorf("prompt lacks %q:\n%s", want, p.Text)
+		}
+		if !strings.Contains(st.Warning, want) {
+			t.Errorf("status warning lacks %q: %q", want, st.Warning)
+		}
+	}
+	if reply := p.OnAnswer(true); !strings.HasPrefix(reply, "✅") {
+		t.Fatalf("approve reply = %q", reply)
+	}
+	if !strings.Contains(r.file(t), `future_key = "2h"`) {
+		t.Errorf("file not written:\n%s", r.file(t))
+	}
+}
+
+// TestConfigRequestHTTP_UnknownKeyAlreadyInFile proves an unknown key already
+// in the file (pre-seeded earlier) neither blocks nor is named in a change
+// to another key, and is still named when the change sets it again.
+func TestConfigRequestHTTP_UnknownKeyAlreadyInFile(t *testing.T) {
+	t.Parallel()
+	seeded := approveTestConfig + "\n[tools]\nfuture_key = \"1h\"\n"
+
+	r := newCheckedApproveRig(t, seeded)
+	st := r.submit(t, setLoops)
+	if st.Outcome != configapprove.Pending || st.Warning != "" {
+		t.Fatalf("other key: status = %+v, want pending with no warning", st)
+	}
+	if p := r.prompt(t); strings.Contains(p.Text, "does not know") {
+		t.Errorf("prompt warns about a key the change does not write:\n%s", p.Text)
+	}
+
+	r = newCheckedApproveRig(t, seeded)
+	st = r.submit(t, setFutureKey)
+	if st.Outcome != configapprove.Pending || !strings.Contains(st.Warning, "tools.future_key") {
+		t.Fatalf("same key: status = %+v, want pending with a warning naming tools.future_key", st)
 	}
 }
 

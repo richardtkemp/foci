@@ -163,6 +163,9 @@ func configRequestCmd(base, sub string, args []string, stdout, stderr io.Writer)
 		if err != nil {
 			return printConfigOutcome(stdout, configapprove.Status{Outcome: configapprove.Failed, Reason: err.Error()})
 		}
+		if st.Warning != "" {
+			_, _ = fmt.Fprintln(stderr, "warning: "+st.Warning)
+		}
 		if st.Outcome == configapprove.Pending {
 			_, _ = fmt.Fprintf(stderr, "waiting for the user to approve %s (request %s, up to %s)...\n", st.Path, st.ID, timeout)
 		}

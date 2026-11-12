@@ -35,6 +35,7 @@ type harness struct {
 	timers  []func()
 	protect error
 	check   error
+	unknown []string
 	present error
 }
 
@@ -48,7 +49,7 @@ func newHarness(t *testing.T) *harness {
 		ConfigPath:     h.path,
 		FileMode:       0o600,
 		CheckProtected: func(string) error { return h.protect },
-		CheckContent:   func(string, string) error { return h.check },
+		CheckContent:   func(string, string) ([]string, error) { return h.unknown, h.check },
 		Present: func(p Prompt) error {
 			h.mu.Lock()
 			defer h.mu.Unlock()
@@ -313,7 +314,7 @@ func TestClampTimeout(t *testing.T) {
 // line breaks, so a long value (an array of tables) cannot run into the
 // other value.
 func TestPromptText_ValuesFencedOnOwnLines(t *testing.T) {
-	got := promptText("main/app/1", "agent_loop.max_tool_loops", "10", "20")
+	got := promptText("main/app/1", "agent_loop.max_tool_loops", "10", "20", "")
 	want := "🔧 Config change requested\n\nSession: main/app/1\nSetting: agent_loop.max_tool_loops\n\n" +
 		"Current value:\n```\n10\n```\n\nNew value:\n```\n20\n```\n\nNothing changes unless you approve."
 	if got != want {
@@ -445,4 +446,46 @@ func mustKeyPath(t *testing.T, s string) config.KeyPath {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// TestUnknownWritten names the unknown keys a change writes (#3046): at,
+// under or above the path, or new to the file; never one already in the
+// file elsewhere.
+func TestUnknownWritten(t *testing.T) {
+	for _, c := range []struct {
+		path      string
+		cur, next []string
+		want      []string
+	}{
+		{"tools.future", nil, []string{"tools.future"}, []string{"tools.future"}},
+		{"tools.future", []string{"tools.future"}, []string{"tools.future"}, []string{"tools.future"}},
+		{"agent_loop.max_tool_loops", []string{"tools.future"}, []string{"tools.future"}, nil},
+		{"agents[main].future", []string{"agents.future"}, []string{"agents.future"}, []string{"agents.future"}},
+		{"tts[x].future", nil, []string{"tts.future"}, []string{"tts.future"}},
+		{"newtable.sub.key", nil, []string{"newtable", "newtable.sub", "newtable.sub.key"}, []string{"newtable", "newtable.sub", "newtable.sub.key"}},
+		{"newtable.sub.key", []string{"newtable", "newtable.sub", "newtable.other"}, []string{"newtable", "newtable.sub", "newtable.other", "newtable.sub.key"}, []string{"newtable", "newtable.sub", "newtable.sub.key"}},
+	} {
+		p, err := config.ParseKeyPath(c.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := unknownWritten(p, c.cur, c.next)
+		if strings.Join(got, ",") != strings.Join(c.want, ",") {
+			t.Errorf("%s cur=%v next=%v: got %v, want %v", c.path, c.cur, c.next, got, c.want)
+		}
+	}
+}
+
+// TestSubmit_UnknownKeyWarnsInPrompt proves the warning reaches the prompt
+// text and the status, and an unknown-key-only check does not refuse.
+func TestSubmit_UnknownKeyWarnsInPrompt(t *testing.T) {
+	h := newHarness(t)
+	h.unknown = []string{"agent_loop.future"}
+	st := h.set("agent_loop.future", "1")
+	if st.Outcome != Pending || !strings.Contains(st.Warning, "agent_loop.future") {
+		t.Fatalf("status = %+v", st)
+	}
+	if p := h.prompt(0); !strings.Contains(p.Text, "⚠️ This foci binary does not know this key: agent_loop.future") {
+		t.Errorf("prompt lacks the warning:\n%s", p.Text)
+	}
 }

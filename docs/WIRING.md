@@ -3658,12 +3658,18 @@ foci config set|unset|add <path> [<value>]   (cmd/foci/cmd_config.go)
                                                       arrayedit.go's editors (inline array / [[...]]
                                                       sections): only the differing elements change
           → config.DroppedComments(cur, next)       ← named in the prompt's new value, never silent
-          → configcheck.CheckContent(next)          ← the foci check config verdict, no auto-approve preview
+          → configcheck.CheckContentAllowUnknown(next) ← the foci check config verdict, no auto-approve
+                                                      preview, unknown keys returned not failed (#3046)
           → fail: {outcome: failed, reason}, no prompt
+          → unknownWritten(path, unknown(cur), unknown(next)) ← unknown keys the change writes (at/under/
+                                                      above the path, or new to the file) → a ⚠️ warning
+                                                      in the prompt text and Status.Warning; the user
+                                                      decides (typo, or a key set ahead of its deploy).
+                                                      The deploy gate (foci check config) stays strict
           → Present: platform.SendInteractiveMessageWithID to defaultSessionKeyFor(agent) with
             Approve/Deny; a timer (DefaultTimeout, clamped to [MinTimeout, MaxTimeout]) → timed_out
             + CancelInteractiveMessage
-  ← {id, outcome: pending, old, new}
+  ← {id, outcome: pending, old, new, warning?}
   → GET /config/request?id=…&wait=20  (long-poll, capped below the 30s WriteTimeout; repeated)
       ← pending | applied | denied | timed_out | failed;  404 = unknown id (gateway restarted)
 
