@@ -12,7 +12,7 @@ Common causes: a character/system-prompt edit picked up by `bootstrap.Reload()`,
 
 ```bash
 # Find the bust boundary (every backend)
-sqlite3 -readonly ~/data/api.db "SELECT c.billed_at, c.cost_usd, t.class, t.count FROM call_costs c JOIN call_tokens t ON t.call_id = c.id WHERE t.class LIKE 'cache%' ORDER BY c.billed_at DESC LIMIT 40"
+sqlite3 -readonly -safe ~/data/api.db "SELECT c.billed_at, c.cost_usd, t.class, t.count FROM call_costs c JOIN call_tokens t ON t.call_id = c.id WHERE t.class LIKE 'cache%' ORDER BY c.billed_at DESC LIMIT 40"
 ```
 
 Then get the two system prompts and diff them:

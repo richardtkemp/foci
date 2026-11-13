@@ -154,7 +154,7 @@ func TestReadOnlyBatch_BashDecidedByReadOnlyRulesOnly(t *testing.T) {
 		{"write command", "touch /tmp/pwned", "deny"},
 		{"write flag of a listed command", "find /tmp -name x -delete", "deny"},
 		{"redirect to a file", "cat /etc/hosts > /tmp/out", "deny"},
-		{"sqlite dot-command", "sqlite3 -readonly :memory: '.shell touch /tmp/pwned'", "deny"},
+		{"sqlite dot-command", "sqlite3 -readonly -safe :memory: '.shell touch /tmp/pwned'", "deny"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

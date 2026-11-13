@@ -21,7 +21,7 @@ A large gap = the app reaches the server and gets nothing; look for `WARN … co
 
 1. **Query the frame store.** Every server→app frame is persisted verbatim to `~/data/app-frames.db`, `app_frames(conv_id, seq, wire, sent_ms, visible, preview)`, PK `(conv_id, seq)`:
    ```
-   sqlite3 -readonly ~/data/app-frames.db \
+   sqlite3 -readonly -safe ~/data/app-frames.db \
      "SELECT conv_id, count(*), datetime(max(sent_ms)/1000,'unixepoch','localtime') \
       FROM app_frames GROUP BY conv_id ORDER BY max(sent_ms) DESC LIMIT 8;"
    ```
@@ -33,7 +33,7 @@ A large gap = the app reaches the server and gets nothing; look for `WARN … co
 **"Is the server sending frame type X at all?"** Tally, do not reason about code paths:
 
 ```bash
-sqlite3 -readonly ~/data/app-frames.db \
+sqlite3 -readonly -safe ~/data/app-frames.db \
   "SELECT json_extract(wire,'\$.t') t, COUNT(*) FROM app_frames \
    WHERE sent_ms>(strftime('%s','now')-7200)*1000 GROUP BY t ORDER BY 2 DESC"
 ```
@@ -43,7 +43,7 @@ Zero rows for an expected type = a definitive server-side break. Transient frame
 ## Gotchas
 
 - **App convIDs are ULIDs** (`01KWN7XZ...`), not the `c<chatID>` of the session key. `WHERE conv_id='c121886…'` returning zero rows does NOT mean "never delivered". Map them through `chat_metadata` (`conv_id` row) in state.db, or find the active conv by `max(sent_ms)` and read `preview`.
-- **Delivered-but-invisible = the conversation is ARCHIVED.** Frames are persisted and sent, but `chat_metadata` `is_archived=true` hides the conv from the app roster. Check: `/usr/bin/sqlite3 -readonly ~/data/state.db "SELECT platform,chat_id,key,value FROM chat_metadata WHERE agent_id='<ag>' AND key='is_archived'"`. Old mechanism (fixed 7f837286): an agent-initiated send to a target with no pinned `is_default` chat resolved through the activity-fallback rung to an archived chat. Default resolution now excludes archived chats, and delivery mints a fresh conversation when only archived ones remain (`route.Resolver.CreateDefault`).
+- **Delivered-but-invisible = the conversation is ARCHIVED.** Frames are persisted and sent, but `chat_metadata` `is_archived=true` hides the conv from the app roster. Check: `/usr/bin/sqlite3 -readonly -safe ~/data/state.db "SELECT platform,chat_id,key,value FROM chat_metadata WHERE agent_id='<ag>' AND key='is_archived'"`. Old mechanism (fixed 7f837286): an agent-initiated send to a target with no pinned `is_default` chat resolved through the activity-fallback rung to an archived chat. Default resolution now excludes archived chats, and delivery mints a fresh conversation when only archived ones remain (`route.Resolver.CreateDefault`).
 - **A bare `strftime` comparison matches NOTHING, silently.** `strftime` returns TEXT, and SQLite orders every INTEGER below every TEXT, so `sent_ms/1000 > strftime('%s','2026-...')` is always false. Arithmetic forces numeric context (`(strftime('%s','now')-7200)*1000`). It also reads the string as UTC. Prefer `datetime(sent_ms/1000,'unixepoch','localtime') BETWEEN ...`, and run the unfiltered query as a positive control for any zero.
 - `convBinding.send` (`hub.go`) persists **unconditionally**, then enqueues to the socket only if `client != nil`. "In store, not delivered" is a real state.
 - `convBinding` is stable per convID (`ensureBinding` updates `.client` on reconnect), but `appConn.NewTurnSink` (`conn.go`) captures the binding **once at turn start**: if disconnected then, it returns a Nop sink and the whole turn's output is discarded with no error (#1045).
@@ -74,11 +74,11 @@ A subagent's text (or a SendMessage follow-up prompt) shows as a plain `role="ag
 
 ```
 # (a) which frame kind carried the leaked text?
-sqlite3 -readonly ~/data/app-frames.db "SELECT seq,datetime(sent_ms/1000,'unixepoch'),visible,
+sqlite3 -readonly -safe ~/data/app-frames.db "SELECT seq,datetime(sent_ms/1000,'unixepoch'),visible,
   json_extract(wire,'\$.t'), json_extract(wire,'\$.d.groupKey'), json_extract(wire,'\$.d.runIndex')
   FROM app_frames WHERE wire LIKE '%<distinctive substring>%' ORDER BY sent_ms"
 # (b) start/text/end tally per group: a MISSING subagent.start is the smoking gun
-sqlite3 -readonly ~/data/app-frames.db "SELECT substr(gk,1,26), SUM(t='subagent.start') starts,
+sqlite3 -readonly -safe ~/data/app-frames.db "SELECT substr(gk,1,26), SUM(t='subagent.start') starts,
   SUM(t='subagent.text') texts, SUM(t='subagent.end') ends FROM (SELECT json_extract(wire,'\$.d.groupKey') gk,
   json_extract(wire,'\$.t') t FROM app_frames WHERE conv_id='<convID>' AND json_extract(wire,'\$.t') LIKE 'subagent%')
   GROUP BY gk HAVING texts>0 ORDER BY starts"

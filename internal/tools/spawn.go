@@ -472,7 +472,7 @@ var spawnModeDocs = map[string]string{
 	spawnModeCharacter: "'character' (default): your prompt plus your full system prompt, with your own tools and permission rules. It cannot use ask. Runs in the background with background=true; otherwise it returns its result directly.",
 	spawnModeClone:     "'clone': a fork of this session that starts from a copy of your conversation. Always runs in the background. The result arrives as [SPAWN RESULT]; steer it with spawn_send and check on it with spawn_status. Use it only when the context can't be written down.",
 	spawnModeRaw:       "'raw': just your prompt, with no other context or prompt provided.",
-	spawnModeExplore:   "'explore': read-only. Reads and searches files and the web, and queries them with read-only commands (jq, sqlite3 -readonly, find, …), and changes nothing. Returns directly.",
+	spawnModeExplore:   "'explore': read-only. Reads and searches files and the web, and queries them with read-only commands (jq, sqlite3 -readonly -safe, find, …), and changes nothing. Returns directly.",
 }
 
 // spawnModeOrder is the order the context parameter describes the modes in:

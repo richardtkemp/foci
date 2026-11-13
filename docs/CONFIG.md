@@ -953,6 +953,10 @@ Commands containing subshell injection (`$(...)` or backticks) are always reject
 
 A segment carrying known-dangerous flags or arguments is also always prompted, even when a rule matches it: `sed -i`, `find -exec`, `sort -o`, `rg --pre`, `git grep -O` and sqlite3 dot-commands — and, because the shell expands an unquoted glob *before* the command runs, any unquoted glob argument that could expand into a flag on those same commands: `rg foo *` in a directory containing a file named `--pre=./x.sh` would run `rg foo --pre=./x.sh …`. Quote the glob (`rg foo '*.go'`), escape it (`rg foo \*`), or give it a literal prefix (`rg foo src/*.go`) to keep the command auto-approved. There is deliberately no `--` exemption — some commands (find) do not honour `--` for every later argument.
 
+sqlite3 is auto-approved only as `sqlite3 -readonly -safe <db> '<sql>'` (the two flags first, in either order). `-readonly` protects the database file only: the CLI's `writefile()` and `edit()` functions write any file even under it. `-safe` refuses those, `readfile()`, `load_extension()`, `ATTACH` and the dot-commands that reach the filesystem or a shell. A `sqlite3 -readonly` without `-safe` prompts, and the prompt says to add `-safe` (#3064).
+
+Arithmetic that names a variable is always prompted (#3064, Dick's ruling 2026-11-13): bash evaluates a variable's value as an expression, and a command substitution in an array subscript inside that value runs (`x='a[$(id)]'; (( x ))` runs `id`). This covers `(( ))`, `for (( ))`, `let`, `$(( ))`, `$[ ]`, array subscripts (`${a[i]}`, `a[i]=v`, `([i]=v)`), substring offsets (`${s:i}`), the numeric comparisons of `[[ ]]` (`-eq`, `-lt`, …), `declare -i`, and the name lookups that evaluate a subscript: `[[ -v n ]]`, `test -v n`/`[ -v n ]` (and `-R`), and the indirect expansion `${!x}`. Arithmetic of literal numbers only (`(( 1 + 2 ))`, `${s:0:3}`, `[[ $# -gt 0 ]]`) and the whole-array forms (`${a[@]}`, `${!a[@]}`) keep approval.
+
 ```toml
 [permissions]
 auto_approve = [

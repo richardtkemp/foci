@@ -60,7 +60,7 @@ func TestFlagCapableGlobArgsNotAutoApproved(t *testing.T) {
 		{"git status", parseAutoApproveRules([]string{"Bash:git *"}), "git status *"},
 		{"git grep", parseAutoApproveRules([]string{"Bash:git *"}), "git grep pattern *"},
 		// sqlite3 has no unsafeFlags entry — its own check gates it in.
-		{"sqlite3 readonly", nil, "sqlite3 -readonly db.sql *"},
+		{"sqlite3 readonly", nil, "sqlite3 -readonly -safe db.sql *"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -160,7 +160,7 @@ func TestContainsUnsafeFlagsGlobRule(t *testing.T) {
 		{"printf 'x' *", true},
 		{"git status *", true},
 		{"git grep pattern *", true},
-		{"sqlite3 -readonly db.sql *", true},
+		{"sqlite3 -readonly -safe db.sql *", true},
 		// No -- exemption.
 		{"rg -- *", true},
 		{"rg foo -- *", true},

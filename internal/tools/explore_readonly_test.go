@@ -125,7 +125,8 @@ func TestReadOnlyBatchRules_DecideCommands(t *testing.T) {
 		{"jq -r .a /tmp/f.jsonl | sort | uniq", true},
 		{"jq -r .a /tmp/f.jsonl | sort", true},
 		{"find /home -newermt 2026-10-21 -name '*.jsonl'", true},
-		{"sqlite3 -readonly /tmp/x.db 'select 1'", true},
+		{"sqlite3 -readonly -safe /tmp/x.db 'select 1'", true},
+		{"sqlite3 -readonly /tmp/x.db 'select 1'", false}, // #3064: -safe is required
 		{"foci_todo list", true},
 		{"foci_spawn --mode raw x", false},
 		{"sqlite3 /tmp/x.db 'delete from t'", false},

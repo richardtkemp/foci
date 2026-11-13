@@ -57,7 +57,7 @@ func TestMatchTimeVeto_WritableExecutableIsNotApproved(t *testing.T) {
 		HomeDir:      "/home/foci",
 	})
 	rules := Compile([]string{"Bash:sqlite3 *"})
-	if ok, _ := MatchWithEnv(rules, "Bash", bashInput(t, "sqlite3 -readonly /tmp/x.db 'SELECT 1'"), nil); ok {
+	if ok, _ := MatchWithEnv(rules, "Bash", bashInput(t, "sqlite3 -readonly -safe /tmp/x.db 'SELECT 1'"), nil); ok {
 		t.Error("a writable executable must not be auto-approved despite a matching rule")
 	}
 }
@@ -73,7 +73,7 @@ func TestMatchTimeVeto_ReadOnlyExecutableIsApproved(t *testing.T) {
 		HomeDir:      "/home/foci",
 	})
 	rules := Compile([]string{"Bash:sqlite3 *"})
-	if ok, _ := MatchWithEnv(rules, "Bash", bashInput(t, "sqlite3 -readonly /tmp/x.db 'SELECT 1'"), nil); !ok {
+	if ok, _ := MatchWithEnv(rules, "Bash", bashInput(t, "sqlite3 -readonly -safe /tmp/x.db 'SELECT 1'"), nil); !ok {
 		t.Error("a read-only executable with a matching rule must be auto-approved")
 	}
 }

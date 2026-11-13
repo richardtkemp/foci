@@ -391,7 +391,7 @@ func wrappedCommandUnsafe(ce *syntax.CallExpr, segment string, vc *varCtx) bool 
 		}
 	}
 	innerSeg := callExprCmdString(syntax.NewPrinter(), innerCE)
-	if commandWordUnsafe(innerCE, innerSeg, vc) || containsUnsafeFlags(innerSeg) || expandedArgsUnsafe(innerCE, innerSeg, vc) {
+	if commandWordUnsafe(innerCE, innerSeg, vc) || containsUnsafeFlags(innerSeg) || expandedArgsUnsafe(innerCE, innerSeg, vc) || testCommandUnsafe(innerCE, vc) {
 		return true
 	}
 	if sub, path, reason := execguard.Substitutable(text, guardEnv()); sub {

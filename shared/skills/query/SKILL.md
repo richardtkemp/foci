@@ -136,9 +136,11 @@ cat something | yq -p toml '.key'
 | `.yaml`, `.yml` | yq | Docker compose, k8s, etc. |
 | `.xml` | yq | |
 | `.csv` | yq | |
-| `.db`, `.sqlite` | sqlite3 -readonly | foci's own stores: state.db, api.db, app-frames.db |
+| `.db`, `.sqlite` | sqlite3 -readonly -safe | foci's own stores: state.db, api.db, app-frames.db |
 
 ## sqlite3 — `.db` files
+
+**Type both `-readonly -safe`, first, before the database.** Only that form auto-approves. `-readonly` alone still lets the CLI's `writefile()` write any file; `-safe` refuses it, and also refuses `readfile()`, `ATTACH`, `load_extension()` and the dot-commands that write or run things (`.output`, `.shell`, `.import`). Plain `SELECT`s, `.tables`, `.schema` and `-json`/`-header` output still work under `-safe`, but an option other than the two flags prompts.
 
 **A numeric column compared against `strftime()`/`date()` matches nothing, silently.** Those return TEXT, and SQLite orders every INTEGER below every TEXT, so `epoch_col > strftime('%s', ...)` is never true — zero rows, no error, reads as absence. Cast the bound to INTEGER, or compare on the formatted side (`datetime(col/1000,'unixepoch','localtime') > '2026-09-02 12:00'`).
 

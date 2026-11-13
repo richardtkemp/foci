@@ -84,15 +84,15 @@ func TestQuotedCommandNameNotAutoApproved(t *testing.T) {
 
 // TestSqliteChecksUseShellVisibleText proves requirement 1 for sqlite3's
 // whole-vector check, in both directions: a dot-command assembled from quoted
-// parts (`'.'shell`) stops approving, and a quoted `-readonly` flag is still
+// parts (`'.'shell`) stops approving, and a quoted `-readonly` (or `-safe`) flag is still
 // the `-readonly` the check requires (before #2216 the quoted form was
 // rejected by accident, because the check compared quoted token text).
 func TestSqliteChecksUseShellVisibleText(t *testing.T) {
 	readonly := parseAutoApproveRules(CommonReadonlyRules)
-	assertApproval(t, readonly, "sqlite3 -readonly db '.'shell", false)
+	assertApproval(t, readonly, "sqlite3 -readonly -safe db '.'shell", false)
 
 	blanket := parseAutoApproveRules([]string{"Bash"})
-	assertApproval(t, blanket, `sqlite3 '-readonly' db.sql 'SELECT 1'`, true)
+	assertApproval(t, blanket, `sqlite3 '-readonly' "-safe" db.sql 'SELECT 1'`, true)
 }
 
 // TestBraceExpansionNotAutoApproved proves requirement 2: a brace group the

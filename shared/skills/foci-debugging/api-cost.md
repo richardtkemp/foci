@@ -15,9 +15,9 @@ Every LLM call, durable across restarts (#2111). `~/logs/api.jsonl` holds the cu
 - `daily_costs` (UTC days), `session_costs`; `call_class_costs` / `turn_class_costs` split by class.
 
 ```bash
-sqlite3 -readonly ~/data/api.db "SELECT billed_at, backend, kind, model, cost_usd FROM call_costs ORDER BY billed_at DESC LIMIT 10"
-sqlite3 -readonly ~/data/api.db "SELECT * FROM daily_costs ORDER BY day DESC LIMIT 7"
-sqlite3 -readonly ~/data/api.db "SELECT TOTAL(cost_usd) FROM call_costs WHERE billed_at >= '2026-09-29T00:00'"
+sqlite3 -readonly -safe ~/data/api.db "SELECT billed_at, backend, kind, model, cost_usd FROM call_costs ORDER BY billed_at DESC LIMIT 10"
+sqlite3 -readonly -safe ~/data/api.db "SELECT * FROM daily_costs ORDER BY day DESC LIMIT 7"
+sqlite3 -readonly -safe ~/data/api.db "SELECT TOTAL(cost_usd) FROM call_costs WHERE billed_at >= '2026-09-29T00:00'"
 ```
 
 **`kind='legacy'` calls are pre-ledger rows** (everything before the cutover; for Claude Code, until 2026-10-01, #2115): one call per turn or per subagent share, priced from the recorded figure when `cost_basis='recorded'`, with the old `call_type` in `json_extract(detail,'$.v1_call_type')`. **Before you state a cost figure, read `api-cost-accounting.md`.**
@@ -41,11 +41,11 @@ tail -200 ~/logs/api-payload.jsonl | jq -c '
 ## "Where did the cost go?"
 
 ```bash
-sqlite3 -readonly ~/data/api.db "SELECT billed_at, agent_id, backend, kind, cost_usd FROM call_costs WHERE billed_at > strftime('%Y-%m-%dT%H:%M:%S', 'now', '-3 hours') ORDER BY cost_usd DESC LIMIT 10"
+sqlite3 -readonly -safe ~/data/api.db "SELECT billed_at, agent_id, backend, kind, cost_usd FROM call_costs WHERE billed_at > strftime('%Y-%m-%dT%H:%M:%S', 'now', '-3 hours') ORDER BY cost_usd DESC LIMIT 10"
 # the expensive turns, with their subagent share
-sqlite3 -readonly ~/data/api.db "SELECT turn_id, cost_usd, subagent_cost_usd, calls FROM turn_costs ORDER BY started_at DESC LIMIT 10"
+sqlite3 -readonly -safe ~/data/api.db "SELECT turn_id, cost_usd, subagent_cost_usd, calls FROM turn_costs ORDER BY started_at DESC LIMIT 10"
 # cache busts: read nothing, wrote a lot (per-call counts; legacy calls hold turn totals)
-sqlite3 -readonly ~/data/api.db "SELECT c.billed_at, c.cost_usd, w.count FROM call_costs c JOIN call_tokens w ON w.call_id = c.id AND w.class LIKE 'cache_write%' LEFT JOIN call_tokens r ON r.call_id = c.id AND r.class = 'cache_read' WHERE r.call_id IS NULL AND w.count > 10000 ORDER BY c.billed_at DESC LIMIT 10"
+sqlite3 -readonly -safe ~/data/api.db "SELECT c.billed_at, c.cost_usd, w.count FROM call_costs c JOIN call_tokens w ON w.call_id = c.id AND w.class LIKE 'cache_write%' LEFT JOIN call_tokens r ON r.call_id = c.id AND r.class = 'cache_read' WHERE r.call_id IS NULL AND w.count > 10000 ORDER BY c.billed_at DESC LIMIT 10"
 ```
 
 For *why* a cache bust happened, see **cache.md**.
@@ -59,7 +59,7 @@ A join is needed only to split cost by `session_type` (chat / reflection / keepa
 ```bash
 # /usr/bin/sqlite3 (real binary): the readonly `sqlite3` wrapper BLOCKS ATTACH.
 # -readonly covers the ATTACHed db too; -uri is unsupported in this build.
-/usr/bin/sqlite3 -readonly -column -header ~/data/state.db "
+/usr/bin/sqlite3 -readonly -safe -column -header ~/data/state.db "
 ATTACH '$HOME/data/api.db' AS api;
 SELECT si.session_type,
        COUNT(DISTINCT si.session_key)      AS n_sessions,

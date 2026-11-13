@@ -21,11 +21,11 @@ func TestReadOnlyBatch_BashDecidedByReadOnlyRulesOnly(t *testing.T) {
 		name, command, want string
 	}{
 		{"whitelisted read runs", "jq .a /tmp/f.json", "once"},
-		{"sqlite read-only query runs", "sqlite3 -readonly /tmp/x.db 'select 1'", "once"},
+		{"sqlite read-only query runs", "sqlite3 -readonly -safe /tmp/x.db 'select 1'", "once"},
 		{"write command rejected", "rm -rf build", "reject"},
 		{"write flag of a listed command rejected", "sed -i s/a/b/ f.txt", "reject"},
 		{"redirect to a file rejected", "jq . f.json > out.json", "reject"},
-		{"sqlite dot-command rejected", "sqlite3 -readonly :memory: '.shell touch /tmp/pwned'", "reject"},
+		{"sqlite dot-command rejected", "sqlite3 -readonly -safe :memory: '.shell touch /tmp/pwned'", "reject"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var mu sync.Mutex

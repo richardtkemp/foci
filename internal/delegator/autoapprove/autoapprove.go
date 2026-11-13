@@ -88,8 +88,14 @@ var CommonReadonlyRules = []string{
 	"Bash:yq",
 	"Bash:mds",
 	"Bash:mdq",
-	"Bash:sqlite3 -readonly",
-	"Bash:/usr/bin/sqlite3 -readonly",
+	// sqlite3 needs BOTH -readonly and -safe (#3064): -readonly guards the
+	// database file only, and the CLI's writefile() writes any file under
+	// it; -safe refuses that and every function or dot-command that reaches
+	// the filesystem or a shell. Either order.
+	"Bash:sqlite3 -readonly -safe",
+	"Bash:sqlite3 -safe -readonly",
+	"Bash:/usr/bin/sqlite3 -readonly -safe",
+	"Bash:/usr/bin/sqlite3 -safe -readonly",
 	// git: read-only subcommands only, judged word by word (#2734). See
 	// ReadonlyGitRule for what it refuses and for the configuration-driven
 	// programs it cannot.
@@ -444,6 +450,13 @@ func validateParsedStmt(rules []Rule, stmt *syntax.Stmt, depth int, vc *varCtx) 
 		if !safe {
 			return false
 		}
+		// An arithmetic context or subscript that names a variable
+		// evaluates that variable's text as an expression, and a
+		// substitution hidden in it runs (#3064). Never approve one.
+		if arithNodeUnsafe(node) {
+			safe = false
+			return false
+		}
 		switch n := node.(type) {
 		case *syntax.Redirect:
 			if isOutputRedirect(n.Op) && !isDevNullRedirect(n) {
@@ -545,9 +558,9 @@ func validateParsedStmt(rules []Rule, stmt *syntax.Stmt, depth int, vc *varCtx) 
 			}
 			hasContent = true
 		case *syntax.ArithmCmd:
-			hasContent = true // (( )) — safe
+			hasContent = true // (( )) of literals only — arithNodeUnsafe judged it
 		case *syntax.LetClause:
-			hasContent = true // let — safe
+			hasContent = true // let of literals only — arithNodeUnsafe judged it
 		case *syntax.FuncDecl:
 			safe = false // function declarations not allowed
 		case *syntax.CoprocClause:
@@ -962,10 +975,20 @@ func (vc *varCtx) noteVeto(segment, path, reason string) {
 	}
 }
 
+// noteHint records a denial explanation that is not a substitutability veto
+// (no file is at fault): it shares the first-wins slot with noteVeto, and
+// renders without a path.
+func (vc *varCtx) noteHint(segment, reason string) {
+	vc.noteVeto(segment, "", reason)
+}
+
 // DenialReason renders the recorded veto for a human, or "" if none was raised.
 func (vc *varCtx) denialReason() string {
 	if vc.veto == nil || vc.veto.reason == "" {
 		return ""
+	}
+	if vc.veto.path == "" {
+		return fmt.Sprintf("not auto-approved: %s. Approving here runs it anyway.", vc.veto.reason)
 	}
 	return fmt.Sprintf("not auto-approved despite matching a rule: %s — %s. Approving here runs it anyway.",
 		vc.veto.path, vc.veto.reason)
@@ -1434,6 +1457,10 @@ func matchBashSegment(rules []Rule, segment string, ce *syntax.CallExpr, vc *var
 		return false
 	}
 	if containsUnsafeFlags(segment) {
+		noteSQLiteSafeHint(segment, vc)
+		return false
+	}
+	if testCommandUnsafe(ce, vc) {
 		return false
 	}
 	if expandedArgsUnsafe(ce, segment, vc) {
@@ -1884,22 +1911,26 @@ func containsUnsafeFlagWords(words []shellWord) bool {
 	return false
 }
 
-// sqliteCommandUnsafe rejects SQLite CLI forms that can execute shell commands
-// or read commands from standard input. The readonly database flag does not
-// constrain dot-commands such as .system, .shell, .load, or .output.
+// sqliteCommandUnsafe rejects SQLite CLI forms that can execute shell commands,
+// write files, or read commands from standard input. The readonly database
+// flag does not constrain dot-commands such as .system, .shell, .load, or
+// .output, nor the CLI's SQL functions writefile() and edit(), which write any
+// file under -readonly (#3064, measured on sqlite 3.45.1). -safe refuses all
+// of those (and readfile(), load_extension(), ATTACH), so both flags are
+// required.
 //
-// Auto-approved SQLite calls must include both a database argument and an
-// explicit SQL argument. Any dot-command or additional CLI option is prompted
-// instead of being interpreted as safe SQL. The tokens are the words'
-// shell-visible text (#2216): quoting (`'.'shell`) does not change what
-// sqlite3 receives.
+// Auto-approved SQLite calls must start with -readonly and -safe (either
+// order) and include both a database argument and an explicit SQL argument.
+// Any dot-command or additional CLI option is prompted instead of being
+// interpreted as safe SQL. The tokens are the words' shell-visible text
+// (#2216): quoting (`'.'shell`) does not change what sqlite3 receives.
 func sqliteCommandUnsafe(tokens []string) bool {
-	// The built-in rules require "sqlite3 -readonly". Require a database and
-	// SQL argument as well, so stdin cannot supply a dot-command.
-	if len(tokens) < 4 || tokens[1] != "-readonly" {
+	// The built-in rules require "sqlite3 -readonly -safe". Require a
+	// database and SQL argument as well, so stdin cannot supply a dot-command.
+	if len(tokens) < 5 || !sqliteSafeReadonlyFlags(tokens[1], tokens[2]) {
 		return true
 	}
-	for _, token := range tokens[2:] {
+	for _, token := range tokens[3:] {
 		arg := strings.TrimSpace(token)
 		if strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, ".") {
 			return true
@@ -1913,6 +1944,39 @@ func sqliteCommandUnsafe(tokens []string) bool {
 		}
 	}
 	return false
+}
+
+// sqliteSafeReadonlyFlags reports whether two leading sqlite3 options are
+// -readonly and -safe, in either order.
+func sqliteSafeReadonlyFlags(a, b string) bool {
+	return a == "-readonly" && b == "-safe" || a == "-safe" && b == "-readonly"
+}
+
+// noteSQLiteSafeHint explains a denied `sqlite3 -readonly …` that lacks -safe
+// (#3064): the form was auto-approved until -safe became required, so agents
+// and skills still type it, and an unexplained prompt teaches nothing. It
+// records the hint only for exactly that shape — the command is sqlite3,
+// -readonly is present and -safe is not — so any other sqlite3 denial keeps
+// its silence.
+func noteSQLiteSafeHint(segment string, vc *varCtx) {
+	words := scanShellWords(segment)
+	if visibleCmdBase(words) != "sqlite3" {
+		return
+	}
+	readonly, safe := false, false
+	for _, w := range words[1:] {
+		switch w.visible {
+		case "-readonly":
+			readonly = true
+		case "-safe":
+			safe = true
+		}
+	}
+	if readonly && !safe {
+		vc.noteHint(segment, "sqlite3 is auto-approved only with both -readonly and -safe "+
+			"(-readonly alone still lets writefile() write any file): "+
+			"use `sqlite3 -readonly -safe <db> '<sql>'`")
+	}
 }
 
 // gitGrepPagerUnsafe reports whether words run git's grep subcommand with a

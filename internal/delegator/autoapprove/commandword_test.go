@@ -112,7 +112,7 @@ func TestNonLiteralCommandWordVetoed(t *testing.T) {
 		HomeDir: "/home/foci",
 	})
 	rules := Compile([]string{"Bash"})
-	ok, reason := MatchWithEnv(rules, "Bash", bashInput(t, `C=sqlite3; $C -readonly /tmp/x.db 'SELECT 1'`), nil)
+	ok, reason := MatchWithEnv(rules, "Bash", bashInput(t, `C=sqlite3; $C -readonly -safe /tmp/x.db 'SELECT 1'`), nil)
 	if ok {
 		t.Error("a resolved command word naming a substitutable executable must not be auto-approved")
 	}
@@ -230,14 +230,14 @@ func TestBraceScopeOutRowsStayApproved(t *testing.T) {
 // branch of resolveWordPart looks stricter but lets the raw, undecoded
 // escapes hide the flag (`X=$'\x2d-pre=./x.sh'` and
 // `bash -c $'sed -\x69 …'` would approve); restoring stripOuterQuotes in
-// sqliteCommandUnsafe would refuse `sqlite3 -readonly db "'.tables'"`, whose
+// sqliteCommandUnsafe would refuse `sqlite3 -readonly -safe db "'.tables'"`, whose
 // SQL string literal is not a dot-command. All four rows pass on main and
 // must keep doing so.
 func TestMutationGateSurvivorsPinned(t *testing.T) {
 	readonly := parseAutoApproveRules(CommonReadonlyRules)
 	assertApproval(t, readonly, `X=$'\x2d-pre=./x.sh'; rg foo $X`, false)
 	assertApproval(t, readonly, `X=$'harmless'; rg foo $X`, true)
-	assertApproval(t, readonly, `sqlite3 -readonly db "'.tables'"`, true)
+	assertApproval(t, readonly, `sqlite3 -readonly -safe db "'.tables'"`, true)
 	blanket := parseAutoApproveRules([]string{"Bash"})
 	assertApproval(t, blanket, `bash -c $'sed -\x69 s/a/b/ f'`, false)
 }

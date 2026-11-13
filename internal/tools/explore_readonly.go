@@ -146,7 +146,7 @@ func ExploreShellPrompt(fociFuncs []string) string {
 	b.WriteString("\nEverything else is unavailable and is denied at once, with no one to ask: any other command, ")
 	b.WriteString("output redirection to a file (`> file`; `2>/dev/null` is fine), and the writing or executing flags of listed commands ")
 	b.WriteString("(`uniq INPUT OUTPUT`, `sed -i`, `find -exec`/`-delete`, `sort -o`, sqlite3 dot-commands like `.shell`, git `--output`/`--ext-diff`/`--textconv`). Pipes between listed commands work. For uniq, put options before its single input file; optional flag values must be attached, and abbreviated or unknown flags are unavailable. ")
-	b.WriteString("Use `sqlite3 -readonly <db> '<query>'` for SQLite and `jq` for JSON/JSONL. A denial is final: do not retry the same command; find another way with the whitelist.\n\n")
+	b.WriteString("Use `sqlite3 -readonly -safe <db> '<query>'` for SQLite (both flags: without -safe the command is denied) and `jq` for JSON/JSONL. A denial is final: do not retry the same command; find another way with the whitelist.\n\n")
 	b.WriteString("If a tool you needed is missing from this whitelist and you believe you and other explore agents would benefit from it, say so at the end of your answer: name the tool and what you would have used it for.")
 	return b.String()
 }

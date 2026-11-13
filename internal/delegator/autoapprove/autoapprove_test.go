@@ -501,8 +501,8 @@ func TestCommonReadonlyMatchesSafeCommands(t *testing.T) {
 		{"Bash", `{"command":"cat $(echo /etc/hosts)"}`},
 		{"Bash", `{"command":"head -5 $(find /tmp -name '*.log')"}`},
 		{"Bash", `{"command":"ls $(go env GOMODCACHE)"}`},
-		// sqlite3 -readonly is safe for querying.
-		{"Bash", `{"command":"sqlite3 -readonly /home/foci/data/api.db 'SELECT * FROM api_calls LIMIT 5'"}`},
+		// sqlite3 -readonly -safe is safe for querying (#3064: both flags).
+		{"Bash", `{"command":"sqlite3 -readonly -safe /home/foci/data/api.db 'SELECT * FROM api_calls LIMIT 5'"}`},
 		// yq without -i is read-only.
 		{"Bash", `{"command":"yq '.agents[0].id' config.toml"}`},
 		{"Bash", `{"command":"yq -oy '.' config.toml"}`},
@@ -734,12 +734,12 @@ func TestCommonReadonlyRejectsUnsafe(t *testing.T) {
 		{"Bash", `{"command":"sqlite3 /tmp/db.sqlite 'DELETE FROM t'"}`},
 		// SQLite dot-commands bypass database readonly mode and can execute
 		// shell commands or write outside the database.
-		{"Bash", `{"command":"sqlite3 -readonly /tmp/db.sqlite '.system rm file'"}`},
-		{"Bash", `{"command":"sqlite3 -readonly /tmp/db.sqlite '.shell rm file'"}`},
-		{"Bash", `{"command":"sqlite3 -readonly /tmp/db.sqlite '.load /tmp/evil.so'"}`},
+		{"Bash", `{"command":"sqlite3 -readonly -safe /tmp/db.sqlite '.system rm file'"}`},
+		{"Bash", `{"command":"sqlite3 -readonly -safe /tmp/db.sqlite '.shell rm file'"}`},
+		{"Bash", `{"command":"sqlite3 -readonly -safe /tmp/db.sqlite '.load /tmp/evil.so'"}`},
 		// Without an explicit SQL argument, SQLite reads stdin, which can carry
 		// a dot-command through a pipe or heredoc.
-		{"Bash", `{"command":"echo '.system rm file' | sqlite3 -readonly /tmp/db.sqlite"}`},
+		{"Bash", `{"command":"echo '.system rm file' | sqlite3 -readonly -safe /tmp/db.sqlite"}`},
 
 		// for loop with unsafe body.
 		{"Bash", `{"command":"for f in /tmp/*.txt; do rm \"$f\"; done"}`},
