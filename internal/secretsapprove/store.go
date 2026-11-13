@@ -77,59 +77,65 @@ func precheck(st Store, r Request) error {
 const Warning = "⚠ SECRETS"
 
 // describe is the dialog's header and markdown body: who asks, then the change
-// as a table. A section that already exists shows its rule before and after;
-// a new one shows only what will be set (#3092: no "now: none" for something
-// that does not exist yet). Every name in it passed Parse's character checks,
-// so none can carry markdown or break a table cell.
+// as a table (Dick 2026-11-13, #3096). A request that changes something that
+// exists shows Before and After columns, and when its table mixes changed and
+// unchanged rows the changed ones are bold; the app fades the rest. A new
+// section, or a request that changes nothing, shows one Value column with no
+// label for what stays. A secret is two rows, its section as Group and its
+// key as Name, spelled as stored (Dick 2026-11-13, #3092: "Group: Hetzner /
+// Name: api-key, rather than Hetzner.api_key"). Every name in it passed
+// Parse's character checks, so
+// none can carry markdown or break a table cell.
 func describe(st Store, agentID string, r Request) (header, text string) {
 	var b strings.Builder
 	sec := r.Section
 	exists := sectionExists(st, sec)
+	group := row{field: "Group", before: "`" + sec + "`", after: "`" + sec + "`"}
+	if !exists {
+		group.value = "`" + sec + "` (new)"
+	}
+	rows := []row{group}
 	switch r.Op {
 	case OpSet:
 		header = "Set secret"
-		what, state := "set a new secret", " (new)"
+		_, key, _ := strings.Cut(r.Name, ".")
+		name := row{field: "Name", before: "none", after: "`" + key + "`", value: "`" + key + "` (new)"}
+		what := "set a new secret"
+		rows = append(rows, name)
 		if _, ok := st.Get(r.Name); ok {
-			what, state = "replace a secret's value", " (replaces the current value)"
+			what = "replace a secret's value"
+			rows[1].before = rows[1].after
+			rows = append(rows, row{field: "Value", before: "current value", after: "new value"})
 		}
 		fmt.Fprintf(&b, "**%s** asks to %s.\n\n", agentID, what)
-		b.WriteString("| Field | Value |\n|---|---|\n")
-		groupName(&b, r, exists, state)
 		cur := st.SectionAllowedHosts(sec)
 		hosts := cur
 		if r.Hosts != nil {
 			hosts = r.Hosts
 		}
-		cell := codeListOr(hosts, "none (http_request cannot use it)")
-		if exists {
-			cell += wasNote(r.Hosts != nil, codeListOr(cur, "none"), codeListOr(hosts, "none"))
-		}
-		fmt.Fprintf(&b, "| Allowed hosts | %s |\n", cell)
+		rows = append(rows, row{field: "Allowed hosts", before: codeListOr(cur, "none"), after: codeListOr(hosts, "none"),
+			value: codeListOr(hosts, "none (http_request cannot use it)")})
 		now := agentRule(st, sec)
 		after := now
 		if r.Agents != nil {
 			after = "only " + codeList(r.Agents)
 		}
-		cell = after
-		if exists {
-			cell += wasNote(r.Agents != nil, now, after)
-		}
-		fmt.Fprintf(&b, "| Agents | %s |\n", cell)
+		rows = append(rows, row{field: "Agents", before: now, after: after})
 	case OpRemove:
 		header = "Remove secret"
+		_, key, _ := strings.Cut(r.Name, ".")
 		fmt.Fprintf(&b, "**%s** asks to remove a secret.\n\n", agentID)
-		b.WriteString("| Field | Value |\n|---|---|\n")
-		groupName(&b, r, true, "")
+		rows = append(rows, row{field: "Name", before: "`" + key + "`", after: "removed"})
 	case OpHostsAdd, OpHostsRemove, OpHostsClear:
 		header = "Secret hosts"
 		cur := st.SectionAllowedHosts(sec)
 		fmt.Fprintf(&b, "**%s** asks to change which hosts may receive a group's secrets.\n\n", agentID)
-		beforeAfter(&b, exists, sec, "Allowed hosts", codeListOr(cur, "none"), codeListOr(afterList(cur, r), "none"))
+		rows = append(rows, row{field: "Allowed hosts", before: codeListOr(cur, "none"), after: codeListOr(afterList(cur, r), "none")})
 	case OpBodyAdd, OpBodyRemove, OpBodyClear:
 		header = "Secret body keys"
 		cur := st.SectionAllowedInBody(sec)
 		fmt.Fprintf(&b, "**%s** asks to change which of a group's keys may go in a request body (allowed_in_body).\n\n", agentID)
-		beforeAfter(&b, exists, sec, "Body keys", codeListOr(cur, "none"), codeListOr(afterList(cur, r), "none"))
+		rows = append(rows, row{field: "Body keys", before: codeListOr(cur, "none"), after: codeListOr(afterList(cur, r), "none")})
 	default: // agents_*
 		header = "Secret agents"
 		fmt.Fprintf(&b, "**%s** asks to change which agents may use a group's secrets.\n\n", agentID)
@@ -140,43 +146,53 @@ func describe(st Store, agentID string, r Request) (header, text string) {
 		case OpAgentsDeny:
 			after = "every agent except " + codeList(r.Agents)
 		}
-		beforeAfter(&b, exists, sec, "Agents", agentRule(st, sec), after)
+		rows = append(rows, row{field: "Agents", before: agentRule(st, sec), after: after})
 	}
+	writeTable(&b, rows, exists)
 	return header, b.String()
 }
 
-// beforeAfter writes a section rule's change as a table: Now and After
-// columns for an existing section, only the new rule for a new one.
-func beforeAfter(b *strings.Builder, exists bool, sec, rule, now, after string) {
-	if exists {
-		b.WriteString("| Field | Now | After |\n|---|---|---|\n")
-		fmt.Fprintf(b, "| Group | `%s` | `%s` |\n| %s | %s | %s |\n", sec, sec, rule, now, after)
+// row is one field of a dialog table: its value before the request and after
+// it. value, when set, is what a one-column table shows instead of after (a
+// new section's "(new)" marks, the hosts rule's consequence).
+type row struct{ field, before, after, value string }
+
+func (r row) changed() bool { return r.before != r.after }
+
+// writeTable writes rows as a markdown table. Before and After columns only
+// when the section exists and some row changes; otherwise one Value column.
+// In a two-column table that mixes changed and unchanged rows, every cell of
+// a changed row is bold: the app's secrets dialog fades the rows that are
+// not, so the change stands out (#3096).
+func writeTable(b *strings.Builder, rows []row, exists bool) {
+	nChanged := 0
+	for _, r := range rows {
+		if r.changed() {
+			nChanged++
+		}
+	}
+	if !exists || nChanged == 0 {
+		b.WriteString("| Field | Value |\n|---|---|\n")
+		for _, r := range rows {
+			v := r.after
+			if r.value != "" && !exists {
+				v = r.value
+			}
+			fmt.Fprintf(b, "| %s | %s |\n", r.field, v)
+		}
 		return
 	}
-	b.WriteString("| Field | Value |\n|---|---|\n")
-	fmt.Fprintf(b, "| Group | `%s` (new) |\n| %s | %s |\n", sec, rule, after)
-}
-
-// groupName writes a secret as two rows, its section as Group and its key as
-// Name, spelled as stored (Dick 2026-11-13, #3092: "Group: Hetzner / Name:
-// api-key, rather than Hetzner.api_key"). A new group is marked so; state
-// follows the name.
-func groupName(b *strings.Builder, r Request, groupExists bool, state string) {
-	_, key, _ := strings.Cut(r.Name, ".")
-	group := "`" + r.Section + "`"
-	if !groupExists {
-		group += " (new)"
+	mixed := nChanged < len(rows)
+	b.WriteString("| Field | Before | After |\n|---|---|---|\n")
+	for _, r := range rows {
+		cells := []string{r.field, r.before, r.after}
+		if mixed && r.changed() {
+			for i, c := range cells {
+				cells[i] = "**" + c + "**"
+			}
+		}
+		fmt.Fprintf(b, "| %s |\n", strings.Join(cells, " | "))
 	}
-	fmt.Fprintf(b, "| Group | %s |\n| Name | `%s`%s |\n", group, key, state)
-}
-
-// wasNote is a set's note on one rule of an existing section: what it was
-// when the request changes it, else that it stays.
-func wasNote(changed bool, now, after string) string {
-	if !changed || now == after {
-		return " (unchanged)"
-	}
-	return " (was " + now + ")"
 }
 
 // sectionExists reports whether secrets.toml already has the section: a

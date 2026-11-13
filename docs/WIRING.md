@@ -3739,8 +3739,9 @@ foci_secrets <action> … (internal/tools/secrets_tool.go; row "secrets" in tool
          hosts exact lowercase hostnames; the value is never an argument)
        → gwSecretsApprove (atomic, set in main after the agent registry) .Submit(agentID from the session key)
            → KnownAgent check on any agent list → precheck (remove/hosts remove/body remove target exists)
-           → describe (dialog header + markdown: agent, then a table of the change; an existing section shows
-             its rule now → after, a new one only what will be set) + Warning "⚠ SECRETS" (fap.AskgwPrompt.warning:
+           → describe (dialog header + markdown: agent, then a table of the change; a change to an existing
+             section has Before / After columns with the changed rows bold (the app fades the rest, #3096),
+             a new section or a no-op one Value column) + Warning "⚠ SECRETS" (fap.AskgwPrompt.warning:
              the app shows it large and red above the body, #3092)
            → presentSecretsPrompt → app.PresentAppPrompt (Hub.presentAppPrompt: the askgw dialog set,
              NO chat fallback; error when no device can show it → the tool call fails, nothing pending)

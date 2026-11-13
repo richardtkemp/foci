@@ -380,7 +380,9 @@ func TestList_NoValues(t *testing.T) {
 // #3092 (Dick 2026-11-13): no "approve then type the value" paragraph, no
 // current state for a section that does not exist yet, the change as a
 // table, the big red warning on every dialog, and (13:10) a secret as
-// Group and Name rows, not section.key.
+// Group and Name rows, not section.key. Only its new-section and Warning
+// checks remain: #3096 changed the existing-section layout, which
+// TestDescribe_Layout3096 pins whole.
 func TestDescribe_Layout3092(t *testing.T) {
 	st, _ := newStore(t, "[old]\nk = \"v\"\nallowed_hosts = [\"a.example\"]\n")
 	cases := []struct {
@@ -397,22 +399,6 @@ func TestDescribe_Layout3092(t *testing.T) {
 			mustParse(t, "set", []string{"fresh.key"}, "", ""),
 			[]string{"| Allowed hosts | none (http_request cannot use it) |"},
 			[]string{"now", "Now", "was", "unchanged"}},
-		{"set, existing section, hosts replaced",
-			mustParse(t, "set", []string{"old.k2"}, "b.example", "scout"),
-			[]string{"| Group | `old` |\n| Name | `k2` (new) |", "| Allowed hosts | `b.example` (was `a.example`) |",
-				"| Agents | only `scout` (was every agent) |"},
-			[]string{"Approve, then"}},
-		{"set, existing secret, rules kept",
-			mustParse(t, "set", []string{"old.k"}, "", ""),
-			[]string{"replace a secret's value", "| Group | `old` |\n| Name | `k` (replaces the current value) |",
-				"| Allowed hosts | `a.example` (unchanged) |", "| Agents | every agent (unchanged) |"},
-			nil},
-		{"remove",
-			mustParse(t, "remove", []string{"old.k"}, "", ""),
-			[]string{"| Group | `old` |\n| Name | `k` |"}, []string{"old.k"}},
-		{"hosts add, existing section",
-			mustParse(t, "hosts", []string{"old", "add", "c.example"}, "", ""),
-			[]string{"| Field | Now | After |", "| Group | `old` | `old` |", "| Allowed hosts | `a.example` | `a.example`, `c.example` |"}, nil},
 		{"hosts add, new section",
 			mustParse(t, "hosts", []string{"fresh", "add", "c.example"}, "", ""),
 			[]string{"| Group | `fresh` (new) |", "| Allowed hosts | `c.example` |"},
@@ -420,9 +406,6 @@ func TestDescribe_Layout3092(t *testing.T) {
 		{"agents allow, new section",
 			mustParse(t, "agents", []string{"fresh", "allow", "scout"}, "", ""),
 			[]string{"| Agents | only `scout` |"}, []string{"Now", "every agent"}},
-		{"body add, existing section",
-			mustParse(t, "body", []string{"old", "add", "k"}, "", ""),
-			[]string{"| Body keys | none | `k` |"}, nil},
 	}
 	for _, c := range cases {
 		_, text := describe(st, "clutch", c.req)
@@ -444,5 +427,71 @@ func TestDescribe_Layout3092(t *testing.T) {
 	}
 	if p := h.prompt(t); p.Warning != Warning || Warning == "" {
 		t.Errorf("prompt Warning = %q, want %q", p.Warning, Warning)
+	}
+}
+
+// TestDescribe_Layout3096 pins the whole table of each kind of request (Dick
+// 2026-11-13, #3096): no "(unchanged)" label, Before and After columns when
+// the request changes something that exists, and in a table that mixes
+// changed and unchanged rows the changed rows are bold (the app fades the
+// rest).
+func TestDescribe_Layout3096(t *testing.T) {
+	st, _ := newStore(t, "[old]\nk = \"v\"\nallowed_hosts = [\"a.example\"]\n")
+	cases := []struct {
+		name  string
+		req   Request
+		table string
+	}{
+		{"set, new section",
+			mustParse(t, "set", []string{"fresh.key"}, "", ""),
+			"| Field | Value |\n|---|---|\n| Group | `fresh` (new) |\n| Name | `key` (new) |\n" +
+				"| Allowed hosts | none (http_request cannot use it) |\n| Agents | every agent |\n"},
+		{"set, existing section, new name, rules kept",
+			mustParse(t, "set", []string{"old.k2"}, "", ""),
+			"| Field | Before | After |\n|---|---|---|\n| Group | `old` | `old` |\n| **Name** | **none** | **`k2`** |\n" +
+				"| Allowed hosts | `a.example` | `a.example` |\n| Agents | every agent | every agent |\n"},
+		{"set, existing section, rules replaced",
+			mustParse(t, "set", []string{"old.k2"}, "b.example", "scout"),
+			"| Field | Before | After |\n|---|---|---|\n| Group | `old` | `old` |\n| **Name** | **none** | **`k2`** |\n" +
+				"| **Allowed hosts** | **`a.example`** | **`b.example`** |\n| **Agents** | **every agent** | **only `scout`** |\n"},
+		{"set, replace a value",
+			mustParse(t, "set", []string{"old.k"}, "", ""),
+			"| Field | Before | After |\n|---|---|---|\n| Group | `old` | `old` |\n| Name | `k` | `k` |\n" +
+				"| **Value** | **current value** | **new value** |\n" +
+				"| Allowed hosts | `a.example` | `a.example` |\n| Agents | every agent | every agent |\n"},
+		{"remove",
+			mustParse(t, "remove", []string{"old.k"}, "", ""),
+			"| Field | Before | After |\n|---|---|---|\n| Group | `old` | `old` |\n| **Name** | **`k`** | **removed** |\n"},
+		{"hosts add, existing section",
+			mustParse(t, "hosts", []string{"old", "add", "c.example"}, "", ""),
+			"| Field | Before | After |\n|---|---|---|\n| Group | `old` | `old` |\n" +
+				"| **Allowed hosts** | **`a.example`** | **`a.example`, `c.example`** |\n"},
+		{"hosts add, already there",
+			mustParse(t, "hosts", []string{"old", "add", "a.example"}, "", ""),
+			"| Field | Value |\n|---|---|\n| Group | `old` |\n| Allowed hosts | `a.example` |\n"},
+		{"hosts add, new section",
+			mustParse(t, "hosts", []string{"fresh", "add", "c.example"}, "", ""),
+			"| Field | Value |\n|---|---|\n| Group | `fresh` (new) |\n| Allowed hosts | `c.example` |\n"},
+		{"body add, existing section",
+			mustParse(t, "body", []string{"old", "add", "k"}, "", ""),
+			"| Field | Before | After |\n|---|---|---|\n| Group | `old` | `old` |\n| **Body keys** | **none** | **`k`** |\n"},
+		{"agents allow, existing section",
+			mustParse(t, "agents", []string{"old", "allow", "scout"}, "", ""),
+			"| Field | Before | After |\n|---|---|---|\n| Group | `old` | `old` |\n| **Agents** | **every agent** | **only `scout`** |\n"},
+		{"agents allow, new section",
+			mustParse(t, "agents", []string{"fresh", "allow", "scout"}, "", ""),
+			"| Field | Value |\n|---|---|\n| Group | `fresh` (new) |\n| Agents | only `scout` |\n"},
+	}
+	for _, c := range cases {
+		_, text := describe(st, "clutch", c.req)
+		_, table, ok := strings.Cut(text, "\n\n")
+		if !ok || table != c.table {
+			t.Errorf("%s: table\n%s\nwant\n%s", c.name, table, c.table)
+		}
+		for _, f := range []string{"unchanged", "(was", "Now"} {
+			if strings.Contains(text, f) {
+				t.Errorf("%s: text holds %q", c.name, f)
+			}
+		}
 	}
 }
