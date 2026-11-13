@@ -60,6 +60,12 @@ type fileScope struct {
 	// every writable test dir lies under a temp area, so a test that needs an
 	// "outside" path removes them.
 	tempRoots *[]string
+	// confineAreas, when set and returning false, skips the allowed-area
+	// check: the path is still canonicalised and the blocklist still applies.
+	// Read on each call, so a live config edit applies (#3100: an API explore
+	// spawn's read, confined only when tools.explore_confine_reads is on).
+	// Nil means always confine. Isolated scopes ignore it.
+	confineAreas func() bool
 	// maxReadBytes returns the current cap on a file's size before read/edit
 	// loads it; <=0 uses the default. A func (not a captured scalar) so the
 	// read/edit tools observe a live config edit on their next call instead of
@@ -80,6 +86,13 @@ func WithWorkspace(dir string) FileOpt { return func(fs *fileScope) { fs.workspa
 // WithExtraRoots sets the live source of tools.file_allowed_paths.
 func WithExtraRoots(fn func() []string) FileOpt {
 	return func(fs *fileScope) { fs.extraRoots = fn }
+}
+
+// WithAreaConfinement makes the allowed-area check conditional (#3100): fn is
+// read on each call, and false lets the path lie anywhere the foci user can
+// reach (canonicalised, blocklist still applied).
+func WithAreaConfinement(fn func() bool) FileOpt {
+	return func(fs *fileScope) { fs.confineAreas = fn }
 }
 
 // WithBlocklist sets the secrets store whose blocklist the tool enforces.
@@ -116,6 +129,8 @@ func (fs fileScope) resolveFileArg(path string) (string, error) {
 	var err error
 	if fs.baseDir != "" {
 		resolved, err = resolveAndValidatePath(resolveWorkspacePath(path, fs.workspace), fs.baseDir)
+	} else if fs.confineAreas != nil && !fs.confineAreas() {
+		resolved, err = canonicalFilePath(resolveWorkspacePath(path, fs.workspace))
 	} else {
 		resolved, err = fs.confine(resolveWorkspacePath(path, fs.workspace))
 	}

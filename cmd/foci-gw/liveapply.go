@@ -260,6 +260,7 @@ var (
 		"memory.daily_digest", "agent.memory.daily_digest",
 		"tools.todo_format", "agent.tools.todo_format",
 		"tools.explore_max_depth", "agent.tools.explore_max_depth",
+		"tools.explore_confine_reads", "agent.tools.explore_confine_reads",
 		"tools.spawn_reserve_percent", "agent.tools.spawn_reserve_percent",
 		// #2722: resizes each Spawner's slots via getSpawner's OnChange.
 		"tools.max_concurrent_spawns", "agent.tools.max_concurrent_spawns",

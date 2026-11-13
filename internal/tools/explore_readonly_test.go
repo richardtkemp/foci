@@ -36,7 +36,7 @@ func TestReadOnlyTodo_RefusesWrites(t *testing.T) {
 	var ran []string
 	reg := NewRegistry()
 	reg.Register(recordingTodo(&ran))
-	_, apiSet := spawnExploreToolSet(reg)
+	_, apiSet := spawnExploreToolSet(reg, nil)
 	bridge := RegistryForAccess(reg, delegator.BatchAccessReadOnly, true)
 	for name, todo := range map[string]*Tool{"api explore": apiSet["todo"], "read-only bridge": bridge.Get("todo")} {
 		if todo == nil {

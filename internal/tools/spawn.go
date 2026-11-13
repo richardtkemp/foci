@@ -219,10 +219,14 @@ type SpawnDeps struct {
 	// configured for a canonical developer/model_id, or nil. It stamps
 	// every request of a one-shot's tool loop (and its fallback hops) with
 	// the model's own routing. Nil = no routing, today's behaviour.
-	ProviderRoutingFor  func(model string) *provider.ProviderRouting
-	MaxInherit          int                                 // initial slot count (from config); SetMaxConcurrent changes it live (#2722)
-	MaxToolLoops        func() int                          // max tool loops for raw/character spawns, read fresh per call
-	ExploreMaxDepth     func() int                          // max tool loops for explore spawns, read fresh per call
+	ProviderRoutingFor func(model string) *provider.ProviderRouting
+	MaxInherit         int        // initial slot count (from config); SetMaxConcurrent changes it live (#2722)
+	MaxToolLoops       func() int // max tool loops for raw/character spawns, read fresh per call
+	ExploreMaxDepth    func() int // max tool loops for explore spawns, read fresh per call
+	// ExploreRead replaces the registry's read tool in an API explore spawn
+	// (#3100): the same read, but area-confined only when
+	// tools.explore_confine_reads is on. Nil = the registry's read as is.
+	ExploreRead         *Tool
 	Notifier            *AsyncNotifier                      // async result delivery for inherit mode
 	OrientationTemplate string                              // orientation template for branch sessions ({branch_key}, {parent_key}, {branch_type} resolved at creation)
 	SetNoCompact        func(sessionKey string, value bool) // marks branch sessions as no_compact (prevents compaction)
@@ -1078,8 +1082,10 @@ var optionalExploreTools = []optionalExploreTool{
 // spawnExploreToolSet builds a tool set for explore spawn mode.
 // It creates ls/find/grep/git tools fresh (not in the registry), adds
 // conditional tools if their binary is in PATH, and pulls allowed tools
-// from the registry via the explicit allowlist.
-func spawnExploreToolSet(reg *Registry) ([]provider.ToolDef, map[string]*Tool) {
+// from the registry via the explicit allowlist. exploreRead, when non-nil,
+// stands in for the registry's read (#3100); a registry without read (denied
+// by config) still gets none.
+func spawnExploreToolSet(reg *Registry, exploreRead *Tool) ([]provider.ToolDef, map[string]*Tool) {
 	defs := make([]provider.ToolDef, 0, 16)
 	tools := make(map[string]*Tool, 16)
 
@@ -1109,6 +1115,9 @@ func spawnExploreToolSet(reg *Registry) ([]provider.ToolDef, map[string]*Tool) {
 	if reg != nil {
 		for _, t := range reg.All() {
 			if spawnExploreAllowed[t.Name] {
+				if t.Name == "read" && exploreRead != nil {
+					t = exploreRead
+				}
 				t = readOnlyTool(t)
 				defs = append(defs, provider.NewCustomTool(t.Name, t.Description, t.Parameters))
 				tools[t.Name] = t

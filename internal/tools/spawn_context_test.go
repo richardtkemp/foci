@@ -325,7 +325,7 @@ func TestSpawnExploreToolSet(t *testing.T) {
 		})
 	}
 
-	defs, tools := spawnExploreToolSet(reg)
+	defs, tools := spawnExploreToolSet(reg, nil)
 
 	// Build name sets.
 	defNames := make(map[string]bool, len(defs))

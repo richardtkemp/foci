@@ -131,3 +131,29 @@ func TestToolTable_AskGraderFollowsSkillDirsAndAllowedPaths(t *testing.T) {
 		t.Errorf("grader under a live file_allowed_paths entry: want only the stat error, got %v", err)
 	}
 }
+
+// TestExploreReadTool_FollowsLiveConfineFlag (#3100): an API explore spawn's
+// read reaches a path outside every area while tools.explore_confine_reads
+// is off (the default), and is refused after a live edit turns it on.
+func TestExploreReadTool_FollowsLiveConfineFlag(t *testing.T) {
+	t.Parallel()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(cwd, "tool_table.go")
+	p := minimalSetupParams(t, "test")
+	p.acfg.Workspace = t.TempDir()
+	read := exploreReadTool(&toolDeps{p: p})
+	raw, _ := json.Marshal(map[string]any{"path": outside, "limit": 1})
+
+	if _, err := read.Execute(context.Background(), raw); err != nil {
+		t.Fatalf("default (off): outside read refused: %v", err)
+	}
+	fresh := *p.resolvedLive.Load()
+	fresh.Tools.ExploreConfineReads = true
+	p.resolvedLive.Store(&fresh)
+	if _, err := read.Execute(context.Background(), raw); err == nil || !strings.Contains(err.Error(), tools.FileAllowedPathsKey) {
+		t.Errorf("explore_confine_reads on: want refusal naming %s, got %v", tools.FileAllowedPathsKey, err)
+	}
+}

@@ -169,6 +169,16 @@ func fileAreas(d *toolDeps) []tools.FileOpt {
 	}
 }
 
+// exploreReadTool is an API explore spawn's read (#3100): the main read with
+// the #3076 area check on only while tools.explore_confine_reads is set (read
+// live, off by default). Canonicalisation and the blocklist always apply.
+func exploreReadTool(d *toolDeps) *tools.Tool {
+	live := d.p.resolvedLive
+	return tools.NewReadTool(d.agentStore, d.p.acfg.Workspace,
+		func() int64 { return live.Load().Tools.MaxFileReadBytes },
+		append(fileAreas(d), tools.WithAreaConfinement(func() bool { return live.Load().Tools.ExploreConfineReads }))...)
+}
+
 // toolTable's row order decides registration order only; it is otherwise
 // cosmetic. The model's tool-list order — and so the prompt-cache prefix —
 // comes from Registry.ToolDefs(), which sorts by name, and the exec bridge's
@@ -796,6 +806,10 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 		spawnDeps.ProviderRoutingFor = config.RoutingFor(modelDefaultsFn(d.p.cfg.Models))
 		spawnDeps.MaxToolLoops = func() int { return live.Load().Loop.MaxToolLoops }
 		spawnDeps.ExploreMaxDepth = func() int { return live.Load().Tools.ExploreMaxDepth }
+		// #3100: the explore spawn's read is the main read with the #3076
+		// area check made conditional on tools.explore_confine_reads (off by
+		// default, read live). Blocklist and canonicalisation always apply.
+		spawnDeps.ExploreRead = exploreReadTool(d)
 	}
 	if depthEnabled(d) {
 		// #2624: a reported depth leaf's spawns pass up its tree at each

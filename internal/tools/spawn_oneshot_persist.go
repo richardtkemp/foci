@@ -276,7 +276,7 @@ func (s *Spawner) apiOneShotRun(ctx context.Context, rec *oneShotRecord, prompt 
 		ctx = withSpawnSelf(WithSpawnCharacter(ctx), rec.Self, model)
 	case spawnModeExplore:
 		p.system = []provider.SystemBlock{{Type: "text", Text: exploreSystemPrompt}}
-		p.toolDefs, p.tools = spawnExploreToolSet(deps.Registry)
+		p.toolDefs, p.tools = spawnExploreToolSet(deps.Registry, deps.ExploreRead)
 		p.maxResultChars = spawnExploreMaxResultChars
 		p.maxLoops = deps.exploreMaxDepth()
 	default:

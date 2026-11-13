@@ -171,6 +171,7 @@ type ResolvedTool struct {
 	ExecAutoBackground  int
 	MaxConcurrentSpawns int
 	ExploreMaxDepth     int
+	ExploreConfineReads bool // #3100
 	SpawnReservePercent int
 	MaxUploadFileSize   int64
 	MaxFileReadBytes    int64
@@ -192,6 +193,7 @@ func resolveTool(m ToolConfig) ResolvedTool {
 		ExecAutoBackground:  DerefInt(m.ExecAutoBackground),
 		MaxConcurrentSpawns: DerefInt(m.MaxConcurrentSpawns),
 		ExploreMaxDepth:     positiveOr(m.ExploreMaxDepth, DefaultExploreMaxDepth),
+		ExploreConfineReads: DerefBool(m.ExploreConfineReads),
 		MaxUploadFileSize:   DerefInt64(m.MaxUploadFileSize),
 		MaxFileReadBytes:    DerefInt64(m.MaxFileReadBytes),
 		HTTPMaxSpillBytes:   DerefInt64(m.HTTPMaxSpillBytes),
