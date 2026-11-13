@@ -556,14 +556,12 @@ func TestFastSummary_NoMaxInFlightHoldsNothing(t *testing.T) {
 	unblock := make(chan struct{})
 	var once sync.Once
 	release := func() { once.Do(func() { close(unblock) }) }
-	var mu sync.Mutex
-	n := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		n++
-		first := n == 1
-		mu.Unlock()
-		if first {
+		// Hold the PIN request by its content, not by arrival order: InFlight
+		// counts the pin before its HTTP request is sent, so under load the
+		// chat-name request can reach the server first and was the one held.
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), "pin this") {
 			<-unblock
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
