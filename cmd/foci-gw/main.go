@@ -654,6 +654,7 @@ Subcommands:
 		pprofGate:         &pprofGate,
 		deferStore:        deferStore,
 		createDefault:     app.CreateDefaultConversation,
+		openSessionChat:   app.OpenSessionConversation,
 		rubrics:           rubrics,
 	}
 

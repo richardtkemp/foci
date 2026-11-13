@@ -167,3 +167,53 @@ func TestSendUsageWrappedFlagDescriptionsAlign(t *testing.T) {
 		}
 	}
 }
+
+// TestSendBackgroundFlag proves #3097's CLI half: --background (or
+// FOCI_BACKGROUND) puts background=true on the /send body, the flag never
+// leaks into the message, and without it the body carries no background key.
+func TestSendBackgroundFlag(t *testing.T) {
+	t.Run("flag", func(t *testing.T) {
+		body := captureBody(t, func(base string) error {
+			return cmdSend(base, []string{"-s", "nightly", "--background", "run it"})
+		})
+		if body["background"] != true {
+			t.Errorf("background = %v, want true", body["background"])
+		}
+		if body["text"] != "run it" {
+			t.Errorf("text = %v, want %q (the flag leaked into the message?)", body["text"], "run it")
+		}
+	})
+	t.Run("env", func(t *testing.T) {
+		t.Setenv("FOCI_BACKGROUND", "1")
+		body := captureBody(t, func(base string) error {
+			return cmdSend(base, []string{"run it"})
+		})
+		if body["background"] != true {
+			t.Errorf("background = %v, want true (FOCI_BACKGROUND not applied?)", body["background"])
+		}
+	})
+	t.Run("absent", func(t *testing.T) {
+		t.Setenv("FOCI_BACKGROUND", "")
+		body := captureBody(t, func(base string) error {
+			return cmdSend(base, []string{"run it"})
+		})
+		if _, ok := body["background"]; ok {
+			t.Errorf("body has background = %v; the key must be absent without the flag", body["background"])
+		}
+	})
+}
+
+// TestSendReadableSessionName proves the CLI passes a session name with
+// spaces, punctuation and an emoji to the gateway verbatim (#3097).
+func TestSendReadableSessionName(t *testing.T) {
+	const name = "Tax 2026 Q&A 🥔"
+	body := captureBody(t, func(base string) error {
+		return cmdSend(base, []string{"-s", name, "hello"})
+	})
+	if body["session"] != name {
+		t.Errorf("session = %q, want %q", body["session"], name)
+	}
+	if body["text"] != "hello" {
+		t.Errorf("text = %v, want hello", body["text"])
+	}
+}

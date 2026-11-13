@@ -30,6 +30,7 @@ These flags are accepted by all commands. On the commands that take free text (`
 | `--message-file <path>` | `-mf` | `FOCI_MESSAGE_FILE` | Read message from file path. |
 | `--sync` / `--wait` | | `FOCI_SYNC` | Wait for the agent's reply, blocking the CLI (send/branch only, non-empty = true). This is NOT one of the `--wait-*` deferral gates below. |
 | `--async` / `--no-wait` | | `FOCI_ASYNC` | Fire-and-forget (send/branch default, non-empty = true). |
+| `--background` | | `FOCI_BACKGROUND` | **Send only**: a session this send creates by name stays background-only, with no chat in the foci app (non-empty = true). Without it, a new named session opens as a chat on every app device (#3097). No effect on a session that already exists. |
 | `--no-compact` | | `FOCI_NO_COMPACT` | Skip compaction (branch only, non-empty = true). |
 | `--no-reset-hook` | | `FOCI_NO_RESET_HOOK` | Skip reset hook (branch only, non-empty = true). |
 | `--oneshot` | | `FOCI_ONESHOT` | `--no-compact` + `--no-reset-hook` + `--silent` as a flag; the env var sets only the first two (branch only, non-empty = true). |
@@ -79,6 +80,8 @@ FOCI_IF_WARM=4h
 ### `send` — Send a message to the agent
 
 Sends a text message to the agent's default session (or a named session / chat alias / exact session key). By default, send is **asynchronous** (fire-and-forget): the CLI returns immediately with "queued" and the agent's response is delivered to the chat. Use `--sync`/`--wait` to block until the response is available.
+
+**New named session:** `-s <name>` with a name that matches no session, key or chat alias creates a new session. The new session opens as a chat in the foci app on every device, as if you had opened it there, titled with the session name: the message and the agent's replies show in that chat (#3097). The title counts as a name you set, so the automatic chat name does not replace it; rename the chat in the app to change it. `--background` keeps it out of the app instead: the session runs with no chat, as before #3097. The app chat is opened only when the session is created; a later send to the same name uses the chat (or the lack of one) it already has. A send that an `--if-*` gate skips opens no chat. An agent with no app connection runs the new session in the background.
 
 `--broadcast` delivers the agent's response to **every surface** for the agent — each platform's default destination (telegram default chat, the app's default conversation, else its newest — auto-created if the agent has none) — instead of only the target session's chat. Useful for "heads up" crons that must reach you wherever you are. Equivalent to `policy=broadcast` in the request (or embedded in the selector: `-s 'research?policy=broadcast'`).
 

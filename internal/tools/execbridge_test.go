@@ -2772,3 +2772,29 @@ func TestSummaryShellEmptyStdinNamesMisuse(t *testing.T) {
 		}
 	})
 }
+
+// TestSessionExecBridge_ReadableSessionName proves the exec bridge works for a
+// named session whose name has spaces, punctuation and an emoji (#3097,
+// `foci send -s 'Tax 2026 Q&A 🥔'`): the socket (named after the key) binds
+// and answers, and bash sources the funcs file through BASH_ENV, so the
+// session's foci_* functions exist.
+func TestSessionExecBridge_ReadableSessionName(t *testing.T) {
+	t.Parallel()
+	b, err := NewSessionExecBridge(testRegistry(), context.Background(), "clutch/iTax 2026 Q&A 🥔")
+	if err != nil {
+		t.Fatalf("NewSessionExecBridge: %v", err)
+	}
+	defer b.Close()
+	if !strings.Contains(b.SockPath(), "Tax 2026 Q&A 🥔") {
+		t.Errorf("socket path %q does not carry the name", b.SockPath())
+	}
+	if res, errMsg := callBridge(t, b.SockPath(), `{"tool":"echo_tool","params":{"text":"potato"}}`); errMsg != "" || res != "echo: potato" {
+		t.Fatalf("bridge not callable: res=%q err=%q", res, errMsg)
+	}
+	cmd := osexec.Command("bash", "-c", "type -t foci__trace")
+	cmd.Env = append(os.Environ(), "BASH_ENV="+b.FuncsPath(), "FOCI_SOCK="+b.SockPath())
+	out, err := cmd.CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) != "function" {
+		t.Errorf("bash did not source the funcs file via BASH_ENV: out=%q err=%v", out, err)
+	}
+}

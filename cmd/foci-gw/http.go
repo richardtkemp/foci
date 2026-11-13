@@ -46,6 +46,11 @@ type httpHandlerDeps struct {
 	// resolveDefaultSession (/status and a selector-less /command) leaves it
 	// nil so those never mint a conversation (#1859).
 	createDefault func(agentID string) (string, error)
+	// openSessionChat gives a session a conversation in the app (or keeps the
+	// one it has), as if the user had opened a chat on it. /send calls it for
+	// a NEW named session unless the request asks for background-only (#3097).
+	// Production wires app.OpenSessionConversation; nil = never open one.
+	openSessionChat func(agentID, sessionKey string) (created bool, err error)
 	// rubrics is the evals registry (nil when it failed to load): /score
 	// validates against it, /evals/rubrics lists it.
 	rubrics *evals.Registry

@@ -170,13 +170,16 @@ type Hub struct {
 	settingsMu sync.Mutex
 
 	// openSetMu serialises every writer of the shared open-set (open_chats):
-	// handleConversationOpenSet's full replace, mintFacetConversation's append
+	// handleConversationOpenSet's full replace, mintSessionConversation's append
 	// and the auto-close sweep's filter (#1243), each together with its
 	// conversation.openSync fan-out — with the send outside the lock an older
 	// set can reach a device after a newer one and close a just-opened tab
 	// (the #2081 shape settingsMu guards against for settings). Held across
 	// the sends on purpose; deliberately not h.mu — see settingsMu.
 	openSetMu sync.Mutex
+	// sessionChatMu serialises openSessionConversation's lookup and mint, so
+	// concurrent sends to one new named session mint one conversation (#3097).
+	sessionChatMu sync.Mutex
 
 	autoCloseOnce  sync.Once     // startAutoCloseSweep starts at most one loop per hub
 	autoCloseEvery time.Duration // sweep cadence override; 0 = autoCloseSweepInterval (tests shrink it)
@@ -1541,13 +1544,41 @@ func (h *Hub) mintFacetConversation(agentID, sessionKey string, first command.Fi
 			return "", fmt.Errorf("no app connection for agent %s to send the first message on", agentID)
 		}
 	}
+	b, err := h.mintSessionConversation(agentID, sessionKey, "")
+	if err != nil {
+		return "", fmt.Errorf("facet %w", err)
+	}
+	if conn != nil {
+		h.sendFirstMessage(conn, b, first)
+	}
+	return b.convID, nil
+}
+
+// mintSessionConversation mints a new conversation bound to sessionKey, adds
+// it to the shared open-set so the tab opens on every device, and pushes the
+// updated roster. A non-empty title is saved as the chat's name before the
+// roster goes out, so every device shows it from the start; it counts as a
+// name set on purpose, which the automatic chat name never replaces. A title
+// another chat already holds is logged and left off (the chat still opens). It is the shared mint of /facet (mintFacetConversation) and
+// a new named session from foci send (openSessionConversation). The open-set
+// append runs under openSetMu with the other open-set writers (see
+// handleConversationOpenSet), so a sweep or a device's replace running
+// concurrently can neither lose this tab nor have its own newer set
+// overwritten by the mint's stale copy. Focus stays device-local: nothing
+// here foregrounds the tab.
+func (h *Hub) mintSessionConversation(agentID, sessionKey, title string) (*convBinding, error) {
 	b := h.ensureBinding(nil, agentID, fap.NewULID())
 	h.adoptSession(b, sessionKey)
 	b.mu.Lock()
 	adopted := b.key()
 	b.mu.Unlock()
 	if adopted != sessionKey {
-		return "", fmt.Errorf("facet conversation %s: session key %q refused", b.convID, sessionKey)
+		return nil, fmt.Errorf("conversation %s: session key %q refused", b.convID, sessionKey)
+	}
+	if idx := h.deps.SessionIndex; idx != nil && title != "" {
+		if err := idx.SetChatAliasUnique(agentID, "app", b.chatID, title); err != nil {
+			appLog.Warnf("conversation %s: name %q not saved: %v", b.convID, title, err)
+		}
 	}
 
 	h.openSetMu.Lock()
@@ -1562,16 +1593,41 @@ func (h *Hub) mintFacetConversation(agentID, sessionKey string, first command.Fi
 	if !present {
 		ids = append(ids, b.convID)
 		h.storeOpenChats(ids)
-		// sender=nil: this mint is server-initiated (a /facet command), so there is
-		// no originating device to exclude — every client must learn the new tab.
+		// sender=nil: this mint is server-initiated, so there is no
+		// originating device to exclude — every client must learn the new tab.
 		h.broadcastExcept(nil, fap.ConversationOpenSync{ConversationIDs: ids})
 	}
 	h.openSetMu.Unlock()
 	h.pushRosterAll()
-	if conn != nil {
-		h.sendFirstMessage(conn, b, first)
+	return b, nil
+}
+
+// openSessionConversation gives sessionKey a conversation in the app, as if
+// the user had opened a chat on it (#3097): a session that already has one
+// keeps it (created=false), else a new one is minted and opened on every
+// device. A named session's chat is titled with its name (the key's ID after
+// "i"), so `foci send -s 'Tax 2026 Q&A'` opens a chat called that. It refuses
+// an agent with no app connection, since there is nothing to show the chat on. sessionChatMu makes the check and the mint one step,
+// so two concurrent sends to the same new name mint one chat, not two.
+func (h *Hub) openSessionConversation(agentID, sessionKey string) (convID string, created bool, err error) {
+	if h.PrimaryBot(agentID) == nil {
+		return "", false, fmt.Errorf("agent %s has no app connection", agentID)
 	}
-	return b.convID, nil
+	h.sessionChatMu.Lock()
+	defer h.sessionChatMu.Unlock()
+	if b := h.bindingForSession(sessionKey); b != nil {
+		return b.convID, false, nil
+	}
+	title := ""
+	if sk, perr := session.ParseSessionKey(sessionKey); perr == nil && sk.Type == 'i' && sk.ChildType == 0 {
+		title = sk.ID
+	}
+	b, err := h.mintSessionConversation(agentID, sessionKey, title)
+	if err != nil {
+		return "", false, err
+	}
+	appLog.Infof("opened conversation %s for new session %s (agent %s)", b.convID, sessionKey, agentID)
+	return b.convID, true, nil
 }
 
 // sendFirstMessage delivers first.Text into the freshly minted conversation b

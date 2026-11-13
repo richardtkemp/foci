@@ -735,6 +735,7 @@ Environment (flag > env var > default):
   FOCI_IF_ACTIVE       Activity gate duration (--if-active)
   FOCI_SYNC            Wait for response (--sync/--wait, non-empty = true)
   FOCI_ASYNC           Fire-and-forget (--async/--no-wait, non-empty = true)
+  FOCI_BACKGROUND      A session send creates stays out of the app (--background, non-empty = true)
   FOCI_MESSAGE_TEXT    Message text (-mt)
   FOCI_MESSAGE_FILE    Message file path (-mf)
   FOCI_NO_COMPACT      Skip compaction (--no-compact, non-empty = true)

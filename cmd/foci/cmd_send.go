@@ -34,6 +34,7 @@ type sendFlags struct {
 	async       bool   // fire-and-forget mode
 	sync        bool   // wait for response (overrides async)
 	broadcast   bool   // deliver the response to every live surface for the agent
+	background  bool   // --background: a session this send creates stays out of the app (#3097)
 	steerFlag   bool   // --steer / FOCI_STEER=steer: fold into a running USER turn (#1318)
 	queueFlag   bool   // --queue / FOCI_STEER=queue: fresh turn behind a running one
 	// help is set when -h/--help appears in the leading flag run — the
@@ -59,6 +60,9 @@ func (flags *sendFlags) consumeOwnFlag(args []string, i int) (next int, consumed
 	switch args[i] {
 	case "--broadcast":
 		flags.broadcast = true
+		return i, true
+	case "--background":
+		flags.background = true
 		return i, true
 	case "--async", "--no-wait":
 		flags.async = true
@@ -92,8 +96,8 @@ func (flags *sendFlags) consumeOwnFlag(args []string, i int) (next int, consumed
 }
 
 // ownValueFlagWord reports the detached spellings of send's own
-// value-taking flags (the bare switches --broadcast, --async, --sync,
-// --steer, --queue and --human are not value flags).
+// value-taking flags (the bare switches --broadcast, --background, --async,
+// --sync, --steer, --queue and --human are not value flags).
 func (flags *sendFlags) ownValueFlagWord(tok string) bool {
 	return isDetachedFlagWord(flags.sessionFlag.specs(), tok) ||
 		isDetachedFlagWord(flags.gateFlags.specs(), tok) ||
@@ -110,6 +114,7 @@ func (flags *sendFlags) applyEnvDefaults() {
 	flags.humanFlag.applyEnvDefault()
 	flags.async = envBool(flags.async, "FOCI_ASYNC")
 	flags.sync = envBool(flags.sync, "FOCI_SYNC")
+	flags.background = envBool(flags.background, "FOCI_BACKGROUND")
 	// FOCI_STEER sets the delivery mode ("steer"/"queue"); other values are
 	// ignored → absent. Mapped through the one shared wire mapping
 	// (platform.SteerPreferenceFromWire, #1318). A flag plus the OTHER
@@ -184,7 +189,7 @@ func resolveMessage(flags sendFlags, trailingArgs []string) (string, error) {
 }
 
 func sendUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: foci send [-a agent] [-s session] [-m model] [--steer | --queue] [--if-active <dur>] [--if-inactive <dur>] [--if-user-active <dur>] [--if-user-inactive <dur>] [--wait-warm <dur>] [--wait-cold <dur>] [--sync] [-mt text | -mf file] <message>
+	fmt.Fprintf(os.Stderr, `Usage: foci send [-a agent] [-s session] [--background] [-m model] [--steer | --queue] [--if-active <dur>] [--if-inactive <dur>] [--if-user-active <dur>] [--if-user-inactive <dur>] [--wait-warm <dur>] [--wait-cold <dur>] [--sync] [-mt text | -mf file] <message>
 
 Send a message to the agent's session.
 
@@ -241,7 +246,12 @@ there), a value-flag that ends the line before the message starts
 
 Flags:
   -a, --agent <id>          Target agent (env: FOCI_AGENT)
-  -s, --session <id|alias>  Target session name or a chat alias (env: FOCI_SESSION, default: main)
+  -s, --session <id|alias>  Target session name or a chat alias (env: FOCI_SESSION, default: main).
+                            A name that matches nothing creates a new session, which
+                            opens as a new chat in the foci app
+  --background              Keep a session this send creates out of the app: it runs
+                            with no chat (env: FOCI_BACKGROUND). No effect on an
+                            existing session
   --broadcast               Deliver the response to every live surface for the agent (telegram, app, …); with a delivery mode the mode is ignored
   -m, --model <model>       Model override: group name, alias, or developer/model_id (env: FOCI_MODEL)
   --steer                   Redirect the agent now: fold into a running user turn (a running system turn is waited out); idle starts at once (env: FOCI_STEER=steer)
@@ -300,6 +310,9 @@ func cmdSend(base string, args []string) error {
 	flags.sessionFlag.addToBody(body)
 	if flags.broadcast {
 		body["policy"] = "broadcast"
+	}
+	if flags.background {
+		body["background"] = true
 	}
 	flags.gateFlags.addToBody(body)
 	flags.waitFlags.addToBody(body)

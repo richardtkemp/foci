@@ -257,6 +257,24 @@ func resolveTargetSession(d httpHandlerDeps, w http.ResponseWriter, agentID, sel
 	return route.Resolution{}, route.Receipt{}, false
 }
 
+// openNewSessionChat opens an app chat for the session a /send just created by
+// name (#3097). selector is the request's session selector: the create rung
+// with an empty selector is the default rung's own mint, never this. A failure
+// (no app provider, an agent with no app connection) leaves the send to run in
+// the background, as before this feature, and is logged.
+func openNewSessionChat(d httpHandlerDeps, agentID, selector string, res route.Resolution, background bool) {
+	if res.Rung != route.RungCreated || selector == "" || d.openSessionChat == nil {
+		return
+	}
+	if background {
+		httpLog.Infof("send: new session %s stays background-only (no app chat)", res.SessionKey)
+		return
+	}
+	if _, err := d.openSessionChat(agentID, res.SessionKey); err != nil {
+		httpLog.Infof("send: new session %s has no app chat: %v", res.SessionKey, err)
+	}
+}
+
 // handleSend returns the handler for POST /send.
 func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -278,6 +296,9 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			IfInactive     string `json:"if_inactive"`
 			waitRequest
 			Async bool `json:"async"`
+			// Background keeps a session this send creates by name out of
+			// the app; without it the new session gets an app chat (#3097).
+			Background bool `json:"background"`
 		}
 		if !decodeCappedJSON(w, r, &req) {
 			return
@@ -318,6 +339,16 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 		}) {
 			return
 		}
+
+		// A NEW named session gets a chat in the app, as if the user had
+		// opened one on it, unless the caller asked for background-only
+		// (#3097, Dick 2026-11-13). It runs after the skip gates, so a skipped
+		// send leaves no empty chat, and before the defer gates, so a deferred
+		// send's chat is there when its turn runs (the deferred record carries
+		// only the session key). Only the create-named rung qualifies: an
+		// existing session keeps whatever chat it has or lacks, and the
+		// default rung already mints its own (createDefault).
+		openNewSessionChat(d, inst.id, req.Session, res, req.Background)
 
 		// Wait/defer gate. Unless the caller opts out (wait_none) or the caller
 		// gave no gate flag at all — in which case /send defaults to wait_cold=1m

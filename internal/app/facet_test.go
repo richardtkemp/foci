@@ -3,6 +3,9 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
+	"sync"
 	"testing"
 
 	"foci/internal/command"
@@ -285,5 +288,157 @@ func TestDeliverBinding_ServerCreatedReachesConnectedClient(t *testing.T) {
 	}
 	if !saw {
 		t.Fatal("the connected device did not receive the first send into a server-created conversation")
+	}
+}
+
+// TestOpenSessionConversation proves #3097's app half: a session with no
+// conversation gets one, bound to its key and opened on every device; a
+// second call for the same session reuses it (no duplicate chat); an agent
+// with no app connection is refused.
+func TestOpenSessionConversation(t *testing.T) {
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+	registerBareAgent(h, "ag")
+	c := fakeClient()
+	h.clients[c] = struct{}{}
+
+	convID, created, err := h.openSessionConversation("ag", "ag/inightly")
+	if err != nil || !created || convID == "" {
+		t.Fatalf("open = (%q, %v, %v), want a new conversation", convID, created, err)
+	}
+	if b := h.bindingForSession("ag/inightly"); b == nil || b.convID != convID {
+		t.Fatalf("binding for ag/inightly = %v, want convID %s", b, convID)
+	}
+	if got := h.loadOpenChats(); len(got) != 1 || got[0] != convID {
+		t.Errorf("open-set = %v, want [%s]", got, convID)
+	}
+	var sawSync bool
+	for _, d := range drain(t, c) {
+		if d.t == fap.TypeConversationOpenSync {
+			sawSync = true
+		}
+	}
+	if !sawSync {
+		t.Error("client got no conversation.openSync: the chat would not open on the device")
+	}
+
+	again, created, err := h.openSessionConversation("ag", "ag/inightly")
+	if err != nil || created || again != convID {
+		t.Errorf("second open = (%q, %v, %v), want (%q, false, nil)", again, created, err, convID)
+	}
+	if got := h.loadOpenChats(); len(got) != 1 {
+		t.Errorf("open-set after second open = %v, want one chat", got)
+	}
+
+	if _, _, err := h.openSessionConversation("noapp", "noapp/inightly"); err == nil {
+		t.Error("agent with no app connection: want an error, got nil")
+	}
+}
+
+// TestOpenSessionConversation_Concurrent proves concurrent opens of one new
+// session mint exactly one conversation.
+func TestOpenSessionConversation_Concurrent(t *testing.T) {
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+	registerBareAgent(h, "ag")
+
+	const n = 8
+	ids := make(chan string, n)
+	var wg sync.WaitGroup
+	for range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			id, _, err := h.openSessionConversation("ag", "ag/irace")
+			if err != nil {
+				t.Errorf("open: %v", err)
+			}
+			ids <- id
+		}()
+	}
+	wg.Wait()
+	close(ids)
+	seen := map[string]bool{}
+	for id := range ids {
+		seen[id] = true
+	}
+	if len(seen) != 1 {
+		t.Errorf("conversations minted = %v, want exactly one", seen)
+	}
+	if got := h.loadOpenChats(); len(got) != 1 {
+		t.Errorf("open-set = %v, want one chat", got)
+	}
+}
+
+// TestOpenSessionConversation_ReadableNameTitle proves #3097's title rule on a
+// name with spaces, punctuation and an emoji: the new chat is named after the
+// session (saved as its alias and sent in the roster every device gets), and
+// a reply sent on the session lands in that chat.
+func TestOpenSessionConversation_ReadableNameTitle(t *testing.T) {
+	const name = "Tax 2026 Q&A 🥔"
+	key := "ag/i" + name
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+	registerBareAgent(h, "ag")
+	c := fakeClient()
+	h.clients[c] = struct{}{}
+
+	convID, created, err := h.openSessionConversation("ag", key)
+	if err != nil || !created {
+		t.Fatalf("open = (%q, %v, %v), want a new conversation", convID, created, err)
+	}
+	b := h.bindingForSession(key)
+	if b == nil || b.convID != convID {
+		t.Fatalf("binding for %q = %v, want convID %s", key, b, convID)
+	}
+	if got := h.aliasFor(b); got != name {
+		t.Errorf("chat name = %q, want %q", got, name)
+	}
+
+	// The roster the device receives names the chat and its session key.
+	var rosterTitle, rosterKey string
+	for _, d := range drain(t, c) {
+		if d.t != fap.TypeHello {
+			continue
+		}
+		raw, _ := json.Marshal(d.d)
+		var hello fap.HelloServer
+		if err := json.Unmarshal(raw, &hello); err != nil {
+			t.Fatalf("decode hello: %v", err)
+		}
+		for _, a := range hello.Agents {
+			for _, ci := range a.Conversations {
+				if ci.ID == convID {
+					rosterTitle, rosterKey = ci.Title, ci.SessionKey
+				}
+			}
+		}
+	}
+	if rosterTitle != name || rosterKey != key {
+		t.Errorf("roster row = (title %q, key %q), want (%q, %q)", rosterTitle, rosterKey, name, key)
+	}
+
+	// A reply on the session lands in the new chat, not a fallback.
+	conn := h.BotForSession(key)
+	if conn == nil {
+		t.Fatal("BotForSession: nil")
+	}
+	if err := conn.SendText("reply for the potato"); err != nil {
+		t.Fatalf("SendText: %v", err)
+	}
+	var landed bool
+	for _, d := range drain(t, c) {
+		if d.t == fap.TypeMessage && d.d["conversationId"] == convID && strings.Contains(fmt.Sprint(d.d["text"]), "reply for the potato") {
+			if strings.Contains(fmt.Sprint(d.d["text"]), "Addressed to session") {
+				t.Errorf("reply carries the misdelivery banner: %v", d.d["text"])
+			}
+			landed = true
+		}
+	}
+	if !landed {
+		t.Error("reply did not reach the new chat")
 	}
 }

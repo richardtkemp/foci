@@ -540,6 +540,22 @@ func MintFacetConversation(agentID, sessionKey string, first command.FirstMessag
 	return h.mintFacetConversation(agentID, sessionKey, first)
 }
 
+// OpenSessionConversation gives sessionKey a conversation in the app via the
+// active hub (see Hub.openSessionConversation): a new named session that
+// foci send creates appears as a chat on every device (#3097). created is
+// false when the session already had one. Errors when the app provider is not
+// running or the agent has no app connection.
+func OpenSessionConversation(agentID, sessionKey string) (created bool, err error) {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return false, errors.New("app provider not running")
+	}
+	_, created, err = h.openSessionConversation(agentID, sessionKey)
+	return created, err
+}
+
 // CreateDefaultConversation creates (or reuses) a non-archived app conversation
 // for the agent and returns its session key, pushing the new conversation to
 // connected devices. Injected into the route Resolver as CreateDefault by the
