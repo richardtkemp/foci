@@ -46,13 +46,14 @@ func TestDepthTaskLeafRunsAtOnce(t *testing.T) {
 	kids := h.node(depthRoot).Children
 	q, task := kids[0], kids[1]
 
-	// The question leaf opens as today; the task leaf shows its task as a
-	// prompt from the fanning session, and nothing else.
+	// The question leaf opens as today. The task leaf shows the user nothing
+	// at creation (#3095, Dick 2026-11-13): its first visible message is its
+	// own reply to the task. (DepthSurface has no call that could show it.)
 	if len(h.surface.prompts) != 1 || h.surface.prompts[0] != q+"|Which colour?" {
-		t.Errorf("questions shown = %v", h.surface.prompts)
+		t.Errorf("shown in leaves = %v, want only the question leaf's question", h.surface.prompts)
 	}
-	if len(h.surface.tasks) != 1 || h.surface.tasks[0] != task+"|Investigate the crash in X.|"+depthRoot {
-		t.Errorf("tasks shown = %v", h.surface.tasks)
+	if !strings.Contains(h.branch.orients[1], "does NOT see it") {
+		t.Errorf("task orientation does not tell the leaf the user cannot see the task: %q", h.branch.orients[1])
 	}
 
 	// Exactly one turn ran: the task leaf's, on its task.
@@ -125,8 +126,10 @@ func TestDepthTaskNested(t *testing.T) {
 	if turns := h.runner.wait(t, 1); turns[0].key != grand[0] || turns[0].text != "Check Y." {
 		t.Fatalf("nested task turn = %+v", turns[0])
 	}
-	if len(h.surface.tasks) != 1 || !strings.HasSuffix(h.surface.tasks[0], "|"+kids[0]) {
-		t.Errorf("nested task shown = %v, want from the leaf that fanned out", h.surface.tasks)
+	for _, p := range h.surface.prompts {
+		if strings.HasPrefix(p, grand[0]+"|") {
+			t.Errorf("nested task leaf showed %q, want nothing (#3095)", p)
+		}
 	}
 }
 
@@ -209,8 +212,8 @@ func TestDepthTaskRestore(t *testing.T) {
 	if len(taken) != 1 || taken[0] != cut {
 		t.Errorf("TakeUndelivered calls = %v, want the resumed leaf only", taken)
 	}
-	if len(h2.surface.tasks) != 0 || len(h2.surface.prompts) != 0 {
-		t.Errorf("restore showed openings again: tasks %v questions %v", h2.surface.tasks, h2.surface.prompts)
+	if len(h2.surface.prompts) != 0 {
+		t.Errorf("restore showed openings again: %v", h2.surface.prompts)
 	}
 	if n := h2.node(cut); n.TaskResumes != 1 || !n.TaskDone {
 		t.Errorf("resumed node = %+v", n)

@@ -44,7 +44,7 @@ func (m *DepthManager) fanoutTool() *Tool {
 		Description: "Send the user several points as separate leaves instead of one message: use it when a reply would carry several independent points (findings, issues, options) that the user may answer or act on one by one. ONE point per leaf, never a list of questions in one leaf. Use it whenever a user's request opens several discussion threads. " +
 			"Each leaf opens in one of two ways; choose per leaf. " +
 			"QUESTION (the default): use it when the user's input is needed first. The question is exactly the message you would otherwise have sent the user for that point, written to the USER (not to the leaf agent): instead of sending the user A, B and C in one message, fan out into leaves A, B and C. It appears as its leaf's first message, from you, and the leaf runs nothing until the user answers it there. " +
-			"TASK: use it when the leaf has work to do before the user sees it (e.g. \"investigate X and report what you find\"). The task is written to the LEAF AGENT; the leaf starts work on it at once, and the user sees the task and then the leaf's result in that leaf. " +
+			"TASK: use it when the leaf has work to do before the user sees it (e.g. \"investigate X and report what you find\"). The task is written to the LEAF AGENT; the leaf starts work on it at once. The user never sees the task: the leaf's result is the first message they see in that leaf, so the leaf must say what it looked at. " +
 			"The user takes the leaves one at a time inside this chat. Each leaf is a fork of your context. " +
 			"You then end your turn and get ONE [DEPTH RESULTS] message when every leaf has reported. In the meantime the user can keep talking to you in this chat, so answer as normal; nothing said here reaches the leaves. You cannot fan out again until the results arrive. Only from an app conversation (or from a leaf). " +
 			"Each leaf costs a copy of your current context, so prefer fanning out while the context is small.",
@@ -59,7 +59,7 @@ func (m *DepthManager) fanoutTool() *Tool {
 						"properties": {
 							"title": {"type": "string"},
 							"question": {"type": "string", "description": "Opens the leaf with a message TO THE USER (use when their input is needed first): exactly what you would otherwise have sent the user for this point. It is shown as the leaf's first message and the leaf waits for the user's answer. (\"prompt\" is accepted as an older name.)"},
-							"task": {"type": "string", "description": "Opens the leaf with a task TO THE LEAF AGENT (use when the leaf has work to do before the user sees it). The leaf starts on it at once; the user sees the task, then the leaf's result."},
+							"task": {"type": "string", "description": "Opens the leaf with a task TO THE LEAF AGENT (use when the leaf has work to do before the user sees it). The leaf starts on it at once; the user does not see the task, only the leaf's result."},
 							"orientation": {"type": "string"}
 						},
 						"required": ["title"]

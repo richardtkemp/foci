@@ -80,10 +80,8 @@ type DepthSurface interface {
 	// ShowQuestion opens a leaf's conversation with its question to the user,
 	// shown as the leaf agent's first message (#2617).
 	ShowQuestion(branchKey, text string)
-	// ShowTask opens a task leaf's conversation with its task (#2998): the
-	// message fromSession (the fanning node) gave the leaf agent, shown as an
-	// incoming prompt from that session.
-	ShowTask(branchKey, text, fromSession string)
+	// A task leaf (#2998) has no Show call: its task goes to the leaf agent
+	// only, and its first visible message is its own reply (#3095).
 	// LeafBusy reports whether the leaf on branchKey has a turn running.
 	LeafBusy(branchKey string) bool
 }
@@ -159,8 +157,8 @@ type DepthDeps struct {
 //     (#2617); the leaf runs no turn until the user answers. The tool takes it
 //     as "question" ("prompt" is still read, and is the stored name).
 //   - a task (Opening "task"): a message TO the leaf agent, which runs its
-//     first turn on it at once; the user sees the task, then the leaf's
-//     result. The tool takes it as "task".
+//     first turn on it at once. The user never sees the task (#3095): the
+//     leaf's reply is its first visible message. The tool takes it as "task".
 type depthLeafSpec struct {
 	Title       string `json:"title"`
 	Prompt      string `json:"prompt"`
@@ -206,7 +204,7 @@ const depthOpeningRuleVar = "{opening_rule}"
 // or with a task to it.
 func openingRule(opening string) string {
 	if opening == depthOpenTask {
-		return "- This leaf opened with a TASK for you: the message after this orientation, which the user also sees. Do that work now, then give the user your result here as one message that stands on its own. Then discuss ONLY that point with them. Other leaves have the others."
+		return "- This leaf opened with a TASK for you: the message after this orientation. The user does NOT see it: your reply is the first message they see in this leaf. Do that work now, then give the user your result here as one message that stands on its own, saying what you were asked to look at. Then discuss ONLY that point with them. Other leaves have the others."
 	}
 	return "- This leaf opened with your own message to the user (the last agent message above, or the opening below); what follows this orientation is their reply. Discuss ONLY that point. Other leaves have the others."
 }
@@ -868,9 +866,9 @@ func (m *DepthManager) doFanout(ctx context.Context, caller string, leaves []dep
 		}
 		if m.deps.Surface != nil {
 			m.registerLeaf(c.Key)
-			if c.Opening == depthOpenTask {
-				m.deps.Surface.ShowTask(c.Key, c.Prompt, caller)
-			} else {
+			// A task leaf shows the user nothing yet (#3095, Dick
+			// 2026-11-13): its first visible message is its reply.
+			if c.Opening != depthOpenTask {
 				m.deps.Surface.ShowQuestion(c.Key, c.Prompt)
 			}
 		}
@@ -898,7 +896,7 @@ func (m *DepthManager) doFanout(ctx context.Context, caller string, leaves []dep
 	for _, c := range children {
 		how := "question: shown to the user as the leaf's opening message; the leaf waits for their answer"
 		if c.Opening == depthOpenTask {
-			how = "task: the leaf is working on it now; the user sees the task, then its result"
+			how = "task: the leaf is working on it now; the user does not see the task, only the leaf's result"
 		}
 		fmt.Fprintf(&b, "- %s (%s) — %s\n", c.Title, c.LeafID, how)
 	}

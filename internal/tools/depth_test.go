@@ -27,7 +27,6 @@ type fakeDepthSurface struct {
 	leaves   map[string]string // branch → root
 	minted   int               // leaf conversations minted (RegisterLeaf with no conversation id)
 	prompts  []string
-	tasks    []string // ShowTask calls: branch|text|from (#2998)
 	feeds    []depthFeedRec
 	busyKeys map[string]bool
 }
@@ -67,11 +66,6 @@ func (s *fakeDepthSurface) PushFeed(root, state string, nodes []fap.DepthNode) {
 func (s *fakeDepthSurface) ShowQuestion(b, text string) {
 	s.mu.Lock()
 	s.prompts = append(s.prompts, b+"|"+text)
-	s.mu.Unlock()
-}
-func (s *fakeDepthSurface) ShowTask(b, text, from string) {
-	s.mu.Lock()
-	s.tasks = append(s.tasks, b+"|"+text+"|"+from)
 	s.mu.Unlock()
 }
 func (s *fakeDepthSurface) LeafBusy(k string) bool {
