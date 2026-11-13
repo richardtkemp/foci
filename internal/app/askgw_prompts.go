@@ -194,8 +194,9 @@ func (h *Hub) putAskgw(f fap.AskgwPrompt, onAnswer func(data, value string)) {
 // request) in the same app-wide dialog as askgw prompts. Unlike presentAskgw
 // there is no chat fallback: it returns an error naming why no device can
 // show it, and registers nothing. value, when non-nil, adds the typed-value
-// step; then only devices advertising featureAskgwValueInput count.
-func (h *Hub) presentAppPrompt(id, header, text string, buttons []platform.ButtonChoice, value *fap.ValueInput, onAnswer func(data, value string)) error {
+// step; then only devices advertising featureAskgwValueInput count. warning,
+// when set, is shown large and red above the text (#3092).
+func (h *Hub) presentAppPrompt(id, header, text, warning string, buttons []platform.ButtonChoice, value *fap.ValueInput, onAnswer func(data, value string)) error {
 	needValue := value != nil
 	if !h.appPromptReachable(needValue) {
 		feature := featureAskgwPrompts
@@ -204,7 +205,7 @@ func (h *Hub) presentAppPrompt(id, header, text string, buttons []platform.Butto
 		}
 		return fmt.Errorf("no foci app device can show it: none is connected or push-wakeable with an app build that advertises %s (update the app, or open it if it has not connected since the gateway started)", feature)
 	}
-	h.putAskgw(fap.AskgwPrompt{PromptID: id, Header: header, Text: text, Choices: askgwChoices(buttons), ValueInput: value}, onAnswer)
+	h.putAskgw(fap.AskgwPrompt{PromptID: id, Header: header, Text: text, Warning: warning, Choices: askgwChoices(buttons), ValueInput: value}, onAnswer)
 	return nil
 }
 

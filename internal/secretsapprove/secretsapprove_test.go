@@ -110,7 +110,7 @@ func TestSet_ApproveWritesValueHostsAgents(t *testing.T) {
 	if !p.NeedsValue || p.ValueLabel != "hetzner.api_key" {
 		t.Errorf("prompt NeedsValue=%t label=%q", p.NeedsValue, p.ValueLabel)
 	}
-	for _, want := range []string{"clutch", "hetzner.api_key", "api.hetzner.cloud", "robot-ws.your-server.de", "scout", "new secret"} {
+	for _, want := range []string{"clutch", "`hetzner`", "`api_key`", "api.hetzner.cloud", "robot-ws.your-server.de", "scout", "new secret"} {
 		if !strings.Contains(p.Text, want) {
 			t.Errorf("dialog text lacks %q:\n%s", want, p.Text)
 		}
@@ -374,5 +374,75 @@ func TestList_NoValues(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("list lacks %q:\n%s", want, out)
 		}
+	}
+}
+
+// #3092 (Dick 2026-11-13): no "approve then type the value" paragraph, no
+// current state for a section that does not exist yet, the change as a
+// table, the big red warning on every dialog, and (13:10) a secret as
+// Group and Name rows, not section.key.
+func TestDescribe_Layout3092(t *testing.T) {
+	st, _ := newStore(t, "[old]\nk = \"v\"\nallowed_hosts = [\"a.example\"]\n")
+	cases := []struct {
+		name      string
+		req       Request
+		want      []string
+		forbidden []string
+	}{
+		{"set, new section",
+			mustParse(t, "set", []string{"fresh.key"}, "api.example", ""),
+			[]string{"| Group | `fresh` (new) |\n| Name | `key` (new) |", "| Allowed hosts | `api.example` |", "| Agents | every agent |"},
+			[]string{"now", "Now", "was", "unchanged", "Approve, then", "fresh.key"}},
+		{"set, new section, no hosts",
+			mustParse(t, "set", []string{"fresh.key"}, "", ""),
+			[]string{"| Allowed hosts | none (http_request cannot use it) |"},
+			[]string{"now", "Now", "was", "unchanged"}},
+		{"set, existing section, hosts replaced",
+			mustParse(t, "set", []string{"old.k2"}, "b.example", "scout"),
+			[]string{"| Group | `old` |\n| Name | `k2` (new) |", "| Allowed hosts | `b.example` (was `a.example`) |",
+				"| Agents | only `scout` (was every agent) |"},
+			[]string{"Approve, then"}},
+		{"set, existing secret, rules kept",
+			mustParse(t, "set", []string{"old.k"}, "", ""),
+			[]string{"replace a secret's value", "| Group | `old` |\n| Name | `k` (replaces the current value) |",
+				"| Allowed hosts | `a.example` (unchanged) |", "| Agents | every agent (unchanged) |"},
+			nil},
+		{"remove",
+			mustParse(t, "remove", []string{"old.k"}, "", ""),
+			[]string{"| Group | `old` |\n| Name | `k` |"}, []string{"old.k"}},
+		{"hosts add, existing section",
+			mustParse(t, "hosts", []string{"old", "add", "c.example"}, "", ""),
+			[]string{"| Field | Now | After |", "| Group | `old` | `old` |", "| Allowed hosts | `a.example` | `a.example`, `c.example` |"}, nil},
+		{"hosts add, new section",
+			mustParse(t, "hosts", []string{"fresh", "add", "c.example"}, "", ""),
+			[]string{"| Group | `fresh` (new) |", "| Allowed hosts | `c.example` |"},
+			[]string{"Now", "none"}},
+		{"agents allow, new section",
+			mustParse(t, "agents", []string{"fresh", "allow", "scout"}, "", ""),
+			[]string{"| Agents | only `scout` |"}, []string{"Now", "every agent"}},
+		{"body add, existing section",
+			mustParse(t, "body", []string{"old", "add", "k"}, "", ""),
+			[]string{"| Body keys | none | `k` |"}, nil},
+	}
+	for _, c := range cases {
+		_, text := describe(st, "clutch", c.req)
+		for _, w := range c.want {
+			if !strings.Contains(text, w) {
+				t.Errorf("%s: text lacks %q:\n%s", c.name, w, text)
+			}
+		}
+		for _, f := range c.forbidden {
+			if strings.Contains(text, f) {
+				t.Errorf("%s: text holds %q:\n%s", c.name, f, text)
+			}
+		}
+	}
+
+	h := newHarness(t, "", nil, time.Minute)
+	if _, err := h.submit(t, mustParse(t, "hosts", []string{"x", "add", "h.example"}, "", "")); err != nil {
+		t.Fatal(err)
+	}
+	if p := h.prompt(t); p.Warning != Warning || Warning == "" {
+		t.Errorf("prompt Warning = %q, want %q", p.Warning, Warning)
 	}
 }

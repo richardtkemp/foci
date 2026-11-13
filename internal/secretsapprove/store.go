@@ -71,49 +71,68 @@ func precheck(st Store, r Request) error {
 	return nil
 }
 
-// describe is the dialog's header and markdown body: who asks, what changes,
-// and the section's rule before and after. Every name in it passed Parse's
-// character checks, so none can carry markdown.
+// Warning is the line every secrets dialog shows in large red type above its
+// body (Dick 2026-11-13, #3092: "This is an operation on secrets, something
+// should be big and red to make it obvious").
+const Warning = "⚠ SECRETS"
+
+// describe is the dialog's header and markdown body: who asks, then the change
+// as a table. A section that already exists shows its rule before and after;
+// a new one shows only what will be set (#3092: no "now: none" for something
+// that does not exist yet). Every name in it passed Parse's character checks,
+// so none can carry markdown or break a table cell.
 func describe(st Store, agentID string, r Request) (header, text string) {
 	var b strings.Builder
 	sec := r.Section
+	exists := sectionExists(st, sec)
 	switch r.Op {
 	case OpSet:
 		header = "Set secret"
-		state := "new secret"
+		what, state := "set a new secret", " (new)"
 		if _, ok := st.Get(r.Name); ok {
-			state = "replaces the current value"
+			what, state = "replace a secret's value", " (replaces the current value)"
 		}
-		fmt.Fprintf(&b, "**%s** asks to set the secret `%s` (%s).\n\n", agentID, r.Name, state)
-		hosts := st.SectionAllowedHosts(sec)
+		fmt.Fprintf(&b, "**%s** asks to %s.\n\n", agentID, what)
+		b.WriteString("| Field | Value |\n|---|---|\n")
+		groupName(&b, r, exists, state)
+		cur := st.SectionAllowedHosts(sec)
+		hosts := cur
 		if r.Hosts != nil {
-			fmt.Fprintf(&b, "- Allowed hosts for [%s]: %s (now: %s)\n", sec, codeList(r.Hosts), codeListOr(hosts, "none"))
-		} else {
-			fmt.Fprintf(&b, "- Allowed hosts for [%s]: %s (unchanged)\n", sec, codeListOr(hosts, "none — http_request cannot use it until hosts are added"))
+			hosts = r.Hosts
 		}
+		cell := codeListOr(hosts, "none (http_request cannot use it)")
+		if exists {
+			cell += wasNote(r.Hosts != nil, codeListOr(cur, "none"), codeListOr(hosts, "none"))
+		}
+		fmt.Fprintf(&b, "| Allowed hosts | %s |\n", cell)
 		now := agentRule(st, sec)
+		after := now
 		if r.Agents != nil {
-			fmt.Fprintf(&b, "- Agents that may use [%s]: only %s (now: %s)\n", sec, codeList(r.Agents), now)
-		} else {
-			fmt.Fprintf(&b, "- Agents that may use [%s]: %s (unchanged)\n", sec, now)
+			after = "only " + codeList(r.Agents)
 		}
-		b.WriteString("\nApprove, then type the value. It goes straight to secrets.toml: the agent never sees it.")
+		cell = after
+		if exists {
+			cell += wasNote(r.Agents != nil, now, after)
+		}
+		fmt.Fprintf(&b, "| Agents | %s |\n", cell)
 	case OpRemove:
 		header = "Remove secret"
-		fmt.Fprintf(&b, "**%s** asks to remove the secret `%s`.", agentID, r.Name)
+		fmt.Fprintf(&b, "**%s** asks to remove a secret.\n\n", agentID)
+		b.WriteString("| Field | Value |\n|---|---|\n")
+		groupName(&b, r, true, "")
 	case OpHostsAdd, OpHostsRemove, OpHostsClear:
 		header = "Secret hosts"
 		cur := st.SectionAllowedHosts(sec)
-		fmt.Fprintf(&b, "**%s** asks to change the hosts that may receive [%s] secrets.\n\n", agentID, sec)
-		fmt.Fprintf(&b, "- Now: %s\n- After: %s", codeListOr(cur, "none"), codeListOr(afterList(cur, r), "none"))
+		fmt.Fprintf(&b, "**%s** asks to change which hosts may receive a group's secrets.\n\n", agentID)
+		beforeAfter(&b, exists, sec, "Allowed hosts", codeListOr(cur, "none"), codeListOr(afterList(cur, r), "none"))
 	case OpBodyAdd, OpBodyRemove, OpBodyClear:
 		header = "Secret body keys"
 		cur := st.SectionAllowedInBody(sec)
-		fmt.Fprintf(&b, "**%s** asks to change which [%s] keys may go in a request body (allowed_in_body).\n\n", agentID, sec)
-		fmt.Fprintf(&b, "- Now: %s\n- After: %s", codeListOr(cur, "none"), codeListOr(afterList(cur, r), "none"))
+		fmt.Fprintf(&b, "**%s** asks to change which of a group's keys may go in a request body (allowed_in_body).\n\n", agentID)
+		beforeAfter(&b, exists, sec, "Body keys", codeListOr(cur, "none"), codeListOr(afterList(cur, r), "none"))
 	default: // agents_*
 		header = "Secret agents"
-		fmt.Fprintf(&b, "**%s** asks to change which agents may use [%s] secrets.\n\n", agentID, sec)
+		fmt.Fprintf(&b, "**%s** asks to change which agents may use a group's secrets.\n\n", agentID)
 		after := "every agent"
 		switch r.Op {
 		case OpAgentsAllow:
@@ -121,9 +140,55 @@ func describe(st Store, agentID string, r Request) (header, text string) {
 		case OpAgentsDeny:
 			after = "every agent except " + codeList(r.Agents)
 		}
-		fmt.Fprintf(&b, "- Now: %s\n- After: %s", agentRule(st, sec), after)
+		beforeAfter(&b, exists, sec, "Agents", agentRule(st, sec), after)
 	}
 	return header, b.String()
+}
+
+// beforeAfter writes a section rule's change as a table: Now and After
+// columns for an existing section, only the new rule for a new one.
+func beforeAfter(b *strings.Builder, exists bool, sec, rule, now, after string) {
+	if exists {
+		b.WriteString("| Field | Now | After |\n|---|---|---|\n")
+		fmt.Fprintf(b, "| Group | `%s` | `%s` |\n| %s | %s | %s |\n", sec, sec, rule, now, after)
+		return
+	}
+	b.WriteString("| Field | Value |\n|---|---|\n")
+	fmt.Fprintf(b, "| Group | `%s` (new) |\n| %s | %s |\n", sec, rule, after)
+}
+
+// groupName writes a secret as two rows, its section as Group and its key as
+// Name, spelled as stored (Dick 2026-11-13, #3092: "Group: Hetzner / Name:
+// api-key, rather than Hetzner.api_key"). A new group is marked so; state
+// follows the name.
+func groupName(b *strings.Builder, r Request, groupExists bool, state string) {
+	_, key, _ := strings.Cut(r.Name, ".")
+	group := "`" + r.Section + "`"
+	if !groupExists {
+		group += " (new)"
+	}
+	fmt.Fprintf(b, "| Group | %s |\n| Name | `%s`%s |\n", group, key, state)
+}
+
+// wasNote is a set's note on one rule of an existing section: what it was
+// when the request changes it, else that it stays.
+func wasNote(changed bool, now, after string) string {
+	if !changed || now == after {
+		return " (unchanged)"
+	}
+	return " (was " + now + ")"
+}
+
+// sectionExists reports whether secrets.toml already has the section: a
+// secret in it, or any of its rules.
+func sectionExists(st Store, sec string) bool {
+	for _, n := range st.Names() {
+		if s, _, ok := strings.Cut(n, "."); ok && s == sec {
+			return true
+		}
+	}
+	return st.SectionAllowedHosts(sec) != nil || st.SectionAllowedInBody(sec) != nil ||
+		st.SectionAllowedAgents(sec) != nil || st.SectionDeniedAgents(sec) != nil
 }
 
 // afterList is a hosts/body list after r's change.

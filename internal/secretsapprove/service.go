@@ -59,6 +59,7 @@ type Prompt struct {
 	ID         string
 	Header     string
 	Text       string
+	Warning    string // shown large and red above Text (#3092)
 	NeedsValue bool   // a set: Approve leads to a masked value field
 	ValueLabel string // the field's label, e.g. the secret's name
 	OnAnswer   func(Answer)
@@ -129,7 +130,7 @@ func (s *Service) Submit(agentID string, req Request, done func(Result)) (string
 	s.pending[id] = p
 	s.mu.Unlock()
 
-	prompt := Prompt{ID: id, Header: header, Text: text, NeedsValue: req.NeedsValue(), ValueLabel: req.Name,
+	prompt := Prompt{ID: id, Header: header, Text: text, Warning: Warning, NeedsValue: req.NeedsValue(), ValueLabel: req.Name,
 		OnAnswer: func(a Answer) { s.answer(id, a) }}
 	if err := s.d.Present(prompt); err != nil {
 		s.take(id)

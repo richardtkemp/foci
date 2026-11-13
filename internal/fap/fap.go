@@ -777,7 +777,11 @@ type AskgwPrompt struct {
 	// connection (this host's name for the Unix socket; the peer's reverse-DNS
 	// name, else its bare IP, for HTTP), never from the request body. The
 	// dialog shows it. Absent when unknown.
-	Host    string   `json:"host,omitempty"`
+	Host string `json:"host,omitempty"`
+	// Warning, when set, is shown in large red type above Text, so the user
+	// sees at a glance what kind of operation this is (#3092: every secrets
+	// dialog). An older client ignores it. Absent on askgw prompts.
+	Warning string   `json:"warning,omitempty"`
 	Choices []Choice `json:"choices"`
 	// ValueInput, when set, asks the user to type a value after one choice
 	// (#3090: an agent-requested secret). Only clients whose hello advertised

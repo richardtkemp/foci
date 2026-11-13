@@ -25,7 +25,7 @@ func TestPresentAppPrompt_ValuePromptOnlyToValueCapable(t *testing.T) {
 	h := newTestHub()
 	newer, older := valueClient(h, "phone"), askgwClient(h, "mac")
 
-	if err := h.presentAppPrompt("s1", "Set secret", "x", askgwButtons, secretValueInput, func(string, string) {}); err != nil {
+	if err := h.presentAppPrompt("s1", "Set secret", "x", "", askgwButtons, secretValueInput, func(string, string) {}); err != nil {
 		t.Fatalf("present: %v", err)
 	}
 	if got := askgwSnapshots(t, newer); !reflect.DeepEqual(got, [][]string{{"s1"}}) {
@@ -48,7 +48,7 @@ func TestPresentAppPrompt_ValuePromptOnlyToValueCapable(t *testing.T) {
 func TestPresentAppPrompt_FrameCarriesValueInput(t *testing.T) {
 	h := newTestHub()
 	c := valueClient(h, "phone")
-	if err := h.presentAppPrompt("s1", "Set secret", "x", askgwButtons, secretValueInput, func(string, string) {}); err != nil {
+	if err := h.presentAppPrompt("s1", "Set secret", "x", "", askgwButtons, secretValueInput, func(string, string) {}); err != nil {
 		t.Fatalf("present: %v", err)
 	}
 	frames := drain(t, c)
@@ -64,7 +64,7 @@ func TestPresentAppPrompt_FrameCarriesValueInput(t *testing.T) {
 func TestPresentAppPrompt_NoCapableDeviceRefuses(t *testing.T) {
 	h := newTestHub()
 	askgwClient(h, "mac") // can show plain prompts, not the value step
-	err := h.presentAppPrompt("s1", "Set secret", "x", askgwButtons, secretValueInput, func(string, string) {})
+	err := h.presentAppPrompt("s1", "Set secret", "x", "", askgwButtons, secretValueInput, func(string, string) {})
 	if err == nil || !strings.Contains(err.Error(), featureAskgwValueInput) {
 		t.Fatalf("err = %v, want a refusal naming %s", err, featureAskgwValueInput)
 	}
@@ -73,7 +73,7 @@ func TestPresentAppPrompt_NoCapableDeviceRefuses(t *testing.T) {
 	}
 
 	// A plain app prompt (no value step) needs only askgw support.
-	if err := h.presentAppPrompt("s2", "Remove secret", "x", askgwButtons, nil, func(string, string) {}); err != nil {
+	if err := h.presentAppPrompt("s2", "Remove secret", "x", "", askgwButtons, nil, func(string, string) {}); err != nil {
 		t.Errorf("plain app prompt refused: %v", err)
 	}
 }
@@ -100,7 +100,7 @@ func TestAskgwResponse_ValueRules(t *testing.T) {
 			c := valueClient(h, "phone")
 			var gotData, gotValue string
 			calls := 0
-			if err := h.presentAppPrompt("s1", "Set secret", "x", askgwButtons, secretValueInput, func(d, v string) {
+			if err := h.presentAppPrompt("s1", "Set secret", "x", "", askgwButtons, secretValueInput, func(d, v string) {
 				calls++
 				gotData, gotValue = d, v
 			}); err != nil {

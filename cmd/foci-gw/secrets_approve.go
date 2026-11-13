@@ -68,7 +68,7 @@ func presentSecretsPrompt(p secretsapprove.Prompt) error {
 	}
 	// The answer arrives on the device's socket goroutine; the file write and
 	// the agent's notice run off it, like the /secrets wizard's writes.
-	return app.PresentAppPrompt(p.ID, p.Header, p.Text, buttons, value, func(data, v string) {
+	return app.PresentAppPrompt(p.ID, p.Header, p.Text, p.Warning, buttons, value, func(data, v string) {
 		go p.OnAnswer(secretsapprove.Answer{Decision: data, Value: v})
 	})
 }

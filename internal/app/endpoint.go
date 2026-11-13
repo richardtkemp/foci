@@ -103,14 +103,14 @@ func PresentAskgwPrompt(id, header, text, host string, buttons []platform.Button
 // step; onAnswer then receives the typed text with value.Choice. The typed
 // text is a secret: onAnswer must not log or echo it. Close it with
 // CloseAskgwPrompt.
-func PresentAppPrompt(id, header, text string, buttons []platform.ButtonChoice, value *fap.ValueInput, onAnswer func(data, value string)) error {
+func PresentAppPrompt(id, header, text, warning string, buttons []platform.ButtonChoice, value *fap.ValueInput, onAnswer func(data, value string)) error {
 	activeMu.RLock()
 	h := activeHub
 	activeMu.RUnlock()
 	if h == nil {
 		return errors.New("the foci app provider is not running")
 	}
-	return h.presentAppPrompt(id, header, text, buttons, value, onAnswer)
+	return h.presentAppPrompt(id, header, text, warning, buttons, value, onAnswer)
 }
 
 // CloseAskgwPrompt withdraws an app-wide askgw prompt (cancelled or timed out)
