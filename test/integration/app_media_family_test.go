@@ -70,7 +70,8 @@ func TestL2_AppMedia_UnboundSessionSendsUp(t *testing.T) {
 		"[[NO_RESPONSE]]")
 
 	// A named session has no chat in its key and no conversation of its own.
-	body, err := json.Marshal(map[string]string{"agent": "alpha", "session": "report-l2?create=true", "text": "send it"})
+	// background keeps the send from opening one for it (#3097).
+	body, err := json.Marshal(map[string]any{"agent": "alpha", "session": "report-l2?create=true", "text": "send it", "background": true})
 	if err != nil {
 		t.Fatal(err)
 	}
