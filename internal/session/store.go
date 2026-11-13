@@ -225,16 +225,21 @@ func (s *Store) loadUnlocked(key string) ([]provider.Message, error) {
 		return nil, err
 	}
 
-	f, err := os.Open(path)
-	if os.IsNotExist(err) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
 		// Check for gzipped archive and decompress if found
 		if err := s.decompressIfGzipped(path); err != nil {
 			return nil, err
 		}
-		f, err = os.Open(path)
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
+	}
+	// A record cut off by a crash would otherwise make the whole file
+	// unreadable (#3065 F13).
+	if err := s.repairTornTailUnlocked(key, path); err != nil {
+		return nil, err
+	}
+
+	f, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("open session %s: %w", key, err)
@@ -254,12 +259,11 @@ func (s *Store) loadUnlocked(key string) ([]provider.Message, error) {
 // live-file loader and the archive-fallback loader.
 func parseMessages(r io.Reader, key string) ([]provider.Message, error) {
 	var messages []provider.Message
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	lineNo := 0
+	err := forEachLine(r, func(line []byte) error {
+		lineNo++
 		if len(line) == 0 {
-			continue
+			return nil
 		}
 
 		// Skip branch metadata lines
@@ -267,17 +271,18 @@ func parseMessages(r io.Reader, key string) ([]provider.Message, error) {
 			Type string `json:"type"`
 		}
 		if json.Unmarshal(line, &probe) == nil && (probe.Type == "branch_meta" || probe.Type == "session_meta") {
-			continue
+			return nil
 		}
 
 		var msg provider.Message
 		if err := json.Unmarshal(line, &msg); err != nil {
-			return nil, fmt.Errorf("decode message in %s: %w", key, err)
+			return fmt.Errorf("decode message in %s (line %d): %w", key, lineNo, err)
 		}
 		messages = append(messages, msg)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan session %s: %w", key, err)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read session %s: %w", key, err)
 	}
 	return messages, nil
 }
@@ -296,6 +301,10 @@ func (s *Store) appendUnlocked(key string, msg provider.Message) error {
 	exists := false
 	if _, err := os.Stat(path); err == nil {
 		exists = true
+		// Never append after a torn record: the two would share a line.
+		if err := s.repairTornTailUnlocked(key, path); err != nil {
+			return err
+		}
 	}
 
 	f, err := s.openFileAppend(path)
@@ -368,6 +377,10 @@ func (s *Store) appendAllUnlocked(key string, msgs []provider.Message) error {
 	exists := false
 	if _, err := os.Stat(path); err == nil {
 		exists = true
+		// Never append after a torn record: the two would share a line.
+		if err := s.repairTornTailUnlocked(key, path); err != nil {
+			return err
+		}
 	}
 
 	// Marshal everything into a buffer first so a marshal failure writes nothing

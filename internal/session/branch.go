@@ -1,7 +1,6 @@
 package session
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -303,23 +302,15 @@ func (s *Store) readBranchMeta(key string) (*BranchMeta, error) {
 		return nil, err
 	}
 
-	f, err := os.Open(path)
+	// Read the first line with no length limit: orientation text is stored
+	// in the meta JSON, and the writer caps nothing (#3065 F18).
+	line, _, err := readFirstLine(path, false)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("open for branch check: %w", err)
 	}
-	defer func() { _ = f.Close() }()
-
-	// Read first line using a scanner to handle large meta lines
-	// (orientation text is stored in the meta JSON).
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
-	if !scanner.Scan() {
-		return nil, nil
-	}
-	line := scanner.Bytes()
 	if len(line) == 0 {
 		return nil, nil
 	}

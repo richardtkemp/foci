@@ -15,6 +15,8 @@ import (
 // This happens when the process is killed mid-tool-call: the defer flush writes
 // the assistant message but no tool_result is ever created, leaving the session
 // structurally invalid for the Anthropic API.
+// Loading each file also repairs a final record torn by a crash; a session
+// still unreadable after that is logged as a warning and skipped.
 // Returns the number of repaired sessions and any error.
 func (s *Store) RepairOrphans() (int, error) {
 	s.mu.Lock()
@@ -41,8 +43,16 @@ func (s *Store) RepairOrphans() (int, error) {
 		rel = strings.TrimSuffix(rel, ".jsonl")
 		key := pathToKey(rel)
 
+		// loadUnlocked repairs a torn final record itself (#3065 F13). An
+		// error left after that is interior corruption: report it — the
+		// session cannot be loaded until someone repairs the file — and go
+		// on with the others.
 		msgs, err := s.loadUnlocked(key)
-		if err != nil || len(msgs) == 0 {
+		if err != nil {
+			sessionLog(key).Warnf("session repair: session %s is unreadable and was skipped: %v", key, err)
+			return nil
+		}
+		if len(msgs) == 0 {
 			return nil
 		}
 

@@ -141,7 +141,9 @@ procx.PassOpenFileLimitToChildren()                       ← internal/procx, ri
 → app.SetSessionChats(appMediaChats(si.sessionIndex))    ← the family-tree walk behind an app media send from a
                                                             session with no conversation (#2755)
   → session.NewStore(dir)
-  → sessions.RepairOrphans()                             ← fix interrupted tool calls before agents start
+  → sessions.RepairOrphans()                             ← fix interrupted tool calls before agents start; loading
+                                                            each file repairs a torn final record (records.go, #3065);
+                                                            a still-unreadable session is WARNed and skipped
   → session.NewSessionIndex(session_index.db)             ← SQLite index; rebuilt on startup
   → sessions.OnSessionEvent(→ sessionIndex)               ← lifecycle hook: create/compact/clear → update index
   → migrateStateJSON(state.json → SQLite)             ← one-time migration, renames to state.json.migrated

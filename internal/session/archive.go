@@ -221,6 +221,11 @@ func (s *Store) Reset(key string) error {
 
 	var archivePath string
 	if _, err := os.Stat(path); err == nil {
+		// Archive a readable file: a torn final record would make the
+		// archive unreadable too (#3065 F13).
+		if err := s.repairTornTailUnlocked(key, path); err != nil {
+			return err
+		}
 		archivePath = nextArchivePath(path)
 		if err := os.Rename(path, archivePath); err != nil {
 			return fmt.Errorf("reset session file: %w", err)
@@ -250,6 +255,12 @@ func (s *Store) replaceInternal(key string, msgs []provider.Message) error {
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("create session dir: %w", err)
+	}
+
+	// Archive a readable file: a torn final record would make the archive
+	// unreadable too (#3065 F13).
+	if err := s.repairTornTailUnlocked(key, path); err != nil {
+		return err
 	}
 
 	// Read metadata before rotating the file
