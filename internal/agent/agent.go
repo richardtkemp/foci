@@ -269,6 +269,10 @@ type Agent struct {
 	// evidenced model response will make (#2509, cache_evidence.go).
 	branchRootMu    sync.Mutex
 	branchRootWarms map[string]branchRootWarm
+	// keepaliveStopped holds the sessions a fork of which missed their cache
+	// since their last own call: keepalive skips them (#3089). In memory: after
+	// a restart the next keepalive fork misses once and sets it again.
+	keepaliveStopped map[string]bool
 
 	// compacting latches compaction-in-flight per session so /status reports
 	// "compacting" rather than "idle" while a summary turn runs. Keyed by

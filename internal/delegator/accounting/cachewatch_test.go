@@ -289,8 +289,9 @@ func TestCacheWatch_SeedsFromTheLedgerAfterARestart(t *testing.T) {
 }
 
 // After a restart, NoteCacheFork's baseline for the agent's warm decision
-// (#2932) is the source's last call in api.db; 0 when the last one there is a
-// compaction, or the source has none.
+// (#2932) is the source's last call in api.db, read plus write (#3089: the
+// prefix that call left cached); 0 when the last one there is a compaction,
+// and unknown when the source has none.
 func TestNoteCacheFork_ReturnsTheSourcesReadAfterARestart(t *testing.T) {
 	l, _ := openLedger(t)
 	useLive(t, l)
@@ -313,14 +314,14 @@ func TestNoteCacheFork_ReturnsTheSourcesReadAfterARestart(t *testing.T) {
 	watch = newCacheWatch() // the restart
 	t.Cleanup(func() { watch = saved })
 
-	if got := NoteCacheFork("fork/c1/b1", "fork/c1"); got != 12199 {
-		t.Errorf("source's read after a restart = %d, want 12199 from api.db", got)
+	if got, known := NoteCacheFork("fork/c1/b1", "fork/c1"); got != 12199+44744 || !known {
+		t.Errorf("source's cached prefix after a restart = %d (known %v), want %d from api.db", got, known, 12199+44744)
 	}
-	if got := NoteCacheFork("fork/c2/b1", "fork/c2"); got != 0 {
-		t.Errorf("source just compacted: read = %d, want 0", got)
+	if got, known := NoteCacheFork("fork/c2/b1", "fork/c2"); got != 0 || !known {
+		t.Errorf("source just compacted: expected = %d (known %v), want 0, known", got, known)
 	}
-	if got := NoteCacheFork("fork/c3/b1", "fork/c3"); got != 0 {
-		t.Errorf("source with no calls: read = %d, want 0", got)
+	if got, known := NoteCacheFork("fork/c3/b1", "fork/c3"); got != 0 || known {
+		t.Errorf("source with no calls: expected = %d (known %v), want 0, unknown", got, known)
 	}
 }
 

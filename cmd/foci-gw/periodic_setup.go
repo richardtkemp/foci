@@ -269,11 +269,14 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 			d, _ := inst.ag.SessionCacheTTL(sk)
 			return d
 		},
-		KeepaliveOffFor:  endpointKeepaliveOffFor(inst, p),
-		Maintenance:      maint,
-		PromptSearchDirs: inst.promptSearchDirs,
-		TodoStore:        p.todoStore,
-		SessionIndex:     p.sessionIndex,
+		KeepaliveOffFor: endpointKeepaliveOffFor(inst, p),
+		// A fork of the session missed its cache: keepalive waits for the
+		// session's next own call (#3089).
+		KeepaliveStoppedFor: inst.ag.KeepaliveStopped,
+		Maintenance:         maint,
+		PromptSearchDirs:    inst.promptSearchDirs,
+		TodoStore:           p.todoStore,
+		SessionIndex:        p.sessionIndex,
 
 		EphemeralRetentionDays: acfg.Sessions.EffectiveEphemeralRetentionDays(p.cfg.Sessions.EphemeralRetentionDays),
 

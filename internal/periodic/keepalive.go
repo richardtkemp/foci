@@ -263,6 +263,10 @@ func (r *Runner) keepaliveTargetsAt(interval time.Duration, now time.Time) (read
 			why = "keepalive off for the endpoint of " + sk
 			continue // the session's endpoint turns keepalive off (#3020)
 		}
+		if r.keepaliveStopped(sk) {
+			why = "keepalive stopped for " + sk + " (a fork missed its cache; waits for its next own call)"
+			continue // a further fork would miss the same way (#3089)
+		}
 		if r.keepaliveRunningFor(sk) {
 			why = "already running on " + sk
 			continue // one keepalive per session at a time (#2487)
@@ -324,6 +328,12 @@ func (r *Runner) keepaliveOff(sk string) bool {
 	return r.keepaliveOffFor != nil && r.keepaliveOffFor(sk)
 }
 
+// keepaliveStopped reports whether keepalive is stopped for sk (#3089): a
+// fork of it missed its cache, and it has made no call of its own since.
+func (r *Runner) keepaliveStopped(sk string) bool {
+	return r.keepaliveStoppedFor != nil && r.keepaliveStoppedFor(sk)
+}
+
 // keepaliveCandidates returns the sessions keepalive considers: the open app
 // chats while warm_open_app_chats is on, else (or when none are open) the
 // default session.
@@ -380,16 +390,18 @@ func keepaliveWarmWindow(touchAge, interval, ttl time.Duration) bool {
 // sk's cache again before it expires. Pre-cold compaction (#1066) runs only
 // when this is false. It replays keepaliveTargets' own rules at the first
 // moment keepalive could fire — the later of now and touch+interval:
-// keepalive enabled with caching available, sk among its candidates, a
-// recorded touch, that moment inside the warm window, and the max_user_idle
-// gate still open at that moment. The transient gates (rate limit, a turn in
-// flight, a yield to another task) only delay keepalive by a tick and are not
-// replayed.
+// keepalive enabled with caching available, sk among its candidates and not
+// turned off or stopped (#3020, #3089), a recorded touch, that moment inside
+// the warm window, and the max_user_idle gate still open at that moment. The
+// transient gates (rate limit, a turn in flight, a yield to another task)
+// only delay keepalive by a tick and are not replayed. A stop is not
+// transient: it lasts until the session's own next call, and a session that
+// makes none goes cold, so pre-cold compaction may take it.
 func (r *Runner) keepaliveWillRewarm(sk string, now time.Time) bool {
 	if !r.kaCfg.Enabled || !r.cachingAvailable() || r.sessionIndex == nil {
 		return false
 	}
-	if !slices.Contains(r.keepaliveCandidates(), sk) || r.keepaliveOff(sk) {
+	if !slices.Contains(r.keepaliveCandidates(), sk) || r.keepaliveOff(sk) || r.keepaliveStopped(sk) {
 		return false
 	}
 	interval, err := time.ParseDuration(r.kaCfg.Interval)

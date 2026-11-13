@@ -133,19 +133,21 @@ type BackgroundAgent interface {
 
 // Runner manages keepalive, background work, and reflection timers for an agent.
 type Runner struct {
-	log              *log.ComponentLogger
-	agentID          string
-	client           provider.Client // for checking caching availability at runtime
-	cachingOverride  *bool           // nil=use client.IsCachingAvailable(), non-nil=override
-	kaCfg            config.ResolvedKeepalive
-	bgCfg            config.ResolvedBackground
-	reflectCfg       config.ResolvedReflection
-	maintCfg         config.ResolvedMaintenance
-	tickInterval     time.Duration // poll cadence for the timer loop (resolved from config)
-	cacheTTL         time.Duration // backend/model prompt-cache lifetime; keepalive upper bound (0 = unknown)
-	cacheTTLFor      func(sessionKey string) time.Duration
-	keepaliveOffFor  func(sessionKey string) bool
-	promptSearchDirs []string
+	log             *log.ComponentLogger
+	agentID         string
+	client          provider.Client // for checking caching availability at runtime
+	cachingOverride *bool           // nil=use client.IsCachingAvailable(), non-nil=override
+	kaCfg           config.ResolvedKeepalive
+	bgCfg           config.ResolvedBackground
+	reflectCfg      config.ResolvedReflection
+	maintCfg        config.ResolvedMaintenance
+	tickInterval    time.Duration // poll cadence for the timer loop (resolved from config)
+	cacheTTL        time.Duration // backend/model prompt-cache lifetime; keepalive upper bound (0 = unknown)
+	cacheTTLFor     func(sessionKey string) time.Duration
+	keepaliveOffFor func(sessionKey string) bool
+	// keepaliveStoppedFor: RunnerConfig.KeepaliveStoppedFor (#3089).
+	keepaliveStoppedFor func(sessionKey string) bool
+	promptSearchDirs    []string
 	// keepaliveScriptTimeout bounds one run of a keepalive prompt script
 	// (#1351); 0 = defaultKeepaliveScriptTimeout. Tests shorten it.
 	keepaliveScriptTimeout time.Duration
@@ -359,6 +361,14 @@ type RunnerConfig struct {
 	// endpoint and the live [endpoints] config. nil = never off.
 	KeepaliveOffFor func(sessionKey string) bool
 
+	// KeepaliveStoppedFor, when set, reports whether keepalive is stopped for
+	// one session (#3089): a fork of it missed its cache and it has made no
+	// model call of its own since, so a keepalive fork would miss the same
+	// way and warm nothing. Such a session is not warmed until its next own
+	// call, and keepaliveWillRewarm says so. cmd/foci-gw wires it to
+	// Agent.KeepaliveStopped. nil = never stopped.
+	KeepaliveStoppedFor func(sessionKey string) bool
+
 	// EphemeralRetentionDays is the age (days) beyond which ephemeral (branch/
 	// fork) backend transcripts are deleted by the daily cleanup. 0 = disabled.
 	EphemeralRetentionDays int
@@ -436,20 +446,21 @@ type RunnerConfig struct {
 func New(cfg RunnerConfig) *Runner {
 	now := time.Now()
 	r := &Runner{
-		log:              log.NewComponentLogger("keepalive:" + cfg.AgentID),
-		agentID:          cfg.AgentID,
-		client:           cfg.Client,
-		cachingOverride:  cfg.CachingOverride,
-		kaCfg:            cfg.Keepalive,
-		bgCfg:            cfg.Background,
-		reflectCfg:       cfg.Reflection,
-		maintCfg:         cfg.Maintenance,
-		cacheTTL:         cfg.CacheTTL,
-		cacheTTLFor:      cfg.CacheTTLFor,
-		keepaliveOffFor:  cfg.KeepaliveOffFor,
-		promptSearchDirs: cfg.PromptSearchDirs,
-		todoStore:        cfg.TodoStore,
-		sessionIndex:     cfg.SessionIndex,
+		log:                 log.NewComponentLogger("keepalive:" + cfg.AgentID),
+		agentID:             cfg.AgentID,
+		client:              cfg.Client,
+		cachingOverride:     cfg.CachingOverride,
+		kaCfg:               cfg.Keepalive,
+		bgCfg:               cfg.Background,
+		reflectCfg:          cfg.Reflection,
+		maintCfg:            cfg.Maintenance,
+		cacheTTL:            cfg.CacheTTL,
+		cacheTTLFor:         cfg.CacheTTLFor,
+		keepaliveOffFor:     cfg.KeepaliveOffFor,
+		keepaliveStoppedFor: cfg.KeepaliveStoppedFor,
+		promptSearchDirs:    cfg.PromptSearchDirs,
+		todoStore:           cfg.TodoStore,
+		sessionIndex:        cfg.SessionIndex,
 
 		openChatSessionsFn: cfg.OpenChatSessionsFn,
 		quietCfg:           cfg.QuietCompaction,

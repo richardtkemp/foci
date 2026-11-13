@@ -211,15 +211,28 @@ func lineageKey(session, actor string) string { return session + "\x00" + actor 
 // last call. Call it when the fork is made: a source that keeps working
 // afterwards must not raise what the fork is expected to read.
 //
-// It returns the cache read of the source's last call, seeded from api.db
-// when this process has not seen one (a restart), or 0 when there is none or
-// the source was just compacted or reset. The agent's warm decision uses it
-// as its fork-miss baseline when it holds none of its own (#2932).
-func NoteCacheFork(branch, source string) int { return watch.noteFork(branch, source, time.Now()) }
+// It returns what the branch's first call should read: the source's last
+// call's cache read plus write, the prefix that call left cached (the same
+// figure the watch checks the fork against), seeded from api.db when this
+// process has not seen the call (a restart). known is false when there is no
+// call to go by; expected is 0 with known true when the source was just
+// compacted or reset (a new conversation, nothing to check). The agent's warm
+// decision uses it as its fork-miss baseline (#2932, #3089).
+func NoteCacheFork(branch, source string) (expected int, known bool) {
+	return watch.noteFork(branch, source, time.Now())
+}
 
-func (w *cacheWatch) noteFork(branch, source string, now time.Time) int {
+// ForkReadShort reports whether a fork's first call that read read cached
+// tokens, against an expected expected, fell short by more than the slack the
+// watch tolerates (a fork re-rendering the last few thousand tokens of its
+// source's tail is not a miss). expected 0 = nothing to check.
+func ForkReadShort(expected, read int) bool {
+	return expected > 0 && expected-read > cacheSlack(expected)
+}
+
+func (w *cacheWatch) noteFork(branch, source string, now time.Time) (int, bool) {
 	if branch == "" || source == "" || branch == source {
-		return 0
+		return 0, false
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -230,16 +243,16 @@ func (w *cacheWatch) noteFork(branch, source string, now time.Time) int {
 	}
 	base := w.lineageLocked(source, "", 0, now)
 	var snap *cacheLineage
-	sourceRead := 0
+	expected := 0
 	if base != nil && !base.fresh {
 		c := *base
 		snap = &c
-		sourceRead = c.read
+		expected = c.read + c.write
 	}
 	// A fork replaces whatever its key held: it is a new conversation.
 	w.dropSessionLocked(branch)
 	w.forks[branch] = cacheFork{source: source, base: snap, at: now}
-	return sourceRead
+	return expected, base != nil
 }
 
 // NoteCacheReset records that session's conversation was reset or compacted:
@@ -447,10 +460,10 @@ func (w *cacheWatch) observe(b Booking) (CacheReport, bool) {
 // checkCache compares one call with its lineage's baseline.
 func checkCache(b Booking, base *cacheLineage, source, prompt string, read, write int) (CacheReport, bool) {
 	expected := base.read + base.write
-	lost := expected - read
-	if lost <= cacheSlack(expected) {
+	if !ForkReadShort(expected, read) {
 		return CacheReport{}, false
 	}
+	lost := expected - read
 	since := b.BilledAt.Sub(base.touched)
 	r := CacheReport{
 		Session: b.Session, Actor: b.Actor, Backend: b.Backend, Model: b.Model, AgentID: b.AgentID, At: b.BilledAt,
