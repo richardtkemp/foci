@@ -2887,8 +2887,8 @@ device=… ip=…`** INFO line in `ServeWS`. The ip is resolved once by
 `clientIPForLog` and cached on `wsClient.ip`, so the disconnect line and the
 outbound-stall WARN can name it too without recomputing (#1782).
 That last one exists because the other two cannot identify a socket that dies
-BEFORE its hello: `deviceID` normally arrives in the hello frame, which such a
-socket never sends, so a burst of hello-less connects was unattributable from
+BEFORE its hello: before device-token auth the `deviceID` arrived only in the
+hello frame, which such a socket never sends, so a burst of hello-less connects was unattributable from
 the server and the diagnosis had to move to client-side logging. Device-token
 auth resolves the device before the upgrade, so `ServeWS` can name it
 unconditionally (`authenticate` returns ok only with a device — there is no
@@ -2902,9 +2902,25 @@ fire at once. Count alone would cry wolf; count *plus* silence is what actually
 means the user is getting nothing.
 
 All of that state is **per device** (`Hub.helloByDevice`, keyed by the
-AUTHENTICATED `deviceID` `ServeWS` set at connect — `dispatch.go` captures it
-before the hello's advisory value overwrites it, since a socket dying before its
-hello only ever has the former). A fleet-wide counter lied in both directions on
+AUTHENTICATED `deviceID` `ServeWS` set at connect, since a socket dying before
+its hello only ever has that one).
+
+**The socket's device identity is the authenticated one, never the hello's
+(#3062).** `ServeWS` → `Hub.admitClient` sets `wsClient.deviceID` from the
+Bearer token's device, publishes the socket in `h.clients`, re-checks the token
+(`deviceStore.hasToken`) and evicts older sockets of the same device (4409).
+The re-check closes the admission race: `ServeRevoke` removes the token and
+then scans `h.clients` (`closeDeviceSockets`), so a socket published after that
+scan is refused (4403) by the re-check instead. The hello's `client.deviceId`
+is self-reported: it never replaces `wsClient.deviceID`, and a conflicting one
+is logged once per socket (`hello: device id … conflicts with authenticated
+device …`). Revocation, hello-time eviction and push-token ownership
+(`pushTokens.set/setReadWake/setAskgw`, `fcmPusher.deviceConnected`) all key
+on `wsClient.deviceID`. Before #3062 the hello overwrote it, so a revoked device
+that reported another id kept its live socket, could evict another device's
+socket and could file its push token under that device. Only a socket with no
+authenticated id (in-memory test clients; `ServePair` refuses an empty
+`deviceId`) takes the hello's id. A fleet-wide counter lied in both directions on
 2026-08-17: a healthy phone's handshakes kept resetting the global run while the
 Mac was dead throughout, and the line named no device, so it read as a fleet
 outage when half the fleet was fine.

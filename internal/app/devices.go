@@ -135,6 +135,15 @@ func (s *deviceStore) validToken(token string) (*device, bool) {
 	return d, true
 }
 
+// hasToken reports whether token is still a live device credential. Unlike
+// validToken it does not refresh lastSeen: it re-checks an existing session.
+func (s *deviceStore) hasToken(token string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.byTok[token]
+	return ok
+}
+
 // revoke removes a device by id, returning it so the caller can tear down any
 // live socket.
 func (s *deviceStore) revoke(deviceID string) (*device, bool) {

@@ -74,15 +74,25 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 	switch f := in.Frame.(type) {
 	case fap.ClientHello:
 		client.mu.Lock()
-		// Captured BEFORE the hello's advisory deviceId overwrites it. The
-		// handshake-health bookkeeping (#1713) is keyed on the AUTHENTICATED
-		// identity that ServeWS set at connect, because that is the only one a
-		// socket dying before its hello ever has. Keying recovery on the
-		// advisory value instead would, on any mismatch, reset a different
-		// device's counter than the outage was counted against — leaving the
-		// real one warned forever and the innocent one silently re-armed.
+		// The socket's identity is the AUTHENTICATED device id ServeWS set from
+		// the Bearer token; the hello's deviceId is self-reported and never
+		// replaces it (#3062). Revocation (closeDeviceSockets), eviction and push
+		// ownership all key on client.deviceID, so letting the hello overwrite
+		// it let a revoked device keep its live socket by reporting another id.
+		// An empty id means no authenticated identity, which production never
+		// has (ServePair refuses an empty deviceId); only then is the hello's
+		// adopted.
 		authDevice := client.deviceID
-		client.deviceID = f.Client.DeviceID
+		helloDevice := f.Client.DeviceID
+		conflict := authDevice != "" && helloDevice != authDevice
+		if authDevice == "" {
+			client.deviceID = helloDevice
+		}
+		devID := client.deviceID
+		logConflict := conflict && !client.helloIDConflictLogged
+		if logConflict {
+			client.helloIDConflictLogged = true
+		}
 		client.features = featureSet(f.Features)
 		client.os = f.Client.OS
 		client.helloAt = time.Now()
@@ -101,19 +111,28 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		appLog.Debugf("hello: device=%s app=%s os=%q version=%s resume=%d features=%d push_token=%t",
 			f.Client.DeviceID, f.Client.App, f.Client.OS, f.Client.Version,
 			len(f.Resume), len(f.Features), f.PushToken != "")
+		if logConflict {
+			// Once per socket: the real app reports its own id, so a mismatch is
+			// a misbehaving or tampered client. The hello's id is ignored.
+			appLog.Warnf("hello: device id %q conflicts with authenticated device %q; keeping the authenticated id", helloDevice, authDevice)
+		}
+		// Keyed on the AUTHENTICATED identity (#1713): it is the only one a
+		// socket dying before its hello ever has, so recovery must reset the
+		// same counter the outage was counted against.
 		h.noteHelloSeen(authDevice)
-		// Re-evict on the hello's advisory deviceId (wire §9, close 4409) so a
-		// reconnecting phone never ends up with two live sockets on one
-		// conversation. ServeWS already evicted on the AUTHENTICATED id at
-		// connect; this covers the two disagreeing.
-		h.evictOtherDeviceSockets(client, f.Client.DeviceID)
-		// Register the device's FCM token for offline wake pushes.
-		h.tokens.set(f.Client.DeviceID, f.PushToken)
-		h.tokens.setReadWake(f.Client.DeviceID, slices.Contains(f.Features, featureReadWake))
-		h.tokens.setAskgw(f.Client.DeviceID, slices.Contains(f.Features, featureAskgwPrompts))
+		// Re-evict (wire §9, close 4409) so a reconnecting phone never ends up
+		// with two live sockets on one conversation. ServeWS already evicted on
+		// the same id at connect; this repeats it for a socket whose identity
+		// was only set here (no authenticated id).
+		h.evictOtherDeviceSockets(client, devID)
+		// Register the device's FCM token for offline wake pushes, under the
+		// authenticated id so a hello cannot claim another device's pushes.
+		h.tokens.set(devID, f.PushToken)
+		h.tokens.setReadWake(devID, slices.Contains(f.Features, featureReadWake))
+		h.tokens.setAskgw(devID, slices.Contains(f.Features, featureAskgwPrompts))
 		// The replay below catches this device up, consuming any wake it was
 		// sent: reopen its coalescing windows so the next offline message wakes it.
-		h.pusher.deviceConnected(f.Client.DeviceID)
+		h.pusher.deviceConnected(devID)
 		h.pushRoster(client)
 		h.pushSettings(client)
 		h.pushReads(client)

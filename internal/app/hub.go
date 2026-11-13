@@ -3578,15 +3578,18 @@ type wsClient struct {
 	// No socket-wide "current agent": one socket multiplexes every agent's
 	// conversations concurrently. Each inbound frame names its agent (or its
 	// conversation's binding does), so the agent is resolved per-frame.
-	deviceID  string                  // from the client hello
-	helloSeen bool                    // a ClientHello was received on this socket (#1713)
-	closeErr  string                  // why the read loop ended, for the hello-less diagnostic (#1713)
-	features  map[string]struct{}     // advertised client capabilities (from the hello)
-	os        string                  // ClientInfo.OS from the hello; the device-tool fallback for pre-"tool:" clients (#1079)
-	helloAt   time.Time               // when the hello arrived; device-tool routing prefers the newest (#1079)
-	convByID  map[string]*convBinding // conversationId → binding
-	viewing   string                  // conversation the device has on screen, "" = none (ViewingPut, #2202)
-	voiceMode map[string]struct{}     // conversations this device has in persistent voice mode (VoiceModePut, #3047)
+	deviceID string // authenticated device id from the Bearer token (ServeWS); a hello never overrides it (#3062)
+	// helloIDConflictLogged: a hello reported a device id other than the
+	// authenticated one and that was logged; logged once per socket (#3062).
+	helloIDConflictLogged bool
+	helloSeen             bool                    // a ClientHello was received on this socket (#1713)
+	closeErr              string                  // why the read loop ended, for the hello-less diagnostic (#1713)
+	features              map[string]struct{}     // advertised client capabilities (from the hello)
+	os                    string                  // ClientInfo.OS from the hello; the device-tool fallback for pre-"tool:" clients (#1079)
+	helloAt               time.Time               // when the hello arrived; device-tool routing prefers the newest (#1079)
+	convByID              map[string]*convBinding // conversationId → binding
+	viewing               string                  // conversation the device has on screen, "" = none (ViewingPut, #2202)
+	voiceMode             map[string]struct{}     // conversations this device has in persistent voice mode (VoiceModePut, #3047)
 	// unknownTypes: inbound frame types this socket sent that the server does
 	// not recognise, so each is logged once per socket, not per frame (#1884).
 	unknownTypes map[string]struct{}
@@ -3844,6 +3847,30 @@ func checkOrigin(r *http.Request) bool {
 	return strings.Contains(origin, r.Host)
 }
 
+// admitClient gives client its authenticated identity, publishes it in
+// h.clients and evicts any older socket of the same device (4409). It reports false, with the socket already closed (4403), when dev
+// was revoked after authenticate() but before the socket was published.
+//
+// That admission race (#3062): ServeRevoke removes the token and THEN scans
+// h.clients in closeDeviceSockets. A socket published after that scan is missed
+// by it, but the token removal happened before the scan, so re-checking the
+// token after addClient catches every revoke the scan could miss.
+func (h *Hub) admitClient(client *wsClient, dev *device) bool {
+	client.mu.Lock()
+	client.deviceID = dev.DeviceID
+	client.mu.Unlock()
+	h.addClient(client)
+	if !h.devices.hasToken(dev.Token) {
+		appLog.Infof("device connect refused: device=%s revoked during connect", dev.DeviceID)
+		client.closeWithCode(fap.CloseForbidden, "device revoked")
+		return false
+	}
+	// Device-token auth gives the deviceId up front, so a stale prior socket for
+	// the same device can be evicted immediately rather than at hello time.
+	h.evictOtherDeviceSockets(client, dev.DeviceID)
+	return true
+}
+
 // ServeWS authenticates (Bearer device token) and upgrades the
 // connection, then runs the socket's read/write pumps.
 func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
@@ -3864,15 +3891,11 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	// to wrap these three sites were dead, and the master-key fallbacks they
 	// described (learn the deviceId from the hello instead) no longer exist.
 	//
-	// The authenticated deviceId is also AUTHORITATIVE; the client hello's is
-	// advisory and should match.
-	client.mu.Lock()
-	client.deviceID = dev.DeviceID
-	client.mu.Unlock()
-	h.addClient(client)
-	// Device-token auth gives the deviceId up front, so a stale prior socket for
-	// the same device can be evicted immediately rather than at hello time.
-	h.evictOtherDeviceSockets(client, dev.DeviceID)
+	// The authenticated deviceId is AUTHORITATIVE; the client hello's is
+	// self-reported and never replaces it (#3062).
+	if !h.admitClient(client, dev) {
+		return
+	}
 	// Name the device. This is the ONLY identity available on a socket that dies
 	// before its hello, and those are exactly the ones worth attributing: the
 	// deviceID otherwise arrives in the hello frame, which such a socket never
