@@ -230,10 +230,10 @@ func sendToChatExecute(ctx context.Context, params json.RawMessage, getSender fu
 	}
 	chatID := ChatIDFromSessionKey(sessionKey)
 
-	// Facet sessions deliver to their own conversation (the facet bot's
-	// session), not the parent/root chat. Non-facet branches (spawn, cron,
-	// etc.) resolve to the root chat as before.
-	if sessionTypeFn != nil && sessionTypeFn(sessionKey) == session.SessionTypeFacet {
+	// A session with a conversation of its own (a facet, an open depth leaf)
+	// sends there: chatID 0 = the sender's own session. Other branches (spawn,
+	// cron, etc.) carry the root's chat id in their key and send to the root.
+	if sessionTypeFn != nil && ownsConversation(sessionKey, sessionTypeFn(sessionKey)) {
 		chatID = 0
 	}
 
@@ -324,6 +324,24 @@ func sendToChatExecute(ctx context.Context, params json.RawMessage, getSender fu
 	}
 
 	return TextResult(fmt.Sprintf("Sent: %s", joinWords(sent))), nil
+}
+
+// ownsConversation reports whether send_to_chat from sessionKey goes to the
+// session's own conversation rather than the root chat its key names. A facet
+// does. So does a depth leaf until it is done (#3087, Dick 2026-11-13: "An
+// image sent by a depth leaf arrives in the parent rather than the leaf. It
+// should go to the leaf!"). A reported leaf (DepthManager.SessionLive false)
+// keeps sending to the root, as before (#3087's ruling).
+func ownsConversation(sessionKey string, typ session.SessionType) bool {
+	switch typ {
+	case session.SessionTypeFacet:
+		return true
+	case session.SessionTypeDepth:
+		m := DepthManagerFor(sessionKey)
+		return m == nil || m.SessionLive(sessionKey)
+	default:
+		return false
+	}
 }
 
 // sendMermaidRender renders the mermaid source at srcPath and sends the PNG as
