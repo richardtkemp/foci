@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"foci/internal/config"
 	"foci/internal/provider"
 	"foci/internal/secrets"
+	"foci/internal/tempdir"
 )
 
 const readToolSchema = `{
@@ -35,15 +37,29 @@ const readToolSchema = `{
 
 // fileScope captures the path-containment context shared by every file-touching
 // tool. resolveFileArg is the single choke point: it resolves a caller-supplied
-// path (workspace-relative for normal tools), enforces isolated-directory
-// containment when baseDir is set, and rejects blocked paths (the secrets file,
-// /proc/self/environ, …) via the secrets store. Used by read/write/edit/summary
-// and http_request's body_file/files/save_to in every mode so no caller can
-// silently skip a check.
+// path (workspace-relative for normal tools), canonicalises it (symlinks
+// resolved), confines it, and rejects blocked paths (the secrets file,
+// /proc/self/environ, …) via the secrets store. Used by read/write/edit/summary,
+// send_to_chat's file and http_request's body_file/files/save_to in every mode,
+// so no caller can silently skip a check.
+//
+// Confinement (#3076): an isolated scope (baseDir set) keeps the path inside
+// baseDir. Every other scope keeps it inside the allowed areas: the agent's
+// workspace, /tmp (and the process temp dir and foci's temp root), and the
+// operator's tools.file_allowed_paths. These tools run inside foci-gw and are
+// auto-approved, so without this an agent could upload or overwrite any file
+// the foci user can reach without the approval its shell would need.
 type fileScope struct {
 	store     *secrets.Store
 	baseDir   string // non-empty => isolated: the resolved path must stay within it
-	workspace string // base for relative paths in non-isolated tools
+	workspace string // base for relative paths, and an allowed area, in non-isolated tools
+	// extraRoots returns the live tools.file_allowed_paths for the agent. A
+	// func so a config edit applies on the next call. Nil means none.
+	extraRoots func() []string
+	// tempRoots overrides the built-in temp areas when non-nil. Tests only:
+	// every writable test dir lies under a temp area, so a test that needs an
+	// "outside" path removes them.
+	tempRoots *[]string
 	// maxReadBytes returns the current cap on a file's size before read/edit
 	// loads it; <=0 uses the default. A func (not a captured scalar) so the
 	// read/edit tools observe a live config edit on their next call instead of
@@ -51,6 +67,35 @@ type fileScope struct {
 	// scopes and tests that construct a fileScope directly) uses the default.
 	maxReadBytes func() int64
 }
+
+// FileOpt configures the file scope of a non-isolated file-touching tool
+// (#3076). The constructors take them variadically so a caller that passes
+// none still gets confinement (to the temp areas only).
+type FileOpt func(*fileScope)
+
+// WithWorkspace sets the agent workspace: the base for relative paths and an
+// allowed area.
+func WithWorkspace(dir string) FileOpt { return func(fs *fileScope) { fs.workspace = dir } }
+
+// WithExtraRoots sets the live source of tools.file_allowed_paths.
+func WithExtraRoots(fn func() []string) FileOpt {
+	return func(fs *fileScope) { fs.extraRoots = fn }
+}
+
+// WithBlocklist sets the secrets store whose blocklist the tool enforces.
+func WithBlocklist(store *secrets.Store) FileOpt { return func(fs *fileScope) { fs.store = store } }
+
+func newFileScope(base fileScope, opts []FileOpt) fileScope {
+	for _, o := range opts {
+		if o != nil {
+			o(&base)
+		}
+	}
+	return base
+}
+
+// FileAllowedPathsKey is the config key named in a refusal.
+const FileAllowedPathsKey = "tools.file_allowed_paths"
 
 // readLimit returns the effective max file size the read/edit tools will load,
 // falling back to the package default when unset.
@@ -64,9 +109,16 @@ func (fs fileScope) readLimit() int64 {
 }
 
 // resolveFileArg canonicalises path and enforces containment + the blocklist.
-// The returned path is safe to hand to os.Open/ReadFile/WriteFile.
+// The returned path is the canonical (symlink-resolved) one, safe to hand to
+// os.Open/ReadFile/WriteFile: the caller opens exactly the path that was checked.
 func (fs fileScope) resolveFileArg(path string) (string, error) {
-	resolved, err := resolveAndValidatePath(resolveWorkspacePath(path, fs.workspace), fs.baseDir)
+	var resolved string
+	var err error
+	if fs.baseDir != "" {
+		resolved, err = resolveAndValidatePath(resolveWorkspacePath(path, fs.workspace), fs.baseDir)
+	} else {
+		resolved, err = fs.confine(resolveWorkspacePath(path, fs.workspace))
+	}
 	if err != nil {
 		return "", err
 	}
@@ -74,6 +126,109 @@ func (fs fileScope) resolveFileArg(path string) (string, error) {
 		return "", err
 	}
 	return resolved, nil
+}
+
+// allowedRoots returns the canonical allowed areas, in display order, without
+// duplicates: the workspace, /tmp, the process temp dir, foci's temp root, then
+// the configured extras.
+func (fs fileScope) allowedRoots() []string {
+	temps := []string{"/tmp", os.TempDir(), tempdir.Dir()}
+	if fs.tempRoots != nil {
+		temps = *fs.tempRoots
+	}
+	cands := append([]string{fs.workspace}, temps...)
+	if fs.extraRoots != nil {
+		cands = append(cands, fs.extraRoots()...)
+	}
+	var roots []string
+	for _, c := range cands {
+		if c == "" || !filepath.IsAbs(c) {
+			continue // a relative root has no fixed meaning here: never matches
+		}
+		r, err := canonicalFilePath(c)
+		if err != nil {
+			r = filepath.Clean(c)
+		}
+		if !slices.Contains(roots, r) {
+			roots = append(roots, r)
+		}
+	}
+	return roots
+}
+
+// confine canonicalises path and requires it to lie in an allowed area.
+func (fs fileScope) confine(path string) (string, error) {
+	canon, err := canonicalFilePath(path)
+	if err != nil {
+		return "", err
+	}
+	roots := fs.allowedRoots()
+	for _, r := range roots {
+		if withinDir(canon, r) {
+			return canon, nil
+		}
+	}
+	shown := path
+	if canon != path {
+		shown = fmt.Sprintf("%s (resolves to %s)", path, canon)
+	}
+	return "", fmt.Errorf("access denied: %s is outside the areas foci file tools may use (%s); "+
+		"the agent's workspace and /tmp are always allowed, and an operator can add a directory with %s in foci.toml",
+		shown, strings.Join(roots, ", "), FileAllowedPathsKey)
+}
+
+// withinDir reports whether p is root or lies under it. Both must be canonical.
+func withinDir(p, root string) bool {
+	if root == string(filepath.Separator) {
+		return true
+	}
+	return p == root || strings.HasPrefix(p, root+string(filepath.Separator))
+}
+
+// canonicalFilePath returns the absolute, cleaned, symlink-resolved form of p.
+// For a path that does not exist yet it resolves the deepest existing ancestor
+// and re-appends the rest. Unlike secrets.CanonicalPath it fails closed: an
+// error other than "does not exist" is returned, and a dangling symlink
+// anywhere in the unresolved tail is refused — os.WriteFile would follow it
+// to a target the containment check never saw.
+func canonicalFilePath(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", fmt.Errorf("resolve path: %w", err)
+	}
+	r, err := filepath.EvalSymlinks(abs)
+	if err == nil {
+		return r, nil
+	}
+	if !os.IsNotExist(err) {
+		return "", fmt.Errorf("resolve path: %w", err)
+	}
+	dir := abs
+	var tail []string
+	for {
+		// dir does not resolve. If it exists at all, it is a dangling link.
+		if _, lerr := os.Lstat(dir); lerr == nil {
+			return "", fmt.Errorf("access denied: %s is a symlink to a missing target", dir)
+		} else if !os.IsNotExist(lerr) {
+			return "", fmt.Errorf("resolve path: %w", lerr)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return abs, nil // unreachable in practice: the root always exists
+		}
+		tail = append(tail, filepath.Base(dir))
+		dir = parent
+		r, err := filepath.EvalSymlinks(dir)
+		if err == nil {
+			for i := len(tail) - 1; i >= 0; i-- {
+				r = filepath.Join(r, tail[i])
+			}
+			return r, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("resolve ancestor: %w", err)
+		}
+	}
 }
 
 // rewriteContainedPaths resolves the named path params in raw against fs and
@@ -120,18 +275,20 @@ func rewriteContainedPaths(raw json.RawMessage, fs fileScope, stringFields []str
 	return out, nil
 }
 
-func NewReadTool(store *secrets.Store, workspace string, maxReadBytes func() int64) *Tool {
+func NewReadTool(store *secrets.Store, workspace string, maxReadBytes func() int64, opts ...FileOpt) *Tool {
+	scope := newFileScope(fileScope{store: store, workspace: workspace, maxReadBytes: maxReadBytes}, opts)
 	return &Tool{
 		Name:        "read",
 		Description: "Read the contents of a file (line-numbered) or list a directory. Use offset/limit to read a specific range of lines.",
 		Parameters:  json.RawMessage(readToolSchema),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return readFile(ctx, params, fileScope{store: store, workspace: workspace, maxReadBytes: maxReadBytes})
+			return readFile(ctx, params, scope)
 		},
 	}
 }
 
-func NewWriteTool(store *secrets.Store, workspace string, blockedPaths []config.BlockedPath, fileMode os.FileMode) *Tool {
+func NewWriteTool(store *secrets.Store, workspace string, blockedPaths []config.BlockedPath, fileMode os.FileMode, opts ...FileOpt) *Tool {
+	scope := newFileScope(fileScope{store: store, workspace: workspace}, opts)
 	return &Tool{
 		Name:        "write",
 		Description: "Create or overwrite a file with the given content.",
@@ -150,12 +307,13 @@ func NewWriteTool(store *secrets.Store, workspace string, blockedPaths []config.
 			"required": ["path", "content"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return writeFile(ctx, params, fileScope{store: store, workspace: workspace}, fileMode, blockedPaths)
+			return writeFile(ctx, params, scope, fileMode, blockedPaths)
 		},
 	}
 }
 
-func NewEditTool(store *secrets.Store, workspace string, blockedPaths []config.BlockedPath, fileMode os.FileMode, maxReadBytes func() int64) *Tool {
+func NewEditTool(store *secrets.Store, workspace string, blockedPaths []config.BlockedPath, fileMode os.FileMode, maxReadBytes func() int64, opts ...FileOpt) *Tool {
+	scope := newFileScope(fileScope{store: store, workspace: workspace, maxReadBytes: maxReadBytes}, opts)
 	return &Tool{
 		Name:        "edit",
 		Description: "Find and replace text in a file. The old_string must appear exactly once in the file.",
@@ -178,7 +336,7 @@ func NewEditTool(store *secrets.Store, workspace string, blockedPaths []config.B
 			"required": ["path", "old_string", "new_string"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return editFile(ctx, params, fileScope{store: store, workspace: workspace, maxReadBytes: maxReadBytes}, fileMode, blockedPaths)
+			return editFile(ctx, params, scope, fileMode, blockedPaths)
 		},
 	}
 }
@@ -286,36 +444,9 @@ func resolveAndValidatePath(path, baseDir string) (string, error) {
 		return "", fmt.Errorf("absolute paths not allowed in isolated mode")
 	}
 
-	resolved := filepath.Clean(filepath.Join(baseDir, path))
-
-	evalResolved, err := filepath.EvalSymlinks(resolved)
-	if err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("resolve path: %w", err)
-	}
-	if err == nil {
-		resolved = evalResolved
-	} else {
-		// File doesn't exist yet — resolve the deepest existing ancestor
-		// to catch symlinks on intermediate path components.
-		dir := resolved
-		var tail []string
-		for {
-			parent := filepath.Dir(dir)
-			tail = append(tail, filepath.Base(dir))
-			dir = parent
-			evalDir, err := filepath.EvalSymlinks(dir)
-			if err == nil {
-				// Rebuild: resolved ancestor + unresolved tail components
-				for i := len(tail) - 1; i >= 0; i-- {
-					evalDir = filepath.Join(evalDir, tail[i])
-				}
-				resolved = evalDir
-				break
-			}
-			if !os.IsNotExist(err) {
-				return "", fmt.Errorf("resolve ancestor: %w", err)
-			}
-		}
+	resolved, err := canonicalFilePath(filepath.Join(baseDir, path))
+	if err != nil {
+		return "", err
 	}
 
 	if !strings.HasPrefix(resolved, evalBase+string(filepath.Separator)) && resolved != evalBase {

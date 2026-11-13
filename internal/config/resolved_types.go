@@ -184,6 +184,7 @@ type ResolvedTool struct {
 	TodoFormat          string
 	AllowTools          []string // empty = no allowlist; see ToolPermitted
 	DenyTools           []string // union of the global and agent lists
+	FileAllowedPaths    []string // union of the global and agent lists (#3076)
 }
 
 func resolveTool(m ToolConfig) ResolvedTool {

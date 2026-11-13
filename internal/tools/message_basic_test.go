@@ -52,7 +52,7 @@ func TestSendMessageToUserDocumentOnly(t *testing.T) {
 	if result.Text != "Sent: report.pdf" {
 		t.Errorf("result = %q", result.Text)
 	}
-	if len(mock.documentCalls) != 1 || mock.documentCalls[0] != "/tmp/report.pdf" {
+	if len(mock.documentCalls) != 1 || mock.documentCalls[0] != canonPath(t, "/tmp/report.pdf") {
 		t.Errorf("documentCalls = %v", mock.documentCalls)
 	}
 }
@@ -75,7 +75,7 @@ func TestSendMessageToUserVoice(t *testing.T) {
 	if result.Text != "Sent: note.ogg" {
 		t.Errorf("result = %q", result.Text)
 	}
-	if len(mock.voiceCalls) != 1 || mock.voiceCalls[0] != "/tmp/note.ogg" {
+	if len(mock.voiceCalls) != 1 || mock.voiceCalls[0] != canonPath(t, "/tmp/note.ogg") {
 		t.Errorf("voiceCalls = %v", mock.voiceCalls)
 	}
 }

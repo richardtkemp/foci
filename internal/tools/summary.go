@@ -25,7 +25,8 @@ import (
 // piped input is written to a temp file and passed via the file param. So
 // `cat foo.txt | foci_summary "summarise this"` works without the Go-side
 // tool needing stdin awareness.
-func NewSummaryTool(store *secrets.Store, summariser Summariser, workspace string) *Tool {
+func NewSummaryTool(store *secrets.Store, summariser Summariser, workspace string, opts ...FileOpt) *Tool {
+	scope := newFileScope(fileScope{store: store, workspace: workspace}, opts)
 	return &Tool{
 		Name:        "summary",
 		Description: "Summarize or extract specific information from a file using a fast, cheap model call. Do NOT use this to read or dump full file contents — use the read tool for that. This tool is for targeted questions like 'what config options are defined?' or 'summarize the error handling approach', not for retrieving the file text itself.",
@@ -46,7 +47,7 @@ func NewSummaryTool(store *secrets.Store, summariser Summariser, workspace strin
 			"required": ["file", "prompt"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return summaryExecute(ctx, params, fileScope{store: store, workspace: workspace}, summariser)
+			return summaryExecute(ctx, params, scope, summariser)
 		},
 	}
 }

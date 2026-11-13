@@ -251,6 +251,8 @@ var (
 		"tools.exec_auto_background", "agent.tools.exec_auto_background",
 		"tools.max_upload_file_size", "agent.tools.max_upload_file_size",
 		"tools.max_file_read_bytes", "agent.tools.max_file_read_bytes",
+		// #3076: read per call by the file tools' scope (fileAreas).
+		"tools.file_allowed_paths", "agent.tools.file_allowed_paths",
 		"tools.http_max_spill_bytes", "agent.tools.http_max_spill_bytes",
 		"tools.web_fetch_max_bytes", "agent.tools.web_fetch_max_bytes",
 		"memory.search_backend", "agent.memory.search_backend",

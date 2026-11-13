@@ -154,6 +154,17 @@ func execExtraEnv(p setupParams) []string {
 	return env
 }
 
+// fileAreas is the file scope every non-isolated file-touching tool gets
+// (#3076): the agent's workspace, and the live tools.file_allowed_paths, read
+// on each call so a config edit applies without a restart. /tmp is built in.
+func fileAreas(d *toolDeps) []tools.FileOpt {
+	live := d.p.resolvedLive
+	return []tools.FileOpt{
+		tools.WithWorkspace(d.p.acfg.Workspace),
+		tools.WithExtraRoots(func() []string { return live.Load().Tools.FileAllowedPaths }),
+	}
+}
+
 // toolTable's row order decides registration order only; it is otherwise
 // cosmetic. The model's tool-list order — and so the prompt-cache prefix —
 // comes from Registry.ToolDefs(), which sorts by name, and the exec bridge's
@@ -211,21 +222,22 @@ var toolTable = []toolEntry{
 
 	{name: "read", paths: pathAPI, build: func(d *toolDeps) *tools.Tool {
 		live := d.p.resolvedLive
-		return tools.NewReadTool(d.agentStore, d.p.acfg.Workspace, func() int64 { return live.Load().Tools.MaxFileReadBytes })
+		return tools.NewReadTool(d.agentStore, d.p.acfg.Workspace, func() int64 { return live.Load().Tools.MaxFileReadBytes },
+			fileAreas(d)...)
 	}},
 	{name: "write", paths: pathAPI, build: func(d *toolDeps) *tools.Tool {
 		fileMode, _ := config.ParseFileMode(d.p.cfg.FileMode)
-		return tools.NewWriteTool(d.agentStore, d.p.acfg.Workspace, d.blockedPaths, fileMode)
+		return tools.NewWriteTool(d.agentStore, d.p.acfg.Workspace, d.blockedPaths, fileMode, fileAreas(d)...)
 	}},
 	{name: "edit", paths: pathAPI, build: func(d *toolDeps) *tools.Tool {
 		fileMode, _ := config.ParseFileMode(d.p.cfg.FileMode)
 		live := d.p.resolvedLive
 		return tools.NewEditTool(d.agentStore, d.p.acfg.Workspace, d.blockedPaths, fileMode,
-			func() int64 { return live.Load().Tools.MaxFileReadBytes })
+			func() int64 { return live.Load().Tools.MaxFileReadBytes }, fileAreas(d)...)
 	}},
 
 	{name: "summary", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {
-		return tools.NewSummaryTool(d.agentStore, d.summariser, d.p.acfg.Workspace)
+		return tools.NewSummaryTool(d.agentStore, d.summariser, d.p.acfg.Workspace, fileAreas(d)...)
 	}},
 
 	{name: "http_request", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {
@@ -236,7 +248,7 @@ var toolTable = []toolEntry{
 			func() int64 { return live.Load().Tools.MaxUploadFileSize },
 			func() int64 { return live.Load().Tools.HTTPMaxSpillBytes },
 			func() int64 { return int64(live.Load().Summary.MaxResultChars) },
-			d.notifier, fileMode)
+			d.notifier, fileMode, fileAreas(d)...)
 	}},
 
 	// SearchProvider/FetchProvider stay baked: they pick WHICH tool object gets
@@ -320,7 +332,7 @@ var toolTable = []toolEntry{
 				return session.SessionTypeUnknown
 			}
 			return entry.SessionType
-		}, sendToChatMermaid(d.p.cfg))
+		}, sendToChatMermaid(d.p.cfg), append(fileAreas(d), tools.WithBlocklist(d.agentStore))...)
 	}},
 
 	{name: "send_to_session", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {

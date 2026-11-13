@@ -20,8 +20,11 @@ import (
 
 // NewSendToChatTool builds send_to_chat. With a mermaid renderer, a mermaid
 // source file (.mmd/.mermaid) sent as a document is followed by a rendered PNG
-// of it (#2195); a nil renderer sends the source alone.
-func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts func() voice.TTS, sessionTypeFn func(sessionKey string) session.SessionType, mermaidR *mermaid.Renderer) *Tool {
+// of it (#2195); a nil renderer sends the source alone. opts set the file
+// scope (#3076): the file must lie in the agent's allowed areas and pass the
+// blocklist, since the gateway reads it and uploads it to a chat platform.
+func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts func() voice.TTS, sessionTypeFn func(sessionKey string) session.SessionType, mermaidR *mermaid.Renderer, opts ...FileOpt) *Tool {
+	scope := newFileScope(fileScope{}, opts)
 	return &Tool{
 		Name:       "send_to_chat",
 		ExecExport: true,
@@ -57,7 +60,7 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts fu
 			}
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return sendToChatExecute(ctx, params, getSender, tts, sessionTypeFn, mermaidR)
+			return sendToChatExecute(ctx, params, getSender, tts, sessionTypeFn, mermaidR, scope)
 		},
 	}
 }
@@ -159,7 +162,7 @@ func prepareNamedFile(filePath, name string) (string, func(), error) {
 	return linkPath, cleanup, nil
 }
 
-func sendToChatExecute(ctx context.Context, params json.RawMessage, getSender func(sessionKey string) platform.Sender, ttsFn func() voice.TTS, sessionTypeFn func(sessionKey string) session.SessionType, mermaidR *mermaid.Renderer) (ToolResult, error) {
+func sendToChatExecute(ctx context.Context, params json.RawMessage, getSender func(sessionKey string) platform.Sender, ttsFn func() voice.TTS, sessionTypeFn func(sessionKey string) session.SessionType, mermaidR *mermaid.Renderer, fs fileScope) (ToolResult, error) {
 	p, err := UnmarshalParams[struct {
 		Text     string `json:"text"`
 		FilePath string `json:"file"`
@@ -185,8 +188,23 @@ func sendToChatExecute(ctx context.Context, params json.RawMessage, getSender fu
 		displayName = p.FilePath
 	}
 
+	// Confine the file before anything reads it (#3076). The canonical path
+	// is what gets opened; when it is a symlink's target with another
+	// basename, the name the agent gave stays the displayed one.
+	sendName := p.Filename
+	if p.FilePath != "" {
+		resolved, err := fs.resolveFileArg(p.FilePath)
+		if err != nil {
+			return ToolResult{}, err
+		}
+		if sendName == "" && filepath.Base(resolved) != filepath.Base(p.FilePath) {
+			sendName = filepath.Base(p.FilePath)
+		}
+		p.FilePath = resolved
+	}
+
 	// Custom display filename via a per-call symlink (no-op when unset).
-	sendPath, cleanup, err := prepareNamedFile(p.FilePath, p.Filename)
+	sendPath, cleanup, err := prepareNamedFile(p.FilePath, sendName)
 	if err != nil {
 		return ToolResult{}, err
 	}

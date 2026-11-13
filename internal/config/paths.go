@@ -206,8 +206,10 @@ func (c *Config) ResolveAllPaths() {
 		}
 	}
 	resolveUserPaths(c.Skills.ExtraDirs)
+	resolveUserPaths(c.Tools.FileAllowedPaths)
 	for i := range c.Agents {
 		resolveUserPaths(c.Agents[i].Skills.ExtraDirs)
+		resolveUserPaths(c.Agents[i].Tools.FileAllowedPaths)
 	}
 }
 

@@ -37,7 +37,7 @@ func (t ResolvedTool) ToolPermitted(name string) bool {
 // and the global [tools] settings. Allow: the agent's list when the agent set
 // one (even an empty one, which lifts a global allowlist for that agent),
 // else the global list. Deny: the union of both lists, so an agent cannot
-// remove a globally denied tool.
+// remove a globally denied tool. file_allowed_paths (#3076): the union too.
 func resolveToolAccess(t *ResolvedTool, agent, global ToolConfig) {
 	t.AllowTools = global.AllowTools
 	if agent.AllowTools != nil {
@@ -50,6 +50,19 @@ func resolveToolAccess(t *ResolvedTool, agent, global ToolConfig) {
 		}
 	}
 	t.DenyTools = deny
+	t.FileAllowedPaths = unionStrings(global.FileAllowedPaths, agent.FileAllowedPaths)
+}
+
+// unionStrings returns the entries of a then b, first occurrence kept, empty
+// strings dropped. Nil when both are empty.
+func unionStrings(a, b []string) []string {
+	var out []string
+	for _, s := range slices.Concat(a, b) {
+		if s != "" && !slices.Contains(out, s) {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // validateToolLists rejects any allow_tools / deny_tools entry, global or

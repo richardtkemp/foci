@@ -271,7 +271,15 @@ A hand edit of `foci.toml` now needs `sudo` (for example `sudoedit`); editors th
 
 ### In-process file tools
 
-Some tools run **inside** foci-gw (the main agent's `read`/`write`/`edit`, and the `ExecExport` tools `summary`/`http_request` invoked over the exec bridge), so the OS group-drop does not apply to them — they hold the gateway's credentials. These tools must therefore enforce the boundary themselves: every file-touching path goes through `fileScope.resolveFileArg` (`internal/tools/files.go`), which canonicalises the path (resolving symlinks), enforces isolated-directory containment for sandboxed spawns, and rejects blocked paths via `Store.IsBlockedPath`. This covers `read`/`write`/`edit`, `summary`, and `http_request`'s `body_file` / `files[]` / `save_to`, so none of them can read `secrets.toml` or `/proc/self/environ` even though they execute at gateway privilege.
+Some tools run **inside** foci-gw (the main agent's `read`/`write`/`edit`, and the `ExecExport` tools `summary`/`http_request`/`send_to_chat` invoked over the exec bridge), so the OS group-drop does not apply to them — they hold the gateway's credentials. They are also auto-approved: a delegated agent's `foci_*` calls never ask the user. These tools must therefore enforce the boundary themselves: every file-touching path goes through `fileScope.resolveFileArg` (`internal/tools/files.go`). This covers `read`/`write`/`edit`, `summary`, `send_to_chat`'s `file`, and `http_request`'s `body_file` / `files[]` / `save_to`.
+
+`resolveFileArg` does three things, in order:
+
+1. **Canonicalise.** The path is made absolute (relative paths resolve against the agent's workspace) and every symlink is resolved. For a file that does not exist yet, the deepest existing ancestor is resolved. A dangling symlink anywhere on the path is refused: a write would follow it to a target the check never saw.
+2. **Confine (#3076).** A sandboxed (isolated) spawn's path must stay inside its own temp directory. Every other path must lie in an **allowed area**: the agent's workspace, `/tmp` (with the process temp dir and foci's temp root), or a directory in `tools.file_allowed_paths` (global `[tools]` or per agent; the lists add up; empty by default; applies live). A refusal names the allowed areas and that key. So an agent cannot use these tools to upload, or overwrite, a file elsewhere that the foci user can reach, such as another agent's workspace or a dotfile. The same read or write from its shell would need the user's approval.
+3. **Blocklist.** The canonical path is checked with `Store.IsBlockedPath`, inside the allowed areas too, so none of the tools can read `secrets.toml` or `/proc/self/environ` even though they run at gateway privilege.
+
+The tool then opens the canonical path, so it opens what was checked. A symlink the agent swaps in between the check and the open is not caught: the agent's own shell could race it.
 
 ### Defence in depth
 

@@ -707,6 +707,10 @@ type ToolConfig struct {
 	// global list; deny_tools is unioned in Resolve instead.
 	AllowTools []string `toml:"allow_tools" desc:"The only foci tools the agent may have (names like shell, browser, send_to_session). The agent's list replaces the global one; an empty or unset list means every tool. Covers foci tools on every backend, not Claude Code or opencode built-in tools. Needs a restart"`
 	DenyTools  []string `toml:"deny_tools"  desc:"Foci tools the agent must never have, applied after allow_tools. The global and the agent's lists add up, so an agent cannot lift a globally denied tool. Covers foci tools on every backend, not Claude Code or opencode built-in tools. Needs a restart"`
+	// FileAllowedPaths (#3076): extra directories foci's file tools may touch,
+	// beyond the agent's workspace and /tmp. A union like DenyTools, so a
+	// global entry reaches every agent and an agent's list adds to it.
+	FileAllowedPaths []string `toml:"file_allowed_paths" hot:"immediate" desc:"Extra directories foci's own file tools (http_request body_file, files and save_to, summary, send_to_chat file, and the read, write and edit tools of API agents) may read or write, beyond the agent's workspace and /tmp. The global and the agent's lists add up. ~ is your home dir; relative paths resolve against the foci home dir. Symlinks are resolved before the check, and the secrets file stays refused inside every area. Empty by default. Applies to the next tool call"`
 }
 
 type AnthropicConfig struct {

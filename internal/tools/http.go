@@ -41,7 +41,8 @@ type fileAttachment struct {
 // preview in the result and spills the full body (up to this cap) to disk (0 = 50MB default).
 // maxResultChars is the agent's max_result_chars tool-result guard; it bounds that inline
 // preview so a large text body can't flood the context (0 = no guard, 1MB preview).
-func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs func() int, maxUploadFileSize, maxSpillBytes, maxResultChars func() int64, notifier *AsyncNotifier, fileMode os.FileMode) *Tool {
+func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs func() int, maxUploadFileSize, maxSpillBytes, maxResultChars func() int64, notifier *AsyncNotifier, fileMode os.FileMode, opts ...FileOpt) *Tool {
+	scope := newFileScope(fileScope{store: store}, opts)
 	return &Tool{
 		Name:        "http_request",
 		ExecExport:  true,
@@ -137,12 +138,12 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 			"required": ["url"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return executeHTTPRequest(ctx, params, store, bwStore, tempDir, autoBackgroundSecs(), maxUploadFileSize(), maxSpillBytes(), maxResultChars(), notifier, fileMode)
+			return executeHTTPRequest(ctx, params, store, bwStore, tempDir, autoBackgroundSecs(), maxUploadFileSize(), maxSpillBytes(), maxResultChars(), notifier, fileMode, scope)
 		},
 	}
 }
 
-func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, maxUploadFileSize, maxSpillBytes, maxResultChars int64, notifier *AsyncNotifier, fileMode os.FileMode) (ToolResult, error) {
+func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, maxUploadFileSize, maxSpillBytes, maxResultChars int64, notifier *AsyncNotifier, fileMode os.FileMode, fs fileScope) (ToolResult, error) {
 	p, err := UnmarshalParams[struct {
 		URL              string            `json:"url"`
 		Method           string            `json:"method"`
@@ -173,10 +174,9 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 
 	// Resolve and contain every file-path param before any I/O. body_file and
 	// files[] are read, and save_to is written, inside foci-gw at full gateway
-	// privilege, so each must pass the blocklist (secrets file, /proc/self/
-	// environ). Isolated-dir containment (baseDir) is added for spawn sandboxes
-	// in a follow-up. (P0-2.)
-	fs := fileScope{store: store}
+	// privilege, so each must lie in the agent's allowed areas (#3076) and
+	// pass the blocklist (secrets file, /proc/self/environ). Isolated spawns
+	// wrap this tool and confine the paths to their baseDir first.
 	if p.BodyFile != "" {
 		if p.BodyFile, err = fs.resolveFileArg(p.BodyFile); err != nil {
 			return ToolResult{}, err

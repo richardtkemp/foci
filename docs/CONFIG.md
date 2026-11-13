@@ -1296,6 +1296,7 @@ Global defaults set in `[tools]`, overridable per-agent via `[agents.tools]`. Pe
 | `todo_format` | string | `"lines"` | Todo list rendering format: `"lines"` (one item per line) or `"table"` (tabular layout). Global: `[tools]`. |
 | `allow_tools` | string[] | unset | The only foci tools the agent may have. The agent's list **replaces** the global one; an unset or empty list means every tool (so an agent can set `allow_tools = []` to lift a global allowlist for itself). See [Tool access](#tool-access). Global: `[tools]`, per-agent: `[[agents]].tools`. Needs a restart. |
 | `deny_tools` | string[] | unset | Foci tools the agent must never have, applied after `allow_tools` (a tool in both is withheld). The global and agent lists **add up**: an agent cannot lift a globally denied tool. See [Tool access](#tool-access). Global: `[tools]`, per-agent: `[[agents]].tools`. Needs a restart. |
+| `file_allowed_paths` | string[] | unset | Extra directories foci's own file tools may read or write, beyond the agent's workspace and `/tmp`, which are always allowed (#3076). The tools are `http_request` (`body_file`, `files[]`, `save_to`), `summary`, `send_to_chat`'s `file`, and an API agent's `read`/`write`/`edit`. A path is checked after symlinks are resolved, and the secrets blocklist still applies inside every area. The global and agent lists **add up**. `~` is the home dir; a relative entry resolves against the foci home dir. Applies live, on the next tool call. Global: `[tools]`, per-agent: `[[agents]].tools`. |
 
 #### Tool access
 

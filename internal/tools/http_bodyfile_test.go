@@ -96,7 +96,7 @@ func TestHTTPRequestBodyFileNotFound(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":       "http://example.com",
 		"method":    "POST",
-		"body_file": "/nonexistent/payload.json",
+		"body_file": "/tmp/nonexistent-3076/payload.json",
 	})
 
 	_, err := tool.Execute(context.Background(), params)

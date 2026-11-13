@@ -28,7 +28,7 @@ func TestSendMessageToUserSendAsVideo(t *testing.T) {
 	if result.Text != "Sent: clip.mp4" {
 		t.Errorf("result = %q", result.Text)
 	}
-	if len(mock.videoCalls) != 1 || mock.videoCalls[0] != "/tmp/clip.mp4" {
+	if len(mock.videoCalls) != 1 || mock.videoCalls[0] != canonPath(t, "/tmp/clip.mp4") {
 		t.Errorf("videoCalls = %v", mock.videoCalls)
 	}
 	if len(mock.documentCalls) != 0 {
@@ -201,7 +201,7 @@ func TestSendMessageToUserSendAsPhoto(t *testing.T) {
 	if result.Text != "Sent: image.jpg" {
 		t.Errorf("result = %q", result.Text)
 	}
-	if len(mock.photoCalls) != 1 || mock.photoCalls[0] != "/tmp/image.jpg" {
+	if len(mock.photoCalls) != 1 || mock.photoCalls[0] != canonPath(t, "/tmp/image.jpg") {
 		t.Errorf("photoCalls = %v", mock.photoCalls)
 	}
 }
@@ -268,7 +268,7 @@ func TestSendMessageToUserSendAsAudio(t *testing.T) {
 	if result.Text != "Sent: song.mp3" {
 		t.Errorf("result = %q", result.Text)
 	}
-	if len(mock.audioCalls) != 1 || mock.audioCalls[0] != "/tmp/song.mp3" {
+	if len(mock.audioCalls) != 1 || mock.audioCalls[0] != canonPath(t, "/tmp/song.mp3") {
 		t.Errorf("audioCalls = %v", mock.audioCalls)
 	}
 }
@@ -335,7 +335,7 @@ func TestSendMessageToUserSendAsAnimation(t *testing.T) {
 	if result.Text != "Sent: funny.gif" {
 		t.Errorf("result = %q", result.Text)
 	}
-	if len(mock.animationCalls) != 1 || mock.animationCalls[0] != "/tmp/funny.gif" {
+	if len(mock.animationCalls) != 1 || mock.animationCalls[0] != canonPath(t, "/tmp/funny.gif") {
 		t.Errorf("animationCalls = %v", mock.animationCalls)
 	}
 }
