@@ -311,7 +311,7 @@ func TestSendToSpawnerInEverySpawnToolSet(t *testing.T) {
 	reg.Register(s.SpawnTool())
 	reg.Register(&Tool{Name: "read"})
 	_, raw := spawnIsolatedToolSet(reg, spawnRawBlacklist, nil, t.TempDir(), 0o600)
-	_, char := spawnToolSet(reg, spawnCharacterBlacklist, false)
+	_, char := spawnToolSet(reg, spawnCharacterBlacklist)
 	_, explore := spawnExploreToolSet(reg, nil)
 	for name, set := range map[string]map[string]*Tool{"raw": raw, "character": char, "explore": explore} {
 		if set["send_to_spawner"] == nil {

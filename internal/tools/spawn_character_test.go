@@ -203,9 +203,9 @@ func TestCloneNotMarkedCharacter(t *testing.T) {
 }
 
 // TestBackgroundOnlyForCharacter proves background is refused for a mode
-// that returns directly, and a direct spawn (here an API one-shot, whose
-// calls carry its spawnLink) cannot start a background spawn: nothing would
-// take its result (#3061).
+// that returns directly, and a foreground (direct) spawn (here an API
+// one-shot, whose calls carry its spawnLink) can start no spawn of any mode,
+// foreground or background (#3081).
 func TestBackgroundOnlyForCharacter(t *testing.T) {
 	t.Parallel()
 	agent := newCtxSpawnAgent()
@@ -217,8 +217,16 @@ func TestBackgroundOnlyForCharacter(t *testing.T) {
 		}
 	}
 	nested := withSpawnLink(h.ctx, spawnLink{s: h.spawner, parent: SessionKeyFromContext(h.ctx), id: "spawn-direct", info: RunningSpawn{ID: "spawn-direct", Direct: true, Depth: 1}})
-	for _, p := range []string{`{"name":"charac8","prompt":"p","background":true}`, `{"name":"charac8","prompt":"p","context":"clone"}`} {
-		if _, err := h.spawner.SpawnTool().Execute(nested, json.RawMessage(p)); err == nil || !strings.Contains(err.Error(), "returns its result directly") {
+	// Each call has its own name, so a call that was let through cannot
+	// hide the next one's verdict behind a name clash.
+	for _, p := range []string{
+		`{"name":"charac8","prompt":"p","background":true}`,
+		`{"name":"charac9","prompt":"p","context":"clone"}`,
+		`{"name":"charac10","prompt":"p","context":"character"}`,
+		`{"name":"charac11","prompt":"p","context":"raw"}`,
+		`{"name":"charac12","prompt":"p","context":"explore"}`,
+	} {
+		if _, err := h.spawner.SpawnTool().Execute(nested, json.RawMessage(p)); err == nil || !strings.Contains(err.Error(), "a foreground spawn cannot start a spawn") {
 			t.Errorf("%s from a direct spawn: err = %v, want refused", p, err)
 		}
 	}
@@ -338,6 +346,10 @@ func TestSpawnToolTextIsApproved(t *testing.T) {
 			"Use 'raw' for a question that needs no context of yours, and 'explore' for read-only research.",
 			// #2662/#2656: new text, listed for Dick's approval.
 			"With agent=<id>, the spawn runs as another agent, in character mode. spawn_status lists your spawns while they run, and spawn_stop stops one.",
+			// #3081: Dick's Q3 ruling (2026-11-13 17:53), in STE.
+			"A foreground spawn (not in the background) blocks you until it returns: you cannot talk to the user meanwhile.",
+			"Keep a session the user talks to interactive: use a foreground spawn only for a short task or a special case, or when you are yourself in the background.",
+			"A foreground spawn cannot start a spawn of its own, so give a task that needs one to a background spawn.",
 		} {
 			if !strings.Contains(desc, want) {
 				t.Errorf("%s description lacks %q:\n%s", c.name, want, desc)

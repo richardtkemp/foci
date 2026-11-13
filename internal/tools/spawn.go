@@ -587,6 +587,13 @@ func spawnToolDescription(modes []string) string {
 		b.WriteString("\nUse " + strings.Join(rest, ", and ") + ".")
 	}
 	b.WriteString("\nWith agent=<id>, the spawn runs as another agent, in character mode. spawn_status lists your spawns while they run, and spawn_stop stops one.")
+	// #3081, Dick 2026-11-13: "foreground is blocking and therefore only for
+	// short-ish tasks or special occasions, OR if the spawning session is
+	// itself in the background. principle here is that we should keep
+	// user-facing sessions interactive, and fg spawns block that".
+	b.WriteString("\nA foreground spawn (not in the background) blocks you until it returns: you cannot talk to the user meanwhile. " +
+		"Keep a session the user talks to interactive: use a foreground spawn only for a short task or a special case, or when you are yourself in the background. " +
+		"A foreground spawn cannot start a spawn of its own, so give a task that needs one to a background spawn.")
 	return b.String()
 }
 
@@ -642,7 +649,11 @@ func (s *Spawner) SpawnTool() *Tool {
 			if p.Background && p.Context != spawnModeCharacter && p.Context != spawnModeClone {
 				return ToolResult{}, fmt.Errorf("background: only a character spawn can run in the background (a clone always does); %s returns its result directly", p.Context)
 			}
-			// One rule for nesting (#3061): the spawn depth limit.
+			// Nesting: a foreground spawn starts none (#3081); any other
+			// session is held to the spawn depth limit (#3061).
+			if err := checkDirectSpawnCaller(ctx); err != nil {
+				return ToolResult{}, err
+			}
 			if err := s.checkSpawnDepth(ctx); err != nil {
 				return ToolResult{}, err
 			}
@@ -651,13 +662,6 @@ func (s *Spawner) SpawnTool() *Tool {
 				return ToolResult{}, fmt.Errorf("NOT started: %s", msg)
 			}
 			background := p.Context == spawnModeClone || p.Background
-			if background && callerIsDirectSpawn(ctx) {
-				// Not a nesting rule: a direct spawn's session ends with its
-				// spawner's call, so a background result would reach no one
-				// (and an API one-shot's clone would fork its spawner's
-				// conversation, not its own).
-				return ToolResult{}, fmt.Errorf("NOT started: you are a spawn that returns its result directly, so nothing would take a background spawn's result. Run a %s spawn without background instead", spawnModeCharacter)
-			}
 
 			// The name is held from here until the spawn is registered under
 			// it, so a concurrent spawn call cannot take it meanwhile.
@@ -983,17 +987,15 @@ func (s *Spawner) runAPIOneShot(ctx context.Context, mode, prompt, modelGroup st
 	return ToolResult{}, fmt.Errorf("spawn: %q is not a one-shot mode", mode)
 }
 
-// spawnToolSet builds API tool definitions and a name→Tool map from the
-// registry, excluding any tools in the blacklist. Returns nil slices if
-// registry is nil.
+// spawnToolSet builds an API one-shot's tool definitions and a name→Tool map
+// from the registry, excluding any tools in the blacklist. Returns nil slices
+// if registry is nil.
 //
-// maySpawn (#3061) is whether the one-shot may start a spawn under the spawn
-// depth limit: then it gets spawn, else none of the spawn family. It never
-// gets spawn_send, spawn_status or spawn_stop: its tool calls run on its
-// spawner's session key, so those would reach its spawner's other spawns, and
-// a spawn it starts runs directly (callerIsDirectSpawn), so it has nothing to
-// check on or steer.
-func spawnToolSet(reg *Registry, blacklist map[string]bool, maySpawn bool) ([]provider.ToolDef, map[string]*Tool) {
+// A one-shot never gets the spawn family (#3081): it is a foreground spawn,
+// which may start no spawn (checkDirectSpawnCaller), and its tool calls run
+// on its spawner's session key, so spawn_send, spawn_status and spawn_stop
+// would reach its spawner's other spawns.
+func spawnToolSet(reg *Registry, blacklist map[string]bool) ([]provider.ToolDef, map[string]*Tool) {
 	if reg == nil {
 		return nil, nil
 	}
@@ -1001,10 +1003,7 @@ func spawnToolSet(reg *Registry, blacklist map[string]bool, maySpawn bool) ([]pr
 	defs := make([]provider.ToolDef, 0, len(all))
 	tools := make(map[string]*Tool, len(all))
 	for _, t := range all {
-		if blacklist[t.Name] {
-			continue
-		}
-		if spawnToolNames[t.Name] && (!maySpawn || t.Name != "spawn") {
+		if blacklist[t.Name] || spawnToolNames[t.Name] {
 			continue
 		}
 		defs = append(defs, provider.NewCustomTool(t.Name, t.Description, t.Parameters))

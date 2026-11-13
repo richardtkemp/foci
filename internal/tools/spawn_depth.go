@@ -18,6 +18,17 @@ package tools
 //     checks (checkSpawnDepth), for a session launched before the limit was
 //     lowered, and its refusal names the limit and the session's depth.
 //
+// A foreground (direct) spawn may start no spawn at all, of any mode, at any
+// depth (#3081, Dick 2026-11-13 18:13: "Let's go with foreground spawns may
+// not respawn in any situation"): an API one-shot or a delegated batch that
+// returns its result directly ends with its spawner's call, and its spawner
+// blocks on it meanwhile. So it is not offered the spawn tools either
+// (SessionMaySpawn is false for a direct batch's key; an API one-shot's tool
+// set leaves them out), and the spawn tool refuses its call
+// (checkDirectSpawnCaller). Background spawns (a background character spawn,
+// a clone) may start any mode, a clone included (Q7: "only bg spawns can
+// clone"), within the depth limit.
+//
 // Depth mode (fan-out trees, depth.go) is not counted: its leaves are not
 // spawns, so a leaf is a depth-0 session here and its spawn is depth 1 (Dick
 // 2026-11-13 01:27: a leaf's spawn counts "as if the leaf were a root
@@ -95,9 +106,13 @@ func SessionSpawnDepth(sessionKey string) int {
 	return spawnDepthIn(Spawns, sessionKey)
 }
 
-// SessionMaySpawn reports whether the session sessionKey may start a spawn
-// under the current limit, so whether it is offered the spawn tools.
+// SessionMaySpawn reports whether the session sessionKey may start a spawn,
+// so whether it is offered the spawn tools: not a direct spawn's delegated
+// batch (#3081), and under the current depth limit.
 func SessionMaySpawn(sessionKey string) bool {
+	if _, direct := directSpawnBatches.Load(sessionKey); direct {
+		return false
+	}
 	return SessionSpawnDepth(sessionKey) < MaxSpawnDepth()
 }
 
@@ -127,13 +142,23 @@ func (s *Spawner) checkSpawnDepth(ctx context.Context) error {
 
 // callerIsDirectSpawn reports whether the call comes from a direct spawn's
 // session (an API one-shot, a delegated batch): one that ends with its
-// spawner's call, so nothing would take a background spawn's result.
+// spawner's call.
 func callerIsDirectSpawn(ctx context.Context) bool {
 	if _, ok := spawnLinkFrom(ctx); ok {
 		return true
 	}
 	_, ok := directSpawnBatches.Load(SessionKeyFromContext(ctx))
 	return ok
+}
+
+// checkDirectSpawnCaller refuses a spawn call from a foreground (direct)
+// spawn, whatever the mode (#3081). It is not offered the spawn tools, so
+// this catches only a session launched with them before the rule.
+func checkDirectSpawnCaller(ctx context.Context) error {
+	if callerIsDirectSpawn(ctx) {
+		return fmt.Errorf("NOT started: you are a foreground spawn (your spawner waits for your result), and a foreground spawn cannot start a spawn of any kind. Do the work yourself, or say in your result what is left")
+	}
+	return nil
 }
 
 // ToolDefsForSession is ToolDefs for an API turn on sessionKey: without the

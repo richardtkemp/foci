@@ -272,6 +272,11 @@ func TestCrossAgentSpawnRefusals(t *testing.T) {
 	if _, err := caller.SpawnTool().Execute(c, json.RawMessage(`{"name":"cross9","prompt":"p","agent":"`+target.deps.AgentID+`"}`)); err == nil || !strings.Contains(err.Error(), "spawn depth limit") {
 		t.Errorf("from a spawn at the limit: err = %v, want refused by the spawn depth limit", err)
 	}
+	// A foreground spawn may not start one either (#3081), below the limit.
+	direct := withSpawnLink(ctx, spawnLink{s: caller, parent: caller.deps.AgentID + "/c1", id: "spawn-fg", info: RunningSpawn{ID: "spawn-fg", Direct: true, Depth: 1}})
+	if _, err := caller.SpawnTool().Execute(direct, json.RawMessage(`{"name":"cross12","prompt":"p","agent":"`+target.deps.AgentID+`"}`)); err == nil || !strings.Contains(err.Error(), "a foreground spawn cannot start a spawn") {
+		t.Errorf("from a foreground spawn: err = %v, want refused as a foreground spawn", err)
+	}
 	// Naming yourself is an ordinary spawn.
 	if _, err := caller.SpawnTool().Execute(ctx, json.RawMessage(`{"name":"cross10","prompt":"p","context":"raw","agent":"`+caller.deps.AgentID+`"}`)); err != nil {
 		t.Errorf("agent = own id: %v, want an ordinary spawn", err)

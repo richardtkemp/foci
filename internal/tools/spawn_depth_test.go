@@ -32,66 +32,62 @@ func (r *chainBatchRunner) RunBatch(_ context.Context, req delegator.BatchReques
 	return r.hook(key, req)
 }
 
-// TestSpawnDepthChainsThroughDelegatedBatches proves #3061 on the delegated
+// TestDelegatedForegroundSpawnCannotSpawn proves #3081 on the delegated
 // direct path, end to end: a character spawn of a chat is a depth-1 batch
-// whose exec bridge has the spawn tools (it may spawn under the default limit
-// 2); its own spawn is a depth-2 batch whose bridge has none; and a spawn call
-// from it anyway (a bridge built before the limit was lowered) is refused,
-// naming its depth and the limit.
-func TestSpawnDepthChainsThroughDelegatedBatches(t *testing.T) {
+// (below the limit 2) whose exec bridge has no spawn tools, because it is a
+// foreground spawn; and a spawn call from it anyway (a bridge built before
+// the rule) is refused for that reason, not the depth limit. Once the batch
+// has returned, its key is no longer a foreground spawn's.
+func TestDelegatedForegroundSpawnCannotSpawn(t *testing.T) {
 	t.Parallel()
 	reg := NewRegistry()
 	for _, n := range []string{"spawn", "spawn_status", "read"} {
 		reg.Register(&Tool{Name: n})
 	}
 	type seen struct {
+		key    string
 		depth  int
 		bridge bool // the batch's exec bridge has foci_spawn
+		read   bool // control: it has an ordinary tool
 	}
 	var mu sync.Mutex
 	var got []seen
 	var nestedErr error
-	runner := &chainBatchRunner{pfx: "depthchain/c1"}
+	runner := &chainBatchRunner{pfx: "fgnospawn/c1"}
 	s := newDelegatedSpawner(runner, allBatchCaps)
-	s.deps.AgentID = "depthchain"
+	s.deps.AgentID = "fgnospawn"
 	s.deps.Tracker = NewSpawnTracker()
 	runner.hook = func(key string, req delegator.BatchRequest) (string, error) {
-		may := SessionMaySpawn(key)
+		br := RegistryForAccess(reg, req.Access, SessionMaySpawn(key))
 		mu.Lock()
-		got = append(got, seen{SessionSpawnDepth(key), RegistryForAccess(reg, req.Access, may).Get("spawn") != nil})
-		level := len(got)
+		got = append(got, seen{key, SessionSpawnDepth(key), br.Get("spawn") != nil, br.Get("read") != nil})
 		mu.Unlock()
-		if level <= 2 {
-			// The batch calls foci_spawn over its exec bridge: only its
-			// session key comes with the call.
-			ctx := WithSessionKey(context.Background(), key)
-			res, err := s.SpawnTool().Execute(ctx, json.RawMessage(fmt.Sprintf(`{"name":"lvl%d","prompt":"level %d"}`, level+1, level+1)))
-			if err != nil {
-				mu.Lock()
-				nestedErr = err
-				mu.Unlock()
-				return "stopped at " + key, nil
-			}
-			return res.Text, nil
+		// The batch calls foci_spawn over its exec bridge: only its
+		// session key comes with the call.
+		ctx := WithSessionKey(context.Background(), key)
+		if _, err := s.SpawnTool().Execute(ctx, json.RawMessage(`{"name":"lvl2","prompt":"level 2"}`)); err != nil {
+			mu.Lock()
+			nestedErr = err
+			mu.Unlock()
 		}
-		return "leaf", nil
+		return "done", nil
 	}
-	if _, err := s.SpawnTool().Execute(WithSessionKey(context.Background(), "depthchain/c1"), json.RawMessage(`{"name":"lvl1","prompt":"level 1"}`)); err != nil {
+	if _, err := s.SpawnTool().Execute(WithSessionKey(context.Background(), "fgnospawn/c1"), json.RawMessage(`{"name":"lvl1","prompt":"level 1"}`)); err != nil {
 		t.Fatalf("spawn from the chat: %v", err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(got) != 2 {
-		t.Fatalf("batches run = %+v, want 2 (the depth-2 batch's spawn refused)", got)
+	if len(got) != 1 {
+		t.Fatalf("batches run = %+v, want 1 (the foreground batch's spawn refused)", got)
 	}
-	if got[0].depth != 1 || !got[0].bridge {
-		t.Errorf("first batch = %+v, want depth 1 with the spawn tools", got[0])
+	if got[0].depth != 1 || got[0].bridge || !got[0].read {
+		t.Errorf("batch = %+v, want depth 1 with read and without the spawn tools", got[0])
 	}
-	if got[1].depth != 2 || got[1].bridge {
-		t.Errorf("second batch = %+v, want depth 2 without the spawn tools", got[1])
+	if nestedErr == nil || !strings.Contains(nestedErr.Error(), "a foreground spawn cannot start a spawn") {
+		t.Errorf("spawn from the foreground batch: err = %v, want refused as a foreground spawn", nestedErr)
 	}
-	if nestedErr == nil || !strings.Contains(nestedErr.Error(), "depth 2") || !strings.Contains(nestedErr.Error(), "limit is 2") {
-		t.Errorf("spawn from the depth-2 batch: err = %v, want refused naming depth 2 and limit 2", nestedErr)
+	if !SessionMaySpawn(got[0].key) {
+		t.Errorf("after the batch returned, %s still may not spawn: its key stayed mapped", got[0].key)
 	}
 }
 
@@ -144,25 +140,24 @@ func TestBackgroundSpawnDepthRecorded(t *testing.T) {
 	h.nextDelivery(t).done(true)
 }
 
-// TestAPICharacterOneShotGetsSpawnBelowLimit proves an API character
-// one-shot is offered spawn only while it may spawn (#3061: "API spawns
-// should be able to spawn, but governed by depth limit"): its depth comes
-// from its spawnLink, as runDirect and a restart's resume set it.
-func TestAPICharacterOneShotGetsSpawnBelowLimit(t *testing.T) {
+// TestAPICharacterOneShotGetsNoSpawn proves an API character one-shot is
+// offered none of the spawn family at any depth (#3081: a foreground spawn
+// may start no spawn), with an ordinary tool as the control.
+func TestAPICharacterOneShotGetsNoSpawn(t *testing.T) {
 	t.Parallel()
 	reg := NewRegistry()
 	for _, n := range []string{"spawn", "spawn_send", "read"} {
 		reg.Register(&Tool{Name: n})
 	}
 	s := NewSpawner(SpawnDeps{AgentID: "oneshotdepth", Registry: reg, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic"}, func() SpawnAgent { return nil })
-	for depth, want := range map[int]bool{1: true, 2: false} {
+	for _, depth := range []int{1, 2} {
 		ctx := withSpawnLink(WithSessionKey(context.Background(), "oneshotdepth/c1"), spawnLink{s: s, parent: "oneshotdepth/c1", id: "spawn-x", info: RunningSpawn{ID: "spawn-x", Direct: true, Depth: depth}})
 		_, p, err := s.apiOneShotRun(ctx, &oneShotRecord{Mode: spawnModeCharacter}, "task")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if (p.tools["spawn"] != nil) != want || p.tools["spawn_send"] != nil {
-			t.Errorf("depth %d: one-shot has spawn = %v (want %v), spawn_send = %v (want false)", depth, p.tools["spawn"] != nil, want, p.tools["spawn_send"] != nil)
+		if p.tools["spawn"] != nil || p.tools["spawn_send"] != nil || p.tools["read"] == nil {
+			t.Errorf("depth %d: one-shot has spawn = %v, spawn_send = %v (want neither), read = %v (want it)", depth, p.tools["spawn"] != nil, p.tools["spawn_send"] != nil, p.tools["read"] != nil)
 		}
 	}
 }
