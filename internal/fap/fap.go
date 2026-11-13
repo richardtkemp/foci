@@ -779,6 +779,22 @@ type AskgwPrompt struct {
 	// dialog shows it. Absent when unknown.
 	Host    string   `json:"host,omitempty"`
 	Choices []Choice `json:"choices"`
+	// ValueInput, when set, asks the user to type a value after one choice
+	// (#3090: an agent-requested secret). Only clients whose hello advertised
+	// "askgwValueInput" are sent such a prompt. Absent on every other prompt.
+	ValueInput *ValueInput `json:"valueInput,omitempty"`
+}
+
+// ValueInput is an AskgwPrompt's typed-value step (#3090). Tapping the choice
+// whose Data is Choice does not answer at once: the dialog shows a masked
+// text field labelled Label, with a submit button and a cancel button. Submit
+// answers with Data = Choice and the typed text in AskgwResponse.Value; cancel
+// answers with Data = CancelData and no value. The client must not store,
+// log or echo the typed text anywhere but that one frame.
+type ValueInput struct {
+	Choice     string `json:"choice"`
+	Label      string `json:"label"`
+	CancelData string `json:"cancelData"`
 }
 
 // AskgwPrompts carries the WHOLE list of pending askgw prompts, oldest first
@@ -1742,6 +1758,9 @@ type VoiceModePut struct {
 type AskgwResponse struct {
 	PromptID string `json:"promptId"`
 	Data     string `json:"data"`
+	// Value is the text typed in a ValueInput step (#3090), sent only with
+	// Data = ValueInput.Choice. It is a secret: never log or store it.
+	Value string `json:"value,omitempty"`
 }
 
 // ViewingSync lists the conversations the user's OTHER devices are viewing

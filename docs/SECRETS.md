@@ -29,6 +29,21 @@ See [CLI.md](CLI.md#secrets--manage-secrets) for full details.
 - `/secrets set section.key value` — add or update a secret
 - `/secrets remove section.key` — delete a secret
 
+### Agent requests (`foci_secrets`, #3090)
+
+An agent cannot write `secrets.toml` and never handles a value. It asks with the `secrets` tool (`foci_secrets` in a shell):
+
+```bash
+foci_secrets list                                            # names and rules, never values; no dialog
+foci_secrets set hetzner.api_key --allowed-hosts api.hetzner.cloud --allowed-agents clutch
+foci_secrets remove hetzner.api_key
+foci_secrets hosts hetzner add|remove <host>   |  foci_secrets hosts hetzner clear
+foci_secrets body hetzner add|remove <key>     |  foci_secrets body hetzner clear
+foci_secrets agents hetzner allow|deny a1,a2   |  foci_secrets agents hetzner clear
+```
+
+Every action except `list` opens a dialog in the foci app, and only there: with no app device able to show it, the request fails at once. The dialog names the asking agent and shows the section's rule before and after. For `set` the user taps Approve and then types the value in a masked field; the value goes over the app's socket straight into the store and is never logged, echoed or shown to the agent. The call returns at once; the agent receives the outcome (`applied`, `denied`, `cancelled`, `timed_out` after 30 minutes, or `failed`) as a later message. `--allowed-hosts` replaces the section's `allowed_hosts`; `--allowed-agents` sets `allowed_agents` (and removes any `denied_agents`: a section may not carry both). Omitted, each stays as it is. `list` reads the global sections, not the per-agent `[agents.<id>.*]` tables. Requests are in memory: a gateway restart drops a pending one silently.
+
 ### File format
 
 ```toml

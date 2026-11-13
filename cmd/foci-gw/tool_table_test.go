@@ -43,7 +43,7 @@ func TestToolTable_PerPathSets(t *testing.T) {
 		"ask", "spawn", "spawn_send", "spawn_status", "spawn_stop", "send_to_spawner",
 		"depth_fanout", "depth_report", "depth_claims", "depth_status",
 		"remind", "client",
-		"set_session_alias", "close_session", "compact_session", "whoami",
+		"set_session_alias", "secrets", "close_session", "compact_session", "whoami",
 	}
 	wantExec := []string{
 		"browser", "summary", "http_request", "web_search", "web_fetch",
@@ -51,7 +51,7 @@ func TestToolTable_PerPathSets(t *testing.T) {
 		"ask", "spawn", "spawn_send", "spawn_status", "spawn_stop", "send_to_spawner",
 		"depth_fanout", "depth_report", "depth_claims", "depth_status",
 		"remind", "client",
-		"set_session_alias", "close_session", "compact_session", "whoami",
+		"set_session_alias", "secrets", "close_session", "compact_session", "whoami",
 	}
 
 	if !equalStrings(api, wantAPI) {

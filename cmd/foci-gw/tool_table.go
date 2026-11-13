@@ -494,6 +494,15 @@ var toolTable = []toolEntry{
 			return tools.NewSetSessionAliasTool(d.p.sessionIndex, app.NotifyAliasChanged)
 		}},
 
+	// secrets: the agent asks to change secrets.toml; the user approves each
+	// write in a foci app dialog and types a set's value there (#3090). Gated
+	// like close_session: the dialog exists only in the app.
+	{name: "secrets", paths: pathBoth,
+		enabled: func(d *toolDeps) bool { return d.p.cfg.Platform("app") != nil },
+		build: func(d *toolDeps) *tools.Tool {
+			return tools.NewSecretsTool(currentSecretsRequester, d.notifier)
+		}},
+
 	// close_session: the agent closes the app chat it is running in, the same
 	// open-set removal as the user's Close chat (#2573), optionally marking it
 	// read at the turn's end (mark_read, #2592). Gated like

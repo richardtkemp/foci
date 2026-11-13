@@ -55,13 +55,15 @@ type pushTokens struct {
 	tokens   map[string]string // deviceId → FCM registration token
 	readWake map[string]bool   // deviceId → its latest hello advertised featureReadWake
 	askgw    map[string]bool   // deviceId → its latest hello advertised featureAskgwPrompts (#2707)
+	// askgwValue: deviceId → its latest hello advertised featureAskgwValueInput (#3090).
+	askgwValue map[string]bool
 	// askgwSeen is whether any hello advertised featureAskgwPrompts since this
 	// process started. It never clears, so a downgrade does not read as a restart.
 	askgwSeen bool
 }
 
 func newPushTokens() *pushTokens {
-	return &pushTokens{tokens: make(map[string]string), readWake: make(map[string]bool), askgw: make(map[string]bool)}
+	return &pushTokens{tokens: make(map[string]string), readWake: make(map[string]bool), askgw: make(map[string]bool), askgwValue: make(map[string]bool)}
 }
 
 // setAskgw records whether deviceID's latest hello advertised
@@ -81,6 +83,35 @@ func (p *pushTokens) setAskgw(deviceID string, ok bool) {
 		delete(p.askgw, deviceID)
 	}
 	p.mu.Unlock()
+}
+
+// setAskgwValue records whether deviceID's latest hello advertised
+// featureAskgwValueInput, like setAskgw.
+func (p *pushTokens) setAskgwValue(deviceID string, ok bool) {
+	if deviceID == "" {
+		return
+	}
+	p.mu.Lock()
+	if ok {
+		p.askgwValue[deviceID] = true
+	} else {
+		delete(p.askgwValue, deviceID)
+	}
+	p.mu.Unlock()
+}
+
+// askgwValueTargetsExcluding is askgwTargetsExcluding further limited to
+// devices that render a prompt's value step (featureAskgwValueInput).
+func (p *pushTokens) askgwValueTargetsExcluding(exclude map[string]bool) map[string]string {
+	out := p.askgwTargetsExcluding(exclude)
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	for id := range out {
+		if !p.askgwValue[id] {
+			delete(out, id)
+		}
+	}
+	return out
 }
 
 // askgwSeenSinceStart reports whether any hello has advertised
@@ -486,11 +517,15 @@ func (p *fcmPusher) flushRead(convID string, connected func() map[string]bool) {
 // notifyAskgw wakes every askgw-capable device without a live socket for a new
 // askgw prompt (#2707). Not coalesced: each prompt is a distinct decision. An
 // older build could not show the prompt, so it is not woken.
-func (p *fcmPusher) notifyAskgw(promptID, preview string, exclude map[string]bool) {
+func (p *fcmPusher) notifyAskgw(promptID, preview string, exclude map[string]bool, needValue bool) {
 	if p == nil {
 		return
 	}
-	for _, tok := range p.tokens.askgwTargetsExcluding(exclude) {
+	targets := p.tokens.askgwTargetsExcluding
+	if needValue {
+		targets = p.tokens.askgwValueTargetsExcluding
+	}
+	for _, tok := range targets(exclude) {
 		safeGo("fcm-askgw", func() { p.sendData(tok, askgwWakeData(promptID, preview), map[string]any{"priority": "high"}) })
 	}
 }

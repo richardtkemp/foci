@@ -25,10 +25,13 @@ var spawnToolNames = map[string]bool{
 // compact_session is left out too (#3040): an API character one-shot's tool
 // calls run on its parent's context, so it would compact the PARENT's session.
 // An API character one-shot leaves out the same (spawnCharacterBlacklist).
+// secrets is left out too (#3090): its write requests need the user, and the
+// outcome would be delivered to the session the call ran on.
 var parentBatchExcluded = map[string]bool{
 	"close_session":   true,
 	"compact_session": true,
 	"ask":             true,
+	"secrets":         true,
 }
 
 // Subset returns a registry holding only the tools keep accepts. The tools

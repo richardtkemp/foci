@@ -664,6 +664,7 @@ Subcommands:
 	}
 
 	gwConfigApprove = newConfigApproveService(cfg, configPath, agents, connMgr)
+	gwSecretsApprove.Store(newSecretsRequester(sec.store, agents))
 
 	mux := http.NewServeMux()
 	pprofGate.Store(config.DerefBool(cfg.Debug.EnablePprof))

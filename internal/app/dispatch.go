@@ -130,6 +130,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.tokens.set(devID, f.PushToken)
 		h.tokens.setReadWake(devID, slices.Contains(f.Features, featureReadWake))
 		h.tokens.setAskgw(devID, slices.Contains(f.Features, featureAskgwPrompts))
+		h.tokens.setAskgwValue(devID, slices.Contains(f.Features, featureAskgwValueInput))
 		// The replay below catches this device up, consuming any wake it was
 		// sent: reopen its coalescing windows so the next offline message wakes it.
 		h.pusher.deviceConnected(devID)

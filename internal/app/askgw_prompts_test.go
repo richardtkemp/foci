@@ -288,7 +288,7 @@ func TestAskgwPresent_RefusesWhenNoCapableDevice(t *testing.T) {
 	if s := askgwSnapshots(t, old); len(s) != 0 {
 		t.Errorf("old-build device got %v", s)
 	}
-	if got := h.askgw.snapshot().Prompts; len(got) != 0 {
+	if got := h.askgw.snapshot(true).Prompts; len(got) != 0 {
 		t.Errorf("refused prompt was registered: %v", got)
 	}
 
