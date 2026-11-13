@@ -162,7 +162,12 @@ func remindWake(sessionKey string, rs *memory.ReminderStore, agentID, text, when
 	}
 
 	if err := wakeFn(id, dur, text, sessionKey); err != nil {
-		_ = rs.Dismiss(id) // clean up DB row on schedule failure
+		// Clean up the row on schedule failure. A failed delete leaves a
+		// wake that was never armed pending, so the next start fires it
+		// (#3080): log it.
+		if derr := rs.Dismiss(id); derr != nil {
+			remindLog.Errorf("wake id=%d: dismiss after schedule failure failed — the next start of foci will fire it: %v", id, derr)
+		}
 		return ToolResult{}, fmt.Errorf("schedule wake: %w", err)
 	}
 

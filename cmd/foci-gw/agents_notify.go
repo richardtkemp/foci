@@ -656,7 +656,19 @@ func wakeTurnDone(store *memory.ReminderStore, id int64) func(error) {
 			remindLog.Infof("wake id=%d not run (shutting down) — left pending for restart", id)
 			return
 		}
-		_ = store.Dismiss(id)
+		dismissWake(store, id, "ran")
+	}
+}
+
+// dismissWake deletes wake id's row because the wake is finished with (why:
+// "ran", "was cancelled", "had no session"). A failed delete is logged at
+// ERROR (#3080): the row stays pending, so the next start of foci schedules
+// the wake again and it fires a second time. The reminder store already waits
+// out lock contention (busy_timeout), so an error here is not transient and
+// is not retried.
+func dismissWake(store *memory.ReminderStore, id int64, why string) {
+	if err := store.Dismiss(id); err != nil {
+		remindLog.Errorf("wake id=%d: dismiss failed after it %s — the row stays pending and the next start of foci will fire it again: %v", id, why, err)
 	}
 }
 
@@ -734,7 +746,7 @@ func buildWakeScheduler(
 					// lose, #2036) and dismiss — the row and the claim go
 					// together, no turn will run.
 					if claimForFire(id, "") {
-						_ = reminderStore.Dismiss(id)
+						dismissWake(reminderStore, id, "had no session")
 					}
 					remindLog.Warnf("no session for agent %s, skipping wake id=%d", agentID, id)
 					return
@@ -746,7 +758,7 @@ func buildWakeScheduler(
 				owner, ok := awaitWakeOwner(wakeCtx, sk)
 				if !ok {
 					// Cancelled while held: wakeCancelFn already claimed it.
-					_ = reminderStore.Dismiss(id)
+					dismissWake(reminderStore, id, "was cancelled")
 					return
 				}
 				if owner.Owner != "" && owner.Owner != sk {
@@ -757,7 +769,7 @@ func buildWakeScheduler(
 				if !claimForFire(id, sk) {
 					// A cancel won the claim while the timer fired; it
 					// cancelled wakeCtx, which this select no longer watches.
-					_ = reminderStore.Dismiss(id)
+					dismissWake(reminderStore, id, "was cancelled")
 					return
 				}
 				wakeCancel()
@@ -779,7 +791,7 @@ func buildWakeScheduler(
 					onInjectRefused(func() { reminderStore.ClearWakeFired(id) }))
 			case <-wakeCtx.Done():
 				// wakeCancelFn already claimed the entry.
-				_ = reminderStore.Dismiss(id)
+				dismissWake(reminderStore, id, "was cancelled")
 			case <-ctx.Done():
 				// The agent stopped (a live stop, #2787) or the process is
 				// exiting: the wake's row stays pending, and the next start
