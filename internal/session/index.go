@@ -242,6 +242,9 @@ func NewSessionIndex(dbPath string) (*SessionIndex, error) {
 	// Expression index for correct cross-timezone last_activity_at ordering.
 	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_session_activity_unix ON session_index(unixepoch(last_activity_at))`)
 	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_session_agent ON session_index(agent_id, is_root, status)`)
+	// ArchiveSweep asks, per candidate, whether any active row names it as
+	// parent (HasActiveChild, #3079).
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_session_parent ON session_index(parent_session_key, status)`)
 
 	return &SessionIndex{db: db}, nil
 }
@@ -2124,6 +2127,23 @@ func (idx *SessionIndex) AgentMetadataByPrefix(agentID, prefix string) (map[stri
 		result[k] = v
 	}
 	return result, rows.Err()
+}
+
+// HasActiveChild reports whether any active index row has parentKey as its
+// parent_session_key. Served by idx_session_parent, so it costs one index
+// probe instead of a scan of the whole index.
+func (idx *SessionIndex) HasActiveChild(parentKey string) (bool, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	var exists int
+	err := idx.db.QueryRow(
+		`SELECT EXISTS(SELECT 1 FROM session_index WHERE parent_session_key = ? AND status = ?)`,
+		parentKey, string(SessionStatusActive),
+	).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists == 1, nil
 }
 
 // SessionExists reports whether a session key has an index row.

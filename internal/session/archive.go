@@ -458,18 +458,14 @@ func ArchiveSweep(store *Store, index *SessionIndex, maxAge time.Duration) (int,
 			continue
 		}
 
-		// Skip sessions that have active branches referencing them
-		branches, err := index.Query(QueryOptions{})
+		// Skip sessions that have active branches referencing them. One
+		// indexed existence query per eligible candidate, asked at the same
+		// point the old full-index scan was, so it sees children archived
+		// earlier in this sweep and branches created since it began (#3079).
+		hasActiveBranch, err := index.HasActiveChild(entry.SessionKey)
 		if err != nil {
 			sessLog.Warnf("archive sweep: query branches for %s: %v", entry.SessionKey, err)
 			continue
-		}
-		hasActiveBranch := false
-		for _, b := range branches {
-			if b.ParentSessionKey == entry.SessionKey && b.Status == SessionStatusActive {
-				hasActiveBranch = true
-				break
-			}
 		}
 		if hasActiveBranch {
 			continue
