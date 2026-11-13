@@ -213,6 +213,33 @@ func TestCleanPinSummary(t *testing.T) {
 	}
 }
 
+func TestSummaryAnswerDropsThinkingPreamble(t *testing.T) {
+	for in, want := range map[string]string{
+		"DNS-as-Code via GoDaddy API in CI </think> DNS-as-Code via GoDaddy API in CI": "DNS-as-Code via GoDaddy API in CI",
+		"Plain answer": "Plain answer",
+		"draft </think>": "",
+	} {
+		if got := cleanPinSummary(stripThinkingPreamble(in)); got != want {
+			t.Errorf("cleanPinSummary(stripThinkingPreamble(%q)) = %q, want %q", in, got, want)
+		}
+	}
+
+	stub := &openRouterStub{reply: "draft </think>"}
+	srv := stub.serve(t)
+	s := testSummariser(srv.URL, &config.AppSpecific{AutoNameModel: "model"})
+	a := summaryAsk{what: "auto chat name", use: useAutoName, system: "s", maxInputRunes: 100, maxTokens: 10, raw: true}
+	if _, err := s.ask(context.Background(), a, "chat", "", ""); err == nil || !strings.Contains(err.Error(), "empty answer") {
+		t.Errorf("empty raw answer error = %v, want empty answer error", err)
+	}
+	stub.mu.Lock()
+	stub.reply = "DNS-as-Code via GoDaddy API in CI </think> DNS-as-Code via GoDaddy API in CI"
+	stub.mu.Unlock()
+	a.raw, a.maxWords = false, 6
+	if got, err := s.ask(context.Background(), a, "chat", "", ""); err != nil || got != "DNS-as-Code via GoDaddy API in CI" {
+		t.Errorf("clean answer = %q, %v; want stripped summary", got, err)
+	}
+}
+
 // TestHandlePinSummarize: one pin.summary answers each pin.summarize on the
 // asking socket, carrying the request id and the summary — or an empty
 // summary when the call fails or the hub has no summariser.

@@ -633,13 +633,13 @@ func (s *pinSummariser) ask(ctx context.Context, a summaryAsk, text, session, ag
 	bookSummary(a.what, out, served, t.endpoint, session, agentID, start, duration)
 
 	if a.raw {
-		answer := strings.TrimSpace(out.Choices[0].Message.Content)
+		answer := strings.TrimSpace(stripThinkingPreamble(out.Choices[0].Message.Content))
 		if answer == "" {
 			return "", emptyAnswerError(t.endpoint, "empty answer", out, a.maxTokens)
 		}
 		return answer, nil
 	}
-	summary := cleanPinSummary(out.Choices[0].Message.Content)
+	summary := cleanPinSummary(stripThinkingPreamble(out.Choices[0].Message.Content))
 	if summary == "" {
 		return "", emptyAnswerError(t.endpoint, "empty summary", out, a.maxTokens)
 	}
@@ -740,6 +740,15 @@ func bookSummary(what string, out openRouterChatResponse, model, endpoint, sessi
 	}.Call()); err != nil {
 		appLog.Warnf("%s: book call: %v", what, err)
 	}
+}
+
+// stripThinkingPreamble keeps only the text after the final closing think tag.
+// Some local thinking models include their reasoning inline in message.content.
+func stripThinkingPreamble(s string) string {
+	if i := strings.LastIndex(s, "</think>"); i >= 0 {
+		return s[i+len("</think>"):]
+	}
+	return s
 }
 
 // cleanPinSummary makes the model's answer one label line: whitespace and
