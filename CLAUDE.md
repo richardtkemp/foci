@@ -123,11 +123,11 @@ make lint
 
 ## Testing
 
-All tests are self-contained. Run `make test` — should pass in ~1s.
+Run `make test` for the whole unit suite (the land gate), or `make test-one PKG=./internal/<pkg>/ [RUN=<TestName>]` for one package. `make integration` runs the L2 tests (real foci-gw against stubbed edges).
 
-`anthropic/cache_test.go` requires `ANTHROPIC_API_KEY` to run (skipped if not set). This is the critical integration test validating cache sharing across branched sessions.
+`internal/anthropic/cache_test.go` requires `ANTHROPIC_API_KEY` to run (skipped if not set). This is the critical integration test validating cache sharing across branched sessions.
 
-**Always use `make test` instead of `go test`** — it runs with proper parallelization and consistent flags.
+**Never run a bare `go test`.** The make targets set `FOCI_TMPDIR` and seal the run; without them the temp-dir guard (`internal/tempdir`) fails the run.
 
 ## Standards
 

@@ -91,7 +91,7 @@ Fewer moving parts means fewer surprises. Secret management follows the same pri
 
 | | | |
 |---|---|---|
-| **Go 1.24+** | Build from source | |
+| **Go** (at least the `go` line in `go.mod`) | Build from source | |
 | **Telegram bot token** | Message transport | Create via [@BotFather](https://t.me/BotFather) |
 
 <details>

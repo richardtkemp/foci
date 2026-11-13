@@ -7,7 +7,7 @@
 # Run this script first, then ./setup.sh --install will succeed.
 #
 # This script is distro-agnostic and idempotent (safe to re-run).
-# Detects package manager and installs: git, Go 1.23+, gcc, make, curl, jq, sqlite3, cron
+# Detects package manager and installs: git, Go (go.mod minimum), gcc, make, curl, jq, sqlite3, cron
 # Reports (never installs) optional extras: mermaid-cli (mmdc) for mermaid diagrams.
 #
 # Usage:
@@ -20,8 +20,29 @@
 
 set -euo pipefail
 
-# Minimum Go version required (from go.mod)
-MIN_GO_VERSION="1.24"
+# Minimum Go version required: read from go.mod's `go` directive, so this
+# check can never drift from what the build actually needs. go.mod sits next
+# to this script in the repo root.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GO_MOD="$SCRIPT_DIR/go.mod"
+if [[ ! -r "$GO_MOD" ]]; then
+    echo "[x] Cannot read $GO_MOD: run this script from a foci checkout" >&2
+    exit 1
+fi
+# GO_MOD_VERSION: the directive as written, e.g. 1.25.0 (or 1.25).
+GO_MOD_VERSION=$(awk '$1 == "go" { print $2; exit }' "$GO_MOD")
+if [[ ! "$GO_MOD_VERSION" =~ ^([0-9]+)\.([0-9]+)(\.[0-9]+)?$ ]]; then
+    echo "[x] Cannot parse the go directive in $GO_MOD (got '${GO_MOD_VERSION}')" >&2
+    exit 1
+fi
+MIN_GO_MAJOR="${BASH_REMATCH[1]}"
+MIN_GO_MINOR="${BASH_REMATCH[2]}"
+# MIN_GO_VERSION: major.minor, for messages.
+MIN_GO_VERSION="${MIN_GO_MAJOR}.${MIN_GO_MINOR}"
+# GO_VERSION_FULL: the release to download. Go releases since 1.21 are
+# named with a patch (go1.25.0), so a bare 1.25 directive becomes 1.25.0.
+GO_VERSION_FULL="$GO_MOD_VERSION"
+[[ -n "${BASH_REMATCH[3]}" ]] || GO_VERSION_FULL="${GO_MOD_VERSION}.0"
 
 # Default mode
 DRY_RUN=true
@@ -305,19 +326,22 @@ if command -v go &>/dev/null; then
     GO_INSTALLED=true
 
     if [[ "$GO_VERSION" != "unknown" ]]; then
-        # Compare versions (simple comparison works for X.Y format)
-        if awk "BEGIN {exit !($GO_VERSION >= $MIN_GO_VERSION)}"; then
+        # Compare major and minor as integers: a decimal compare would
+        # rank 1.3 above 1.25.
+        HAVE_MAJOR="${GO_VERSION%%.*}"
+        HAVE_MINOR="${GO_VERSION#*.}"
+        if (( HAVE_MAJOR > MIN_GO_MAJOR || (HAVE_MAJOR == MIN_GO_MAJOR && HAVE_MINOR >= MIN_GO_MINOR) )); then
             info "  Go $GO_VERSION: meets requirement (>= $MIN_GO_VERSION)"
             NEED_GO_INSTALL=false
         else
             warn "  Go $GO_VERSION: too old (need >= $MIN_GO_VERSION)"
-            warn "  Will download and install Go $MIN_GO_VERSION"
+            warn "  Will download and install Go $GO_VERSION_FULL"
         fi
     else
         warn "  Go version detection failed, will reinstall"
     fi
 else
-    info "  Go not found, will install Go $MIN_GO_VERSION"
+    info "  Go not found, will install Go $GO_VERSION_FULL"
 fi
 
 if [[ "$NEED_GO_INSTALL" == "true" ]]; then
@@ -339,12 +363,11 @@ if [[ "$NEED_GO_INSTALL" == "true" ]]; then
     fi
 
     # Download and install Go
-    GO_VERSION_FULL="${MIN_GO_VERSION}.0"  # Convert 1.23 to 1.23.0
     GO_TARBALL="go${GO_VERSION_FULL}.${OS_NAME}-${GO_ARCH}.tar.gz"
     GO_URL="https://go.dev/dl/$GO_TARBALL"
 
     if [[ "$DRY_RUN" == "false" ]]; then
-        info "Installing Go $MIN_GO_VERSION from go.dev..."
+        info "Installing Go $GO_VERSION_FULL from go.dev..."
 
         info "  Downloading $GO_URL..."
         curl -L "$GO_URL" -o "/tmp/$GO_TARBALL"
@@ -377,7 +400,7 @@ EOF
 
         info "  Go installed successfully"
     else
-        info "Would install Go $MIN_GO_VERSION:"
+        info "Would install Go $GO_VERSION_FULL:"
         info "  Download: $GO_URL"
         info "  Install to: /usr/local/go"
         info "  Add to system PATH: /etc/profile.d/go.sh"

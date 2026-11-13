@@ -3993,9 +3993,10 @@ Cooldown (min tool calls between repeating the same rule, default 5 — also the
 ## Testing
 
 ```
-go test ./...           # all tests (~66, runs in ~1s)
-go test ./... -v        # verbose
-go test ./session/...   # single package
+make test                                       # whole unit suite (the land gate)
+make test-one PKG=./internal/session/           # one package
+make test-one PKG=./internal/session/ RUN=TestX # one test (also COUNT=N, TIMEOUT=<dur>)
+make integration                                # L2: real foci-gw against stubbed edges
 ```
 
-The cache_test.go in `anthropic/` requires `ANTHROPIC_API_KEY` env var and hits the real API. All other tests are self-contained.
+Never run a bare `go test`: the targets set `FOCI_TMPDIR` and seal the run, and without that the temp-dir guard (`internal/tempdir`) fails the run (#1510). `internal/anthropic/cache_test.go` hits the real API and skips without `ANTHROPIC_API_KEY`; all other tests are self-contained.

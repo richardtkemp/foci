@@ -25,7 +25,7 @@ The rest of this guide covers the traditional bare-metal install with systemd.
 
 Install these before running setup:
 
-- **Go 1.24+** — downloaded automatically by `make setup` if not available (requires `curl` or `wget`)
+- **Go** — at least the version on the `go` line in `go.mod`. `./prerequisites.sh --install` downloads it from go.dev if Go is missing or older (requires `curl`)
 - **git** — for cloning the repo
 - **gcc / build-essential** — C compiler for the `nosgid.so` LD_PRELOAD shim only; the Go binaries build with `CGO_ENABLED=0` (SQLite is pure Go, and the ambient-capability clear in `procx` requires a cgo-free binary — see SECRETS.md)
 - **make** — build tool
@@ -351,7 +351,7 @@ sudo chmod 660 /home/foci/config/secrets.toml
 ```
 
 ### Build errors
-Ensure Go 1.24+: `go version`. Setup downloads Go automatically if needed. Foci uses go module caching at `/var/cache/go` and `/var/cache/go-build`.
+Ensure `go version` is at least the `go` line in `go.mod`. With automatic toolchain download off (`GOTOOLCHAIN=local`), an older Go fails to build. `sudo ./prerequisites.sh --install` installs the right version. Foci uses go module caching at `/var/cache/go` and `/var/cache/go-build`.
 
 ### "unknown command: setup"
 Older versions emitted a `foci setup` call in the generated root-install script, but the wizard command is `foci first-run`. The bad call aborted the install before the systemd service was created. Pull the latest repo and re-run `sudo make setup`.
