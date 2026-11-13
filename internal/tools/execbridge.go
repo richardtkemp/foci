@@ -1422,6 +1422,7 @@ func generateShellFunc(t *Tool) string {
     search)
       local params='{"action":"search"}'
       [ -n "$query" ] && params="$(echo "$params" | jq --arg q "$query" '. + {query: $q}')"
+      [ -n "$status" ] && params="$(echo "$params" | jq --arg s "$status" '. + {status: $s}')"
       [ -n "$sort" ] && params="$(echo "$params" | jq --arg o "$sort" '. + {sort: $o}')"
       [ -n "$reverse" ] && params="$(echo "$params" | jq '. + {reverse: true}')"
       [ -n "$limit" ] && params="$(echo "$params" | jq --argjson l "$limit" '. + {limit: $l}')"
