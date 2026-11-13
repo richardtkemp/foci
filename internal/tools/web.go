@@ -225,30 +225,57 @@ func hasAttr(n *html.Node, key string) bool {
 // opposed to one that failed on the page's content.
 var errFetchParseTimeout = errors.New("readability parse timed out")
 
+// errFetchParseBusy marks a parse that never started: every parse slot stayed
+// held, by earlier parses that had outrun their own budgets, for the whole of
+// this call's budget (#3069).
+var errFetchParseBusy = errors.New("readability parse skipped: every parse slot is held")
+
+// maxOutstandingParses bounds the readability parses running at once, the
+// timed-out ones still running in the background included (#3069). A parse
+// cannot be cancelled, so without the bound repeated heavy or hostile pages
+// would pile up parse goroutines (and their memory) with no limit.
+const maxOutstandingParses = 4
+
+// readabilityParseSlots is the semaphore behind maxOutstandingParses. A slot
+// is taken before the parse goroutine starts and given back only when that
+// goroutine's parse returns, not when the caller stops waiting. A package var
+// so a test can install a smaller one.
+var readabilityParseSlots = make(chan struct{}, maxOutstandingParses)
+
 // parseReadableWithTimeout runs readability extraction under a wall-clock
 // timeout. readability/html.Parse is not context-cancellable, so on timeout the
 // background goroutine is left to finish (and exit) on its own via the buffered
-// channel — bounded in practice because the network body is capped by
-// web_fetch_max_bytes (default 1 MiB) and the x/net bump removes the known
-// infinite-loop inputs. A timeout wraps errFetchParseTimeout.
+// channel. It keeps its parse slot until then, so at most
+// maxOutstandingParses parses run at once (#3069). Waiting for a free slot
+// counts against the same timeout. A timeout wraps errFetchParseTimeout; no
+// free slot within the timeout wraps errFetchParseBusy.
 func parseReadableWithTimeout(body []byte, parsed *url.URL, timeout time.Duration) (readability.Article, error) {
 	type result struct {
 		article readability.Article
 		err     error
 	}
-	ch := make(chan result, 1)
-	// Capture the parse func in the caller goroutine before spawning, so the
-	// background goroutine never reads the readabilityFromReader package var —
-	// otherwise a test that swaps that var would race the goroutine's read.
+	// Capture the parse func and the slots in the caller goroutine before
+	// spawning, so the background goroutine never reads a package var that a
+	// test swaps — otherwise that test would race the goroutine's read.
 	parse := readabilityFromReader
+	slots := readabilityParseSlots
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case slots <- struct{}{}:
+	case <-timer.C:
+		return readability.Article{}, fmt.Errorf("%w: %d parses still running after %s", errFetchParseBusy, cap(slots), timeout)
+	}
+	ch := make(chan result, 1)
 	go func() {
+		defer func() { <-slots }()
 		a, err := parse(bytes.NewReader(body), parsed)
 		ch <- result{a, err}
 	}()
 	select {
 	case r := <-ch:
 		return r.article, r.err
-	case <-time.After(timeout):
+	case <-timer.C:
 		return readability.Article{}, fmt.Errorf("%w: exceeded %s", errFetchParseTimeout, timeout)
 	}
 }
@@ -344,6 +371,11 @@ func isStubExtraction(extractedChars, visibleChars int) bool {
 // page was returned instead (#2905). The page is not at fault, so a retry can
 // give the clean extraction.
 const parseTimeoutNote = "\n\n---\n_[foci: article extraction timed out after %s, so this is the whole page — navigation, sidebars and comments included. A retry may extract the article alone.]_"
+
+// parseBusyNote is appended when no parse slot came free within the budget
+// (#3069): earlier extractions that timed out are still running, so this one
+// never started and the result is the whole page.
+const parseBusyNote = "\n\n---\n_[foci: article extraction did not start within %s, because earlier extractions are still running, so this is the whole page — navigation, sidebars and comments included. A retry later may extract the article alone.]_"
 
 // stubFallbackNote is appended when a stub extraction was replaced by the
 // whole page (#2065), so the caller knows why page chrome is present.
@@ -597,7 +629,8 @@ func webFetch(ctx context.Context, params json.RawMessage, maxBytes int64, parse
 	var htmlContent string
 	article, err := parseReadableWithTimeout(body, parsed, parseTimeout)
 	parseTimedOut := errors.Is(err, errFetchParseTimeout)
-	if parseTimedOut {
+	parseBusy := errors.Is(err, errFetchParseBusy)
+	if parseTimedOut || parseBusy {
 		web_fetchLog.Warnf("session=%s url=%s body=%d bytes: %v; returning the whole page", SessionKeyFromContext(ctx), parsed.Hostname(), len(body), err)
 	}
 	usedArticle := err == nil && strings.TrimSpace(article.Content) != ""
@@ -635,6 +668,9 @@ func webFetch(ctx context.Context, params json.RawMessage, maxBytes int64, parse
 	}
 	if parseTimedOut {
 		md += fmt.Sprintf(parseTimeoutNote, parseTimeout)
+	}
+	if parseBusy {
+		md += fmt.Sprintf(parseBusyNote, parseTimeout)
 	}
 	if usedArticle {
 		// #2069: the thin and list-drop checks measure against the regions

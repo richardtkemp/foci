@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -67,6 +69,66 @@ func TestParseReadableWithTimeout(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exceeded") {
 		t.Errorf("err = %v, want timeout error", err)
+	}
+}
+
+func TestParseReadableWithTimeoutBoundsOutstandingParses(t *testing.T) {
+	// #3069: a timed-out parse keeps running (it cannot be cancelled), so the
+	// number of parses running at once must stay bounded however many slow
+	// pages arrive. N timed-out calls start at most cap(slots) parses; the rest
+	// return errFetchParseBusy without starting one. When the stuck parses
+	// end, their slots come back. Not parallel: it swaps package vars.
+	origParse, origSlots := readabilityFromReader, readabilityParseSlots
+	defer func() { readabilityFromReader, readabilityParseSlots = origParse, origSlots }()
+	const bound = 2
+	readabilityParseSlots = make(chan struct{}, bound)
+	block := make(chan struct{})
+	var started, running, maxRunning atomic.Int32
+	readabilityFromReader = func(io.Reader, *url.URL) (readability.Article, error) {
+		started.Add(1)
+		n := running.Add(1)
+		for {
+			m := maxRunning.Load()
+			if n <= m || maxRunning.CompareAndSwap(m, n) {
+				break
+			}
+		}
+		<-block
+		running.Add(-1)
+		return readability.Article{}, nil
+	}
+
+	const calls = 3 * bound
+	var timedOut, busy int
+	for range calls {
+		_, err := parseReadableWithTimeout([]byte("<html></html>"), nil, 20*time.Millisecond)
+		switch {
+		case errors.Is(err, errFetchParseTimeout):
+			timedOut++
+		case errors.Is(err, errFetchParseBusy):
+			busy++
+		default:
+			t.Fatalf("err = %v, want a timeout or busy error", err)
+		}
+	}
+	if got := started.Load(); got != bound {
+		t.Errorf("%d slow calls started %d parses, want the bound %d", calls, got, bound)
+	}
+	if got := maxRunning.Load(); got > bound {
+		t.Errorf("%d parses ran at once, want at most %d", got, bound)
+	}
+	if timedOut != bound || busy != calls-bound {
+		t.Errorf("timed out %d, busy %d; want %d and %d", timedOut, busy, bound, calls-bound)
+	}
+
+	// The stuck parses end: their slots must come back, so a fast parse runs.
+	close(block)
+	readabilityFromReader = func(io.Reader, *url.URL) (readability.Article, error) {
+		return readability.Article{Content: "ok"}, nil
+	}
+	art, err := parseReadableWithTimeout([]byte("<html></html>"), nil, testFetchParseTimeout)
+	if err != nil || art.Content != "ok" {
+		t.Fatalf("after the stuck parses ended: article %q, err %v; want the slots released", art.Content, err)
 	}
 }
 
@@ -824,6 +886,39 @@ func TestWebFetchParseTimeoutSaysSo(t *testing.T) {
 	}
 	if !strings.Contains(result.Text, fmt.Sprintf(parseTimeoutNote, time.Millisecond)) {
 		t.Errorf("no timeout note on the fallback; result ends: %s", result.Text[max(0, len(result.Text)-200):])
+	}
+}
+
+func TestWebFetchParseBusySaysSo(t *testing.T) {
+	// #3069: when every parse slot stays held for the whole budget, web_fetch
+	// returns the whole page and says why, without starting another parse.
+	// Not parallel: it swaps package vars.
+	origParse, origSlots := readabilityFromReader, readabilityParseSlots
+	defer func() { readabilityFromReader, readabilityParseSlots = origParse, origSlots }()
+	readabilityParseSlots = make(chan struct{}, 1)
+	readabilityParseSlots <- struct{}{} // held by an earlier, still-running parse
+	var started atomic.Int32
+	readabilityFromReader = func(io.Reader, *url.URL) (readability.Article, error) {
+		started.Add(1)
+		return readability.Article{}, nil
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("<html><body><p>whole page text here</p></body></html>"))
+	}))
+	defer server.Close()
+	params, _ := json.Marshal(map[string]interface{}{"url": server.URL})
+	result, err := webFetch(context.Background(), params, webFetchLimit(nil), time.Millisecond)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if started.Load() != 0 {
+		t.Errorf("a parse started with no free slot")
+	}
+	if !strings.Contains(result.Text, "whole page text here") {
+		t.Errorf("page text missing from the whole-page fallback: %s", result.Text)
+	}
+	if !strings.Contains(result.Text, fmt.Sprintf(parseBusyNote, time.Millisecond)) {
+		t.Errorf("no busy note on the fallback; result ends: %s", result.Text[max(0, len(result.Text)-200):])
 	}
 }
 
