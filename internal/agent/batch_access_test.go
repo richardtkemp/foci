@@ -149,9 +149,10 @@ func TestRunBatch_AccessAndPromptReachLaunch(t *testing.T) {
 
 // TestRunBatch_BridgeToolsFollowAccess proves a batch session's exec bridge
 // exports only what its access allows (tools.RegistryForAccess): the whole
-// registry for foci's own batches; all but close_session and the spawn family for a
-// parent-access batch; the explore allowlist read-only; and no bridge at all
-// for an isolated batch.
+// registry for foci's own batches; all but close_session for a parent-access
+// batch (no spawn ran it, so it is at depth 0 and keeps the spawn tools,
+// #3061); the explore allowlist read-only; and no bridge at all for an
+// isolated batch.
 func TestRunBatch_BridgeToolsFollowAccess(t *testing.T) {
 	t.Parallel()
 	all := []string{"foci_memory_search", "foci_send_to_chat", "foci_close_session", "foci_spawn", "foci_spawn_status"}
@@ -160,7 +161,7 @@ func TestRunBatch_BridgeToolsFollowAccess(t *testing.T) {
 		want   []string // exported functions; nil = no bridge
 	}{
 		{delegator.BatchAccessDefault, all},
-		{delegator.BatchAccessParent, []string{"foci_memory_search", "foci_send_to_chat"}},
+		{delegator.BatchAccessParent, []string{"foci_memory_search", "foci_send_to_chat", "foci_spawn", "foci_spawn_status"}},
 		{delegator.BatchAccessReadOnly, []string{"foci_memory_search"}},
 		{delegator.BatchAccessIsolated, nil},
 	}

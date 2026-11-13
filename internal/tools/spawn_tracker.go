@@ -65,6 +65,11 @@ type RunningSpawn struct {
 	// a spawn runs unattended too, as before #2684; any other spawn's asks go
 	// up to its spawner's chat. Captured at launch and kept across a restart.
 	SpawnerUnattended bool
+	// Depth is the spawn's depth (#3061, spawn_depth.go): 1 for a spawn of a
+	// session no spawn started, N+1 for a spawn of a depth-N spawn. The spawn
+	// may start a spawn only while Depth+1 <= the spawn depth limit. Kept
+	// across a restart.
+	Depth int
 }
 
 // SpawnObserver is told about each spawn of a parent session, background or

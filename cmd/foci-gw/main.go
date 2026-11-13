@@ -320,6 +320,7 @@ Subcommands:
 	app.SetSessionChats(appMediaChats(si.sessionIndex))
 	setupUsageHold(cfg, si.sessionIndex)
 	applyUserCommandTimeout(cfg)
+	tools.SetMaxSpawnDepth(cfg.Tools.MaxSpawnDepth) // #3061; live: liveApplySpawnDepthAddrs
 	defer si.cleanup()
 
 	// ========== Memory system ==========

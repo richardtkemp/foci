@@ -192,7 +192,8 @@ func (t *APITransport) ResolveModelEffort(ts *TurnState) {
 func (t *APITransport) BuildSystemAndTools(ts *TurnState) {
 	a := t.agent
 	ts.System = a.buildSystemBlocks(ts.SessionKey)
-	ts.ToolDefs = a.Tools.ToolDefs()
+	// Without the spawn tools on a session at the spawn depth limit (#3061).
+	ts.ToolDefs = a.Tools.ToolDefsForSession(ts.SessionKey)
 	if len(a.ServerTools) > 0 {
 		ts.ToolDefs = append(ts.ToolDefs, a.ServerTools...)
 	}

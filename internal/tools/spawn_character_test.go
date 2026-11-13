@@ -19,7 +19,6 @@ type ctxSpawnAgent struct {
 	mu        sync.Mutex
 	keys      []string
 	character []bool
-	inherit   []bool
 	deadlines []time.Duration
 	ran       chan struct{}
 }
@@ -30,7 +29,6 @@ func (a *ctxSpawnAgent) HandleMessage(ctx context.Context, sk string, _ []string
 	a.mu.Lock()
 	a.keys = append(a.keys, sk)
 	a.character = append(a.character, IsSpawnCharacter(ctx))
-	a.inherit = append(a.inherit, IsSpawnInherit(ctx))
 	if dl, ok := ctx.Deadline(); ok {
 		a.deadlines = append(a.deadlines, time.Until(dl))
 	}
@@ -205,7 +203,9 @@ func TestCloneNotMarkedCharacter(t *testing.T) {
 }
 
 // TestBackgroundOnlyForCharacter proves background is refused for a mode
-// that returns directly, and a background spawn cannot start another one.
+// that returns directly, and a direct spawn (here an API one-shot, whose
+// calls carry its spawnLink) cannot start a background spawn: nothing would
+// take its result (#3061).
 func TestBackgroundOnlyForCharacter(t *testing.T) {
 	t.Parallel()
 	agent := newCtxSpawnAgent()
@@ -216,9 +216,11 @@ func TestBackgroundOnlyForCharacter(t *testing.T) {
 			t.Errorf("%s with background: err = %v, want refused", mode, err)
 		}
 	}
-	nested := WithSpawnInherit(h.ctx)
-	if _, err := h.spawner.SpawnTool().Execute(nested, json.RawMessage(`{"name":"charac8","prompt":"p","background":true}`)); err == nil {
-		t.Error("a background spawn started another background spawn")
+	nested := withSpawnLink(h.ctx, spawnLink{s: h.spawner, parent: SessionKeyFromContext(h.ctx), id: "spawn-direct", info: RunningSpawn{ID: "spawn-direct", Direct: true, Depth: 1}})
+	for _, p := range []string{`{"name":"charac8","prompt":"p","background":true}`, `{"name":"charac8","prompt":"p","context":"clone"}`} {
+		if _, err := h.spawner.SpawnTool().Execute(nested, json.RawMessage(p)); err == nil || !strings.Contains(err.Error(), "returns its result directly") {
+			t.Errorf("%s from a direct spawn: err = %v, want refused", p, err)
+		}
 	}
 	if len(cb.created) != 0 {
 		t.Errorf("refused spawns created branches: %v", cb.created)
@@ -296,14 +298,19 @@ func TestCharacterSpawnRefusesUserTools(t *testing.T) {
 	for _, n := range []string{"ask", "close_session", "spawn", "read"} {
 		reg.Register(&Tool{Name: n})
 	}
-	sub := RegistryForAccess(reg, delegator.BatchAccessParent)
+	sub := RegistryForAccess(reg, delegator.BatchAccessParent, false)
 	for _, n := range []string{"ask", "close_session", "spawn"} {
 		if sub.Get(n) != nil {
-			t.Errorf("parent-access bridge keeps %s", n)
+			t.Errorf("parent-access bridge at the spawn depth limit keeps %s", n)
 		}
 	}
 	if sub.Get("read") == nil {
 		t.Error("parent-access bridge dropped read")
+	}
+	// Below the limit it may spawn (#3061); ask and close_session stay out.
+	sub = RegistryForAccess(reg, delegator.BatchAccessParent, true)
+	if sub.Get("spawn") == nil || sub.Get("ask") != nil || sub.Get("close_session") != nil {
+		t.Errorf("parent-access bridge below the limit: spawn=%v ask=%v close_session=%v, want spawn only", sub.Get("spawn") != nil, sub.Get("ask") != nil, sub.Get("close_session") != nil)
 	}
 	if spawnCharacterBlacklist["ask"] != true {
 		t.Error("the API character one-shot keeps ask")

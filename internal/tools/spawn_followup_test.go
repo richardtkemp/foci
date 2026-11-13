@@ -390,9 +390,11 @@ func TestSpawnSend_StoppedSpawnTakesNoFollowUp(t *testing.T) {
 	}
 }
 
-func TestSpawn_NestedFromSpawnBranchRefused(t *testing.T) {
-	// A delegated spawn's tool calls carry its branch key and no inherit
-	// marker; it still may not spawn a clone of its own.
+func TestSpawn_NestedFromSpawnBranchFollowsDepth(t *testing.T) {
+	// A delegated spawn's tool calls carry its branch key alone; its depth
+	// comes from the tracker (#3061, which replaced the "may not spawn a
+	// clone of its own" guard): a depth-1 spawn's branch starts a clone of
+	// its own, at depth 2.
 	t.Parallel()
 	agent := newScriptedSpawnAgent(1)
 	h := newFollowupHarness(agent)
@@ -401,9 +403,12 @@ func TestSpawn_NestedFromSpawnBranchRefused(t *testing.T) {
 	defer close(agent.gates[0])
 
 	params, _ := json.Marshal(map[string]string{"name": "follow2", "prompt": "nested", "context": "clone"})
-	_, err := h.spawner.SpawnTool().Execute(WithSessionKey(context.Background(), branch), params)
-	if err == nil || !strings.Contains(err.Error(), "nested") {
-		t.Errorf("spawn from a spawn's branch: err = %v, want nested refusal", err)
+	if _, err := h.spawner.SpawnTool().Execute(WithSessionKey(context.Background(), branch), params); err != nil {
+		t.Fatalf("clone from a depth-1 spawn's branch: %v, want allowed", err)
+	}
+	nested := branch + "/b1000000000" // mockSessionBrancher's fork of branch
+	if parent, info, ok := h.tracker.ForBranch(nested); !ok || parent != branch || info.Depth != 2 {
+		t.Errorf("nested clone: parent %q, depth %d, tracked %v; want parent %q at depth 2", parent, info.Depth, ok, branch)
 	}
 }
 

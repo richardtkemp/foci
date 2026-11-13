@@ -19,8 +19,8 @@ func TestSpawnContext_NoRunDeadline(t *testing.T) {
 		if dl, ok := ctx.Deadline(); ok {
 			t.Errorf("detached=%v: unexpected deadline %v", detached, dl)
 		}
-		if SessionKeyFromContext(ctx) != "test/imain/b1" || !IsSpawnInherit(ctx) {
-			t.Error("missing spawn markers")
+		if SessionKeyFromContext(ctx) != "test/imain/b1" {
+			t.Error("missing the branch's session key")
 		}
 		cancel()
 		if ctx.Err() != context.Canceled {

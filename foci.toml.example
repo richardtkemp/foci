@@ -722,6 +722,7 @@ bind = "127.0.0.1"
 # user_command_timeout = "15m"           # limit for a chat "!" command or code-block run, every backend
 # web_fetch_max_bytes = 1048576
 # max_concurrent_spawns = 10
+# max_spawn_depth = 2                    # how deep spawns may nest: chat 0, its spawn 1, ... (every mode, backend, agent)
 # explore_max_depth = 100                # max tool loops for explore spawn mode
 # tool_call_preview_chars = 450
 # tmux_memory_check_interval = "5m"

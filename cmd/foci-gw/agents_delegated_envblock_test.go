@@ -11,6 +11,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/secrets"
+	"foci/internal/tools"
 )
 
 // charFileMarkers are the per-file sentinels seeded into the fixture workspace,
@@ -105,7 +106,7 @@ func TestNewDelegatedSystemPromptFunc_RetainsEnvBlock(t *testing.T) {
 			[]provider.SystemBlock{{Type: "text", Text: "Available Skills: foo"}}
 	}
 
-	buildEnv := func(string, bool) string { return env }
+	buildEnv := func(string, bool, bool) string { return env }
 	platformFor := func(string) string { return "" }
 	fn := newDelegatedSystemPromptFunc(buildEnv, platformFor, nil, reload, nil)
 	got := fn("test/c1")
@@ -219,5 +220,33 @@ func TestConfigureDelegated_SpawnSessionGetsSpawnReplyRouting(t *testing.T) {
 	}
 	if static := ag.DelegatedManager.StartOpts.SystemPrompt; strings.Contains(static, spawnReplyRouting) {
 		t.Error("static launch prompt carries the spawn reply routing")
+	}
+}
+
+// TestDelegatedPromptOmitsSpawnToolsAtDepthLimit proves a delegated session
+// at the spawn depth limit is not told of the spawn tools its exec bridge
+// leaves out (#3061): the per-session prompt asks buildEnv with maySpawn
+// false, and the listing drops every foci_spawn* function.
+func TestDelegatedPromptOmitsSpawnToolsAtDepthLimit(t *testing.T) {
+	t.Parallel()
+	const parent, atLimit, below = "envdepth/c1", "envdepth/c1/b2", "envdepth/c1/b1"
+	tools.Spawns.Add(parent, tools.RunningSpawn{ID: "spawn-ed1", BranchKey: below, Depth: 1}, func() {})
+	tools.Spawns.Add(parent, tools.RunningSpawn{ID: "spawn-ed2", BranchKey: atLimit, Depth: tools.MaxSpawnDepth()}, func() {})
+	got := map[string]bool{}
+	buildEnv := func(platform string, _, maySpawn bool) string {
+		got[platform] = maySpawn
+		return "env"
+	}
+	reload := func() (ws, extra []provider.SystemBlock) { return nil, nil }
+	fn := newDelegatedSystemPromptFunc(buildEnv, func(k string) string { return k }, nil, reload, nil)
+	for _, k := range []string{parent, below, atLimit} {
+		fn(k)
+	}
+	if !got[parent] || !got[below] || got[atLimit] {
+		t.Errorf("maySpawn per session = %v, want true for %s and %s, false for %s", got, parent, below, atLimit)
+	}
+	listed := withoutSpawnShellTools([]tools.ExportedTool{{Name: "foci_spawn"}, {Name: "foci_spawn_status"}, {Name: "foci_todo"}, {Name: "foci_spawnish"}})
+	if len(listed) != 2 || listed[0].Name != "foci_todo" || listed[1].Name != "foci_spawnish" {
+		t.Errorf("listing at the limit = %+v, want foci_todo and foci_spawnish", listed)
 	}
 }

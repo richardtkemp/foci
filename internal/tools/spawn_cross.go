@@ -46,15 +46,12 @@ func spawnAgentIDs() []string {
 }
 
 // hostFor returns the Spawner the spawn runs on: s for the caller's own agent
-// ("" or its own id), else the target's. A spawn as another agent is refused
-// from inside a spawn, so no chain of agents spawning each other can start.
-func (s *Spawner) hostFor(ctx context.Context, agentID string) (*Spawner, error) {
+// ("" or its own id), else the target's. A chain of agents spawning each
+// other is bounded by the spawn depth limit, as any chain of spawns is
+// (#3061, checkSpawnDepth).
+func (s *Spawner) hostFor(agentID string) (*Spawner, error) {
 	if agentID == "" || agentID == s.deps.AgentID {
 		return s, nil
-	}
-	caller := SessionKeyFromContext(ctx)
-	if IsSpawnInherit(ctx) || IsSpawnCharacter(ctx) || s.isSpawnBranch(caller) || session.IsCrossAgentSpawnKey(caller) {
-		return nil, fmt.Errorf("a spawn cannot start a spawn of another agent")
 	}
 	h := spawnerFor(agentID)
 	if h == nil {

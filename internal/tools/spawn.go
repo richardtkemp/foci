@@ -614,7 +614,7 @@ func (s *Spawner) SpawnTool() *Tool {
 			if err != nil {
 				return ToolResult{}, err
 			}
-			host, err := s.hostFor(ctx, strings.TrimSpace(p.Agent))
+			host, err := s.hostFor(strings.TrimSpace(p.Agent))
 			if err != nil {
 				return ToolResult{}, err
 			}
@@ -636,11 +636,22 @@ func (s *Spawner) SpawnTool() *Tool {
 			if p.Background && p.Context != spawnModeCharacter && p.Context != spawnModeClone {
 				return ToolResult{}, fmt.Errorf("background: only a character spawn can run in the background (a clone always does); %s returns its result directly", p.Context)
 			}
+			// One rule for nesting (#3061): the spawn depth limit.
+			if err := s.checkSpawnDepth(ctx); err != nil {
+				return ToolResult{}, err
+			}
 			// The usage hold (#2491): no new spawn while the account holds.
 			if msg := usageHoldRefusal(host.agentOrNil()); msg != "" {
 				return ToolResult{}, fmt.Errorf("NOT started: %s", msg)
 			}
 			background := p.Context == spawnModeClone || p.Background
+			if background && callerIsDirectSpawn(ctx) {
+				// Not a nesting rule: a direct spawn's session ends with its
+				// spawner's call, so a background result would reach no one
+				// (and an API one-shot's clone would fork its spawner's
+				// conversation, not its own).
+				return ToolResult{}, fmt.Errorf("NOT started: you are a spawn that returns its result directly, so nothing would take a background spawn's result. Run a %s spawn without background instead", spawnModeCharacter)
+			}
 
 			// The name is held from here until the spawn is registered under
 			// it, so a concurrent spawn call cannot take it meanwhile.
@@ -698,7 +709,8 @@ func (s *Spawner) runDirect(ctx context.Context, host *Spawner, mode, name, prom
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	info := RunningSpawn{ID: spawnIDFor(ctx), Name: name, Description: spawnDescription(prompt), Started: time.Now(), Mode: mode, Direct: true,
-		CallerShell: callerShell(CallerPIDFromContext(ctx)), SpawnerUnattended: s.deps.turnUnattended(parent)}
+		CallerShell: callerShell(CallerPIDFromContext(ctx)), SpawnerUnattended: s.deps.turnUnattended(parent),
+		Depth: s.callerSpawnDepth(ctx) + 1}
 	owner := parent
 	if host != s {
 		info.Agent = host.deps.AgentID
@@ -968,7 +980,14 @@ func (s *Spawner) runAPIOneShot(ctx context.Context, mode, prompt, modelGroup st
 // spawnToolSet builds API tool definitions and a name→Tool map from the
 // registry, excluding any tools in the blacklist. Returns nil slices if
 // registry is nil.
-func spawnToolSet(reg *Registry, blacklist map[string]bool) ([]provider.ToolDef, map[string]*Tool) {
+//
+// maySpawn (#3061) is whether the one-shot may start a spawn under the spawn
+// depth limit: then it gets spawn, else none of the spawn family. It never
+// gets spawn_send, spawn_status or spawn_stop: its tool calls run on its
+// spawner's session key, so those would reach its spawner's other spawns, and
+// a spawn it starts runs directly (callerIsDirectSpawn), so it has nothing to
+// check on or steer.
+func spawnToolSet(reg *Registry, blacklist map[string]bool, maySpawn bool) ([]provider.ToolDef, map[string]*Tool) {
 	if reg == nil {
 		return nil, nil
 	}
@@ -979,7 +998,7 @@ func spawnToolSet(reg *Registry, blacklist map[string]bool) ([]provider.ToolDef,
 		if blacklist[t.Name] {
 			continue
 		}
-		if spawnToolNames[t.Name] {
+		if spawnToolNames[t.Name] && (!maySpawn || t.Name != "spawn") {
 			continue
 		}
 		defs = append(defs, provider.NewCustomTool(t.Name, t.Description, t.Parameters))
@@ -999,6 +1018,8 @@ func spawnIsolatedToolSet(reg *Registry, blacklist map[string]bool, store *secre
 		if blacklist[t.Name] {
 			continue
 		}
+		// A raw spawn starts no spawn (#3061): it runs isolated in its
+		// sandbox, as a delegated raw batch, which has no foci tools at all.
 		if spawnToolNames[t.Name] {
 			continue
 		}
@@ -1377,12 +1398,8 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (answer string, runErr e
 func (s *Spawner) startClone(ctx context.Context, name, prompt string, persistent bool) (ToolResult, error) {
 	deps := s.deps
 	parentSession := SessionKeyFromContext(ctx)
-	// No-recursion guard: reject clone calls from inside a clone. An API
-	// spawn's tool calls carry the inherit marker; a delegated spawn's come
-	// through its own exec bridge with just its branch key (#2523).
-	if IsSpawnInherit(ctx) || s.isSpawnBranch(parentSession) {
-		return ToolResult{}, fmt.Errorf("nested inherit spawns not allowed — use context='raw' or context='character' instead")
-	}
+	// Nesting is decided by the spawn depth limit, checked by the spawn tool
+	// (#3061).
 	if parentSession == "" {
 		return ToolResult{}, fmt.Errorf("spawn inherit: no parent session in context")
 	}
@@ -1459,6 +1476,7 @@ func (s *Spawner) launchBackground(ctx context.Context, agent SpawnAgent, parent
 		running.Mode = spawnModeClone
 	}
 	running.SpawnerUnattended = deps.turnUnattended(parent)
+	running.Depth = s.callerSpawnDepth(ctx) + 1
 	if h := s.hostOf(running); h != nil && h.deps.ModelFor != nil {
 		running.Model = h.deps.ModelFor(running.BranchKey)
 	}
@@ -1501,11 +1519,8 @@ func (s *Spawner) withSteerNotice(task string) string {
 // root. The caller (s) tracks it and gets its result.
 func (s *Spawner) startBackgroundCharacter(ctx context.Context, host *Spawner, name, prompt, model string) (ToolResult, error) {
 	parent := SessionKeyFromContext(ctx)
-	// The same no-recursion guard as clone: a background spawn may not start
-	// another one (a delegated character branch has no spawn tools at all).
-	if IsSpawnInherit(ctx) || s.isSpawnBranch(parent) {
-		return ToolResult{}, fmt.Errorf("a background spawn cannot start another background spawn — run this character spawn without background")
-	}
+	// Nesting is decided by the spawn depth limit, checked by the spawn tool
+	// (#3061).
 	if parent == "" {
 		return ToolResult{}, fmt.Errorf("spawn character: no parent session in context")
 	}
@@ -1533,12 +1548,6 @@ func (s *Spawner) startBackgroundCharacter(ctx context.Context, host *Spawner, n
 	spawnLog.Infof("background character branch=%s parent=%s agent=%q model=%q prompt=%d chars",
 		branchKey, parent, running.Agent, model, len(prompt))
 	return s.launchBackground(ctx, agent, parent, running, prompt)
-}
-
-// isSpawnBranch reports whether sessionKey is a tracked spawn's own branch.
-func (s *Spawner) isSpawnBranch(sessionKey string) bool {
-	_, _, ok := s.deps.Tracker.ForBranch(sessionKey)
-	return ok
 }
 
 // runBackground runs texts on the spawn's branch in a goroutine, holding a
@@ -1740,7 +1749,7 @@ func (s *Spawner) runContext(ctx context.Context, running RunningSpawn, detached
 	return spawnCtx, cancel
 }
 
-// buildSpawnContext creates a cancellable spawn context with session/inherit markers.
+// buildSpawnContext creates a cancellable spawn context on the branch's session.
 func buildSpawnContext(ctx context.Context, branchKey string, detached bool) (context.Context, context.CancelFunc) {
 	var baseCtx context.Context
 	if detached {
@@ -1749,7 +1758,6 @@ func buildSpawnContext(ctx context.Context, branchKey string, detached bool) (co
 		baseCtx = ctx
 	}
 	spawnCtx, cancel := context.WithCancel(baseCtx)
-	spawnCtx = WithSpawnInherit(spawnCtx)
 	spawnCtx = WithSessionKey(spawnCtx, branchKey)
 	return spawnCtx, cancel
 }

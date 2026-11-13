@@ -66,21 +66,6 @@ func JSONResult(v any) (ToolResult, error) {
 	return ToolResult{Text: b.String(), JSON: true}, nil
 }
 
-// spawnInheritKey is the context key for marking a spawn-inherit session.
-type spawnInheritKey struct{}
-
-// WithSpawnInherit marks a context as running inside a spawn inherit session.
-// The spawn tool checks this and rejects nested inherit calls.
-func WithSpawnInherit(ctx context.Context) context.Context {
-	return context.WithValue(ctx, spawnInheritKey{}, true)
-}
-
-// IsSpawnInherit returns true if the context is inside a spawn inherit session.
-func IsSpawnInherit(ctx context.Context) bool {
-	v, _ := ctx.Value(spawnInheritKey{}).(bool)
-	return v
-}
-
 // spawnCharacterKey is the context key marking an API agent's character
 // spawn's tool calls (#2643).
 type spawnCharacterKey struct{}

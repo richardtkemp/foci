@@ -12,6 +12,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/modelinfo"
 	"foci/internal/skills"
+	"foci/internal/tools"
 )
 
 // liveApply routes a successful config-file edit to the running process, for
@@ -136,6 +137,11 @@ var (
 	// The chat "!" command limit (#3045): global only, read from the raw
 	// config into the process-wide userCommandTimeoutNs at each run.
 	liveApplyUserCommandTimeoutAddrs = []string{"tools.user_command_timeout"}
+
+	// The spawn depth limit (#3061): global only, read from the raw config
+	// into the process-wide tools.MaxSpawnDepth at each spawn call and
+	// session launch.
+	liveApplySpawnDepthAddrs = []string{"tools.max_spawn_depth"}
 
 	// Extra skill dirs (#2657): a derived handle — each agent's
 	// *skills.LiveDirs, read at every skill reload (session start) and every
@@ -344,6 +350,11 @@ func registerLiveAppliers(la *liveApply, agents *agentRegistry) {
 
 	la.register(liveApplyUserCommandTimeoutAddrs, func(fresh *config.Config) error {
 		applyUserCommandTimeout(fresh)
+		return nil
+	})
+
+	la.register(liveApplySpawnDepthAddrs, func(fresh *config.Config) error {
+		tools.SetMaxSpawnDepth(fresh.Tools.MaxSpawnDepth)
 		return nil
 	})
 

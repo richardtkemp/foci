@@ -300,8 +300,9 @@ func TestSendToSpawnerHeldRoute(t *testing.T) {
 
 // Every spawn kind whose session can reach foci's tools has send_to_spawner:
 // raw and character API one-shots, explore (API and a delegated read-only
-// batch's bridge) and a delegated character batch's bridge. The spawn family
-// stays out of all of them.
+// batch's bridge) and a delegated character batch's bridge. Raw and explore
+// never get spawn; a character one-shot only below the spawn depth limit
+// (#3061).
 func TestSendToSpawnerInEverySpawnToolSet(t *testing.T) {
 	t.Parallel()
 	reg := NewRegistry()
@@ -310,7 +311,7 @@ func TestSendToSpawnerInEverySpawnToolSet(t *testing.T) {
 	reg.Register(s.SpawnTool())
 	reg.Register(&Tool{Name: "read"})
 	_, raw := spawnIsolatedToolSet(reg, spawnRawBlacklist, nil, t.TempDir(), 0o600)
-	_, char := spawnToolSet(reg, spawnCharacterBlacklist)
+	_, char := spawnToolSet(reg, spawnCharacterBlacklist, false)
 	_, explore := spawnExploreToolSet(reg)
 	for name, set := range map[string]map[string]*Tool{"raw": raw, "character": char, "explore": explore} {
 		if set["send_to_spawner"] == nil {
@@ -321,7 +322,7 @@ func TestSendToSpawnerInEverySpawnToolSet(t *testing.T) {
 		}
 	}
 	for _, access := range []delegator.BatchAccess{delegator.BatchAccessParent, delegator.BatchAccessReadOnly} {
-		sub := RegistryForAccess(reg, access)
+		sub := RegistryForAccess(reg, access, true)
 		if sub == nil || sub.Get("send_to_spawner") == nil {
 			t.Errorf("batch access %s lacks send_to_spawner", access)
 		}

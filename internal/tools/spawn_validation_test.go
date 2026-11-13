@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -91,72 +92,47 @@ func TestSpawnInheritNoParentSession(t *testing.T) {
 	}
 }
 
-func TestSpawnNoRecursiveInherit(t *testing.T) {
-	// Proves that nested clone spawns (a spawned agent trying to spawn another clone) are rejected,
-	// while raw and character modes are still allowed from within a spawned context.
+func TestSpawnDepthGovernsNesting(t *testing.T) {
+	// Proves the spawn depth limit alone decides nesting (#3061; it replaced
+	// TestSpawnNoRecursiveInherit, the old "no clone from a clone" guard). At
+	// the default limit 2, a depth-1 spawn's branch may start any mode,
+	// clone included; a depth-2 spawn's branch may start none, and the
+	// refusal names its depth and the limit.
 	t.Parallel()
 	mockAgent := &mockSpawnAgent{response: "ok"}
-	mockSessions := &mockSessionBrancher{}
+	server := mockModelServer(okResponse("ok"))
+	defer server.Close()
+	tr := NewSpawnTracker()
+	tr.add("test/imain", RunningSpawn{ID: "spawn-d1", BranchKey: "test/imain/b1", Depth: 1}, func() {})
+	tr.add("test/imain", RunningSpawn{ID: "spawn-d2", BranchKey: "test/imain/b2", Depth: 2}, func() {})
 
 	deps := SpawnDeps{
-		Sessions:       mockSessions,
+		Sessions:       &mockSessionBrancher{},
 		AgentID:        "test",
+		Client:         newTestAnthropicClient(server.URL, "test-token"),
 		FallbackModel:  "anthropic/claude-haiku-4-5",
 		FallbackFormat: "anthropic",
 		MaxInherit:     3,
 		MaxToolLoops:   func() int { return 10 },
+		Tracker:        tr,
 	}
 	tool := NewSpawner(deps, func() SpawnAgent { return mockAgent }).SpawnTool()
 
-	// Mark context as already inside a spawn inherit
-	ctx := WithSessionKey(context.Background(), "test/imain")
-	ctx = WithSpawnInherit(ctx)
-
-	// Inherit should be rejected
-	params, _ := json.Marshal(map[string]string{
-		"name":    "valida4",
-		"prompt":  "nested task",
-		"context": "clone",
-	})
-	_, err := tool.Execute(ctx, params)
-	if err == nil {
-		t.Fatal("expected error for nested inherit")
-	}
-	if !strings.Contains(err.Error(), "nested inherit spawns not allowed") {
-		t.Errorf("error = %q, want 'nested inherit spawns not allowed'", err.Error())
+	d1 := WithSessionKey(context.Background(), "test/imain/b1")
+	for i, mode := range []string{"clone", "raw", "character"} {
+		params, _ := json.Marshal(map[string]string{"name": fmt.Sprintf("valida%d", 4+i), "prompt": "nested task", "context": mode})
+		if _, err := tool.Execute(d1, params); err != nil {
+			t.Errorf("%s from a depth-1 spawn (limit %d): %v, want allowed", mode, MaxSpawnDepth(), err)
+		}
 	}
 
-	// But raw/character should still work from inside a spawn inherit
-	server := mockModelServer(okResponse("ok"))
-	defer server.Close()
-
-	deps.Client = newTestAnthropicClient(server.URL, "test-token")
-	tool = NewSpawner(deps, func() SpawnAgent { return mockAgent }).SpawnTool()
-
-	params, _ = json.Marshal(map[string]string{
-		"name":    "valida5",
-		"prompt":  "simple query",
-		"context": "raw",
-	})
-	result, err := tool.Execute(ctx, params)
-	if err != nil {
-		t.Fatalf("raw mode from spawn inherit should work: %v", err)
-	}
-	if result.Text != "ok" {
-		t.Errorf("result = %q", result.Text)
-	}
-
-	params, _ = json.Marshal(map[string]string{
-		"name":    "valida6",
-		"prompt":  "full query",
-		"context": "character",
-	})
-	result, err = tool.Execute(ctx, params)
-	if err != nil {
-		t.Fatalf("full mode from spawn inherit should work: %v", err)
-	}
-	if result.Text != "ok" {
-		t.Errorf("result = %q", result.Text)
+	d2 := WithSessionKey(context.Background(), "test/imain/b2")
+	for i, mode := range []string{"clone", "raw", "character"} {
+		params, _ := json.Marshal(map[string]string{"name": fmt.Sprintf("validb%d", i), "prompt": "nested task", "context": mode})
+		_, err := tool.Execute(d2, params)
+		if err == nil || !strings.Contains(err.Error(), "depth 2") || !strings.Contains(err.Error(), "limit is 2") {
+			t.Errorf("%s from a depth-2 spawn: err = %v, want refused naming depth 2 and limit 2", mode, err)
+		}
 	}
 }
 

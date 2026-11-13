@@ -718,10 +718,13 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string, u
 	// are available in the backend's shell environment. The bridge is created here
 	// (not in individual backends) so all backend types get it automatically. A
 	// batch's bridge carries only the tools its BatchAccess allows
-	// (tools.RegistryForAccess); an isolated batch gets no bridge at all.
+	// (tools.RegistryForAccess); an isolated batch gets no bridge at all. A
+	// session that may not start a spawn under the spawn depth limit gets no
+	// spawn tools (#3061): its depth is known by now, since the spawn that
+	// runs on it registers before its first launch.
 	var bridge *tools.ExecBridge
 	agentReg, _ := opts.ExecRegistry.(*tools.Registry)
-	if reg := tools.RegistryForAccess(agentReg, opts.BatchAccess); reg != nil {
+	if reg := tools.RegistryForAccess(agentReg, opts.BatchAccess, tools.SessionMaySpawn(sessionKey)); reg != nil {
 		bridgeCtx := context.Background()
 		if sessionKey != "" {
 			bridgeCtx = tools.WithSessionKey(bridgeCtx, sessionKey)

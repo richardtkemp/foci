@@ -236,5 +236,8 @@ func recInfo(rec spawnRecord) RunningSpawn {
 		Character: rec.Character, SpawnModel: rec.SpawnModel,
 		Mode: mode, Agent: rec.Agent, SpawnerUnattended: rec.SpawnerUnattended,
 		Direct: rec.OneShot != nil,
+		// A record written before depths (#3061) is a spawn all the same:
+		// spawns could not nest then, so it is a spawn of a depth-0 session.
+		Depth: max(rec.Depth, 1),
 	}
 }

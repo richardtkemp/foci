@@ -226,7 +226,7 @@ func TestSpawnOneShotToolSetsExcludeWhoami(t *testing.T) {
 		kept     []string
 	}
 	rawDefs, rawTools := spawnIsolatedToolSet(reg, spawnRawBlacklist, nil, t.TempDir(), 0o640)
-	charDefs, charTools := spawnToolSet(reg, spawnCharacterBlacklist)
+	charDefs, charTools := spawnToolSet(reg, spawnCharacterBlacklist, true)
 	for _, s := range []toolSet{
 		{"raw", rawDefs, rawTools, []string{"whoami", "close_session"}, []string{"read"}},
 		{"character", charDefs, charTools, []string{"close_session"}, []string{"read", "whoami"}},
@@ -256,24 +256,39 @@ func TestSpawnOneShotToolSetsExcludeWhoami(t *testing.T) {
 
 // TestAPICharacterSpawnToolsMatchDelegated proves an API character one-shot
 // gets exactly the tools a delegated character batch's exec bridge reaches
-// (RegistryForAccess, BatchAccessParent), so the two paths match (#2676).
+// (RegistryForAccess, BatchAccessParent), so the two paths match (#2676),
+// at the spawn depth limit and below it (#3061), except that a one-shot that
+// may spawn gets spawn alone of the spawn family: its calls run on its
+// spawner's session key, so spawn_send, spawn_status and spawn_stop would
+// reach its spawner's other spawns.
 func TestAPICharacterSpawnToolsMatchDelegated(t *testing.T) {
 	t.Parallel()
 	reg := NewRegistry()
 	for _, n := range []string{"read", "send_to_chat", "send_to_session", "send_to_spawner", "whoami", "ask", "close_session", "remind", "spawn", "spawn_send", "spawn_status", "spawn_stop"} {
 		reg.Register(&Tool{Name: n, Parameters: json.RawMessage(`{"type":"object","properties":{}}`)})
 	}
-	_, api := spawnToolSet(reg, spawnCharacterBlacklist)
-	deleg := RegistryForAccess(reg, delegator.BatchAccessParent)
-	for _, tool := range reg.All() {
-		n := tool.Name
-		if (api[n] != nil) != (deleg.Get(n) != nil) {
-			t.Errorf("%s: API character spawn has it = %v, delegated character batch = %v", n, api[n] != nil, deleg.Get(n) != nil)
+	for _, maySpawn := range []bool{false, true} {
+		_, api := spawnToolSet(reg, spawnCharacterBlacklist, maySpawn)
+		deleg := RegistryForAccess(reg, delegator.BatchAccessParent, maySpawn)
+		for _, tool := range reg.All() {
+			n := tool.Name
+			if maySpawn && (n == "spawn_send" || n == "spawn_status" || n == "spawn_stop") {
+				if api[n] != nil || deleg.Get(n) == nil {
+					t.Errorf("maySpawn: %s: API character spawn has it = %v (want false), delegated = %v (want true)", n, api[n] != nil, deleg.Get(n) != nil)
+				}
+				continue
+			}
+			if (api[n] != nil) != (deleg.Get(n) != nil) {
+				t.Errorf("maySpawn=%v: %s: API character spawn has it = %v, delegated character batch = %v", maySpawn, n, api[n] != nil, deleg.Get(n) != nil)
+			}
 		}
-	}
-	for _, n := range []string{"whoami", "send_to_session"} {
-		if api[n] == nil {
-			t.Errorf("API character spawn lacks %s", n)
+		for _, n := range []string{"whoami", "send_to_session"} {
+			if api[n] == nil {
+				t.Errorf("API character spawn lacks %s", n)
+			}
+		}
+		if (api["spawn"] != nil) != maySpawn {
+			t.Errorf("maySpawn=%v: API character spawn has spawn = %v", maySpawn, api["spawn"] != nil)
 		}
 	}
 }
@@ -334,28 +349,30 @@ func TestSpawnCharacterTools(t *testing.T) {
 	}
 }
 
-func TestSpawnToolSetExcludesSpawn(t *testing.T) {
-	// Proves that the spawn tool is always excluded from the tool set passed to spawned agents,
-	// preventing recursive spawn chains.
+func TestSpawnToolSetFollowsSpawnDepth(t *testing.T) {
+	// Proves an API one-shot's tool set has spawn only when the one-shot may
+	// start a spawn under the spawn depth limit (#3061; it replaced
+	// TestSpawnToolSetExcludesSpawn, from when no one-shot could spawn).
 	t.Parallel()
 	reg := NewRegistry()
-	reg.Register(&Tool{
-		Name:       "spawn",
-		Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
-		Execute:    func(ctx context.Context, params json.RawMessage) (ToolResult, error) { return TextResult("ok"), nil },
-	})
-	reg.Register(&Tool{
-		Name:       "shell",
-		Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
-		Execute:    func(ctx context.Context, params json.RawMessage) (ToolResult, error) { return TextResult("ok"), nil },
-	})
+	for _, n := range []string{"spawn", "spawn_status", "shell"} {
+		reg.Register(&Tool{
+			Name:       n,
+			Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
+			Execute:    func(ctx context.Context, params json.RawMessage) (ToolResult, error) { return TextResult("ok"), nil },
+		})
+	}
 
-	defs, tools := spawnToolSet(reg, nil)
+	defs, tools := spawnToolSet(reg, nil, false)
 	if len(defs) != 1 || defs[0].Name() != "shell" {
-		t.Errorf("defs = %v, want [shell] only", defs)
+		t.Errorf("at the limit: defs = %v, want [shell] only", defs)
 	}
 	if _, ok := tools["spawn"]; ok {
-		t.Error("spawn should be excluded from tool set")
+		t.Error("at the limit: spawn should be excluded from the tool set")
+	}
+	defs, tools = spawnToolSet(reg, nil, true)
+	if len(defs) != 2 || tools["spawn"] == nil || tools["shell"] == nil || tools["spawn_status"] != nil {
+		t.Errorf("below the limit: defs = %v, want shell and spawn (no spawn_status)", defs)
 	}
 }
 

@@ -205,7 +205,7 @@ Every spawn call names its spawn (`name`, required, #2721). The name is unique a
 **Clone mode details:**
 - Creates a branch session: `{parentKey}/b{TIMESTAMP}`
 - Branch has `NoResetHook` set (ephemeral, no memory formation on cleanup)
-- Recursive background spawns are blocked — a spawned session can use `raw`/`character` (directly) but not `clone` or a background character
+- Spawn nesting is bounded by one depth limit, `[tools] max_spawn_depth` (default 2): a chat is depth 0, its spawn 1, and a session may start a spawn only if the new depth is at most the limit (#3061). A direct spawn starts no background spawn or clone (nothing would take the result)
 - Concurrent clone spawns are limited by `max_concurrent_spawns` (default 10, live-editable)
 - Runs as a full agent turn with all tools available
 - Always async: returns `"Spawn started in background."` immediately, delivers `[SPAWN RESULT]` via notifier on completion (matching the `[EXEC RESULT]`/`[HTTP RESULT]` pattern)

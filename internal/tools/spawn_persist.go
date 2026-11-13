@@ -52,6 +52,8 @@ type spawnRecord struct {
 	Agent string `json:"agent,omitempty"`
 	// SpawnerUnattended: see RunningSpawn (#2684).
 	SpawnerUnattended bool `json:"spawner_unattended,omitempty"`
+	// Depth: see RunningSpawn (#3061); 0 in a record written before it.
+	Depth int `json:"depth,omitempty"`
 	// Kept: the messages to its spawner kept for the head of its result
 	// (send_to_spawner, #2662), in the order sent. A resumed run's result
 	// still carries them (#2677).
@@ -160,7 +162,7 @@ func (s *trackedSpawn) record(parent string) *spawnRecord {
 		Started: s.info.Started, Pending: slices.Clone(s.pending),
 		Resumes: s.resumes, Running: s.running, Result: s.result,
 		Character: s.info.Character, SpawnModel: s.info.SpawnModel,
-		Agent: s.info.Agent, SpawnerUnattended: s.info.SpawnerUnattended,
+		Agent: s.info.Agent, SpawnerUnattended: s.info.SpawnerUnattended, Depth: s.info.Depth,
 		Kept: keptRecords(s.kept), OneShot: s.oneShot,
 	}
 }

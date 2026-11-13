@@ -248,7 +248,7 @@ func TestCrossAgentDirectSpawnRunsAsTarget(t *testing.T) {
 
 // Dick 2026-10-30: naming an agent implies character mode, and an explicit
 // other mode with it is refused; an
-// unknown agent is a clear error; a spawn cannot start one.
+// unknown agent is a clear error; a spawn at the spawn depth limit cannot start one.
 func TestCrossAgentSpawnRefusals(t *testing.T) {
 	t.Parallel()
 	caller, _, target, _ := newCrossPair(t, "xrefuse")
@@ -263,14 +263,14 @@ func TestCrossAgentSpawnRefusals(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `unknown agent "nobody-xrefuse"`) || !strings.Contains(err.Error(), target.deps.AgentID) {
 		t.Errorf("unknown agent: err = %v, want a clear error naming the agents", err)
 	}
-	for name, c := range map[string]context.Context{
-		"inherit":     WithSpawnInherit(ctx),
-		"character":   WithSpawnCharacter(ctx),
-		"cross-agent": WithSessionKey(context.Background(), session.CrossAgentSpawnRoot(caller.deps.AgentID)+"/b1"),
-	} {
-		if _, err := caller.SpawnTool().Execute(c, json.RawMessage(`{"name":"cross9","prompt":"p","agent":"`+target.deps.AgentID+`"}`)); err == nil || !strings.Contains(err.Error(), "cannot start a spawn of another agent") {
-			t.Errorf("from a %s spawn: err = %v, want refused", name, err)
-		}
+	// A spawn as another agent is bounded by the spawn depth limit like any
+	// spawn (#3061): refused from a spawn at the limit (here a cross-agent
+	// spawn's branch at depth 2, the default limit), naming its depth.
+	atLimit := session.CrossAgentSpawnRoot(caller.deps.AgentID) + "/b1"
+	caller.deps.Tracker.add(caller.deps.AgentID+"/c9", RunningSpawn{ID: "spawn-x", BranchKey: atLimit, Depth: MaxSpawnDepth()}, func() {})
+	c := WithSessionKey(context.Background(), atLimit)
+	if _, err := caller.SpawnTool().Execute(c, json.RawMessage(`{"name":"cross9","prompt":"p","agent":"`+target.deps.AgentID+`"}`)); err == nil || !strings.Contains(err.Error(), "spawn depth limit") {
+		t.Errorf("from a spawn at the limit: err = %v, want refused by the spawn depth limit", err)
 	}
 	// Naming yourself is an ordinary spawn.
 	if _, err := caller.SpawnTool().Execute(ctx, json.RawMessage(`{"name":"cross10","prompt":"p","context":"raw","agent":"`+caller.deps.AgentID+`"}`)); err != nil {

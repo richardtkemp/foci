@@ -8,9 +8,8 @@ import (
 	"foci/internal/session"
 )
 
-// spawnToolNames are the spawn family. No one-shot gets them: a one-shot that
-// could spawn would recurse with nobody watching (the API one-shots' tool
-// sets skip spawn too, spawnToolSet).
+// spawnToolNames are the spawn family. A session gets them only while it may
+// start a spawn under the spawn depth limit (#3061, SessionMaySpawn).
 var spawnToolNames = map[string]bool{
 	"spawn":        true,
 	"spawn_send":   true,
@@ -19,8 +18,7 @@ var spawnToolNames = map[string]bool{
 }
 
 // parentBatchExcluded lists the tools a parent-access batch session's exec
-// bridge (spawn character) leaves out of the agent's own set: the spawn
-// family (above); close_session, which on a batch session (keyed under its
+// bridge (spawn character) leaves out of the agent's own set: close_session, which on a batch session (keyed under its
 // owner's root) would close the OWNER's chat on a throwaway session's say-so
 // (#2573); and ask, since nobody is there to answer a character spawn
 // (#2643). (Its permission requests go up to its spawner instead, #2684.)
@@ -49,22 +47,31 @@ func (r *Registry) Subset(keep func(name string) bool) *Registry {
 // reach through its exec bridge, or nil for none (no bridge at all):
 //   - default (every non-batch session, and foci's own batches): the agent's
 //     whole registry;
-//   - parent: the agent's registry less the spawn family, close_session and ask;
+//   - parent: the agent's registry less close_session, compact_session and ask;
 //   - isolated: none — the session runs no commands, so it has no shell to
 //     reach a bridge from, and the bridge's tools are not confined to its
 //     directory;
 //   - read-only: the explore allowlist (spawnExploreAllowed), the same tools
 //     an API explore spawn gets from the registry, with todo narrowed to its
 //     read actions (readOnlyRegistry, #2702).
-func RegistryForAccess(reg *Registry, access delegator.BatchAccess) *Registry {
+//
+// maySpawn is whether the session may start a spawn under the spawn depth
+// limit (#3061, SessionMaySpawn): when false, default and parent leave out
+// the spawn family too. Read-only has none of it whatever maySpawn says.
+func RegistryForAccess(reg *Registry, access delegator.BatchAccess, maySpawn bool) *Registry {
 	if reg == nil {
 		return nil
 	}
 	switch access {
 	case delegator.BatchAccessDefault:
-		return reg
+		if maySpawn {
+			return reg
+		}
+		return reg.Subset(func(name string) bool { return !spawnToolNames[name] })
 	case delegator.BatchAccessParent:
-		return reg.Subset(func(name string) bool { return !spawnToolNames[name] && !parentBatchExcluded[name] })
+		return reg.Subset(func(name string) bool {
+			return (maySpawn || !spawnToolNames[name]) && !parentBatchExcluded[name]
+		})
 	case delegator.BatchAccessReadOnly:
 		return readOnlyRegistry(reg)
 	}

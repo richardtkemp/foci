@@ -96,14 +96,20 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	if p.resolved.Environment.Enabled { // static-cfg:ignore: startup-only gate for an expensive subprocess spawn
 		crontabCount = countCrontabJobs()
 	}
-	buildEnv := func(sessionPlatform string, spawn bool) string {
+	// maySpawn: a session at the spawn depth limit is not told of the spawn
+	// tools its exec bridge leaves out (#3061).
+	buildEnv := func(sessionPlatform string, spawn, maySpawn bool) string {
 		rc := p.resolvedLive.Load()
 		if !rc.Environment.Enabled {
 			return ""
 		}
-		return buildEnvironmentDelegated(p.acfg, p.configPath, p.cfg, rc, bakedPerms, crontabCount, p.plat.ActivePlatformNames(), registry.ExportedTools(), shared.promptSearchDirs, sessionPlatform, spawn)
+		shellTools := registry.ExportedTools()
+		if !maySpawn {
+			shellTools = withoutSpawnShellTools(shellTools)
+		}
+		return buildEnvironmentDelegated(p.acfg, p.configPath, p.cfg, rc, bakedPerms, crontabCount, p.plat.ActivePlatformNames(), shellTools, shared.promptSearchDirs, sessionPlatform, spawn)
 	}
-	systemPrompt := delegatedSystemPrompt(buildEnv("", false), bs.SystemBlocks(), br.extraSystemBlocks)
+	systemPrompt := delegatedSystemPrompt(buildEnv("", false, true), bs.SystemBlocks(), br.extraSystemBlocks)
 
 	ag.Model = model
 
@@ -1199,14 +1205,16 @@ func delegatedSystemPrompt(envBlock string, workspaceBlocks, extraBlocks []provi
 // rebuilds the environment block for a given session platform (so the ## Platform
 // block matches the session's messaging platform) and for a spawn's session or
 // not; platformFor resolves that platform from the session key, and isSpawn
-// (nil = never) whether the session is a spawn's (#2986).
+// (nil = never) whether the session is a spawn's (#2986). maySpawn is whether
+// the session may start a spawn under the spawn depth limit (#3061,
+// tools.SessionMaySpawn): its exec bridge has the spawn tools only then.
 //
 // digest (nil = none) returns the session's daily-memory digest (#2827), ""
 // for a session that gets none; it goes LAST so everything before it stays a
 // prefix shared across sessions.
-func newDelegatedSystemPromptFunc(buildEnv func(sessionPlatform string, spawn bool) string, platformFor func(sessionKey string) string, isSpawn func(sessionKey string) bool, reload func() (workspaceBlocks, extraBlocks []provider.SystemBlock), digest func(sessionKey string) string) func(sessionKey string) string {
+func newDelegatedSystemPromptFunc(buildEnv func(sessionPlatform string, spawn, maySpawn bool) string, platformFor func(sessionKey string) string, isSpawn func(sessionKey string) bool, reload func() (workspaceBlocks, extraBlocks []provider.SystemBlock), digest func(sessionKey string) string) func(sessionKey string) string {
 	return func(sessionKey string) string {
-		envBlock := buildEnv(platformFor(sessionKey), isSpawn != nil && isSpawn(sessionKey))
+		envBlock := buildEnv(platformFor(sessionKey), isSpawn != nil && isSpawn(sessionKey), tools.SessionMaySpawn(sessionKey))
 		ws, extra := reload()
 		p := delegatedSystemPrompt(envBlock, ws, extra)
 		if digest != nil {
@@ -1482,4 +1490,16 @@ func sendSystemNotice(connMgr platform.ConnectionManager, agentID, sessionKey, t
 	if err := conn.SendInjectedMessage(sessionKey, text); err != nil {
 		log.NewComponentLogger("agent:"+agentID).Warnf("system notice send failed for session=%s: %v", sessionKey, err)
 	}
+}
+
+// withoutSpawnShellTools is the shell-tool listing less the spawn tools'
+// functions (#3061), for a session that may not start a spawn.
+func withoutSpawnShellTools(in []tools.ExportedTool) []tools.ExportedTool {
+	out := make([]tools.ExportedTool, 0, len(in))
+	for _, t := range in {
+		if !tools.IsSpawnFamilyShellFunc(t.Name) {
+			out = append(out, t)
+		}
+	}
+	return out
 }

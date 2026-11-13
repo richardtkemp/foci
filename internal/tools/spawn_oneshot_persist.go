@@ -268,7 +268,9 @@ func (s *Spawner) apiOneShotRun(ctx context.Context, rec *oneShotRecord, prompt 
 		if deps.SystemPrompt != nil {
 			p.system = deps.SystemPrompt(rec.Self)
 		}
-		p.toolDefs, p.tools = spawnToolSet(deps.Registry, spawnCharacterBlacklist)
+		// ctx carries the one-shot's own spawnLink (runDirect, or the
+		// restart's resume), so this is its own depth (#3061).
+		p.toolDefs, p.tools = spawnToolSet(deps.Registry, spawnCharacterBlacklist, s.callerSpawnDepth(ctx) < MaxSpawnDepth())
 		p.maxResultChars = spawnMaxResultChars
 		p.maxLoops = deps.maxToolLoops()
 		ctx = withSpawnSelf(WithSpawnCharacter(ctx), rec.Self, model)
