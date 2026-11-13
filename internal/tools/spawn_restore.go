@@ -75,12 +75,12 @@ func (s *Spawner) RestoreSpawns() {
 	}
 
 	type pendingResume struct {
-		rec   spawnRecord
-		host  *Spawner
-		agent SpawnAgent
-		base  context.Context
-		stop  context.CancelFunc
-		texts []string
+		rec    spawnRecord
+		host   *Spawner
+		agent  SpawnAgent
+		base   context.Context
+		stop   context.CancelFunc
+		notice string
 	}
 	var resumes []pendingResume
 	for _, rec := range recs {
@@ -119,6 +119,13 @@ func (s *Spawner) RestoreSpawns() {
 			report(rec.Parent).lost = append(report(rec.Parent).lost, label+": "+reason)
 			continue
 		}
+		if rec.OneShot == nil && host.deps.TakeUndelivered != nil {
+			// What its backend never consumed joins the parent messages
+			// it had queued: the adopted record keeps them all until the
+			// resumed run takes them, so a second restart while it waits
+			// for a slot does not lose them (#3071).
+			rec.Pending = append(host.deps.TakeUndelivered(rec.BranchKey), rec.Pending...)
+		}
 		base, stop := context.WithCancel(context.Background())
 		tr.adopt(rec, true, "", stop)
 		if rec.Result != "" {
@@ -129,12 +136,8 @@ func (s *Spawner) RestoreSpawns() {
 			resumes = append(resumes, pendingResume{rec: rec, host: host, base: base, stop: stop})
 			continue
 		}
-		texts := []string{host.withSteerNotice(spawnRestartNotice(rec.Prompt))}
-		if host.deps.TakeUndelivered != nil {
-			texts = append(texts, host.deps.TakeUndelivered(rec.BranchKey)...)
-		}
-		texts = append(texts, rec.Pending...)
-		resumes = append(resumes, pendingResume{rec: rec, host: host, agent: agent, base: base, stop: stop, texts: texts})
+		resumes = append(resumes, pendingResume{rec: rec, host: host, agent: agent, base: base, stop: stop,
+			notice: host.withSteerNotice(spawnRestartNotice(rec.Prompt))})
 	}
 
 	for _, parent := range parents {
@@ -150,7 +153,7 @@ func (s *Spawner) RestoreSpawns() {
 				go s.resumeOneShotAfterRestart(r.host, r.rec, r.base, r.stop)
 				continue
 			}
-			s.resumeAfterRestart(r.host, r.agent, r.rec, r.base, r.stop, r.texts)
+			s.resumeAfterRestart(r.host, r.agent, r.rec, r.base, r.stop, r.notice)
 		}
 	}()
 }
@@ -189,13 +192,16 @@ func (s *Spawner) noticeRestore(parent string, r *spawnRestoreReport) {
 }
 
 // resumeAfterRestart runs a restored spawn again once a slot frees up, with
-// texts: a restart notice (with its task), then whatever its backend never
-// consumed, then the parent messages that were waiting. Its stop handle is
-// stop (base's cancel) from the start, so /stop reaches it while it waits for
-// a slot.
-func (s *Spawner) resumeAfterRestart(host *Spawner, agent SpawnAgent, rec spawnRecord, base context.Context, stop context.CancelFunc, texts []string) {
+// notice (the restart notice, with its task), then its pending inputs:
+// whatever its backend never consumed, then the parent messages that were
+// waiting, then any spawn_send that arrived while it waited. They stay in its
+// persisted record until it takes them here, once it has a slot (#3071). Its
+// stop handle is stop (base's cancel) from the start, so /stop reaches it
+// while it waits for a slot.
+func (s *Spawner) resumeAfterRestart(host *Spawner, agent SpawnAgent, rec spawnRecord, base context.Context, stop context.CancelFunc, notice string) {
 	tr := s.deps.Tracker
 	_ = s.slots.acquire(context.Background()) // never fails: a /stop meanwhile cancels base, so the run ends at once
+	texts := append([]string{notice}, tr.drainPending(rec.Parent, rec.ID)...)
 	running := recInfo(rec)
 	if running.Character && host.deps.PrepareCharacterBranch != nil {
 		// Its launch settings were in the last process's memory (#2643).

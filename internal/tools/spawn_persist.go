@@ -279,8 +279,9 @@ func (t *SpawnTracker) loadRecords(agentID string) []spawnRecord {
 
 // adopt registers a persisted spawn in a new process. running marks it as
 // about to be resumed (its resume count goes up, and is persisted before the
-// run starts, so a spawn that crashes foci is not resumed forever); otherwise
-// it is known as finished with outcome. cancel stops it.
+// run starts, so a spawn that crashes foci is not resumed forever; its
+// rec.Pending stays pending, and persisted, until the resumed run takes it,
+// #3071); otherwise it is known as finished with outcome. cancel stops it.
 func (t *SpawnTracker) adopt(rec spawnRecord, running bool, outcome string, cancel func()) {
 	if t == nil {
 		return
@@ -293,6 +294,7 @@ func (t *SpawnTracker) adopt(rec spawnRecord, running bool, outcome string, canc
 	}
 	if running {
 		s.resumes++
+		s.pending = slices.Clone(rec.Pending)
 	} else {
 		s.ended, s.outcome = time.Now(), outcome
 	}

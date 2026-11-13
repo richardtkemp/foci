@@ -399,3 +399,52 @@ func TestRestoredSpawnStoppableBeforeItRuns(t *testing.T) {
 		t.Fatalf("delivered %q, want stopped", d.msg)
 	}
 }
+
+// A restored spawn's waiting inputs (its backend's unconsumed inputs and the
+// parent messages it had queued) stay in its persisted record until its
+// resumed run takes them. A second restart while it still waits for a slot
+// resumes it with them, each once (#3071).
+func TestRestoredSpawnKeepsInputsAcrossSecondRestart(t *testing.T) {
+	t.Parallel()
+	// The first process: the only slot is taken, so the restored spawn waits.
+	first := newPersistHarness(newScriptedSpawnAgent(0), func(d *SpawnDeps) {
+		d.MaxInherit = 1
+		d.TakeUndelivered = func(string) []string { return []string{"unconsumed input"} }
+	})
+	_ = first.spawner.slots.acquire(context.Background())
+	rec := runningRecord("spawn-ee")
+	first.store.put(t, rec)
+	first.spawner.RestoreSpawns()
+	<-first.notices
+
+	got, ok := first.store.record(t, rec.ID)
+	if !ok || !got.Running || len(got.Pending) != 2 || got.Pending[0] != "unconsumed input" || got.Pending[1] != rec.Pending[0] {
+		t.Fatalf("record while the restored spawn waits for a slot = %+v (ok %v), want running with its unconsumed input and its queued message pending", got, ok)
+	}
+
+	// The second process: the backend's inputs were already taken by the
+	// first, so only the record still holds them.
+	agent := newScriptedSpawnAgent(1)
+	second := newPersistHarness(agent, func(d *SpawnDeps) {
+		d.TakeUndelivered = func(string) []string { return nil }
+	})
+	second.store = first.store
+	second.tracker.SetStore(first.store)
+	second.spawner.RestoreSpawns()
+	<-second.notices
+	<-agent.started
+	calls, _ := agent.turns()
+	texts := calls[0]
+	if len(texts) != 3 || !strings.Contains(texts[0], "FOCI RESTARTED") || texts[1] != "unconsumed input" || texts[2] != rec.Pending[0] {
+		t.Fatalf("resume turn inputs after the second restart = %q, want notice, unconsumed input, queued message, each once", texts)
+	}
+	if got, ok := second.store.record(t, rec.ID); !ok || len(got.Pending) != 0 || got.Resumes != 2 {
+		t.Fatalf("record during the resumed run = %+v (ok %v), want its inputs taken (no pending) and Resumes 2", got, ok)
+	}
+	close(agent.gates[0])
+	d := second.nextDelivery(t)
+	if !strings.Contains(d.msg, "completed") {
+		t.Fatalf("delivered %q, want the completed result", d.msg)
+	}
+	d.done(true)
+}
