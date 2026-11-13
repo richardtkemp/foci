@@ -432,8 +432,9 @@ func TestSweep_DeliversOldSchemaRow(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("old-schema row was not delivered")
 			}
-			if n := storedCount(t, store); n != 0 {
-				t.Errorf("stored=%d want 0", n)
+			// The row goes once the turn has run, after it entered (#3063).
+			if !eventually(func() bool { return storedCount(t, store) == 0 }) {
+				t.Errorf("stored=%d want 0", storedCount(t, store))
 			}
 		})
 	}

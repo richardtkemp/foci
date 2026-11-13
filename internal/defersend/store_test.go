@@ -306,3 +306,44 @@ func TestStore_ReopenSameFile(t *testing.T) {
 		t.Errorf("reopen lost the branch record: %+v", all)
 	}
 }
+
+// TestStore_StartedRoundtrip: a new record is unstarted; MarkStarted sets
+// StartedAt (#3063), ClearStarted resets it, and neither errors on a
+// record that is gone.
+func TestStore_StartedRoundtrip(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	id, _, err := s.Enqueue(Record{AgentID: "a", SessionKey: "a/c1", Text: "x", CreatedAt: now, DeadlineAt: now.Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := func() time.Time {
+		t.Helper()
+		all, err := s.All()
+		if err != nil || len(all) != 1 {
+			t.Fatalf("All: %v %+v", err, all)
+		}
+		return all[0].StartedAt
+	}
+	if at := started(); !at.IsZero() {
+		t.Fatalf("new record StartedAt = %v, want zero", at)
+	}
+	if err := s.MarkStarted(id, now); err != nil {
+		t.Fatal(err)
+	}
+	if at := started(); !at.Equal(now) {
+		t.Fatalf("StartedAt = %v, want %v", at, now)
+	}
+	if err := s.ClearStarted(id); err != nil {
+		t.Fatal(err)
+	}
+	if at := started(); !at.IsZero() {
+		t.Fatalf("StartedAt after ClearStarted = %v, want zero", at)
+	}
+	if err := s.MarkStarted(id+99, now); err != nil {
+		t.Errorf("MarkStarted on a missing record: %v", err)
+	}
+	if err := s.ClearStarted(id + 99); err != nil {
+		t.Errorf("ClearStarted on a missing record: %v", err)
+	}
+}

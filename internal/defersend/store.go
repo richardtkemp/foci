@@ -66,6 +66,13 @@ type Record struct {
 	// not reset the count. A row written before the column existed reads
 	// back as 0.
 	Attempts int
+	// StartedAt is when the delivery of this record began running (its turn
+	// started, or its command was dispatched); zero while it has not (#3063).
+	// The row is deleted only once the delivery has run, so a record queued
+	// on a busy session survives a restart; a record that a previous process
+	// STARTED but never confirmed finished is not run again (it may already
+	// have had its effect), and the sweep drops it with a notice instead.
+	StartedAt time.Time
 }
 
 // EffectiveKind normalises the stored kind: a row written before the kind
@@ -109,7 +116,8 @@ func NewStore(path string) (*Store, error) {
 			no_reset_hook      INTEGER NOT NULL DEFAULT 0,
 			silent             INTEGER NOT NULL DEFAULT 0,
 			persistent INTEGER NOT NULL DEFAULT 0,
-			attempts           INTEGER NOT NULL DEFAULT 0
+			attempts           INTEGER NOT NULL DEFAULT 0,
+			started_at         TEXT NOT NULL DEFAULT ''
 		)`,
 	)
 	if err != nil {
@@ -129,6 +137,7 @@ func NewStore(path string) (*Store, error) {
 		{"steer", `ALTER TABLE deferred_sends ADD COLUMN steer TEXT NOT NULL DEFAULT ''`},
 		{"persistent", `ALTER TABLE deferred_sends ADD COLUMN persistent INTEGER NOT NULL DEFAULT 0`},
 		{"attempts", `ALTER TABLE deferred_sends ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0`},
+		{"started_at", `ALTER TABLE deferred_sends ADD COLUMN started_at TEXT NOT NULL DEFAULT ''`},
 	} {
 		if _, err := db.Exec(col.ddl); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			_ = db.Close()
@@ -245,7 +254,7 @@ func (s *Store) All() ([]Record, error) {
 	rows, err := s.db.Query(
 		`SELECT id, agent_id, session_key, text, policy, model, steer,
 		        wait_warm, wait_cold, wait_user_active, wait_user_inactive,
-		        kind, no_compact, no_reset_hook, silent, persistent, created_at, deadline_at, attempts
+		        kind, no_compact, no_reset_hook, silent, persistent, created_at, deadline_at, attempts, started_at
 		   FROM deferred_sends ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -256,18 +265,39 @@ func (s *Store) All() ([]Record, error) {
 	for rows.Next() {
 		var r Record
 		var kind string
-		var created, deadline string
+		var created, deadline, started string
 		if err := rows.Scan(&r.ID, &r.AgentID, &r.SessionKey, &r.Text, &r.Policy, &r.Model, &r.Steer,
 			&r.WaitWarm, &r.WaitCold, &r.WaitUserActive, &r.WaitUserInactive,
-			&kind, &r.NoCompact, &r.NoResetHook, &r.Silent, &r.Persistent, &created, &deadline, &r.Attempts); err != nil {
+			&kind, &r.NoCompact, &r.NoResetHook, &r.Silent, &r.Persistent, &created, &deadline, &r.Attempts, &started); err != nil {
 			return nil, err
 		}
 		r.Kind = Kind(kind) // read verbatim; normalise via EffectiveKind
 		r.CreatedAt, _ = time.Parse(time.RFC3339, created)
 		r.DeadlineAt, _ = time.Parse(time.RFC3339, deadline)
+		if started != "" {
+			r.StartedAt, _ = time.Parse(time.RFC3339, started)
+		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// MarkStarted records that the delivery of record id has begun running
+// (Record.StartedAt). Marking a record that no longer exists is not an error.
+func (s *Store) MarkStarted(id int64, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`UPDATE deferred_sends SET started_at = ? WHERE id = ?`, timeutil.Format(at), id)
+	return err
+}
+
+// ClearStarted undoes MarkStarted: the delivery was refused before it had
+// any effect (foci was shutting down), so the next process must run it.
+func (s *Store) ClearStarted(id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`UPDATE deferred_sends SET started_at = '' WHERE id = ?`, id)
+	return err
 }
 
 // Delete removes a pending request by id (idempotent).

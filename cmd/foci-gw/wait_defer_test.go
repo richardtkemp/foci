@@ -293,7 +293,9 @@ func TestSweep_WithholdsWhileRateLimited(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("send was not delivered once the rate limit cleared")
 	}
-	if all, _ := store.All(); len(all) != 0 {
+	// The row goes once the turn has run, after it entered (#3063).
+	if !eventually(func() bool { all, _ := store.All(); return len(all) == 0 }) {
+		all, _ := store.All()
 		t.Errorf("store not drained: %d", len(all))
 	}
 }
@@ -321,7 +323,9 @@ func TestSweep_DeliversWhenSatisfied(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("satisfied send was not delivered by the sweep")
 	}
-	if all, _ := store.All(); len(all) != 0 {
+	// The row goes once the turn has run, after it entered (#3063).
+	if !eventually(func() bool { all, _ := store.All(); return len(all) == 0 }) {
+		all, _ := store.All()
 		t.Errorf("store not drained: %d", len(all))
 	}
 }
@@ -346,7 +350,9 @@ func TestSweep_DeliversOnDeadline(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("deadline-expired send was not delivered")
 	}
-	if all, _ := store.All(); len(all) != 0 {
+	// The row goes once the turn has run, after it entered (#3063).
+	if !eventually(func() bool { all, _ := store.All(); return len(all) == 0 }) {
+		all, _ := store.All()
 		t.Errorf("store not drained: %d", len(all))
 	}
 }
@@ -501,7 +507,8 @@ func TestSweep_DeliversBranchRecord(t *testing.T) {
 	if len(parentMsgs) != 0 {
 		t.Errorf("parent session gained %d message(s), want 0", len(parentMsgs))
 	}
-	if all, _ := store.All(); len(all) != 0 {
+	if !eventually(func() bool { all, _ := store.All(); return len(all) == 0 }) { // deleted after the turn ran (#3063)
+		all, _ := store.All()
 		t.Errorf("store not drained: %d", len(all))
 	}
 }
@@ -555,7 +562,9 @@ func TestSweep_DeliversBranchOnDeadline(t *testing.T) {
 	if calls := mock.snapshot(); len(calls) != 1 || calls[0].trigger != "branch" {
 		t.Errorf("calls=%+v want one branch turn", calls)
 	}
-	if all, _ := store.All(); len(all) != 0 {
+	// The row goes once the turn has run, after it entered (#3063).
+	if !eventually(func() bool { all, _ := store.All(); return len(all) == 0 }) {
+		all, _ := store.All()
 		t.Errorf("store not drained: %d", len(all))
 	}
 }
@@ -630,7 +639,9 @@ func TestSweep_WithholdsBranchWhileRateLimited(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("branch was not delivered once the rate limit cleared")
 	}
-	if all, _ := store.All(); len(all) != 0 {
+	// The row goes once the turn has run, after it entered (#3063).
+	if !eventually(func() bool { all, _ := store.All(); return len(all) == 0 }) {
+		all, _ := store.All()
 		t.Errorf("store not drained: %d", len(all))
 	}
 }

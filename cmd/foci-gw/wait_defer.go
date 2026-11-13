@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"foci/internal/agent"
@@ -306,6 +307,16 @@ func resolveWaitTimeout(s string) (time.Duration, error) {
 // dropped with a notice (#2220). A transient delivery failure keeps the
 // record for a later sweep, up to deferMaxAttempts; a permanent one drops it
 // at once with a notice. It runs until ctx is cancelled.
+//
+// A record's row is deleted only once its delivery has RUN, not when it is
+// handed to the session's in-memory inbox (#3063): a send or branch queued
+// behind a long turn survives a restart and runs in the next process. While
+// it waits in the inbox the sweeper tracks it as in flight, so later sweeps
+// do not hand it over again. The row is marked started when the delivery
+// begins; a started row that the current process does not own was started by
+// a process that died before confirming it, and is dropped with a notice
+// rather than run a second time. A failed delete is logged and retried on
+// each sweep, and the record is never delivered again meanwhile.
 type deferSweeper struct {
 	store           *defersend.Store
 	deps            httpHandlerDeps
@@ -313,8 +324,112 @@ type deferSweeper struct {
 	isSessionActive sessionActivityChecker
 	// deliverFn replaces deliver when set — a test seam for driving the
 	// retry/drop classification with a chosen failure. Production leaves it
-	// nil.
+	// nil. Its delivery counts as run when it returns nil.
 	deliverFn func(*agentInstance, defersend.Record) error
+
+	mu sync.Mutex
+	// running holds the ids handed to a session inbox whose delivery has not
+	// finished (or been refused) yet. In memory on purpose: after a restart
+	// nothing is in flight, so a queued record is delivered again.
+	running map[int64]bool
+	// unremoved holds the ids that are finished with (delivered or dropped)
+	// but whose row delete failed: the sweep retries the delete and never
+	// delivers them again.
+	unremoved map[int64]bool
+}
+
+// inFlight reports whether record id is handed to an inbox and not finished.
+func (s *deferSweeper) inFlight(id int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.running[id]
+}
+
+func (s *deferSweeper) setInFlight(id int64, on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !on {
+		delete(s.running, id)
+		return
+	}
+	if s.running == nil {
+		s.running = map[int64]bool{}
+	}
+	s.running[id] = true
+}
+
+// isUnremoved reports whether record id is finished with but its delete failed.
+func (s *deferSweeper) isUnremoved(id int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.unremoved[id]
+}
+
+// remove deletes record r's row because it is finished with (why: "ran",
+// "dropped"). A failed delete is logged at ERROR the first time (DEBUG on
+// each retry) and the id is kept in unremoved, so the next sweep retries the
+// delete instead of delivering it again.
+func (s *deferSweeper) remove(r defersend.Record, why string) {
+	err := s.store.Delete(r.ID)
+	s.mu.Lock()
+	retry := s.unremoved[r.ID]
+	if err == nil {
+		delete(s.unremoved, r.ID)
+	} else {
+		if s.unremoved == nil {
+			s.unremoved = map[int64]bool{}
+		}
+		s.unremoved[r.ID] = true
+	}
+	s.mu.Unlock()
+	switch {
+	case err != nil && !retry:
+		deferLog.Errorf("deferred %s %d (agent=%s session=%s): delete failed after it %s — kept, delete retried each sweep, not delivered again: %v",
+			r.EffectiveKind(), r.ID, r.AgentID, r.SessionKey, why, err)
+	case err != nil:
+		deferLog.Debugf("deferred %s %d (agent=%s session=%s): delete retry failed: %v", r.EffectiveKind(), r.ID, r.AgentID, r.SessionKey, err)
+	case retry:
+		deferLog.Infof("deferred %s %d (agent=%s session=%s): delete succeeded on retry", r.EffectiveKind(), r.ID, r.AgentID, r.SessionKey)
+	}
+}
+
+// markStarted persists that record r's delivery has begun. A failure is
+// logged: the delivery still runs, but a crash before it finishes would then
+// run it again in the next process.
+func (s *deferSweeper) markStarted(r defersend.Record) {
+	if err := s.store.MarkStarted(r.ID, timeutil.Now()); err != nil {
+		deferLog.Errorf("deferred %s %d (agent=%s session=%s): mark started failed (a crash mid-run would run it again): %v",
+			r.EffectiveKind(), r.ID, r.AgentID, r.SessionKey, err)
+	}
+}
+
+// trackDelivery returns the hooks that follow record r through the session
+// inbox (deferDelivery): started marks the row, done deletes it — unless the
+// turn was refused because foci is shutting down, when the row is kept,
+// unstarted, for the next process (as a wake's is, #2059) — and refused
+// releases it for a later sweep or the next process. Each hook ends the
+// in-flight claim the sweep took before handing the record over.
+func (s *deferSweeper) trackDelivery(r defersend.Record) *deferDelivery {
+	return &deferDelivery{
+		started: func() { s.markStarted(r) },
+		done: func(err error) {
+			if errors.Is(err, agent.ErrShuttingDown) {
+				if cerr := s.store.ClearStarted(r.ID); cerr != nil {
+					deferLog.Errorf("deferred %s %d (agent=%s session=%s): clear started failed (the next process will drop it as interrupted): %v",
+						r.EffectiveKind(), r.ID, r.AgentID, r.SessionKey, cerr)
+				}
+				deferLog.Infof("deferred %s %d not run (shutting down) — kept for the next process", r.EffectiveKind(), r.ID)
+				s.setInFlight(r.ID, false)
+				return
+			}
+			s.remove(r, "ran")
+			s.setInFlight(r.ID, false)
+		},
+		refused: func() {
+			deferLog.Infof("deferred %s %d not run (inbox refused it) — kept for a later sweep", r.EffectiveKind(), r.ID)
+			s.setInFlight(r.ID, false)
+		},
+	}
 }
 
 func (s *deferSweeper) run(ctx context.Context) {
@@ -342,11 +457,24 @@ func (s *deferSweeper) sweep() {
 	}
 	now := timeutil.Now()
 	for _, r := range records {
+		if s.inFlight(r.ID) {
+			continue // queued on its session's inbox; its delivery hooks own it
+		}
+		if s.isUnremoved(r.ID) {
+			s.remove(r, "was finished with")
+			continue
+		}
+		if !r.StartedAt.IsZero() {
+			// Started by a process that ended before confirming it (#3063):
+			// it may already have had its effect, so it is not run again.
+			s.drop(r, "interrupted by a restart after it started; not run again", nil)
+			continue
+		}
 		inst, ok := s.deps.agents.Get(r.AgentID)
 		if !ok {
 			// No agent, so no session chat to notify: log only.
 			deferLog.Warnf("dropping deferred %s %d: agent %q gone", r.EffectiveKind(), r.ID, r.AgentID)
-			_ = s.store.Delete(r.ID)
+			s.remove(r, "was dropped")
 			continue
 		}
 		// A send or branch whose session was archived after it was queued
@@ -355,7 +483,7 @@ func (s *deferSweeper) sweep() {
 		// turn, so it still runs.
 		if r.EffectiveKind() != defersend.KindCommand && s.deps.sessionIndex != nil && s.deps.sessionIndex.SessionArchived(r.SessionKey) {
 			deferLog.Warnf("dropping deferred %s %d: session %s has been archived", r.EffectiveKind(), r.ID, r.SessionKey)
-			_ = s.store.Delete(r.ID)
+			s.remove(r, "was dropped")
 			continue
 		}
 		in := activityGateInputs{
@@ -398,15 +526,29 @@ func (s *deferSweeper) sweep() {
 			reason = "deadline reached — sending anyway"
 		}
 		deferLog.Infof("delivering deferred %s %d (agent=%s session=%s): %s", r.EffectiveKind(), r.ID, r.AgentID, r.SessionKey, reason)
-		deliver := s.deliver
 		if s.deliverFn != nil {
-			deliver = s.deliverFn
+			if err := s.deliverFn(inst, r); err != nil {
+				s.failed(r, err)
+				continue
+			}
+			s.remove(r, "ran")
+			continue
 		}
-		if err := deliver(inst, r); err != nil {
+		// Claim the record BEFORE the hand-off: the inbox can run it, and
+		// its done hook release the claim, before deliver returns.
+		s.setInFlight(r.ID, true)
+		queued, err := s.deliver(inst, r)
+		if err != nil {
+			s.setInFlight(r.ID, false)
 			s.failed(r, err)
 			continue
 		}
-		_ = s.store.Delete(r.ID)
+		if !queued {
+			// Delivered synchronously (a command, or a choice-carrying send
+			// handed over as a user envelope): finished now.
+			s.remove(r, "ran")
+			s.setInFlight(r.ID, false)
+		}
 	}
 }
 
@@ -460,7 +602,7 @@ func (s *deferSweeper) drop(r defersend.Record, class string, cause error) {
 	} else {
 		deferLog.Warnf("dropping deferred %s %d (agent=%s session=%s): %s", r.EffectiveKind(), r.ID, r.AgentID, r.SessionKey, class)
 	}
-	_ = s.store.Delete(r.ID)
+	s.remove(r, "was dropped")
 	s.notifyDropped(r, class)
 }
 
@@ -487,13 +629,16 @@ func (s *deferSweeper) notifyDropped(r defersend.Record, class string) {
 }
 
 // deliver hands one ready record to its kind's delivery path and returns the
-// failure, if any, for the sweep to classify (classifyDeferFailure).
-func (s *deferSweeper) deliver(inst *agentInstance, r defersend.Record) error {
+// failure, if any, for the sweep to classify (classifyDeferFailure). queued
+// reports that the record went onto a session inbox carrying its
+// trackDelivery hooks, which then own the row; false means the delivery
+// finished before deliver returned.
+func (s *deferSweeper) deliver(inst *agentInstance, r defersend.Record) (queued bool, err error) {
 	switch r.EffectiveKind() {
 	case defersend.KindBranch:
-		return s.deliverBranch(inst, r)
+		return true, s.deliverBranch(inst, r)
 	case defersend.KindCommand:
-		return s.deliverCommand(inst, r)
+		return false, s.deliverCommand(inst, r)
 	default:
 		return s.deliverSend(inst, r)
 	}
@@ -507,10 +652,15 @@ func (s *deferSweeper) deliver(inst *agentInstance, r defersend.Record) error {
 // is inert exactly as on the immediate path (steerChoiceRoutes). A model that
 // no longer resolves is a permanent failure (the immediate path refuses it
 // with 400), and nothing is delivered; a full inbox is transient.
-func (s *deferSweeper) deliverSend(inst *agentInstance, r defersend.Record) error {
+//
+// The plain path queues an injection carrying the record's trackDelivery
+// hooks (queued=true). The choice-carrying path hands over a user envelope,
+// which has no completion hook, so its row goes as soon as the inbox takes it
+// (queued=false) — the pre-#3063 behaviour, kept for that path only.
+func (s *deferSweeper) deliverSend(inst *agentInstance, r defersend.Record) (queued bool, err error) {
 	if r.Model != "" {
 		if err := applyModelOverride(inst, r.SessionKey, r.Model, s.deps.cfg.Models); err != nil {
-			return fmt.Errorf("%w: %w", errBranchBadModel, err)
+			return false, fmt.Errorf("%w: %w", errBranchBadModel, err)
 		}
 	}
 	app.DeliverExternalPrompt(r.SessionKey, r.Text)
@@ -519,15 +669,15 @@ func (s *deferSweeper) deliverSend(inst *agentInstance, r defersend.Record) erro
 		// (#1130): whoever declared themselves human at enqueue time may be
 		// gone by delivery — a deferred request always delivers as automated.
 		if !enqueueSteerChoice(inst, s.deps, r.SessionKey, r.Text, pref, false, route.Policy(r.Policy)) {
-			return errBranchInboxFull
+			return false, errBranchInboxFull
 		}
-		return nil
+		return false, nil
 	}
-	sendCtx := agent.WithTrigger(s.deps.ctx, "user")
+	sendCtx := withDeferDelivery(agent.WithTrigger(s.deps.ctx, "user"), s.trackDelivery(r))
 	if !deliverBufferedQueued(inst, s.deps.connMgr, sendCtx, r.SessionKey, r.Text, "defersend", false, route.Policy(r.Policy)) {
-		return errBranchInboxFull
+		return false, errBranchInboxFull
 	}
-	return nil
+	return true, nil
 }
 
 // deliverBranch runs a deferred branch at delivery time: the fork happens NOW
@@ -547,9 +697,15 @@ func (s *deferSweeper) deliverSend(inst *agentInstance, r defersend.Record) erro
 // it is not part of the deferrable record, and whoever declared themselves
 // human at enqueue time may be gone by delivery — a deferred request always
 // delivers as automated.
+//
+// The branch turn carries the record's trackDelivery hooks (through the deps'
+// context, which runBranchTurn derives the turn's context from), so the row
+// lives until the turn has run (#3063).
 func (s *deferSweeper) deliverBranch(inst *agentInstance, r defersend.Record) error {
 	parentIsDefault := r.SessionKey == defaultSessionKey(s.deps, inst.id)
-	_, err := runBranchTurn(s.deps, inst, r.SessionKey, parentIsDefault, route.Receipt{SessionKey: r.SessionKey}, branchTurnOptions{
+	deps := s.deps
+	deps.ctx = withDeferDelivery(deps.ctx, s.trackDelivery(r))
+	_, err := runBranchTurn(deps, inst, r.SessionKey, parentIsDefault, route.Receipt{SessionKey: r.SessionKey}, branchTurnOptions{
 		Text: r.Text, Model: r.Model, NoCompact: r.NoCompact, NoResetHook: r.NoResetHook, Persistent: r.Persistent, Silent: r.Silent,
 	}, false, false)
 	return err
@@ -577,6 +733,7 @@ func (s *deferSweeper) deliverCommand(inst *agentInstance, r defersend.Record) e
 	var result command.Response
 	ok := err == nil
 	if ok {
+		s.markStarted(r) // a crash mid-command must not run it again (#3063)
 		result, ok = dispatchAgentCommand(s.deps, inst, s.deps.ctx, r.SessionKey, r.Text)
 	}
 	if !ok {

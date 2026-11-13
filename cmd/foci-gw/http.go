@@ -474,9 +474,21 @@ func defaultSessionKey(d httpHandlerDeps, agentID string) string {
 // HTTP reply.
 func deliverBufferedQueued(inst *agentInstance, connMgr platform.ConnectionManager,
 	ctx context.Context, sessionKey, text, logTag string, silent bool, policy route.Policy) bool {
+	track := deferDeliveryFromContext(ctx)
+	if track != nil {
+		// The hooks belong to THIS delivery only: nothing the turn starts
+		// under ctx may inherit them.
+		ctx = withDeferDelivery(ctx, nil)
+	}
 	run := func() {
+		var err error
+		if track != nil {
+			track.started()
+			defer func() { track.done(err) }()
+		}
 		if silent || policy == route.PolicyBroadcast {
-			resp, err := runAgentBuffered(ctx, inst.ag, sessionKey, text)
+			var resp string
+			resp, err = runAgentBuffered(ctx, inst.ag, sessionKey, text)
 			if err != nil {
 				log.NewComponentLogger(logTag).Errorf("async error: %v", err)
 				return
@@ -509,13 +521,16 @@ func deliverBufferedQueued(inst *agentInstance, connMgr platform.ConnectionManag
 		if cleanup != nil {
 			defer cleanup()
 		}
-		if err := inst.ag.HandleMessage(turnCtx, sessionKey, []string{text}, nil); err != nil {
+		if err = inst.ag.HandleMessage(turnCtx, sessionKey, []string{text}, nil); err != nil {
 			log.NewComponentLogger(logTag).Errorf("async error: %v", err)
 		}
 	}
 	env := agent.Envelope{
 		SessionKey: sessionKey,
 		Inject:     &agent.InjectMeta{Trigger: agent.TriggerFromContext(ctx), Run: run, Durable: httpAsyncDurable(ctx, text, logTag, silent, policy)},
+	}
+	if track != nil {
+		env.Inject.Refused = track.refused
 	}
 	if id := usageHeldIDFromContext(ctx); id != "" {
 		env.SetUsageHeldID(id)
@@ -530,7 +545,8 @@ const durableHTTPAsync = "http_async"
 // httpAsyncDurable is the serialisable form of an async /send or /webhook
 // turn, so a usage hold that parks it keeps it across a restart (#2491). A
 // branch turn runs on a fork that does not outlive the process, and a
-// deferred send keeps its own sweep row: neither gets one.
+// deferred send keeps its own sweep row until its turn has run (#3063):
+// neither gets one.
 func httpAsyncDurable(ctx context.Context, text, logTag string, silent bool, policy route.Policy) *agent.DurableInject {
 	if logTag != "http" {
 		return nil
@@ -540,6 +556,28 @@ func httpAsyncDurable(ctx context.Context, text, logTag string, silent bool, pol
 		args["silent"] = "true"
 	}
 	return &agent.DurableInject{Kind: durableHTTPAsync, Trigger: agent.TriggerFromContext(ctx), Text: text, Args: args}
+}
+
+// deferDelivery follows a deferred record's turn through the session inbox
+// (#3063): deliverBufferedQueued calls started as the turn begins, done with
+// the turn's error when it ends, and refused (as InjectMeta.Refused) when the
+// inbox declines to run it. Built by deferSweeper.trackDelivery.
+type deferDelivery struct {
+	started func()
+	done    func(err error)
+	refused func()
+}
+
+// deferDeliveryKey carries a *deferDelivery into deliverBufferedQueued.
+type deferDeliveryKey struct{}
+
+func withDeferDelivery(ctx context.Context, d *deferDelivery) context.Context {
+	return context.WithValue(ctx, deferDeliveryKey{}, d)
+}
+
+func deferDeliveryFromContext(ctx context.Context) *deferDelivery {
+	d, _ := ctx.Value(deferDeliveryKey{}).(*deferDelivery)
+	return d
 }
 
 // usageHeldIDKey carries the id of restored held input into
