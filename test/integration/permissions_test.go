@@ -337,10 +337,11 @@ func TestL2_Permissions_PromptContainsCommandInFencedBlock(t *testing.T) {
 	h.WriteCCStubScript(t, "alpha", permissionScript(reqID, "Bash", map[string]any{"command": cmd}, nil))
 	pushTrigger(t, h, token, "trigger fenced")
 
-	if _, ok := waitForPermissionPrompt(t, h.TelegramStub(), token, cmd, 10*time.Second); !ok {
+	call, ok := waitForPermissionPrompt(t, h.TelegramStub(), token, cmd, 10*time.Second)
+	if !ok {
 		t.Fatalf("prompt never fired")
 	}
-	body := peekSendMessageBody(h.TelegramStub(), token)
+	body := sendMessageText(call)
 	// HTML mode: foci wraps the command in <pre><code>...</code></pre>.
 	// We assert on the structural wrapping (presence of both tags) AND
 	// the command itself appearing inside, not on backticks.

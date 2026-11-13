@@ -201,23 +201,14 @@ func decodeInlineKeyboard(body []byte) [][]map[string]string {
 	return rm.InlineKeyboard
 }
 
-// peekSendMessageBody returns the text field of the most recent
-// sendMessage call to the given token. Useful for asserting fenced-block
-// command formatting in permission prompts. The text comes through with
-// HTML escapes intact (foci sends parse_mode=HTML), so backticks and
-// other markdown-style characters are NOT interpreted here — but the
-// command itself is rendered inside <pre><code>...</code></pre>.
-func peekSendMessageBody(stub *testharness.TelegramStub, token string) string {
-	calls := stub.PeekSent(token)
-	for i := len(calls) - 1; i >= 0; i-- {
-		if calls[i].Method != "sendMessage" {
-			continue
-		}
-		var env map[string]any
-		_ = json.Unmarshal(calls[i].Body, &env)
-		if t, ok := env["text"].(string); ok {
-			return t
-		}
-	}
-	return ""
+// sendMessageText returns the text field of one sendMessage call, with the
+// HTML escapes intact (foci sends parse_mode=HTML): the command of a
+// permission prompt is rendered inside <pre><code>...</code></pre>. Take the
+// call from waitForPermissionPrompt, never "the latest sendMessage": another
+// reply (the priming turn's) can land after the prompt.
+func sendMessageText(call testharness.SentCall) string {
+	var env map[string]any
+	_ = json.Unmarshal(call.Body, &env)
+	t, _ := env["text"].(string)
+	return t
 }
