@@ -260,6 +260,43 @@ type TurnState struct {
 	// turn that gets that far (#2446).
 	inputDelivered  bool
 	sessionFilePath string // cached before SendToPane to avoid deadlock in OnTurnComplete
+	// beganSink holds the release of the non-delivered turn's sink when the
+	// backend registered it as it claimed the turn (TurnEvents.OnBegin,
+	// #3067). Empty when the backend did not call OnBegin or the turn needs
+	// no registration; the orchestrator then registers after RunInference.
+	beganSink beganSinkReg
+}
+
+// beganSinkReg is the registration a turn made from TurnEvents.OnBegin. The
+// backend fires OnBegin under its own locks, possibly off the turn goroutine,
+// so the release is guarded.
+type beganSinkReg struct {
+	mu      sync.Mutex
+	release func()
+}
+
+// set records the release of the registration OnBegin made.
+func (r *beganSinkReg) set(release func()) {
+	r.mu.Lock()
+	r.release = release
+	r.mu.Unlock()
+}
+
+// registered reports whether OnBegin made a registration.
+func (r *beganSinkReg) registered() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.release != nil
+}
+
+// releaseNow releases the registration, if any. Idempotent.
+func (r *beganSinkReg) releaseNow() {
+	r.mu.Lock()
+	release := r.release
+	r.mu.Unlock()
+	if release != nil {
+		release()
+	}
 }
 
 // NewTurnState creates a TurnState with a properly initialised CompletionChan.

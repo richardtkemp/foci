@@ -91,6 +91,8 @@ func (b *Backend) beginTurnLocked(turn *delegator.TurnEvents) {
 	b.lastModel = ""
 	b.lastProvider = ""
 	b.mu.Unlock()
+	// Claimed: tell the agent before the prompt is sent (#3067).
+	turn.Began()
 }
 
 // cancelTurn reverses beginTurn WITHOUT firing OnTurnComplete. Used only to

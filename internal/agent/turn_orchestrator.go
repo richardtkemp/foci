@@ -146,6 +146,10 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	// restart that cuts it resumes the session (#2999, restart_resume.go).
 	defer a.trackCutTurn(ts)()
 	err := tc.RunInference(ts)
+	// A registration the backend made as it claimed the turn (Phase 3.5,
+	// #3067) is released when the turn ends, as the one below is; and on a
+	// failed RunInference too, whose turn never ran.
+	defer ts.beganSink.releaseNow()
 	if delegated && ts.inputDelivered {
 		a.recordTurnRan(ts)
 	}
@@ -191,15 +195,40 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	// A non-delivered turn's sink also stamps its tool calls with the turn's
 	// kind, so background work that outlives the turn (and CC's reaction to its
 	// result) stays out of the chat after the Clear below (#2093, bg_origin.go).
-	if router := a.sessionRouter(ts.SessionKey); !ts.foldedFollowUp && !router.routesTo(turnevent.SinkFromContext(ctx)) {
-		ctxSink := turnevent.SinkFromContext(ctx)
-		defer router.Register(a.withOriginStamp(a.recordingSystemSink(ctxSink, ts), ts.SessionKey,
-			nonDeliveredOriginKind(ts.Trigger, ctxSink)))()
+	//
+	// The registration normally happens earlier than here: the delegated
+	// transport hands it to the backend as TurnEvents.OnBegin, which fires
+	// the moment the exclusive begin accepts the turn and before its input is
+	// written (#3067). Registering only after RunInference returned left a
+	// window in which the turn's first text, emitted as soon as the input
+	// landed, found no sink and went to the delivering fallback: reflection
+	// text in the chat. A begin that is refused never fires OnBegin, so a
+	// waiting system turn still cannot take a running turn's sink. The
+	// registration below stays for a turn whose backend did not fire OnBegin
+	// (the API transport, test backends).
+	if !ts.beganSink.registered() {
+		if router, sink := a.systemTurnSink(ts); sink != nil {
+			defer router.Register(sink)()
+		}
 	}
 
 	// Phase 4: Post-turn (sync for API, async for delegated)
 	a.runPostTurn(tc, ts)
 	return ts.FinalText, nil
+}
+
+// systemTurnSink returns ts's session router and the sink ts registers on it
+// (Phase 3.5 of OrchestrateFullTurn). The sink is nil when ts needs no
+// registration: a folded follow-up, or a platform turn whose ctx sink already
+// is (a decoration of) the router.
+func (a *Agent) systemTurnSink(ts *TurnState) (*sessionRouter, turnevent.Sink) {
+	router := a.sessionRouter(ts.SessionKey)
+	ctxSink := turnevent.SinkFromContext(ts.Ctx)
+	if ts.foldedFollowUp || router.routesTo(ctxSink) {
+		return router, nil
+	}
+	return router, a.withOriginStamp(a.recordingSystemSink(ctxSink, ts), ts.SessionKey,
+		nonDeliveredOriginKind(ts.Trigger, ctxSink))
 }
 
 // streamIdleTimeout is how long runPostTurn tolerates silence on the CC

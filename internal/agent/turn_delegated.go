@@ -504,6 +504,15 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 	// Per-turn bookkeeping callbacks (nudge hooks + OnTurnComplete). Extracted so
 	// adopted autonomous turns build the identical completion accounting.
 	turnEvents := t.buildTurnEvents(ts, be)
+	// A turn that registers its own sink (a system turn: reflection,
+	// keepalive, memory) registers it the moment the backend claims the turn,
+	// before the input is written, so its first text cannot fall through to
+	// the delivering fallback (#3067; OrchestrateFullTurn Phase 3.5). A
+	// refused begin does not fire OnBegin, so this turn never takes the sink
+	// of a turn still running.
+	if router, sink := a.systemTurnSink(ts); sink != nil {
+		turnEvents.OnBegin = func() { ts.beganSink.set(router.Register(sink)) }
+	}
 	if voiceMode != nil {
 		// The turn is async (delegated backends stream OnTurnComplete later,
 		// not on RunInference's return), so restoring effort has to hang off

@@ -328,6 +328,7 @@ func (m *mockBackendDT) ImmediateInject(ctx context.Context, inj delegator.Injec
 	switch inj.Source {
 	case delegator.SourceUser, delegator.SourceSteer:
 		if !m.IsTurnInFlight() {
+			inj.Turn.Began() // claimed, before the input is written (#3067)
 			_, err := m.SendToPane(ctx, inj.Text, handler)
 			return err
 		}
@@ -344,6 +345,7 @@ func (m *mockBackendDT) ImmediateInject(ctx context.Context, inj delegator.Injec
 		if refused {
 			return delegator.ErrTurnInFlight
 		}
+		inj.Turn.Began() // claimed, before the input is written (#3067)
 		_, err := m.SendToPane(ctx, inj.Text, handler)
 		return err
 	case delegator.SourceCompact, delegator.SourcePass:
@@ -2172,15 +2174,8 @@ func TestDelegatedTransport_SinkLessTurnBindsRouterNotNopSink(t *testing.T) {
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
 		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
-			if handler != nil {
-				if handler.OnText != nil {
-					handler.OnText("one")
-					handler.OnText("two")
-					handler.OnText("three")
-				}
-				if handler.OnTurnComplete != nil {
-					handler.OnTurnComplete(&delegator.TurnResult{Text: "onetwothree", Model: "test-model"})
-				}
+			if handler != nil && handler.OnTurnComplete != nil {
+				handler.OnTurnComplete(&delegator.TurnResult{Text: "done", Model: "test-model"})
 			}
 			return nil, nil
 		},
@@ -2191,9 +2186,6 @@ func TestDelegatedTransport_SinkLessTurnBindsRouterNotNopSink(t *testing.T) {
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 
 	sk := "test/c999"
-	var got []string
-	a.sessionRouter(sk).Register(captureTextSink{got: &got})
-	defer a.sessionRouter(sk).Clear()
 
 	// context.Background carries NO sink → SinkFromContext == NopSink: exactly the
 	// sink-less system turn that used to poison the binding.
@@ -2204,6 +2196,26 @@ func TestDelegatedTransport_SinkLessTurnBindsRouterNotNopSink(t *testing.T) {
 		t.Fatalf("RunInference: %v", err)
 	}
 	<-ts.CompletionChan
+	// The turn's own sink, registered as the backend claimed the turn (#3067),
+	// is released when the turn ends; the orchestrator does that, not
+	// RunInference.
+	ts.beganSink.releaseNow()
+
+	// A concurrent autonomous run's text, emitted through the session's
+	// SessionEvents after that turn: it must reach whatever the router now
+	// forwards to.
+	var got []string
+	a.sessionRouter(sk).Register(captureTextSink{got: &got})
+	defer a.sessionRouter(sk).Clear()
+	be.mu.Lock()
+	se := be.sessionEvents
+	be.mu.Unlock()
+	if se == nil {
+		t.Fatal("no SessionEvents attached")
+	}
+	se.OnText("one")
+	se.OnText("two")
+	se.OnText("three")
 
 	if len(got) != 3 {
 		t.Fatalf("router sink got %d texts, want 3 — SessionEvents must bind the router, not the ctx's NopSink; got=%v", len(got), got)

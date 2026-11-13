@@ -51,6 +51,13 @@ type ExecBridge struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
+
+	// sessionKey is the identity every tool call over this bridge carries.
+	// It starts as the key on the creation ctx and moves with the backend:
+	// when a reset hands the live process to a reflection branch
+	// (DelegatedManager.RemapSession), the process keeps this socket, so its
+	// tool calls must run as the branch, not as the chat it left (#3067).
+	sessionKey atomic.Pointer[string]
 }
 
 // NewExecBridge creates a unix socket and shell functions file. The bridge
@@ -119,6 +126,8 @@ func startExecBridge(registry *Registry, ctx context.Context, listener net.Liste
 		ctx:       bridgeCtx,
 		cancel:    cancel,
 	}
+	initialKey := SessionKeyFromContext(ctx)
+	b.sessionKey.Store(&initialKey)
 
 	// Write shell functions file
 	if err := b.writeShellFuncs(); err != nil {
@@ -134,6 +143,21 @@ func startExecBridge(registry *Registry, ctx context.Context, listener net.Liste
 
 	execbridgeLog.Debugf("session=%s started sock=%s tools=%d", SessionKeyFromContext(ctx), sockPath, b.exportedToolCount())
 	return b, nil
+}
+
+// SessionKey returns the session key tool calls over this bridge run as.
+func (b *ExecBridge) SessionKey() string {
+	if k := b.sessionKey.Load(); k != nil {
+		return *k
+	}
+	return ""
+}
+
+// Rebind makes every later tool call over this bridge run as sessionKey.
+// A call already running keeps the key it started with. Used when the
+// backend that owns the bridge moves to another session key (#3067).
+func (b *ExecBridge) Rebind(sessionKey string) {
+	b.sessionKey.Store(&sessionKey)
 }
 
 // SockPath returns the unix socket path for FOCI_SOCK env var.
@@ -198,7 +222,7 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 	// request and response handling.
 	defer func() {
 		if r := recover(); r != nil {
-			execbridgeLog.Errorf("session=%s exec bridge panic: %v\n%s", SessionKeyFromContext(b.ctx), r, debug.Stack())
+			execbridgeLog.Errorf("session=%s exec bridge panic: %v\n%s", b.SessionKey(), r, debug.Stack())
 			writeError(conn, fmt.Sprintf("exec bridge internal error: panic: %v", r))
 		}
 	}()
@@ -251,7 +275,7 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 		return
 	}
 
-	execbridgeLog.Debugf("session=%s call tool=%s", SessionKeyFromContext(b.ctx), req.Tool)
+	execbridgeLog.Debugf("session=%s call tool=%s", b.SessionKey(), req.Tool)
 	// The call ends when its caller does (#2656): foci-call never writes after
 	// its request line, so a read that returns means the caller closed the
 	// connection (it was killed, or its Bash call was stopped). The tool's
@@ -262,6 +286,12 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 	ctx, cancel := context.WithCancel(b.ctx)
 	defer cancel()
 	go cancelWhenPeerCloses(conn, cancel)
+	// The caller's identity is the bridge's CURRENT key, read per call: the
+	// creation ctx holds the key the backend launched under, which a reset
+	// handover has since moved away from (#3067).
+	if key := b.SessionKey(); key != "" {
+		ctx = WithSessionKey(ctx, key)
+	}
 	if req.Hints != (OutputHints{}) {
 		ctx = WithOutputHints(ctx, req.Hints)
 	}
@@ -280,7 +310,7 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 		// dominant case is benign input/validation errors (e.g. a missing
 		// required arg) — agent mistakes, not system faults — and a flood of
 		// WARNs for those drowns out genuine problems.
-		execbridgeLog.Infof("session=%s tool=%s error: %v", SessionKeyFromContext(b.ctx), req.Tool, err)
+		execbridgeLog.Infof("session=%s tool=%s error: %v", b.SessionKey(), req.Tool, err)
 		writeError(conn, err.Error())
 		return
 	}
@@ -304,7 +334,7 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 		ResultSize: result.ResultSize,
 	})
 	if err != nil {
-		execbridgeLog.Warnf("session=%s tool=%s: %v", SessionKeyFromContext(b.ctx), req.Tool, err)
+		execbridgeLog.Warnf("session=%s tool=%s: %v", b.SessionKey(), req.Tool, err)
 		writeError(conn, err.Error())
 		return
 	}

@@ -143,7 +143,8 @@ func TestRecordingSystemSink(t *testing.T) {
 }
 
 // waitRegistered blocks until a turn has registered a sink on sk's router —
-// the orchestrator's Phase 3.5, which runs after dispatch. Syncs on the state,
+// at the backend's begin (TurnEvents.OnBegin, #3067) or the orchestrator's
+// Phase 3.5 after dispatch. Syncs on the state,
 // not a sleep; the deadline is only a hang guard.
 func waitRegistered(t *testing.T, a *Agent, sk string) bool {
 	deadline := time.Now().Add(10 * time.Second)

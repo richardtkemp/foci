@@ -1762,6 +1762,15 @@ func (m *DelegatedManager) RemapSession(oldKey, newKey string) bool {
 	}
 	m.mu.Unlock()
 
+	// Re-point the process's foci tools at newKey. The process keeps its exec
+	// bridge (FOCI_SOCK is baked into its environment), and the bridge was
+	// created with oldKey as the caller identity. Without this, a reflection
+	// branch's foci_* calls run as the live chat it left: they send, ask and
+	// spawn as that chat and slip past the reflection send bar (#3067).
+	if remapped != nil && remapped.bridge != nil {
+		remapped.bridge.Rebind(newKey)
+	}
+
 	// Re-point session-scoped delivery from oldKey's router to newKey's.
 	// SessionEvents are bound to a router ONCE, at acquisition (AttachDelivery
 	// in setBackendCallbacks — never per turn, #1068), captured around the key's

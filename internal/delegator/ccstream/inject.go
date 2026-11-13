@@ -126,6 +126,8 @@ func (b *Backend) beginTurnLocked(turn *delegator.TurnEvents) {
 	b.turnOutputTokens = 0
 	b.turnCalls = 0
 	b.redispatchInFlight = false
+	// Claimed: tell the agent before the input is written (#3067).
+	turn.Began()
 }
 
 // AdoptRunningTurn opens a first-class foci turn around a CC run that CC started

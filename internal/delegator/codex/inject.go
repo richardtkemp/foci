@@ -50,6 +50,8 @@ func (b *Backend) beginTurn(text string, turn *delegator.TurnEvents) error {
 	b.turnResultCh = make(chan *delegator.TurnResult, 1)
 	b.turnText.Reset()
 	b.resetTurnUsageLocked()
+	// Claimed: tell the agent before turn/start is sent (#3067).
+	turn.Began()
 	b.turnMu.Unlock()
 
 	threadID := b.SessionIDFor(b.startOpts.SessionKey)

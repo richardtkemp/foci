@@ -954,6 +954,15 @@ type TurnEvents struct {
 	// invariant holds by construction (no counters needed).
 	OnTurnComplete func(result *TurnResult)
 
+	// OnBegin fires once, when the backend claims the turn this TurnEvents was
+	// passed with: after its exclusive begin accepted the turn and before the
+	// turn's input is written, so before the turn can emit anything. It does
+	// not fire for a refused begin. The agent layer registers a non-delivered
+	// turn's sink here, so the turn's first text cannot reach the session's
+	// delivering fallback (#3067). Called with backend locks held: it must
+	// not block or call back into the backend. Use Began, which is nil-safe.
+	OnBegin func()
+
 	// OnModelUsage fires for each top-level model response of the turn that
 	// reports usage, as it arrives (mid-turn), with that one call's counts.
 	// It is the agent layer's evidence that a model call reached the API and
@@ -984,6 +993,15 @@ type TurnEvents struct {
 	// authoritative one. The TurnEvents stays bound across both rounds;
 	// only the round-2 OnResult clears it.
 	PreAnswerNudgeFunc func(result *TurnResult) string
+}
+
+// Began fires OnBegin. Safe on a nil TurnEvents or a nil callback. Every
+// backend calls it where it claims a turn begun with this TurnEvents.
+func (t *TurnEvents) Began() {
+	if t == nil || t.OnBegin == nil {
+		return
+	}
+	t.OnBegin()
 }
 
 // ReportModelUsage fires OnModelUsage with u. Safe on a nil TurnEvents or a
