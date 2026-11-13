@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
@@ -245,6 +246,14 @@ func (s *Store) Reset(key string) error {
 // replaceInternal overwrites a session with the given messages, archiving the
 // old file in place (e.g. root.2026-03-04T02-30-00Z.jsonl) for audit/history.
 // This is internal and must be called through SessionWriter only.
+//
+// The replacement is published atomically (#3066 F12): every record is
+// marshalled before anything on disk changes, the new file is written and
+// synced under a temporary name, the old file is archived by hard link (so the
+// live path is never missing), and only then does a rename swap the new file
+// in. Any failure before that rename leaves the original history live and
+// untouched; a crash at any point leaves either the old or the new file live,
+// never a partial one.
 func (s *Store) replaceInternal(key string, msgs []provider.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -263,26 +272,12 @@ func (s *Store) replaceInternal(key string, msgs []provider.Message) error {
 		return err
 	}
 
-	// Read metadata before rotating the file
+	// Read metadata from the file being replaced
 	branchMeta, _ := s.readBranchMeta(key)
 	createdAt := s.getStoredCreatedAt(key)
 
-	// Rotate existing file to numbered archive
-	var archivePath string
-	if _, err := os.Stat(path); err == nil {
-		archivePath = nextArchivePath(path)
-		if err := os.Rename(path, archivePath); err != nil {
-			return fmt.Errorf("rotate session file: %w", err)
-		}
-		sessionLog(key).Infof("session rotated key=%s archive=%s", key, filepath.Base(archivePath))
-	}
-
-	f, err := s.createFile(path)
-	if err != nil {
-		return fmt.Errorf("create session file: %w", err)
-	}
-	defer func() { _ = f.Close() }()
-
+	// Marshal everything first: a marshal failure must change nothing.
+	var buf bytes.Buffer
 	if branchMeta != nil {
 		// Branch session: preserve branch_meta with branch_point=0.
 		// Compacted messages are self-contained (summary includes parent context).
@@ -291,33 +286,59 @@ func (s *Store) replaceInternal(key string, msgs []provider.Message) error {
 		if err != nil {
 			return fmt.Errorf("marshal branch meta: %w", err)
 		}
-		if _, err := f.Write(append(metaData, '\n')); err != nil {
-			return fmt.Errorf("write branch meta: %w", err)
-		}
+		buf.Write(metaData)
+		buf.WriteByte('\n')
 	} else if createdAt != "" {
 		// Regular session: write session_meta to preserve creation time
-		meta := SessionMeta{
+		metaData, err := json.Marshal(SessionMeta{
 			Type:      "session_meta",
 			CreatedAt: createdAt,
-		}
-		metaData, err := json.Marshal(meta)
+		})
 		if err != nil {
 			return fmt.Errorf("marshal session meta: %w", err)
 		}
-		if _, err := f.Write(append(metaData, '\n')); err != nil {
-			return fmt.Errorf("write session meta: %w", err)
-		}
+		buf.Write(metaData)
+		buf.WriteByte('\n')
 	}
-
 	for _, msg := range msgs {
 		data, err := json.Marshal(msg)
 		if err != nil {
 			return fmt.Errorf("marshal message: %w", err)
 		}
-		if _, err := f.Write(append(data, '\n')); err != nil {
-			return fmt.Errorf("write message: %w", err)
+		buf.Write(data)
+		buf.WriteByte('\n')
+	}
+
+	// Write the replacement under a temporary name that no session walker
+	// reads (it does not end in .jsonl).
+	tmp := path + ".replace-tmp"
+	if err := s.writeSynced(tmp, buf.Bytes()); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("write replacement session file: %w", err)
+	}
+
+	// Archive the old file without taking it off the live path.
+	var archivePath string
+	if _, err := os.Stat(path); err == nil {
+		archivePath = nextArchivePath(path)
+		if err := s.archiveCopy(path, archivePath); err != nil {
+			_ = os.Remove(tmp)
+			return fmt.Errorf("archive session file: %w", err)
 		}
 	}
+
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		if archivePath != "" {
+			_ = os.Remove(archivePath) // the original is still live
+		}
+		return fmt.Errorf("publish replacement session file: %w", err)
+	}
+	syncDir(filepath.Dir(path))
+	if archivePath != "" {
+		sessionLog(key).Infof("session rotated key=%s archive=%s", key, filepath.Base(archivePath))
+	}
+
 	sessionLog(key).Infof("session replaced key=%s messages=%d", key, len(msgs))
 	s.fireEvent(SessionEvent{
 		Key:         key,
@@ -327,6 +348,53 @@ func (s *Store) replaceInternal(key string, msgs []provider.Message) error {
 		ArchivePath: archivePath,
 	})
 	return nil
+}
+
+// writeSynced creates path (truncating any leftover) with the store's file
+// mode, writes data and syncs it to disk.
+func (s *Store) writeSynced(path string, data []byte) error {
+	f, err := s.createFile(path)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// archiveCopy makes dst a second name for src (a hard link), or a synced
+// byte copy where the filesystem has no hard links. src stays in place.
+func (s *Store) archiveCopy(src, dst string) error {
+	if err := os.Link(src, dst); err == nil {
+		return nil
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	if err := s.writeSynced(dst, data); err != nil {
+		_ = os.Remove(dst)
+		return err
+	}
+	return nil
+}
+
+// syncDir flushes a directory entry change (rename, create) to disk, best
+// effort: power cuts are frequent on the host, and a rename that is not yet
+// on disk can come back as the old name.
+func syncDir(dir string) {
+	d, err := os.Open(dir)
+	if err != nil {
+		return
+	}
+	_ = d.Sync()
+	_ = d.Close()
 }
 
 // ArchiveSweep gzips idle session files older than maxAge.
@@ -407,14 +475,20 @@ func ArchiveSweep(store *Store, index *SessionIndex, maxAge time.Duration) (int,
 			continue
 		}
 
-		// Gzip the session file
-		if err := gzipFile(entry.FilePath); err != nil {
+		// Compress and remove under the store lock that Append, Load and
+		// Replace hold, and only if the file is still idle now: the
+		// candidate list is a snapshot, and a session that resumed since
+		// would otherwise have its new messages written into a file that is
+		// then unlinked (#3066 F11).
+		archivedNow, err := archiveIfStillIdle(store, entry.FilePath, cutoff)
+		if err != nil {
 			sessLog.Warnf("archive sweep: gzip %s: %v", entry.FilePath, err)
 			continue
 		}
-
-		// Also gzip any numbered archive files in the same directory
-		gzipArchiveFiles(entry.FilePath)
+		if !archivedNow {
+			sessLog.Infof("archive sweep: %s was written since the sweep began; left active", entry.SessionKey)
+			continue
+		}
 
 		// Update index status
 		index.UpdateStatus(entry.SessionKey, SessionStatusArchived)
@@ -432,6 +506,26 @@ func ArchiveSweep(store *Store, index *SessionIndex, maxAge time.Duration) (int,
 	}
 
 	return archived, nil
+}
+
+// archiveIfStillIdle gzips a session file and its archive siblings while
+// holding store.mu, after re-checking that the file has not been modified
+// since cutoff. It reports false (and changes nothing) when the file was
+// written after cutoff. A file that no longer exists counts as archived, as
+// gzipFile has always treated it.
+func archiveIfStillIdle(store *Store, path string, cutoff time.Time) (bool, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	if fi, err := os.Stat(path); err == nil && fi.ModTime().After(cutoff) {
+		return false, nil
+	}
+	if err := gzipFile(path); err != nil {
+		return false, err
+	}
+	// Also gzip any numbered archive files in the same directory
+	gzipArchiveFiles(path)
+	return true, nil
 }
 
 // gzipFile compresses src to src.gz and removes the original.
@@ -470,12 +564,23 @@ func gzipFile(src string) error {
 		_ = os.Remove(dst)
 		return fmt.Errorf("finalize gzip %s: %w", src, err)
 	}
+	// The original is removed next: the compressed copy must be on disk
+	// first, or a power cut can leave neither.
+	if err := out.Sync(); err != nil {
+		_ = out.Close()
+		_ = os.Remove(dst)
+		return fmt.Errorf("sync %s: %w", dst, err)
+	}
 	if err := out.Close(); err != nil {
 		_ = os.Remove(dst)
 		return fmt.Errorf("close %s: %w", dst, err)
 	}
 
-	return os.Remove(src)
+	if err := os.Remove(src); err != nil {
+		return err
+	}
+	syncDir(filepath.Dir(src))
+	return nil
 }
 
 // gzipArchiveFiles finds and gzips archive files for the same session.

@@ -38,7 +38,7 @@ func TestArchiveSweep_GzipsIdleSessions(t *testing.T) {
 	// Must use UpdateActivity since Upsert only moves activity forward.
 	past := time.Now().UTC().Add(-48 * time.Hour)
 	for _, key := range []string{"bot/c100", "bot/c200"} {
-		idx.UpdateActivity(key, past)
+		backdateSession(t, store, idx, key, past)
 	}
 
 	// Run sweep with 24h threshold
@@ -102,7 +102,7 @@ func TestArchiveSweep_SkipsSessionsWithActiveBranches(t *testing.T) {
 
 	// Set parent to old, but branch is still active
 	past := time.Now().UTC().Add(-48 * time.Hour)
-	idx.UpdateActivity("bot/c100", past)
+	backdateSession(t, store, idx, "bot/c100", past)
 
 	archived, err := ArchiveSweep(store, idx, 24*time.Hour)
 	if err != nil {
@@ -131,8 +131,8 @@ func TestArchiveSweep_SkipsCurrentChatSession(t *testing.T) {
 
 	// Set both to old activity so they'd normally both qualify
 	past := time.Now().UTC().Add(-48 * time.Hour)
-	idx.UpdateActivity("bot/c100", past)
-	idx.UpdateActivity("bot/c200", past)
+	backdateSession(t, store, idx, "bot/c100", past)
+	backdateSession(t, store, idx, "bot/c200", past)
 
 	archived, err := ArchiveSweep(store, idx, 24*time.Hour)
 	if err != nil {
@@ -175,7 +175,7 @@ func TestArchiveSweep_GzipsArchiveFiles(t *testing.T) {
 	// Set last activity to past
 	past := time.Now().UTC().Add(-48 * time.Hour)
 	path := mustSessionPath(t, store, "bot/c100")
-	idx.UpdateActivity("bot/c100", past)
+	backdateSession(t, store, idx, "bot/c100", past)
 
 	// Verify archive file exists before sweep
 	sessionDir := filepath.Dir(path)
@@ -234,7 +234,7 @@ func TestArchiveSweep_GzipPreservesFileMode(t *testing.T) {
 	idx.Rebuild(store)
 
 	past := time.Now().UTC().Add(-48 * time.Hour)
-	idx.UpdateActivity("bot/c100", past)
+	backdateSession(t, store, idx, "bot/c100", past)
 	path := mustSessionPath(t, store, "bot/c100")
 
 	// Sanity check: source files were created with 0640.
@@ -459,8 +459,8 @@ func TestArchiveSweep_SkipsIndexEntryPointingAtADirectory(t *testing.T) {
 	})
 
 	past := time.Now().UTC().Add(-48 * time.Hour)
-	idx.UpdateActivity("bot/c100", past)
-	idx.UpdateActivity("codex/c999", past)
+	backdateSession(t, store, idx, "bot/c100", past)
+	backdateSession(t, store, idx, "codex/c999", past)
 
 	var mu sync.Mutex
 	var warns []string
