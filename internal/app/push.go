@@ -343,7 +343,12 @@ func newFCMPusherFromJSON(ctx context.Context, data []byte, tokens *pushTokens, 
 	if window <= 0 {
 		window = defaultPushCoalesce
 	}
-	creds, err := google.CredentialsFromJSON(ctx, data, fcmScope)
+	// FCM HTTP v1 authenticates as a service account, and both callers hand
+	// over service-account JSON. Naming the type makes the loader refuse any
+	// other credential kind (an external-account config that would make it
+	// fetch from an attacker's URL, say): the reason oauth2 v0.36 deprecated
+	// the untyped CredentialsFromJSON (#3068).
+	creds, err := google.CredentialsFromJSONWithType(ctx, data, google.ServiceAccount, fcmScope)
 	if err != nil {
 		appLog.Warnf("fcm credentials parse: %v — push disabled", err)
 		return nil

@@ -119,13 +119,34 @@ func TestNewFCMPusherFromFields(t *testing.T) {
 		if p == nil {
 			t.Fatal("expected a pusher, got nil")
 		}
-		// google.CredentialsFromJSON parses PEM lazily (only on first Token()
+		// google.CredentialsFromJSONWithType parses PEM lazily (only on first Token()
 		// call), so a successful build here doesn't by itself prove the PEM is
 		// well-formed. Directly check the normalization the loader applies.
 		if got := normalizeFCMPrivateKey(fields.PrivateKey); got == fields.PrivateKey {
 			t.Fatal("test fixture doesn't actually exercise the escaped-newline path")
 		}
 	})
+}
+
+// TestNewFCMPusherFromJSON_RefusesNonServiceAccount pins the typed loader:
+// credential JSON of any other kind disables push instead of being accepted
+// (#3068).
+func TestNewFCMPusherFromJSON_RefusesNonServiceAccount(t *testing.T) {
+	ctx := context.Background()
+	tokens := newPushTokens()
+	data, err := json.Marshal(map[string]string{
+		"type":          "authorized_user",
+		"project_id":    "synthetic-project",
+		"client_id":     "synthetic-client",
+		"client_secret": "synthetic-secret",
+		"refresh_token": "synthetic-refresh",
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if p := newFCMPusherFromJSON(ctx, data, tokens, time.Second); p != nil {
+		t.Errorf("expected nil pusher for authorized_user credentials, got %+v", p)
+	}
 }
 
 // writeSyntheticServiceAccountFile writes a fake (never-used) service-account
