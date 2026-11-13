@@ -185,12 +185,13 @@ func TestAPIOneShot_UnreadableConversationKeepsItsSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A write torn by a power cut.
+	// A corrupt record. Since #3065 a torn TAIL (no final newline) is repaired
+	// at load, so the unreadable case is a malformed newline-terminated line.
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _ = f.WriteString(`{"role":"assistant","content":[{"ty`)
+	_, _ = f.WriteString("{\"role\":\"assistant\",\"content\":[{\"ty\n")
 	_ = f.Close()
 	if _, err := h.convs.LoadSpawnConversation(key); err == nil {
 		t.Fatal("the torn file reads cleanly: the test sets up nothing")
