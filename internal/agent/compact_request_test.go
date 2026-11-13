@@ -129,7 +129,8 @@ func TestRequestedCompaction_APITransport(t *testing.T) {
 		Compactor: compaction.NewCompactor(store, 0.8),
 	}
 	var memorySK string
-	ag.CompactionMemoryFunc.Add(func(sk string) { memorySK = sk })
+	var memoryInTurn bool
+	ag.CompactionMemoryFunc.Add(func(ctx context.Context, sk string) { memorySK = sk; memoryInTurn = InSessionTurn(ctx) })
 	if err := ag.RequestCompaction(sk, ""); err != nil {
 		t.Fatalf("RequestCompaction: %v", err)
 	}
@@ -145,6 +146,10 @@ func TestRequestedCompaction_APITransport(t *testing.T) {
 	// pipeline, whatever the threshold, and was consumed.
 	if memorySK != sk {
 		t.Errorf("memory hook fired for %q, want %q: the request did not run", memorySK, sk)
+	}
+	// The request runs in the turn's post phase (#3088).
+	if !memoryInTurn {
+		t.Error("requested compaction fired the memory hook without InSessionTurn")
 	}
 	if ag.CompactionRequested(sk) {
 		t.Error("request still recorded after the turn ended")

@@ -224,6 +224,15 @@ func configureUniversal(ag *agent.Agent, p setupParams, compactor *compaction.Co
 	}
 	ag.CanRunBackground = p.resolved.Background.CanRunBackground // static-cfg:ignore: fallback, LiveConfigFn takes over (bucket B)
 
+	// Pre-compaction reflection (#3088). Registered here, for every
+	// transport: it once sat in configureAPI only, so no delegated agent
+	// (claude-code, codex, opencode) ran it from March to November 2026.
+	// The orientation template resolves when the hook fires, the same way
+	// as the reset path's (ResetOrientTemplateFn above).
+	ag.CompactionMemoryFunc.Add(func(ctx context.Context, sessionKey string) {
+		ag.FireCompactionMemory(ctx, sessionKey, ag.ResetOrientTemplateFn())
+	})
+
 	setupWarningQueue(ag, p.resolved, p.cfg) // static-cfg:ignore: queues hold their own live state, reconfigured via liveApplyWarningAddrs (#1225)
 }
 

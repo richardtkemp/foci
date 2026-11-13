@@ -366,13 +366,6 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	ag.MaxOutputTokens = al.MaxOutputTokens
 	ag.Streaming = al.Streaming // static-cfg:ignore: fallback, LiveConfigFn takes over — see comment above
 
-	// Pre-compaction memory formation hook
-	compactMemOrientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
-	compactMemOrientTemplate := prompts.ResolveOrientationTemplate(compactMemOrientPath, false, promptSearchDirs...)
-	ag.CompactionMemoryFunc.Add(func(sessionKey string) {
-		ag.FireCompactionMemory(p.ctx, sessionKey, compactMemOrientTemplate)
-	})
-
 	// Post-creation agent configuration (API-specific)
 	setupRedaction(ag, p, agentStore)
 

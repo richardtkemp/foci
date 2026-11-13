@@ -344,7 +344,7 @@ func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []
 	}
 
 	for _, fn := range a.CompactionMemoryFunc {
-		fn(sessionKey)
+		fn(WithInSessionTurn(ctx), sessionKey)
 	}
 
 	oldCount := len(messages)

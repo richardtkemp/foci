@@ -290,7 +290,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		env := newCompactionTestEnv(t, &turnCount, 5)
 
 		var memoryHookCalls []string
-		env.ag.CompactionMemoryFunc.Add(func(sessionKey string) {
+		env.ag.CompactionMemoryFunc.Add(func(_ context.Context, sessionKey string) {
 			memoryHookCalls = append(memoryHookCalls, sessionKey)
 		})
 

@@ -91,6 +91,17 @@ func (r *Runner) maybeReflection() {
 		return
 	}
 
+	// A session reflected less than one interval ago is not due yet, whoever
+	// reflected it: a pre-compaction or session-end pass counts as the
+	// session's reflection, so the interval runs from it (#3088). This pass's
+	// own stamps (winStart <= lastReflection) never hold a session back
+	// beyond the agent-wide interval above.
+	keys = r.dueByInterval(keys, now, interval)
+	if len(keys) == 0 {
+		skip = "no sessions due (reflected within the interval)"
+		return
+	}
+
 	// Filter out sessions with a turn currently in flight. For delegated
 	// agents reflection injects into the main session — firing while the
 	// user's turn is mid-flight queues the reflection prompt as a SourceUser
@@ -187,6 +198,20 @@ func (r *Runner) maybeReflection() {
 			}
 		}
 	}()
+}
+
+// dueByInterval drops the keys whose last reflection is less than interval
+// before now. It filters keys in place.
+func (r *Runner) dueByInterval(keys []string, now time.Time, interval time.Duration) []string {
+	due := keys[:0]
+	for _, k := range keys {
+		if last, ok := r.sessionIndex.LastReflection(k); ok && now.Sub(last) < interval {
+			r.log.Debugf("reflection: %s not due: reflected at %s (interval %s)", k, last.Format("15:04:05"), interval)
+			continue
+		}
+		due = append(due, k)
+	}
+	return due
 }
 
 // ReflectSessionIfDue fires a single reflection branch for sessionKey iff it is

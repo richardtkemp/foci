@@ -149,7 +149,11 @@ func TestQuietCompact_APIPath_RunsCompactionPipeline(t *testing.T) {
 	}
 
 	var memoryFiredFor string
-	ag.CompactionMemoryFunc.Add(func(sessionKey string) { memoryFiredFor = sessionKey })
+	var memoryInTurn bool
+	ag.CompactionMemoryFunc.Add(func(ctx context.Context, sessionKey string) {
+		memoryFiredFor = sessionKey
+		memoryInTurn = InSessionTurn(ctx)
+	})
 	var notifyMsgs []string
 	ag.CompactionNotifyFunc.Add(func(sessionKey, msg, summary string) {
 		notifyMsgs = append(notifyMsgs, msg)
@@ -160,6 +164,9 @@ func TestQuietCompact_APIPath_RunsCompactionPipeline(t *testing.T) {
 	}
 	if memoryFiredFor != sk {
 		t.Errorf("memory hook fired for %q, want %q (the /compact pipeline fires it)", memoryFiredFor, sk)
+	}
+	if memoryInTurn {
+		t.Error("quiet compaction fired the memory hook marked InSessionTurn; it runs outside the session's turn")
 	}
 	// The compacted history (marker + summary + handoff) loads under the
 	// stable key — same shape as TestCompactSession_HappyPath.

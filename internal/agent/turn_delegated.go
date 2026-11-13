@@ -1048,6 +1048,14 @@ func (t *DelegatedTransport) RunCompaction(ts *TurnState) {
 	if ts.FinalUsage == nil {
 		return
 	}
+	// The pre-compaction reflection's own turn never compacts: it runs just
+	// before a compaction that is already under way (nested inside its
+	// post-turn phase, or queued by /compact), and compacting from inside it
+	// would compact twice and fire the reflection again, recursively (#3088).
+	if ts.Trigger == compactionMemoryTrigger {
+		a.logger().Debugf("session=%s post-turn compaction skipped: this is the pre-compaction reflection's turn", ts.SessionKey)
+		return
+	}
 	// Compaction acts on the backend that ran this turn. If that backend is
 	// gone (an abandoned batch is reset while its turn finishes; a /reset; a
 	// crash), there is nothing to compact and no memory to form for it. The
@@ -1119,10 +1127,17 @@ func (t *DelegatedTransport) RunCompaction(ts *TurnState) {
 		return
 	}
 
-	// Memory formation runs only on auto-compaction — the post-turn hook is
-	// where the agent records insights before the window shrinks.
+	// Memory formation before the window shrinks. This is the post-turn
+	// phase of the session's own turn, so the hook may run a nested turn on
+	// the session directly (InSessionTurn); it returns once that pass ends,
+	// and only then does /compact go out (#3088). ts.Ctx may be cancelled by
+	// now: keep its values, drop the cancellation.
+	hookCtx := context.Background()
+	if ts.Ctx != nil {
+		hookCtx = context.WithoutCancel(ts.Ctx)
+	}
 	for _, fn := range a.CompactionMemoryFunc {
-		fn(ts.SessionKey)
+		fn(WithInSessionTurn(hookCtx), ts.SessionKey)
 	}
 
 	// Background — not ts.Ctx which may be cancelled (post-turn runs after

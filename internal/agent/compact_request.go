@@ -118,6 +118,9 @@ func (a *Agent) runRequestedCompaction(ts *TurnState) bool {
 	if wake != "" {
 		ctx = withCompactionWake(ctx)
 	}
+	// This runs in the turn's post phase: the pre-compaction reflection may
+	// run a nested turn on the session directly (#3088).
+	ctx = WithInSessionTurn(ctx)
 	a.logger().Infof("session=%s running the agent-requested compaction", ts.SessionKey)
 	_, err := a.compactSession(ctx, ts.SessionKey, false, compactDeferRestart)
 	var status string

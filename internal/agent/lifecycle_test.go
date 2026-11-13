@@ -365,13 +365,19 @@ func TestCompactSession_FiresMemoryHook(t *testing.T) {
 	}
 
 	var memoryFiredFor string
-	ag.CompactionMemoryFunc.Add(func(sk string) { memoryFiredFor = sk })
+	var memoryInTurn bool
+	ag.CompactionMemoryFunc.Add(func(ctx context.Context, sk string) { memoryFiredFor = sk; memoryInTurn = InSessionTurn(ctx) })
 
 	if _, err := ag.CompactSession(context.Background(), sessionKey, false); err != nil {
 		t.Fatalf("CompactSession: %v", err)
 	}
 	if memoryFiredFor != sessionKey {
 		t.Errorf("CompactionMemoryFunc fired for %q, want %q", memoryFiredFor, sessionKey)
+	}
+	// /compact runs outside the session's turn: the hook must queue its
+	// in-session pass through the inbox, so it must not be told otherwise.
+	if memoryInTurn {
+		t.Error("manual /compact fired the memory hook marked InSessionTurn")
 	}
 
 	// Dry-run must NOT fire memory formation (no side effects).

@@ -83,6 +83,26 @@ func TriggerFromContext(ctx context.Context) string {
 	return s
 }
 
+// inSessionTurnKey marks a context whose caller runs inside the session's own
+// turn: the post-turn phase of OrchestrateFullTurn (threshold compaction, the
+// agent's compact_session request). The session is quiescent there (its turn
+// has completed) and nothing else can start a turn on it, so a nested system
+// turn runs by calling HandleMessage directly. A caller outside it (/compact,
+// quiet-hours compaction, the usage hold) must go through the session's inbox
+// to serialise with a user turn. See FireCompactionMemory (#3088).
+type inSessionTurnKey struct{}
+
+// WithInSessionTurn marks ctx as running inside the session's own turn.
+func WithInSessionTurn(ctx context.Context) context.Context {
+	return context.WithValue(ctx, inSessionTurnKey{}, true)
+}
+
+// InSessionTurn reports whether ctx was marked by WithInSessionTurn.
+func InSessionTurn(ctx context.Context) bool {
+	v, _ := ctx.Value(inSessionTurnKey{}).(bool)
+	return v
+}
+
 // steerPrefKey is the context key for the sender's per-message steer/queue
 // preference (Envelope.Steer). Set by RunTurn from the batch's first envelope
 // so the turn transport can honour SteerNever: an explicitly-queued message
@@ -360,7 +380,8 @@ func (a *Agent) turnUnattended(ts *TurnState) bool {
 }
 
 // isMemoryTrigger reports whether a turn is a memory-formation pass —
-// reflection or end-of-session memory — rather than substantive activity.
+// reflection, end-of-session memory or pre-compaction memory — rather than
+// substantive activity.
 //
 // On delegated (CC) agents these passes inject into the *main* session, so a
 // turn running them bumps that session's last_activity_at. Counting them as
@@ -377,7 +398,7 @@ func (a *Agent) turnUnattended(ts *TurnState) bool {
 // countsAsActivity.
 func isMemoryTrigger(trigger string) bool {
 	switch trigger {
-	case "reflection", "session_end_memory":
+	case "reflection", "session_end_memory", "compaction_memory":
 		return true
 	default:
 		return false

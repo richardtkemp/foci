@@ -1200,6 +1200,31 @@ func TestStampReflection(t *testing.T) {
 	}
 }
 
+// TestLastReflection (#3088): a stamped reflection is reported; the value an
+// INSERT seeds at the session's birth is not a reflection; an unknown session
+// has none.
+func TestLastReflection(t *testing.T) {
+	idx := tempIndex(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	idx.RecordTurnReceipt(SessionIndexEntry{
+		SessionKey: "bot/c1", CreatedAt: now.Add(-time.Hour),
+		SessionType: SessionTypeChat, Status: SessionStatusActive,
+	}, true, false)
+
+	if at, ok := idx.LastReflection("bot/c1"); ok {
+		t.Fatalf("a fresh session reports a reflection at %s; its birth seed is not one", at)
+	}
+	stamp := now.Add(-10 * time.Minute)
+	idx.StampReflection("bot/c1", stamp)
+	at, ok := idx.LastReflection("bot/c1")
+	if !ok || !at.Equal(stamp) {
+		t.Fatalf("LastReflection = %s, %v; want %s, true", at, ok, stamp)
+	}
+	if _, ok := idx.LastReflection("bot/unknown"); ok {
+		t.Error("an unknown session reports a reflection")
+	}
+}
+
 func TestReflectionRedundant(t *testing.T) {
 	// ReflectionRedundant backs the reset-time "no need to reflect twice" guard.
 	// It returns true when last_activity <= last_reflection (nothing new to

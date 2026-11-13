@@ -2459,13 +2459,13 @@ func TestDelegatedTransport_RunCompaction_AboveThreshold(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	comp := compaction.NewCompactor(store, 0.8)
 
-	var memoryFired, startFired, notifyFired bool
+	var memoryFired, startFired, notifyFired, memoryInTurn bool
 	a := &Agent{
 		Model:            "test-model",
 		Compactor:        comp,
 		DelegatedManager: newMockDelegatedManager(t, be),
 	}
-	a.CompactionMemoryFunc.Add(func(_ string) { memoryFired = true })
+	a.CompactionMemoryFunc.Add(func(ctx context.Context, _ string) { memoryFired = true; memoryInTurn = InSessionTurn(ctx) })
 	a.CompactionStartFunc.Add(func(_, _ string) { startFired = true })
 	a.CompactionNotifyFunc.Add(func(_, _, _ string) { notifyFired = true })
 
@@ -2492,6 +2492,9 @@ func TestDelegatedTransport_RunCompaction_AboveThreshold(t *testing.T) {
 	}
 	if !memoryFired {
 		t.Error("CompactionMemoryFunc should have been called")
+	}
+	if !memoryInTurn {
+		t.Error("post-turn compaction fired the memory hook without InSessionTurn (#3088)")
 	}
 	if !startFired {
 		t.Error("CompactionStartFunc should have been called")
@@ -3021,7 +3024,7 @@ func TestDelegatedTransport_RunCompaction_SkipsClosedBackend(t *testing.T) {
 	comp := compaction.NewCompactor(store, 0.3)
 	memoryFired := false
 	a := &Agent{Model: "claude-sonnet-4-5", Compactor: comp, DelegatedManager: mgr}
-	a.CompactionMemoryFunc.Add(func(_ string) { memoryFired = true })
+	a.CompactionMemoryFunc.Add(func(_ context.Context, _ string) { memoryFired = true })
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)

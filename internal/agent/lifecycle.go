@@ -269,13 +269,17 @@ func (a *Agent) compactSession(ctx context.Context, sessionKey string, dryRun bo
 	}
 
 	// Fire memory formation before compaction so the memory agent sees the
-	// pre-compaction transcript. Both auto paths (maybeCompact for API,
-	// RunCompaction for delegated) fire this hook; manual /compact used to
-	// skip it, losing the chance to save memories before summarisation.
+	// pre-compaction transcript. Every compaction path fires this hook: the
+	// auto paths (maybeCompact for API, RunCompaction for delegated), the
+	// agent's own request, /compact, quiet-hours and pre-cold compaction and
+	// the usage hold. It returns only once the pass is done (or skipped), so
+	// compaction never starts under a running in-place reflection (#3088).
+	// ctx carries InSessionTurn when the caller is the session's own post-turn
+	// phase (runRequestedCompaction); FireCompactionMemory routes on it.
 	// Dry-run is excluded — it must not cause side effects.
 	if !dryRun {
 		for _, fn := range a.CompactionMemoryFunc {
-			fn(sessionKey)
+			fn(ctx, sessionKey)
 		}
 	}
 

@@ -530,6 +530,27 @@ func (idx *SessionIndex) StampReflection(sessionKey string, at time.Time) {
 	}
 }
 
+// LastReflection returns when a reflection pass was last dispatched for the
+// session (StampReflection), and false when none was or the session is
+// unknown. The value an INSERT seeds at the session's birth (last_reflection
+// = its first activity, see upsertLocked) is not a reflection: a stamp no
+// later than created_at reads as none.
+func (idx *SessionIndex) LastReflection(sessionKey string) (time.Time, bool) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	var epoch sql.NullInt64
+	err := idx.db.QueryRow(
+		`SELECT unixepoch(last_reflection) FROM session_index
+		 WHERE session_key = ? AND unixepoch(last_reflection) > unixepoch(created_at)`,
+		sessionKey,
+	).Scan(&epoch)
+	if err != nil || !epoch.Valid {
+		return time.Time{}, false
+	}
+	return time.Unix(epoch.Int64, 0), true
+}
+
 // ReflectionRedundant reports whether a reflection pass would be redundant for
 // the given session: a reflection has already run AND no substantive activity
 // has occurred since (last_activity_at <= last_reflection).

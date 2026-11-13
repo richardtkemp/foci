@@ -150,7 +150,7 @@ type Agent struct {
 	RateLimitFunc                 HookList[func(resetTime time.Time)]     // callbacks when API returns 429 (rate limited)
 	ReloadOnCompact               bool                                    // delegated: after compaction, bounce the CC session (resume) so character/skill files reload from disk (#828)
 	TaskListNotifyFunc            HookList[func(string, string)]          // callbacks for task list changes (session key, message)
-	CompactionMemoryFunc          HookList[func(string)]                  // fires before compaction to save memories (session key)
+	CompactionMemoryFunc          HookList[func(context.Context, string)] // fires before compaction to save memories (ctx, session key); ctx says whether the caller is inside the session's own turn (InSessionTurn)
 	CompactionStartFunc           HookList[func(string, string)]          // callbacks for compaction start (session key, message) — sent immediately, not buffered
 	CompactionNotifyFunc          HookList[func(string, string, string)]  // callbacks for compaction notifications (session key, message, summary — summary is "" when compaction produced no summary, e.g. delegated-backend compactions)
 	CompactionDebugFunc           HookList[func(string, string)]          // callbacks for compaction debug (session key, summary text)
