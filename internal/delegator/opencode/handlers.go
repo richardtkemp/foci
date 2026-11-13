@@ -615,7 +615,8 @@ func (b *Backend) onSessionIdle(sessionID string) {
 	if err := b.flushSteerBuf(context.Background(), func() *delegator.TurnEvents {
 		return nil
 	}); err != nil {
-		log.NewComponentLogger(b.logComponent()).Warnf("onSessionIdle: flushSteerBuf: %v", err)
+		// flushSteerBuf unwound its turn and kept the messages (#3072).
+		log.NewComponentLogger(b.logComponent()).Warnf("onSessionIdle: flushSteerBuf: %v (messages kept for the next idle)", err)
 	}
 }
 

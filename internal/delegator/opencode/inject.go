@@ -468,9 +468,12 @@ func buildPromptBody(text string, attachments []delegator.Attachment, noReply bo
 // separators — they were all meant for the same model context, and
 // sending N separate turns would multiply model round-trips.
 //
-// Returns nil if steerBuf was empty (no-op). Returns the sendPrompt
-// error otherwise — OnSessionIdle's caller decides whether to surface or
-// retry. A nil turnEvents means "begin a fresh turn but with no
+// Returns nil if steerBuf was empty (no-op). On a sendPrompt error it
+// unwinds the turn it began (cancelTurn) and puts the messages back at the
+// front of steerBuf, so a rejected follow-up neither leaves a phantom active
+// turn nor loses the text: the next session.idle flush retries it (#3072).
+// Callers must not cancelTurn again — a turn begun after the unwind is not
+// theirs. A nil turnEvents means "begin a fresh turn but with no
 // completion callback"; in practice OnSessionIdle always passes a non-nil
 // TurnEvents that fires OnTurnComplete.
 //
@@ -500,7 +503,19 @@ func (b *Backend) flushSteerBuf(ctx context.Context, turnFactory func() *delegat
 	turn := turnFactory()
 	b.beginTurn(turn)
 	log.NewComponentLogger(b.logComponent()).Infof("flushSteerBuf: sending %d queued message(s) as follow-up turn", len(buf))
-	return b.sendPrompt(ctx, combined, nil, b.systemPrompt)
+	if err := b.sendPrompt(ctx, combined, nil, b.systemPrompt); err != nil {
+		// opencode rejected the follow-up, so no event will ever end the turn
+		// begun above: unwind it, or every later inject queues behind a turn
+		// that does not exist (#3072). Put the messages back in front of any
+		// that arrived while the POST was open, so the next flush retries them
+		// in their original order instead of losing them.
+		b.cancelTurn()
+		b.turnMu.Lock()
+		b.steerBuf = append(buf, b.steerBuf...)
+		b.turnMu.Unlock()
+		return err
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -614,8 +629,7 @@ func (b *Backend) abortDrainComplete() {
 		b.turnMu.Unlock()
 	}
 	if err := b.flushSteerBuf(context.Background(), func() *delegator.TurnEvents { return nil }); err != nil {
-		// The follow-up never reached opencode, so no event will end its turn.
-		b.cancelTurn()
-		log.NewComponentLogger(b.logComponent()).Warnf("steer: flushSteerBuf after abort drain: %v", err)
+		// flushSteerBuf has already unwound the turn and kept the messages.
+		log.NewComponentLogger(b.logComponent()).Warnf("steer: flushSteerBuf after abort drain: %v (messages kept for the next idle)", err)
 	}
 }
