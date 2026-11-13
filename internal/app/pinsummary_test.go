@@ -216,7 +216,7 @@ func TestCleanPinSummary(t *testing.T) {
 func TestSummaryAnswerDropsThinkingPreamble(t *testing.T) {
 	for in, want := range map[string]string{
 		"DNS-as-Code via GoDaddy API in CI </think> DNS-as-Code via GoDaddy API in CI": "DNS-as-Code via GoDaddy API in CI",
-		"Plain answer": "Plain answer",
+		"Plain answer":   "Plain answer",
 		"draft </think>": "",
 	} {
 		if got := cleanPinSummary(stripThinkingPreamble(in)); got != want {
