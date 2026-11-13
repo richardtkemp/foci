@@ -279,7 +279,7 @@ func TestToolAccess_DelegatedDenyAbsentEverywhere(t *testing.T) {
 	p.acfg.Backend = "claude-code"
 	p.acfg.Workspace = t.TempDir()
 
-	registry := buildExecRegistry(p, stubWakeFn, nil, nil)
+	registry := buildExecRegistry(p, stubWakeFn, nil, nil, nil)
 	names := registry.ExportedNames()
 	if !slices.Contains(names, "foci_todo") {
 		t.Fatalf("fixture broken: foci_todo missing from %v", names)

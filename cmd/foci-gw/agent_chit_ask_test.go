@@ -253,7 +253,7 @@ func TestAskExecRegistry_WiresUserInputDeliver(t *testing.T) {
 	p.agentResolverFn = func(string) *agentInstance { return &agentInstance{ag: target} }
 
 	p.connMgr = oneConnMgr{conn: &buttonStubConn{stubConn{sessionKey: "test/main"}}}
-	registry := buildExecRegistry(p, stubWakeFn, nil, func() *agent.Agent { return target })
+	registry := buildExecRegistry(p, stubWakeFn, nil, func() *agent.Agent { return target }, nil)
 	startAskAndAnswer(t, registry, target)
 	wantUserInputEnvelope(t, envs)
 }

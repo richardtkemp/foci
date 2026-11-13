@@ -10,7 +10,7 @@ Per-tool reference for the Claude Code (shell) backend. How `foci_*` shell funct
 - Request IDs must be **colon-free** (button payloads are encoded as `<id>:<index>`).
 - **Multi-select:** `"multiSelect": true` on a question lets the user tick several options (plus typed text) in the foci app; the answer lists every label and the JSON adds `selections` (question → `{selected, other, single_select_fallback}`). On Telegram/Discord the user can only pick one — `single_select_fallback: true` then means unpicked options are not a considered "no".
 - **Quiz mode:** mark a question with `quiz` (`correct`: 0-based option indexes, or `answer` for no-options free recall; optional `explanation`) and the client hides the answer until the user reveals it; option questions come back with a true/false verdict in `quiz_results`. See the `quiz` skill.
-- Optional grader: `--grader <abs-path>` runs an executable over `{request_id, questions, answers}` (JSON on stdin) and delivers *its* output to you instead of the raw answers. `--grader-args <json-array>` appends argv after request_id; `--grader-timeout-seconds` (default 15); `--grader-on-error fallback|report`.
+- Optional grader: `--grader <abs-path>` (must be under a skill dir, your workspace, `/tmp` or `tools.file_allowed_paths`) runs an executable over `{request_id, questions, answers}` (JSON on stdin) and delivers *its* output to you instead of the raw answers. `--grader-args <json-array>` appends argv after request_id; `--grader-timeout-seconds` (default 15); `--grader-on-error fallback|report`.
 
 ### `foci_send_to_chat` — send a rich message to your own chat
 - Positional `text` (or stdin, or `--text`/`--description`/`--caption`). Markdown supported.

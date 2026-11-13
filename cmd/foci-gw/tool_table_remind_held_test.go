@@ -33,7 +33,7 @@ func TestRemindToolTable_WiresSessionHeld(t *testing.T) {
 	ag.SetInFlightDeliveringForTest(sk, true) // an adopted delivering run holds the session
 	t.Cleanup(func() { ag.SetInFlightDeliveringForTest(sk, false) })
 
-	registry := buildExecRegistry(p, stubWakeFn, nil, func() *agent.Agent { return ag })
+	registry := buildExecRegistry(p, stubWakeFn, nil, func() *agent.Agent { return ag }, nil)
 	tool := registry.Get("remind")
 	if tool == nil {
 		t.Fatal("remind tool not registered with reminderStore + wakeFn set")

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"foci/internal/agent"
+	"foci/internal/skills"
 	"foci/internal/tools"
 )
 
@@ -68,5 +69,65 @@ func TestToolTable_FileToolsFollowLiveAllowedPaths(t *testing.T) {
 		if err := run(c.tool, c.key); err != nil && strings.Contains(err.Error(), tools.FileAllowedPathsKey) {
 			t.Errorf("%s: path under a live-added file_allowed_paths entry still refused: %v", c.tool, err)
 		}
+	}
+}
+
+// TestToolTable_AskGraderFollowsSkillDirsAndAllowedPaths (#3083): the ask row
+// passes the agent's live skill dirs and the #3076 file areas to the grader
+// check. A grader path under this package's source dir is refused until the
+// dir is a skill dir, or (separately) a live tools.file_allowed_paths entry.
+// The path does not exist, so once it is inside an area the error turns from
+// the area refusal into a stat error: the call never presents an ask.
+func TestToolTable_AskGraderFollowsSkillDirsAndAllowedPaths(t *testing.T) {
+	t.Parallel()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	grader := filepath.Join(cwd, "no-such-grader-3083")
+	const refusal = "outside the directories a grader may run from"
+
+	build := func(sd *skills.LiveDirs) (*tools.Tool, setupParams) {
+		p := minimalSetupParams(t, "test")
+		p.acfg.Workspace = t.TempDir()
+		registry := tools.NewRegistry()
+		registerTools(&toolDeps{
+			p:          p,
+			path:       pathAPI,
+			registry:   registry,
+			connMgr:    stubConnMgr{},
+			agLazy:     func() *agent.Agent { return nil },
+			wakeFn:     stubWakeFn,
+			skillsDirs: sd,
+			out:        &toolOutputs{},
+		})
+		ask := registry.Get("ask")
+		if ask == nil {
+			t.Fatal("ask not registered")
+		}
+		return ask, p
+	}
+	run := func(ask *tools.Tool) error {
+		raw := `{"questions":[{"question":"q?","options":[{"label":"A"}]}],"grader":"` + grader + `"}`
+		_, err := ask.Execute(tools.WithSessionKey(context.Background(), "test/grader-scope"), json.RawMessage(raw))
+		return err
+	}
+
+	sd := skills.NewLiveDirs(skills.Dirs{})
+	ask, p := build(sd)
+	if err := run(ask); err == nil || !strings.Contains(err.Error(), refusal) {
+		t.Fatalf("grader outside every area: want refusal, got %v", err)
+	}
+	sd.Set(skills.Dirs{Extra: []string{cwd}}) // a live extra_dirs edit
+	if err := run(ask); err == nil || strings.Contains(err.Error(), refusal) {
+		t.Errorf("grader in a skill dir: want only the stat error, got %v", err)
+	}
+
+	ask, p = build(nil)
+	fresh := *p.resolvedLive.Load()
+	fresh.Tools.FileAllowedPaths = []string{cwd}
+	p.resolvedLive.Store(&fresh)
+	if err := run(ask); err == nil || strings.Contains(err.Error(), refusal) {
+		t.Errorf("grader under a live file_allowed_paths entry: want only the stat error, got %v", err)
 	}
 }

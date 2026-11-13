@@ -22,6 +22,7 @@ import (
 	"foci/internal/route"
 	"foci/internal/secrets"
 	"foci/internal/session"
+	"foci/internal/skills"
 	"foci/internal/tools"
 	"foci/internal/turn"
 	"foci/internal/turnevent"
@@ -76,7 +77,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// always-on FociShellRules — keeps the auto-approve list in sync with
 	// what's actually wired in (no hand-list to drift).
 	agLazy := func() *agent.Agent { return ag }
-	registry := buildExecRegistry(p, shared.wakeScheduleFn, shared.wakeCancelFn, agLazy)
+	registry := buildExecRegistry(p, shared.wakeScheduleFn, shared.wakeCancelFn, agLazy, br.skillsDirs)
 	setupUserShell(ag, p, registry)
 	ag.ResultSummariser = newBatchSummariser(p, agLazy)
 
@@ -1279,7 +1280,10 @@ func buildAutoApproveRules(p setupParams, fociExecNames []string) []string {
 // send_to_session can deliver replies back to the calling session. May be nil
 // in tests where the notifier path isn't exercised; when nil, send_to_session
 // is still registered but reply_to=caller deliveries are a no-op.
-func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, wakeCancelFn tools.CancelWakeFn, agLazy func() *agent.Agent) *tools.Registry {
+//
+// skillsDirs is the agent's live skill directories, where an ask grader may
+// run from (#3083). nil = none.
+func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, wakeCancelFn tools.CancelWakeFn, agLazy func() *agent.Agent, skillsDirs *skills.LiveDirs) *tools.Registry {
 	registry := tools.NewRegistry()
 	acfg := p.acfg
 	connMgr := p.connMgr
@@ -1323,6 +1327,7 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, wakeC
 		askDeliver:     newAskDeliverFn(p.agentResolverFn, p.ctx, connMgr),
 		askUserDeliver: newAskUserDeliverFn(p.agentResolverFn, p.ctx, connMgr),
 		agentTTS:       agentTTS,
+		skillsDirs:     skillsDirs,
 		out:            out,
 	})
 	if agLazy != nil {

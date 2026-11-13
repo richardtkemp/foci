@@ -35,7 +35,7 @@ func TestUserCommand_FociFunctionRunsOnProductionWiring(t *testing.T) {
 		t.Fatal(err)
 	}
 	ag := &agent.Agent{}
-	registry := buildExecRegistry(p, stubWakeFn, nil, func() *agent.Agent { return ag })
+	registry := buildExecRegistry(p, stubWakeFn, nil, func() *agent.Agent { return ag }, nil)
 	setupUserShell(ag, p, registry)
 
 	if !ag.UserCommandRunnable("foci_whoami") {

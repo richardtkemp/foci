@@ -19,6 +19,7 @@ import (
 	"foci/internal/route"
 	"foci/internal/secrets"
 	"foci/internal/session"
+	"foci/internal/skills"
 	"foci/internal/tools"
 	"foci/internal/tools/browser"
 	"foci/internal/tools/shell"
@@ -59,6 +60,9 @@ type toolDeps struct {
 	askUserDeliver tools.AskDeliverFn    // ask user-input deliveries (answers, cancel) → user path, via=ask-grader (#2233)
 	agentTTS       func() voice.TTS
 	blockedPaths   []config.BlockedPath // API-only (write/edit)
+	// skillsDirs is the agent's live skill directories: an ask grader may run
+	// from them (#3083). nil = none (tests).
+	skillsDirs *skills.LiveDirs
 
 	// API-only deps for spawn.
 	client           provider.Client
@@ -389,6 +393,9 @@ var toolTable = []toolEntry{
 			tools.WithBatchPresent(newAskPresentBatchFn(d.p.acfg.ID, d.connMgr, chats, spawnerChatClosed(d.p.acfg.ID))),
 			tools.WithBatchRestore(newAskRestoreBatchFn(d.p.acfg.ID, d.connMgr, chats)),
 			tools.WithRemove(newAskRemoveFn(d.p.acfg.ID, d.connMgr, chats)),
+			// #3083: a grader may run only from the agent's skill dirs and
+			// the #3076 file areas (workspace, /tmp, file_allowed_paths).
+			tools.WithGraderAreas(d.skillsDirs.List, fileAreas(d)...),
 			// Quiz reveals (#1316): after a chat user answers a quiz question,
 			// post its withheld answer+explanation to the asking session's chat.
 			tools.WithReveal(newAskRevealFn(d.p.acfg.ID, d.connMgr, chats)),

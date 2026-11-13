@@ -60,7 +60,7 @@ func TestBuildExecRegistryWhoamiReportsBackendModel(t *testing.T) {
 	}
 	ag := &agent.Agent{AgentID: "olly", Model: "opus", DelegatedManager: mgr}
 
-	registry := buildExecRegistry(p, stubWakeFn, nil, func() *agent.Agent { return ag })
+	registry := buildExecRegistry(p, stubWakeFn, nil, func() *agent.Agent { return ag }, nil)
 	tool := registry.Get("whoami")
 	if tool == nil {
 		t.Fatal("registry missing whoami tool")

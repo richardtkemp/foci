@@ -36,6 +36,53 @@ type graderConfig struct {
 	args    []string      // extra argv passed AFTER request_id (e.g. source filename)
 }
 
+// graderScope confines which executables an ask may run as its grader (#3083).
+// A grader runs at foci's privilege with no approval, so it may only be an
+// executable under the agent's skill directories, its workspace, /tmp or
+// tools.file_allowed_paths (Dick, 2026-11-13: "Skill dirs + #3076 areas").
+// The path is symlink-resolved before the check, and the resolved path is the
+// one run. The zero value allows only the temp areas.
+type graderScope struct {
+	files     fileScope       // workspace + live file_allowed_paths (+ test temp override)
+	skillDirs func() []string // the agent's live skill directories; nil = none
+}
+
+// resolve returns the canonical path of grader if it lies in an allowed area.
+func (g graderScope) resolve(grader string) (string, error) {
+	fs := g.files
+	fileRoots, skillDirs := fs.extraRoots, g.skillDirs
+	fs.extraRoots = func() []string {
+		var out []string
+		if skillDirs != nil {
+			out = append(out, skillDirs()...)
+		}
+		if fileRoots != nil {
+			out = append(out, fileRoots()...)
+		}
+		return out
+	}
+	canon, roots, inside, err := fs.locate(grader)
+	if err != nil {
+		return "", err
+	}
+	if !inside {
+		return "", fmt.Errorf("access denied: %s is outside the directories a grader may run from (%s); "+
+			"a grader must live in a skill directory, the agent's workspace or /tmp, or in a directory an operator adds with %s in foci.toml",
+			shownPath(grader, canon), strings.Join(roots, ", "), FileAllowedPathsKey)
+	}
+	return canon, nil
+}
+
+// WithGraderAreas sets where an ask's grader may live (#3083): skillDirs
+// returns the agent's skill directories (read on each check, so a live
+// extra_dirs edit applies), and opts carry the #3076 file areas (workspace,
+// tools.file_allowed_paths). Without it only the temp areas are allowed.
+func WithGraderAreas(skillDirs func() []string, opts ...FileOpt) AskOption {
+	return func(s *askState) {
+		s.graderAreas = graderScope{files: newFileScope(fileScope{}, opts), skillDirs: skillDirs}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // foci-native `ask` / `foci_ask` tool
 // ---------------------------------------------------------------------------
@@ -228,6 +275,8 @@ type askState struct {
 	// fd on a specific retry attempt, so ETXTBSY recovery is causally ordered
 	// rather than racing the retry budget on the wall clock. nil in production.
 	onGraderAttempt func(attempt int)
+	// graderAreas confines the grader executable (#3083); see WithGraderAreas.
+	graderAreas graderScope
 	// restoring is set for the duration of restorePending; while it is, deliverMsg
 	// parks messages in held instead of sending them. Restore runs inside
 	// NewAskTool, before the gateway has registered the agent with its resolver or
@@ -1630,6 +1679,14 @@ func (a *askState) runGrader(p *pendingAsk, qs []question.Question, answers map[
 		return graderErrorMsg(p, rawBatch, fmt.Sprintf("encode grader input: %v", err))
 	}
 
+	// Re-check the grader at run time (#3083): the areas are live config, and
+	// an ask restored after a restart was accepted under the rules of its day.
+	// Run the canonical path, so the file run is the file checked.
+	exe, err := a.graderAreas.resolve(p.grader.path)
+	if err != nil {
+		return graderErrorMsg(p, rawBatch, err.Error())
+	}
+
 	timeout := p.grader.timeout
 	if timeout <= 0 {
 		timeout = defaultGraderTimeout
@@ -1658,7 +1715,7 @@ func (a *askState) runGrader(p *pendingAsk, qs []question.Question, answers map[
 		stderr.Reset()
 		// Operator: the grader is an operator-authored executable (absolute path
 		// from config, so no bare-name lookup) that calls the operator's tools.
-		cmd := procx.Spawn(ctx, procx.Operator, p.grader.path, spawnArgs...)
+		cmd := procx.Spawn(ctx, procx.Operator, exe, spawnArgs...)
 		cmd.Stdin = bytes.NewReader(payload)
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
@@ -1820,7 +1877,7 @@ func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn
 						"required": ["question"]
 					}
 				},
-				"grader": {"type": "string", "description": "Optional absolute path to an executable. When the user finishes answering, foci runs it with {request_id, questions, answers} as JSON on stdin; its stdout is delivered to you INSTEAD of the raw answers. Use for deterministic post-processing (quiz grading, answer normalization, lookups)."},
+				"grader": {"type": "string", "description": "Optional absolute path to an executable in a skill directory, your workspace, /tmp or an operator-listed directory (tools.file_allowed_paths); any other path is refused. When the user finishes answering, foci runs it with {request_id, questions, answers} as JSON on stdin; its stdout is delivered to you INSTEAD of the raw answers. Use for deterministic post-processing (quiz grading, answer normalization, lookups)."},
 				"grader_args": {"type": "array", "items": {"type": "string"}, "description": "Optional extra argv for the grader, appended AFTER request_id: the grader is run as [path, request_id, ...grader_args]. Pure vector (no shell), so safe for arbitrary strings — use it to pass context the grader needs, e.g. the source quiz filename. Ignored if 'grader' is unset."},
 				"grader_timeout_seconds": {"type": "integer", "description": "Hard timeout for the grader in seconds (default 15). Past it the grader is killed and the user's raw answers are delivered instead."},
 				"grader_on_error": {"type": "string", "enum": ["fallback", "report"], "description": "What to deliver if the grader fails (non-zero exit / timeout / launch error). 'fallback' (default): the raw answers plus a brief note. 'report': a failure report plus the raw answers. The user's answers are never lost either way."}
@@ -1864,6 +1921,11 @@ func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn
 			if in.Grader != "" {
 				if !filepath.IsAbs(in.Grader) {
 					return ToolResult{}, fmt.Errorf("ask: grader must be an absolute path, got %q", in.Grader)
+				}
+				// Confine the grader first (#3083), so a path outside the
+				// allowed areas is refused even when it does not exist.
+				if _, err := state.graderAreas.resolve(in.Grader); err != nil {
+					return ToolResult{}, fmt.Errorf("ask: grader: %w", err)
 				}
 				fi, err := os.Stat(in.Grader)
 				if err != nil {

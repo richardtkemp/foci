@@ -710,7 +710,7 @@ type ToolConfig struct {
 	// FileAllowedPaths (#3076): extra directories foci's file tools may touch,
 	// beyond the agent's workspace and /tmp. A union like DenyTools, so a
 	// global entry reaches every agent and an agent's list adds to it.
-	FileAllowedPaths []string `toml:"file_allowed_paths" hot:"immediate" desc:"Extra directories foci's own file tools (http_request body_file, files and save_to, summary, send_to_chat file, and the read, write and edit tools of API agents) may read or write, beyond the agent's workspace and /tmp. The global and the agent's lists add up. ~ is your home dir; relative paths resolve against the foci home dir. Symlinks are resolved before the check, and the secrets file stays refused inside every area. Empty by default. Applies to the next tool call"`
+	FileAllowedPaths []string `toml:"file_allowed_paths" hot:"immediate" desc:"Extra directories foci's own file tools (http_request body_file, files and save_to, summary, send_to_chat file, and the read, write and edit tools of API agents) may read or write, beyond the agent's workspace and /tmp. The global and the agent's lists add up. ~ is your home dir; relative paths resolve against the foci home dir. Symlinks are resolved before the check, and the secrets file stays refused inside every area. An ask grader may also run from these directories. Empty by default. Applies to the next tool call"`
 }
 
 type AnthropicConfig struct {

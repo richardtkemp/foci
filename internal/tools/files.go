@@ -158,23 +158,42 @@ func (fs fileScope) allowedRoots() []string {
 
 // confine canonicalises path and requires it to lie in an allowed area.
 func (fs fileScope) confine(path string) (string, error) {
-	canon, err := canonicalFilePath(path)
+	canon, roots, inside, err := fs.locate(path)
 	if err != nil {
 		return "", err
 	}
-	roots := fs.allowedRoots()
-	for _, r := range roots {
-		if withinDir(canon, r) {
-			return canon, nil
-		}
-	}
-	shown := path
-	if canon != path {
-		shown = fmt.Sprintf("%s (resolves to %s)", path, canon)
+	if inside {
+		return canon, nil
 	}
 	return "", fmt.Errorf("access denied: %s is outside the areas foci file tools may use (%s); "+
 		"the agent's workspace and /tmp are always allowed, and an operator can add a directory with %s in foci.toml",
-		shown, strings.Join(roots, ", "), FileAllowedPathsKey)
+		shownPath(path, canon), strings.Join(roots, ", "), FileAllowedPathsKey)
+}
+
+// locate canonicalises path and reports whether it lies in an allowed area.
+// It also returns the allowed areas, so each caller words its own refusal
+// (the file tools in confine, the ask grader in graderScope.resolve).
+func (fs fileScope) locate(path string) (canon string, roots []string, inside bool, err error) {
+	canon, err = canonicalFilePath(path)
+	if err != nil {
+		return "", nil, false, err
+	}
+	roots = fs.allowedRoots()
+	for _, r := range roots {
+		if withinDir(canon, r) {
+			return canon, roots, true, nil
+		}
+	}
+	return canon, roots, false, nil
+}
+
+// shownPath renders path for a refusal, with its canonical form when the two
+// differ (a symlink was resolved).
+func shownPath(path, canon string) string {
+	if canon != path {
+		return fmt.Sprintf("%s (resolves to %s)", path, canon)
+	}
+	return path
 }
 
 // withinDir reports whether p is root or lies under it. Both must be canonical.

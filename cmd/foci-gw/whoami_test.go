@@ -20,7 +20,7 @@ func TestBuildExecRegistryExportsWhoami(t *testing.T) {
 	t.Parallel()
 
 	p := minimalSetupParams(t, "test")
-	registry := buildExecRegistry(p, stubWakeFn, nil, nil)
+	registry := buildExecRegistry(p, stubWakeFn, nil, nil, nil)
 
 	found := false
 	for _, n := range registry.ExportedNames() {
@@ -62,7 +62,7 @@ func TestBuildExecRegistryExportsWhoami(t *testing.T) {
 func TestBuildExecRegistryWhoamiAutoApproved(t *testing.T) {
 	t.Parallel()
 
-	registry := buildExecRegistry(minimalSetupParams(t, "test"), stubWakeFn, nil, nil)
+	registry := buildExecRegistry(minimalSetupParams(t, "test"), stubWakeFn, nil, nil, nil)
 	rules := autoapprove.FociShellRulesFor(registry.ExportedNames())
 	if !slices.Contains(rules, "Bash:foci_whoami") {
 		t.Errorf("FociShellRulesFor(ExportedNames()) = %v, want to contain Bash:foci_whoami", rules)

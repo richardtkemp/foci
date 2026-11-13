@@ -286,6 +286,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 		askUserDeliver:   newAskUserDeliverFn(p.agentResolverFn, p.ctx, connMgr),
 		agentTTS:         agentTTS,
 		blockedPaths:     blockedPaths,
+		skillsDirs:       bs.skillsDirs,
 		client:           client,
 		groupResolver:    groupResolver,
 		fallbackFn:       fallbackFn,

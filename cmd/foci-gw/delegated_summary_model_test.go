@@ -90,7 +90,7 @@ func runDelegatedSummary(t *testing.T, be startRecorder, agentModel, batchModel 
 	}
 	ag := &agent.Agent{AgentID: "olly", DelegatedManager: mgr}
 
-	registry := buildExecRegistry(p, stubWakeFn, nil, func() *agent.Agent { return ag })
+	registry := buildExecRegistry(p, stubWakeFn, nil, func() *agent.Agent { return ag }, nil)
 	tool := registry.Get("summary")
 	if tool == nil {
 		t.Fatal("delegated registry has no summary tool")

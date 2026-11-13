@@ -294,6 +294,8 @@ Some tools run **inside** foci-gw (the main agent's `read`/`write`/`edit`, and t
 2. **Confine (#3076).** A sandboxed (isolated) spawn's path must stay inside its own temp directory. Every other path must lie in an **allowed area**: the agent's workspace, `/tmp` (with the process temp dir and foci's temp root), or a directory in `tools.file_allowed_paths` (global `[tools]` or per agent; the lists add up; empty by default; applies live). A refusal names the allowed areas and that key. So an agent cannot use these tools to upload, or overwrite, a file elsewhere that the foci user can reach, such as another agent's workspace or a dotfile. The same read or write from its shell would need the user's approval.
 3. **Blocklist.** The canonical path is checked with `Store.IsBlockedPath`, inside the allowed areas too, so none of the tools can read `secrets.toml` or `/proc/self/environ` even though they run at gateway privilege.
 
+The `ask` grader (#3083) is an executable, not a file argument, but it runs at the gateway's privilege (minus the secrets group) with no approval. So it may run only from the agent's skill directories, its workspace, `/tmp` or `tools.file_allowed_paths`, checked on the canonical path when the ask is made and again just before the grader runs.
+
 The tool then opens the canonical path, so it opens what was checked. A symlink the agent swaps in between the check and the open is not caught: the agent's own shell could race it.
 
 ### Defence in depth
