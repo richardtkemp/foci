@@ -294,6 +294,23 @@ func compactionWaitFailedNotice(err error) string {
 // mid-task, or emits the no-response sentinel if it was idle.
 const compactionResumePrompt = "[system: your context was just compacted and your CC session restarted, interrupting any work in progress. If you were in the middle of a task when this happened, resume it now from where you left off. If you were NOT mid-task (idle, or the previous turn fully completed), reply with " + NoResponseSentinel + " and nothing else — do not narrate this message.]"
 
+// compactionResumePromptToolFirst is compactionResumePrompt for a backend whose
+// Spec sets PostCompactNeedsToolCall (Claude Code, #3093). This nudge is the
+// first request after the compaction. If its reply is text only, no later
+// request (the next real turn, a keepalive fork) can read the cache entry it
+// wrote, and each one rewrites ~50k tokens (#3086). A reply with a tool call
+// keeps the entry readable, so the idle branch makes one trivial, always
+// auto-approved tool call before the sentinel.
+const compactionResumePromptToolFirst = "[system: your context was just compacted and your CC session restarted, interrupting any work in progress. If you were in the middle of a task when this happened, resume it now from where you left off. If you were NOT mid-task (idle, or the previous turn fully completed), first run `foci_whoami` with the Bash tool (one call, ignore its output; it keeps the prompt cache readable), then reply with " + NoResponseSentinel + " and nothing else — do not narrate this message, and write no text before the tool call.]"
+
+// compactionResumeText picks the resume nudge for this agent's backend.
+func (a *Agent) compactionResumeText() string {
+	if a.DelegatedManager != nil && a.DelegatedManager.Spec.PostCompactNeedsToolCall {
+		return compactionResumePromptToolFirst
+	}
+	return compactionResumePrompt
+}
+
 // maybeInjectCompactionResume self-injects the resume nudge after a compaction
 // bounce so an interrupted flow continues autonomously (#845). It is suppressed
 // when:
@@ -320,7 +337,7 @@ func (a *Agent) maybeInjectCompactionResume(ctx context.Context, sessionKey stri
 		a.logger().Debugf("session=%s skip compaction-resume nudge: user input already queued", sessionKey)
 		return
 	}
-	a.AsyncNotifier.InjectToAgent(sessionKey, compactionResumePrompt, "", "compaction-resume")
+	a.AsyncNotifier.InjectToAgent(sessionKey, a.compactionResumeText(), "", "compaction-resume")
 }
 
 // maybeCompact checks whether context compaction is needed and performs it.

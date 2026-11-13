@@ -16,3 +16,13 @@ func TestSpec_QuestionPromptCapability(t *testing.T) {
 		t.Error("claude-code must declare CapQuestionPrompt Yes: AskUserQuestion and elicitation go through SetQuestionPromptFunc (#2275)")
 	}
 }
+
+// TestSpec_PostCompactNeedsToolCall pins the #3093 declaration: a text-only
+// first reply after a CC compaction leaves the cached tail unreadable to every
+// later request (#3086), so the resume nudge must ask for a tool call. Dropping
+// the field silently brings back a ~50k-token cache rewrite per compaction.
+func TestSpec_PostCompactNeedsToolCall(t *testing.T) {
+	if !spec.PostCompactNeedsToolCall {
+		t.Error("claude-code must set PostCompactNeedsToolCall (#3086, #3093)")
+	}
+}

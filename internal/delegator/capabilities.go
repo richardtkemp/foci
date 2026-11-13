@@ -266,6 +266,11 @@ type Spec struct {
 	ClosesTurnActivity bool          // closes each turn's ledger activity itself (CC: background subagents outlive the turn)
 	CacheTTL           time.Duration // prompt-cache TTL; 0 = unknown, config fallback
 	ForkNeedsRunning   bool          // fork is an RPC to a live server: start the parent first
+	// PostCompactNeedsToolCall: the first reply after a compaction must carry a
+	// tool call. With a text-only reply there, later requests cannot read the
+	// cache entry written after the compaction (CC, #3086). The post-compaction
+	// resume nudge then asks for one trivial tool call (#3093).
+	PostCompactNeedsToolCall bool
 	// ConfigFamily names the global config section folded into the agent's
 	// backend_config: ConfigFamilyClaudeCode, ConfigFamilyOpencode or ""
 	// (none).

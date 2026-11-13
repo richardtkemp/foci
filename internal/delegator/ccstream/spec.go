@@ -100,9 +100,11 @@ var spec = delegator.Spec{
 	ModelcapsKey:       modelcaps.BackendCCStream,
 	LedgerKey:          accounting.BackendCCStream,
 	ClosesTurnActivity: true,
-	CacheTTL:           ccStreamCacheTTL,
-	ConfigFamily:       delegator.ConfigFamilyClaudeCode,
-	ConfigKeys:         []string{"allowed_tools", "binary", "skip_permissions"},
+	// A text-only first reply after a compaction strands the cache tail (#3086, #3093).
+	PostCompactNeedsToolCall: true,
+	CacheTTL:                 ccStreamCacheTTL,
+	ConfigFamily:             delegator.ConfigFamilyClaudeCode,
+	ConfigKeys:               []string{"allowed_tools", "binary", "skip_permissions"},
 	StartFields: []string{
 		"WorkDir", "SystemPrompt", "Model", "AgentID", "Label", "ResumeSessionID", "SessionKey",
 		"SkipPermissions", "BatchAccess", "DepthLeaf", "PromptSuggestions", "Env", "AutoApproveRules", "SubagentMaxAge", "Effort",
