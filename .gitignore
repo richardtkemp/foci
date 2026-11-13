@@ -21,6 +21,7 @@ coverage.html
 cover.html
 *.out
 .test-output.tmp
+.test-pkgs.tmp
 /cc-stub
 
 # runtime artefacts

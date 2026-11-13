@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-land.sh — scripted check of scripts/land.sh against a throwaway bare
+# land-test.sh — scripted check of scripts/land.sh against a throwaway bare
 # origin (#2583). Runs on Linux and on macOS; it never touches the real origin.
 #
 # Cases:
@@ -20,10 +20,10 @@
 # failure and pushed without the lock. lintred and nolint fail on the
 # pre-#2957 script: it ran no lint after the rebase and pushed.
 #
-# usage: bash scripts/test-land.sh [path/to/land.sh]
-#   default land.sh: the one next to this script. KEEP=1 keeps the temp dir.
+# usage: bash scripts/tests/land-test.sh [path/to/land.sh]
+#   default land.sh: scripts/land.sh (the parent dir). KEEP=1 keeps the temp dir.
 # On the work Mac (ssh work-mac), from a checkout of this repo:
-#   ssh work-mac 'cd ~/git/foci && PATH=/opt/homebrew/bin:$PATH bash scripts/test-land.sh'
+#   ssh work-mac 'cd ~/git/foci && PATH=/opt/homebrew/bin:$PATH bash scripts/tests/land-test.sh'
 set -u
 
 if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
@@ -32,7 +32,7 @@ if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
 fi
 
 here=$(cd "$(dirname "$0")" && pwd)
-LAND=${1:-$here/land.sh}
+LAND=${1:-$here/../land.sh}
 LAND=$(cd "$(dirname "$LAND")" && pwd)/$(basename "$LAND")
 [ -f "$LAND" ] || { echo "no land.sh at $LAND" >&2; exit 2; }
 
@@ -43,7 +43,7 @@ export GIT_AUTHOR_EMAIL=land@test.invalid GIT_COMMITTER_EMAIL=land@test.invalid
 # A parent make's flags must not leak into the gate's make.
 unset MAKEFLAGS MFLAGS MAKELEVEL
 
-TMP=$(mktemp -d "${TMPDIR:-/tmp}/test-land.XXXXXX")
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/land-test.XXXXXX")
 [ -n "${KEEP:-}" ] || trap 'rm -rf "$TMP"' EXIT
 fails=0
 pass() { echo "PASS $*"; }
@@ -209,5 +209,5 @@ else
 	fail "concur: gates '$seq' rcA=$ra rcB=$rb"; cat "$d/a.log" "$d/b.log"
 fi
 
-echo "test-land: $(uname -s), $(bash --version | head -n 1), flock $(command -v flock || echo MISSING), $fails failure(s)"
+echo "land-test: $(uname -s), $(bash --version | head -n 1), flock $(command -v flock || echo MISSING), $fails failure(s)"
 [ "$fails" -eq 0 ]

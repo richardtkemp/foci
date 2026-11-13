@@ -130,7 +130,7 @@
 # prints `LAND_RESULT: FAILED ...` naming the cause and exits non-zero — so a
 # landing never runs the gate or pushes without having held the lock. The
 # script must also run under macOS's /bin/bash 3.2 and BSD userland: keep to
-# bash-3.2 syntax and POSIX tool flags. scripts/test-land.sh exercises it
+# bash-3.2 syntax and POSIX tool flags. scripts/tests/land-test.sh exercises it
 # against a throwaway bare origin on either OS.
 #
 # Timestamped progress marker (#1748): mirrors $(SAY) in mk/say.mk so make

@@ -301,7 +301,7 @@ main directly. `make land` runs `scripts/land.sh`, which needs:
 - Everything the gate (`make test`) needs, i.e. `make macos-deps`.
 - An `origin` this checkout can push to.
 
-`bash scripts/test-land.sh` checks the script against a throwaway bare origin
+`bash scripts/tests/land-test.sh` checks the script against a throwaway bare origin
 (red gate, green gate, missing and failing lock, two concurrent landings) on
 either OS, without touching the real origin.
 

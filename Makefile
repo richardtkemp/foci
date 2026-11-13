@@ -588,11 +588,17 @@ bench-test-build:
 land:
 	@LAND_LOCK=/tmp/foci-merge.lock LAND_TEST_TARGET=test LAND_LINT_TARGET=lint bash scripts/land.sh
 
+# coverage, coverage-check: the exit status is go test's (and, for
+# coverage-check, the thresholds'), never a pipe stage's. Under make's /bin/sh a
+# pipeline reports its LAST stage, so `go test | grep` exited 0 on a failing
+# test, and a FAILED=1 set inside `... | while` was lost with the subshell
+# (#3073). go test's status goes through a file; the per-package loop reads a
+# file by redirection, which runs it in the current shell.
 coverage:
 	$(eval TESTDIR := $(call fgw_testdir,test))
 	@mkdir -p $(TESTDIR)/home
 	@echo "=== Test Coverage ==="
-	@HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -cover ./... 2>&1 | grep -E '(coverage:|FAIL|PASS)' ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS
+	@{ HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -cover ./... 2>&1 ; echo $$? > $(TESTDIR)/go-test.rc ; } | grep -E '(coverage:|FAIL|PASS)' ; STATUS=$$(cat $(TESTDIR)/go-test.rc) ; rm -rf $(TESTDIR) ; exit $$STATUS
 
 coverage-report:
 	$(eval TESTDIR := $(call fgw_testdir,test))
@@ -622,9 +628,9 @@ coverage-check:
 	$(eval TESTDIR := $(call fgw_testdir,test))
 	@mkdir -p $(TESTDIR)/home
 	@echo "=== Testing with Coverage (total>=$(COVERAGE_TOTAL_MIN)%, per-package>=$(COVERAGE_PKG_MIN)%) ==="
-	@HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -cover -coverprofile=coverage.out ./internal/... ./shared/... 2>&1 | tee .test-output.tmp
-	@rm -rf $(TESTDIR)
-	@if grep -q '^FAIL' .test-output.tmp; then \
+	@{ HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -cover -coverprofile=coverage.out ./internal/... ./shared/... 2>&1 ; echo $$? > $(TESTDIR)/go-test.rc ; } | tee .test-output.tmp ; \
+	STATUS=$$(cat $(TESTDIR)/go-test.rc) ; rm -rf $(TESTDIR) ; \
+	if [ "$$STATUS" != 0 ] || grep -q '^FAIL' .test-output.tmp; then \
 		rm -f .test-output.tmp; \
 		exit 1; \
 	fi
@@ -640,8 +646,10 @@ coverage-check:
 	fi; \
 	echo ""; \
 	echo "Per-package coverage (internal only):"; \
-	grep "^ok" .test-output.tmp | grep "foci/internal/" | while read -r line; do \
+	grep "^ok" .test-output.tmp | grep "foci/internal/" > .test-pkgs.tmp; \
+	while read -r line; do \
 		PKG=$$(echo "$$line" | awk '{print $$2}'); \
+		case "$$line" in *"[no statements]"*) echo "  ➖ $$PKG: no statements"; continue ;; esac; \
 		COV=$$(echo "$$line" | grep -oP 'coverage: \K[0-9.]+' || echo "0"); \
 		if [ "$$(echo "$$COV < $(COVERAGE_PKG_MIN)" | bc -l)" -eq 1 ]; then \
 			echo "  ❌ $$PKG: $$COV% (below $(COVERAGE_PKG_MIN)%)"; \
@@ -649,8 +657,8 @@ coverage-check:
 		else \
 			echo "  ✅ $$PKG: $$COV%"; \
 		fi; \
-	done; \
-	rm -f .test-output.tmp; \
+	done < .test-pkgs.tmp; \
+	rm -f .test-output.tmp .test-pkgs.tmp; \
 	if [ "$$FAILED" -eq 1 ]; then \
 		exit 1; \
 	fi
