@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"runtime"
 	"runtime/debug"
 	"sort"
 	"strings"
@@ -72,12 +73,13 @@ func NewExecBridge(registry *Registry, ctx context.Context) (*ExecBridge, error)
 }
 
 // NewSessionExecBridge creates an exec bridge for a delegated backend session.
-// The socket path is UNIQUE PER BACKEND INSTANCE — it embeds the session key
-// (for log/debug correlation), the gateway pid (to isolate separate gateway
-// processes sharing one FOCI_TMPDIR, e.g. concurrent tests), and a
-// process-local counter (the actual per-instance discriminator):
+// The socket path is UNIQUE PER BACKEND INSTANCE — it embeds a shell-safe slug
+// of the session key (for log/debug correlation, see sessionBridgePaths), the
+// gateway pid (to isolate separate gateway processes sharing one FOCI_TMPDIR,
+// e.g. concurrent tests), and a process-local counter (the actual
+// per-instance discriminator):
 //
-//	exec-<session-key>-<gw-pid>-<n>.sock
+//	exec-<slug>-<gw-pid>-<n>.sock
 //
 // Per-instance is deliberate. Two backends can transiently exist for the same
 // session key: on /reset the dying session's backend is remapped onto a branch
@@ -89,12 +91,69 @@ func NewExecBridge(registry *Registry, ctx context.Context) (*ExecBridge, error)
 // that impossible: Close on one bridge can never touch another's socket. The
 // path is not reused, so there is no stale socket to remove before listening.
 func NewSessionExecBridge(registry *Registry, ctx context.Context, sessionKey string) (*ExecBridge, error) {
-	// Sanitize: session keys may contain slashes (e.g. "clutch/c123/b456").
-	safe := strings.ReplaceAll(sessionKey, "/", "-")
-	n := bridgeCounter.Add(1)
-	sockPath := fmt.Sprintf("%s/exec-%s-%d-%d.sock", tempdir.Dir(), safe, os.Getpid(), n)
-	funcsPath := fmt.Sprintf("%s/exec-%s-%d-%d-funcs.sh", tempdir.Dir(), safe, os.Getpid(), n)
+	sockPath, funcsPath := sessionBridgePaths(tempdir.Dir(), sessionKey, os.Getpid(), bridgeCounter.Add(1))
 	return newExecBridge(registry, ctx, sockPath, funcsPath)
+}
+
+// bridgeSlugMax caps the session-key slug in a bridge path. The slug is for a
+// human reading the temp dir; the pid and counter make the path unique.
+const bridgeSlugMax = 40
+
+// sessionBridgePaths builds a session bridge's socket and funcs paths:
+//
+//	<dir>/exec-<slug>-<gw-pid>-<n>.sock
+//
+// The slug is the session key reduced to characters no shell treats
+// specially (bridgeSlug), never the key itself. The funcs path reaches bash in
+// BASH_ENV, and bash expands BASH_ENV ($(...), backticks, $VAR) before it
+// sources the file: a key carrying a session name verbatim let the name run
+// commands as the agent user (#3098). The slug is also capped, and dropped when
+// the socket path would still exceed sun_path, so a long name cannot stop the
+// socket binding.
+func sessionBridgePaths(dir, sessionKey string, pid int, n int64) (sockPath, funcsPath string) {
+	slug := bridgeSlug(sessionKey)
+	sockPath = fmt.Sprintf("%s/exec-%s-%d-%d.sock", dir, slug, pid, n)
+	if len(sockPath) > maxSockPathLen() {
+		slug = "s"
+		sockPath = fmt.Sprintf("%s/exec-%s-%d-%d.sock", dir, slug, pid, n)
+	}
+	funcsPath = fmt.Sprintf("%s/exec-%s-%d-%d-funcs.sh", dir, slug, pid, n)
+	return sockPath, funcsPath
+}
+
+// bridgeSlug maps a session key to at most bridgeSlugMax bytes of
+// [A-Za-z0-9._-]: '/' becomes '-', every other character outside the set
+// becomes '_'.
+func bridgeSlug(sessionKey string) string {
+	var sb strings.Builder
+	for _, r := range sessionKey {
+		if sb.Len() >= bridgeSlugMax {
+			break
+		}
+		switch {
+		case r == '/':
+			sb.WriteByte('-')
+		case isBridgePathRune(r):
+			sb.WriteRune(r)
+		default:
+			sb.WriteByte('_')
+		}
+	}
+	return sb.String()
+}
+
+// isBridgePathRune reports whether r may appear in a bridge path's file name.
+func isBridgePathRune(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-'
+}
+
+// maxSockPathLen is the longest unix socket path the platform binds:
+// sun_path less its terminating NUL (108 bytes on Linux, 104 on macOS).
+func maxSockPathLen() int {
+	if runtime.GOOS == "linux" {
+		return 107
+	}
+	return 103
 }
 
 func newExecBridge(registry *Registry, ctx context.Context, sockPath, funcsPath string) (*ExecBridge, error) {
@@ -655,7 +714,7 @@ func (b *ExecBridge) writeShellFuncs() error {
 	}
 
 	// O_EXCL rather than os.WriteFile (O_TRUNC, no O_EXCL): funcsPath is
-	// built from a predictable pattern (session key + gw pid + counter, all
+	// built from a predictable pattern (session-key slug + gw pid + counter, all
 	// discoverable by a local user), and the temp root it lives under can be
 	// group- or world-writable depending on deployment (see
 	// internal/tempdir's rootMode). os.WriteFile follows an existing symlink

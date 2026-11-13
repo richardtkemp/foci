@@ -74,7 +74,11 @@ func ParseTarget(s string) (Target, error) {
 	t := Target{Create: true, Policy: PolicyFallback}
 
 	raw := s
-	if i := strings.IndexByte(raw, '?'); i >= 0 {
+	i, err := optionsStart(raw)
+	if err != nil {
+		return Target{}, err
+	}
+	if i >= 0 {
 		q, err := url.ParseQuery(raw[i+1:])
 		if err != nil {
 			return Target{}, fmt.Errorf("invalid target params %q: %w", raw[i+1:], err)
@@ -99,6 +103,48 @@ func ParseTarget(s string) (Target, error) {
 	t.Agent = agent
 	t.Rest = rest
 	return t, nil
+}
+
+// targetOptionKeys are the option names a target's "?key=value" tail may set.
+var targetOptionKeys = map[string]bool{"create": true, "policy": true}
+
+// optionsStart returns the index of the '?' that starts s's options, or -1
+// when s has none. A session name or alias may contain '?' ("Tax Q&A? part
+// 2"), so a '?' starts options only when it is the LAST '?' and everything
+// after it is "key=value" pairs joined by '&' whose every key is a known
+// option. Anything else after the '?' is part of the name and is kept
+// exactly (#3098: "Tax Q&A? part 2" used to become "Tax Q&A", silently).
+// A tail that mixes known options with other text is ambiguous and is an
+// error, so neither reading is guessed.
+func optionsStart(s string) (int, error) {
+	i := strings.LastIndexByte(s, '?')
+	if i < 0 {
+		return -1, nil
+	}
+	known, other := 0, 0
+	var unknown string
+	for _, part := range strings.Split(s[i+1:], "&") {
+		if part == "" {
+			continue
+		}
+		key, _, hasValue := strings.Cut(part, "=")
+		if hasValue && targetOptionKeys[key] {
+			known++
+			continue
+		}
+		other++
+		if unknown == "" {
+			unknown = part
+		}
+	}
+	switch {
+	case known == 0:
+		return -1, nil
+	case other > 0:
+		return -1, fmt.Errorf("invalid target %q: options after '?' mixed with %q (options are create= and policy=; a session name may contain '?' only when no option follows it)", s, unknown)
+	default:
+		return i, nil
+	}
 }
 
 // String renders the canonical form. Round-trips through ParseTarget.

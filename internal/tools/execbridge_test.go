@@ -2785,9 +2785,7 @@ func TestSessionExecBridge_ReadableSessionName(t *testing.T) {
 		t.Fatalf("NewSessionExecBridge: %v", err)
 	}
 	defer b.Close()
-	if !strings.Contains(b.SockPath(), "Tax 2026 Q&A 🥔") {
-		t.Errorf("socket path %q does not carry the name", b.SockPath())
-	}
+	assertSafeBridgePaths(t, b)
 	if res, errMsg := callBridge(t, b.SockPath(), `{"tool":"echo_tool","params":{"text":"potato"}}`); errMsg != "" || res != "echo: potato" {
 		t.Fatalf("bridge not callable: res=%q err=%q", res, errMsg)
 	}
@@ -2796,5 +2794,86 @@ func TestSessionExecBridge_ReadableSessionName(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err != nil || strings.TrimSpace(string(out)) != "function" {
 		t.Errorf("bash did not source the funcs file via BASH_ENV: out=%q err=%v", out, err)
+	}
+}
+
+// assertSafeBridgePaths fails unless both bridge paths are built only from
+// characters no shell treats specially, and the socket path fits the
+// platform's sun_path limit. The funcs path reaches bash in BASH_ENV, which
+// bash expands ($(...), backticks, $VAR) before it sources the file (#3098).
+func assertSafeBridgePaths(t *testing.T, b *ExecBridge) {
+	t.Helper()
+	for _, p := range []string{b.SockPath(), b.FuncsPath()} {
+		base := filepath.Base(p)
+		for _, r := range base {
+			if !isBridgePathRune(r) {
+				t.Errorf("bridge path %q has unsafe character %q", p, r)
+				break
+			}
+		}
+	}
+	if len(b.SockPath()) > maxSockPathLen() {
+		t.Errorf("socket path %q is %d bytes, over the %d-byte limit", b.SockPath(), len(b.SockPath()), maxSockPathLen())
+	}
+}
+
+// TestSessionExecBridge_HostileSessionName proves no session name runs a
+// command when bash loads the session's foci_* functions (#3098 F1). bash
+// expands BASH_ENV before sourcing it, and the funcs path used to embed the
+// name verbatim: a session named "Cost $(touch X) Q" ran touch on every Bash
+// call and lost its foci_* functions. Each name below must leave the marker
+// file absent AND still give the shell its functions.
+func TestSessionExecBridge_HostileSessionName(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// The marker is relative to the shell's working dir so each name stays
+	// short: the old code then fails on the injection, not on socket length.
+	marker := filepath.Join(dir, "pwned")
+	names := []string{
+		"Cost $(touch pwned) Q",
+		"Cost `touch pwned` Q",
+		"a'; touch pwned; '",
+		"a\"; touch pwned; \"",
+		"a; touch pwned",
+		"a | touch pwned",
+		"a && touch pwned",
+		"$HOME ${HOME} $((1+1)) ~ * ? [x] {a,b} !! <x >y #c",
+	}
+	for _, name := range names {
+		b, err := NewSessionExecBridge(testRegistry(), context.Background(), "clutch/i"+name)
+		if err != nil {
+			t.Fatalf("NewSessionExecBridge(%q): %v", name, err)
+		}
+		assertSafeBridgePaths(t, b)
+		cmd := osexec.Command("bash", "-c", "type -t foci__trace")
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "BASH_ENV="+b.FuncsPath(), "FOCI_SOCK="+b.SockPath())
+		out, err := cmd.CombinedOutput()
+		b.Close()
+		if _, statErr := os.Stat(marker); statErr == nil {
+			t.Fatalf("name %q ran a command through BASH_ENV", name)
+		}
+		if err != nil || strings.TrimSpace(string(out)) != "function" {
+			t.Errorf("name %q: bash did not load the foci_* functions: out=%q err=%v", name, out, err)
+		}
+	}
+}
+
+// TestSessionExecBridge_LongSessionName proves a long session name still gets
+// a working bridge (#3098 F2). The socket path used to embed the whole name,
+// and a unix socket path over sun_path (107 bytes on Linux, 103 on macOS)
+// fails to bind, so the session started with no foci_* tools.
+func TestSessionExecBridge_LongSessionName(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{strings.Repeat("x", 81), strings.Repeat("Long name 🥔 ", 16)} {
+		b, err := NewSessionExecBridge(testRegistry(), context.Background(), "clutch/i"+name)
+		if err != nil {
+			t.Fatalf("NewSessionExecBridge(%d-byte name): %v", len(name), err)
+		}
+		assertSafeBridgePaths(t, b)
+		if res, errMsg := callBridge(t, b.SockPath(), `{"tool":"echo_tool","params":{"text":"potato"}}`); errMsg != "" || res != "echo: potato" {
+			t.Errorf("%d-byte name: bridge not callable: res=%q err=%q", len(name), res, errMsg)
+		}
+		b.Close()
 	}
 }

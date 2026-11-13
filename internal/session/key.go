@@ -170,14 +170,26 @@ func NewChatSessionKey(agentID string, chatID int64) string {
 	return NewChatSession(agentID, chatID).String()
 }
 
+// MaxSessionNameBytes is the longest session name accepted, in UTF-8 bytes.
+// A named root session lives in the directory "i<name>", one path segment,
+// and filesystems cap a segment at 255 bytes; the margin is for safety, not
+// for any known suffix.
+const MaxSessionNameBytes = 200
+
 // ValidateSessionName checks that a request-controlled session name is a single
 // safe path segment. The name is placed verbatim into the session key (and hence
 // into a filesystem path), so it must not contain path separators, "."/".."
 // traversal, or control characters — otherwise a caller could escape the session
-// directory (P1-5).
+// directory (P1-5) — and must fit MaxSessionNameBytes. Every other character
+// (spaces, '&', '?', '$', quotes, emoji) is allowed: no layer may hand a name
+// to a shell unquoted (#3098; the exec bridge builds its paths from a
+// shell-safe slug, tools.sessionBridgePaths).
 func ValidateSessionName(name string) error {
 	if name == "" {
 		return fmt.Errorf("session name must not be empty")
+	}
+	if len(name) > MaxSessionNameBytes {
+		return fmt.Errorf("session name is too long: %d bytes, the limit is %d (an emoji or accented letter counts as 2 to 4)", len(name), MaxSessionNameBytes)
 	}
 	if name == "." || name == ".." {
 		return fmt.Errorf("session name %q is reserved", name)

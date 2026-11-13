@@ -308,8 +308,13 @@ func TestResolverParseTarget_LiteralAliasFirst(t *testing.T) {
 		t.Errorf("ambiguous literal resolve err = %v, want ErrAliasAmbiguous", err)
 	}
 
-	// Without an index there is nothing to match literally.
-	if got, err := (&Resolver{}).ParseTarget("clutch/what next?"); err != nil || got.Rest != "what next" {
+	// Without an index there is no alias to match, and the package grammar
+	// decides: a '?' with no option after it stays in the name (#3098), a
+	// known option is read as one.
+	if got, err := (&Resolver{}).ParseTarget("clutch/what next?"); err != nil || got.Rest != "what next?" {
+		t.Errorf("nil index: got %+v, %v; want the name kept whole", got, err)
+	}
+	if got, err := (&Resolver{}).ParseTarget("clutch/notes?create=false"); err != nil || got.Rest != "notes" || got.Create {
 		t.Errorf("nil index: got %+v, %v; want options parse", got, err)
 	}
 }
@@ -328,5 +333,56 @@ func TestResolve_KeyShapedAlias(t *testing.T) {
 		if got, err := r.Resolve(Target{Agent: "clutch", Rest: alias}); err != nil || got.SessionKey != session.NewChatSessionKey("clutch", chat) || got.Rung != RungAlias {
 			t.Errorf("alias %q: got %+v, %v; want chat %d via alias", alias, got, err, chat)
 		}
+	}
+}
+
+// TestParseTargetQuestionMarkInName proves a '?' in a session name is carried
+// exactly, never cut off (#3098 F3): only a trailing "?key=value[&...]" whose
+// every key is a known option (create, policy) is read as options; anything
+// else after the '?' is part of the name. A mix of known options and unknown
+// text is refused with an error rather than guessed.
+func TestParseTargetQuestionMarkInName(t *testing.T) {
+	literal := []struct{ in, rest string }{
+		{"clutch/Tax Q&A? part 2", "Tax Q&A? part 2"},
+		{"clutch/what next?", "what next?"},
+		{"clutch/why?because", "why?because"},
+		{"clutch/Q&A?policy", "Q&A?policy"},
+		{"clutch/100%? sure", "100%? sure"},
+		{"clutch/a? b; c", "a? b; c"},
+		{"clutch/x?created=1", "x?created=1"},
+	}
+	for _, c := range literal {
+		got, err := ParseTarget(c.in)
+		if err != nil {
+			t.Errorf("ParseTarget(%q): %v", c.in, err)
+			continue
+		}
+		want := Target{Agent: "clutch", Rest: c.rest, Create: true, Policy: PolicyFallback}
+		if got != want {
+			t.Errorf("ParseTarget(%q) = %+v, want %+v", c.in, got, want)
+		}
+	}
+
+	// Options after the LAST '?' still apply to a name that has its own '?'.
+	got, err := ParseTarget("clutch/Tax Q&A? part 2?create=false")
+	if err != nil {
+		t.Fatalf("name with '?' plus options: %v", err)
+	}
+	if want := (Target{Agent: "clutch", Rest: "Tax Q&A? part 2", Create: false, Policy: PolicyFallback}); got != want {
+		t.Errorf("name with '?' plus options = %+v, want %+v", got, want)
+	}
+
+	for _, bad := range []string{"clutch/x?create=false&foo", "clutch/x?policy=strict& part 2"} {
+		if _, err := ParseTarget(bad); err == nil {
+			t.Errorf("ParseTarget(%q) succeeded, want an error for options mixed with other text", bad)
+		}
+	}
+
+	// The literal reading round-trips through String.
+	in := "clutch/Tax Q&A? part 2"
+	parsed, _ := ParseTarget(in)
+	back, err := ParseTarget(parsed.String())
+	if err != nil || back != parsed {
+		t.Errorf("round-trip %q via %q: %+v, %v", in, parsed.String(), back, err)
 	}
 }

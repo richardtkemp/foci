@@ -376,3 +376,36 @@ func TestAppendCreatesDirectories(t *testing.T) {
 		t.Errorf("len = %d, want 1", len(msgs))
 	}
 }
+
+// TestSessionNameLengthLimit proves the longest name ValidateSessionName
+// accepts really works as a session (#3098 requirement 2: a name that cannot
+// work is refused at creation, never accepted and then broken). The root
+// session's directory is "i<name>", one path segment, which the filesystem
+// caps at 255 bytes; a longer name used to pass validation and then fail every
+// write. One byte over the limit must be refused with an error naming it.
+func TestSessionNameLengthLimit(t *testing.T) {
+	s := NewStore(t.TempDir())
+	for _, name := range []string{
+		strings.Repeat("x", MaxSessionNameBytes),
+		strings.Repeat("🥔", MaxSessionNameBytes/4) + strings.Repeat("y", MaxSessionNameBytes%4),
+	} {
+		key, err := NamedIndependentSessionKey("clutch", name)
+		if err != nil {
+			t.Fatalf("%d-byte name refused: %v", len(name), err)
+		}
+		if err := s.TestAppend(key, msg("user", "hello")); err != nil {
+			t.Fatalf("%d-byte name accepted but its session cannot be written: %v", len(name), err)
+		}
+		if err := s.TestCreateBranch(key, key+"/b1700000000"); err != nil {
+			t.Fatalf("%d-byte name: branch cannot be written: %v", len(name), err)
+		}
+	}
+	over := strings.Repeat("x", MaxSessionNameBytes+1)
+	err := ValidateSessionName(over)
+	if err == nil || !strings.Contains(err.Error(), "too long") {
+		t.Errorf("ValidateSessionName(%d bytes) = %v, want a 'too long' error", len(over), err)
+	}
+	if _, err := NamedIndependentSessionKey("clutch", strings.Repeat("x", 300)); err == nil {
+		t.Error("300-byte name accepted")
+	}
+}
