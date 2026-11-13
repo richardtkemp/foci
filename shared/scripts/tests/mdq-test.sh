@@ -539,4 +539,20 @@ check "heading shapes: mds --render with quotes (rc)" "0" "$rend_rc"
 check "heading shapes: mds --render with quotes (out)" \
     "$("$REAL_MDQ" '# "LESSON: an \"odd\" one (#2491)"' "$HF")" "$rend_got"
 
+
+# ---------------------------------------------------------------------------
+# #3075 F27: mds must call ITS OWN mdq wrapper (the sibling file), not whatever
+# 'mdq' comes first on PATH. --raw is a flag only the wrapper has; on a Mac the
+# Homebrew mdq precedes ~/bin and rejected it, so every mds extraction failed.
+# A fake 'mdq' first on PATH that refuses everything stands in for it.
+FAKE="$TMP/fakebin"; mkdir -p "$FAKE"
+printf '#!/bin/sh\necho "fake mdq: unknown flag $1" >&2\nexit 2\n' > "$FAKE/mdq"
+chmod +x "$FAKE/mdq"
+sib_want=$(sed -n '/^## Section A$/,/^Nested content.$/p' "$FIX")
+sib_got=$(PATH="$FAKE:$PATH" "$MDS" "$FIX" "Section A" 2>&1); sib_rc=$?
+check "mds uses its sibling mdq, not PATH's (rc)" "0" "$sib_rc"
+check "mds uses its sibling mdq, not PATH's (source bytes)" "$sib_want" "$sib_got"
+sibr_got=$(PATH="$FAKE:$PATH" "$MDS" "$FIX" "Section B" --render 2>&1); sibr_rc=$?
+check "mds --render uses its sibling mdq (rc)" "0" "$sibr_rc"
+
 exit $RC

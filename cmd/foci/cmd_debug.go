@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
@@ -330,16 +329,11 @@ func branchFileSpan(path string) (first, last time.Time, ok bool) {
 	}
 	defer r.Close() //nolint:errcheck
 
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
+	// No line limit (#3075): a session record can be any size (#3065).
+	_ = session.ForEachLine(r, func(line []byte) error {
 		ts := lineTimestamp(line)
 		if ts.IsZero() {
-			continue
+			return nil
 		}
 		if first.IsZero() || ts.Before(first) {
 			first = ts
@@ -347,7 +341,8 @@ func branchFileSpan(path string) (first, last time.Time, ok bool) {
 		if last.IsZero() || ts.After(last) {
 			last = ts
 		}
-	}
+		return nil
+	})
 	return first, last, !first.IsZero()
 }
 
@@ -528,25 +523,33 @@ func printFilteredContent(path string, from, to time.Time, format outputFormat) 
 	}
 	defer f.Close() //nolint:errcheck
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-
+	return session.ForEachLine(f, func(line []byte) error {
 		ts := lineTimestamp(line)
 		if !ts.IsZero() && !inTimeRange(ts, from, to) {
-			continue
+			return nil
 		}
+		printRendered(line, format)
+		return nil
+	})
+}
 
-		out := renderLine(line, format)
-		if out != "" {
-			fmt.Print(out)
-		}
+// printRendered prints one session line in the given format; a blank line,
+// or one that renders to nothing, prints nothing.
+func printRendered(line []byte, format outputFormat) {
+	if len(line) == 0 {
+		return
 	}
-	return scanner.Err()
+	if out := renderLine(line, format); out != "" {
+		fmt.Print(out)
+	}
+}
+
+// printRenderedLine adapts printRendered to session.ForEachLine.
+func printRenderedLine(format outputFormat) func([]byte) error {
+	return func(line []byte) error {
+		printRendered(line, format)
+		return nil
+	}
 }
 
 // renderLine formats a JSONL line according to the output format.
@@ -584,26 +587,14 @@ func printExistingContent(path string, format outputFormat) (int64, error) {
 	}
 	defer f.Close() //nolint:errcheck
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		out := renderLine(line, format)
-		if out != "" {
-			fmt.Print(out)
-		}
-	}
-	if err := scanner.Err(); err != nil {
+	if err := session.ForEachLine(f, printRenderedLine(format)); err != nil {
 		return 0, err
 	}
 
 	// Get current file offset
 	offset, err := f.Seek(0, io.SeekCurrent)
 	if err != nil {
-		// Scanner consumed the whole file; stat for size
+		// The reader consumed the whole file; stat for size
 		info, statErr := f.Stat()
 		if statErr != nil {
 			return 0, statErr
@@ -636,19 +627,7 @@ func printNewContent(path string, offset int64, format outputFormat) (int64, err
 		return offset, err
 	}
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		out := renderLine(line, format)
-		if out != "" {
-			fmt.Print(out)
-		}
-	}
-	if err := scanner.Err(); err != nil {
+	if err := session.ForEachLine(f, printRenderedLine(format)); err != nil {
 		return offset, err
 	}
 

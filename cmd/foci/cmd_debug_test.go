@@ -893,3 +893,84 @@ func TestHandleMissingRootSession_TimeRange(t *testing.T) {
 		t.Errorf("out-of-range message should have been filtered out, got: %s", output)
 	}
 }
+
+// Tests that every 'foci debug' session reader accepts a record over the old
+// 10 MiB scanner cap (#3075). The session store writes and reads records of
+// any length (#3065); a capped reader here made one big tool result end the
+// output with "token too long" (or, for the span, silently report nothing).
+func TestDebugReaders_RecordOverTenMiB(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "b1000.jsonl")
+
+	early := time.Date(2026, 9, 2, 14, 10, 0, 0, time.UTC)
+	late := time.Date(2026, 9, 2, 14, 15, 0, 0, time.UTC)
+	big := writeSessionLine(t, early, strings.Repeat("x", 11*1024*1024))
+	tail := writeSessionLine(t, late, "after-the-big-one")
+	content := `{"type":"branch_meta","parent_key":"clutch/c1"}` + "\n" + big + tail
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Output goes to a file, not a pipe: >10 MiB would fill a pipe's buffer
+	// and block the writer before anything reads it.
+	capture := func(t *testing.T, fn func() error) string {
+		t.Helper()
+		out, err := os.CreateTemp(t.TempDir(), "stdout")
+		if err != nil {
+			t.Fatalf("temp stdout: %v", err)
+		}
+		old := os.Stdout
+		os.Stdout = out
+		runErr := fn()
+		os.Stdout = old
+		if runErr != nil {
+			t.Fatalf("reader failed on a >10 MiB record: %v", runErr)
+		}
+		data, err := os.ReadFile(out.Name())
+		if err != nil {
+			t.Fatalf("read stdout: %v", err)
+		}
+		return string(data)
+	}
+
+	t.Run("branchFileSpan", func(t *testing.T) {
+		first, last, ok := branchFileSpan(path)
+		if !ok || !first.Equal(early) || !last.Equal(late) {
+			t.Errorf("span = (%v, %v, %v), want (%v, %v, true)", first, last, ok, early, late)
+		}
+	})
+	t.Run("printFilteredContent", func(t *testing.T) {
+		out := capture(t, func() error {
+			return printFilteredContent(path, early.Add(-time.Hour), late.Add(time.Hour), outputJSON)
+		})
+		if !strings.Contains(out, "after-the-big-one") {
+			t.Error("record after the big one missing from output")
+		}
+	})
+	t.Run("printExistingContent", func(t *testing.T) {
+		var offset int64
+		out := capture(t, func() (err error) {
+			offset, err = printExistingContent(path, outputJSON)
+			return err
+		})
+		if !strings.Contains(out, "after-the-big-one") {
+			t.Error("record after the big one missing from output")
+		}
+		if offset != int64(len(content)) {
+			t.Errorf("offset = %d, want %d", offset, len(content))
+		}
+	})
+	t.Run("printNewContent", func(t *testing.T) {
+		var offset int64
+		out := capture(t, func() (err error) {
+			offset, err = printNewContent(path, 0, outputJSON)
+			return err
+		})
+		if !strings.Contains(out, "after-the-big-one") {
+			t.Error("record after the big one missing from output")
+		}
+		if offset != int64(len(content)) {
+			t.Errorf("offset = %d, want %d", offset, len(content))
+		}
+	})
+}

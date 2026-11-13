@@ -44,6 +44,9 @@ func resetForTest() {
 	}
 
 	subMu.Lock()
+	for _, sr := range subRuns {
+		sr.stop()
+	}
 	subRuns = map[string]*subagentRun{}
 	subMu.Unlock()
 

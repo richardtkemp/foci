@@ -260,7 +260,7 @@ func (s *Store) loadUnlocked(key string) ([]provider.Message, error) {
 func parseMessages(r io.Reader, key string) ([]provider.Message, error) {
 	var messages []provider.Message
 	lineNo := 0
-	err := forEachLine(r, func(line []byte) error {
+	err := ForEachLine(r, func(line []byte) error {
 		lineNo++
 		if len(line) == 0 {
 			return nil

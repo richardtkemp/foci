@@ -2428,7 +2428,10 @@ one-observation traces named after the call type.
 whichever sink the session router holds *at that moment*, which for a background
 Agent is a later turn's. Open runs therefore live in a package registry keyed by
 (session, group key, run), and whichever turn sees the end closes it; runs with no
-end signal are closed as `end_unobserved` after 2 h.
+end signal are closed as `end_unobserved` after 2 h, by a timer each run arms at
+its start (`subExpiry`; `SubagentEnd` disarms it). Before #3075 only the next
+`SubagentStart` pruned, so a lost end with no later subagent held the run open
+until restart.
 
 **Cross-agent links** (`links.go`): Langfuse has no cross-trace edge, so the two
 turns of a `send_to_session` exchange are joined by metadata. The tool
@@ -3051,7 +3054,10 @@ the pull path finishes, a mid-stream hole is what the no-drop rule exists to pre
 truncated conversation does not abort the resume, since each conversation has its own seq
 stream. The bound is therefore the socket queue itself, self-tuning per client, rather than
 `maxResumeStoreReplay` — which bounds nothing once a hello carries many conversations,
-because each one spends the cap again into the SAME queue); `conversation.open`→bind socket to agent;
+because each one spends the cap again into the SAME queue. The cap still sizes the ONE store
+page a replay reads: a page that ends before the in-memory floor (or, with no in-memory
+buffer, before the store's end) is a truncation too, and the in-memory frames are then
+withheld, since sending them would leave the same hole, #3075); `conversation.open`→bind socket to agent;
 `message`→`routeUserTurn`→`ensureBinding`→`agent.Enqueue(Envelope{Driver:
 appConn})`; `conversation.open`→`handleConversationOpen` (adopts a client-assigned
 `conversationId` when the frame carries one — so the app creates + opens the

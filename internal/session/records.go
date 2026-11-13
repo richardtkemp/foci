@@ -24,9 +24,9 @@ import (
 //     torn tail (#3065 F13); repairTornTailUnlocked acts on it and on
 //     nothing else, so interior corruption still fails loudly.
 
-// forEachLine calls fn with every line of r (without its '\n'), with no
+// ForEachLine calls fn with every line of r (without its '\n'), with no
 // length limit. A final line with no trailing newline is still delivered.
-func forEachLine(r io.Reader, fn func(line []byte) error) error {
+func ForEachLine(r io.Reader, fn func(line []byte) error) error {
 	br := bufio.NewReaderSize(r, 64*1024)
 	for {
 		line, err := br.ReadBytes('\n')

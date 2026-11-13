@@ -3597,10 +3597,25 @@ func (b *convBinding) replayTo(client *wsClient, fromSeq int64) bool {
 	// SAME sendBuffer-slot queue. Stopping when the queue is full is
 	// self-tuning — a fast client gets everything, a slow one gets a contiguous
 	// prefix and pulls the rest (#1779).
+	//
+	// The store is read ONE page deep. Asking for one frame more than the page
+	// tells whether the page reached the end of what this replay needs (#3075,
+	// #2968 F14): a page that stops short of memFloor (or, with no memory, of the
+	// store's end) is a truncation. Sending the in-memory frames after it would
+	// skip the frames between, and the client would ack past the hole; so the
+	// replay stops there and reports truncated, and the client pulls the rest.
 	storeCount, sentBuffer, truncated := 0, 0, false
 	if store != nil && (!hasMem || fromSeq < memFloor-1) {
-		for _, sf := range store.Range(convID, fromSeq, maxResumeStoreReplay) {
+		page := store.Range(convID, fromSeq, maxResumeStoreReplay+1)
+		pageShort := false // a frame this replay needs lies beyond the page
+		if len(page) > maxResumeStoreReplay {
+			next := page[maxResumeStoreReplay]
+			page = page[:maxResumeStoreReplay]
+			pageShort = !hasMem || next.seq < memFloor
+		}
+		for _, sf := range page {
 			if hasMem && sf.seq >= memFloor {
+				pageShort = false
 				break
 			}
 			if !client.enqueueReplay(stampAck(toolCallPlaceholder(substituteResolvedAsk(sf.wire, orphaned), client), ack)) {
@@ -3609,6 +3624,7 @@ func (b *convBinding) replayTo(client *wsClient, fromSeq int64) bool {
 			}
 			storeCount++
 		}
+		truncated = truncated || pageShort
 	}
 	if !truncated {
 		for _, wire := range pending {

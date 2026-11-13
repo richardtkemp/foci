@@ -21,7 +21,7 @@ type subagentRun struct {
 	turnID  string // the SPAWNING turn — the trace this run belongs to
 	texts   []string
 	prompts []string
-	started time.Time
+	stop    func() bool // disarms the run's expiry
 }
 
 var (
@@ -31,8 +31,17 @@ var (
 
 // subagentTTL bounds how long an un-ended run is kept; the ccstream tracker
 // prunes its own pending subagents at 2h by default, so anything older here has
-// lost its end signal and is closed as unresolved.
+// lost its end signal and is closed as unresolved. Each run carries its own
+// expiry timer (#3075): before, only the next SubagentStart pruned, so a lost
+// end with no later subagent kept the run's texts and open span until restart.
 const subagentTTL = 2 * time.Hour
+
+// subExpiry arms fn to run once after d and returns a func that disarms it.
+// Each open run gets its own expiry (#3075). A test replaces this with a fake
+// clock that fires fn by hand.
+var subExpiry = func(d time.Duration, fn func()) (stop func() bool) {
+	return time.AfterFunc(d, fn).Stop
+}
 
 func subKey(session, group string, run int) string {
 	if run <= 1 {
@@ -82,7 +91,6 @@ func (t *Turn) SubagentStart(groupKey, label, prompt string, run int) {
 
 	subMu.Lock()
 	defer subMu.Unlock()
-	pruneSubagentsLocked()
 	key := subKey(sessionKey, groupKey, run)
 	if _, dup := subRuns[key]; dup {
 		return
@@ -111,7 +119,9 @@ func (t *Turn) SubagentStart(groupKey, label, prompt string, run int) {
 	}
 	ctx := withIDs(rootCtx, trace.TraceID{}, SubagentSpanID(turnID, groupKey, run))
 	_, span := tr.Start(ctx, name, trace.WithAttributes(attrs...))
-	subRuns[key] = &subagentRun{span: span, turnID: turnID, started: time.Now()}
+	sr := &subagentRun{span: span, turnID: turnID}
+	sr.stop = subExpiry(subagentTTL, func() { expireSubagent(key, sr) })
+	subRuns[key] = sr
 }
 
 // SubagentText appends a text block the run produced.
@@ -172,6 +182,7 @@ func (t *Turn) SubagentEnd(groupKey string, run int) {
 	if sr == nil {
 		return
 	}
+	sr.stop()
 	endSubagent(sr, o, false)
 }
 
@@ -199,19 +210,21 @@ func endSubagent(sr *subagentRun, o Options, unresolved bool) {
 	sr.span.End()
 }
 
-// pruneSubagentsLocked closes runs that never received an end signal.
-func pruneSubagentsLocked() {
-	_, o, ok := current()
-	if !ok {
+// expireSubagent closes a run that never received its end signal. It acts
+// only if key still maps to this run: an end that raced the timer, or a newer
+// run under the same key, is left alone.
+func expireSubagent(key string, sr *subagentRun) {
+	subMu.Lock()
+	if subRuns[key] != sr {
+		subMu.Unlock()
 		return
 	}
-	cutoff := time.Now().Add(-subagentTTL)
-	for k, sr := range subRuns {
-		if sr.started.Before(cutoff) {
-			delete(subRuns, k)
-			endSubagent(sr, o, true)
-		}
-	}
+	delete(subRuns, key)
+	subMu.Unlock()
+	// Telemetry switched off since the start: still end the span, so it is
+	// not held open, but export no content.
+	_, o, _ := current()
+	endSubagent(sr, o, true)
 }
 
 func (t *Turn) session() string {

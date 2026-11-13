@@ -33,7 +33,8 @@
 # three plain-grep tiers cover everything documented above, so the script is
 # useful on any install. Tier 4 is a nicety, not a dependency.
 #
-# Requires: mdq (the extraction is delegated to it). fzf is optional.
+# Requires: the foci mdq wrapper installed beside this script (the extraction
+# is delegated to it), plus the upstream mdq binary it wraps. fzf is optional.
 
 set -euo pipefail
 
@@ -111,10 +112,22 @@ fi
 #      so <, [ and friends are not parsed as selector syntax. A backslash or '"' in
 #      the heading would end or bend that literal, so escape both.
 clean=$(echo "$match" | sed -E 's/^[#[:space:]]+//; s/[[:space:]]+#+[[:space:]]*$//; s/`//g; s/\\/\\\\/g; s/"/\\"/g')
+
+# Call OUR mdq wrapper, the file installed next to this script, not the first
+# 'mdq' on PATH (#3075). --raw/--render exist only in the wrapper; where another
+# mdq precedes it on PATH (Homebrew's on a Mac), a bare 'mdq' rejected them and
+# every extraction failed. Parameter expansion, not dirname: like mdq, this must
+# run on a PATH too minimal to hold coreutils. Falls back to PATH when no
+# sibling wrapper exists (e.g. mds reached through a lone symlink).
+here=${BASH_SOURCE[0]%/*}
+[[ "$here" == "${BASH_SOURCE[0]}" ]] && here=.
+mdq_cmd=mdq
+[[ -x "$here/mdq" && ! -d "$here/mdq" ]] && mdq_cmd="$here/mdq"
+
 if (( raw )); then
-    mdq --raw "# \"$clean\"" "$file"
+    "$mdq_cmd" --raw "# \"$clean\"" "$file"
 else
     # Forward the opt-out explicitly: mdq's own default is now raw, so calling
     # it bare here would hand back source bytes and quietly ignore --render.
-    mdq --render "# \"$clean\"" "$file"
+    "$mdq_cmd" --render "# \"$clean\"" "$file"
 fi
