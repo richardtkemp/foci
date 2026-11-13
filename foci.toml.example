@@ -557,6 +557,7 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # chat_sections_model = "qwen3.6:35b-a3b"  # the sections' own model (default: pin_summary_model)
 # chat_sections_endpoint = "local"     # the sections' own [endpoints] entry; set with chat_sections_model (default: pin_summary_endpoint)
 # allowed_devices = []                 # device IDs allowed to pair (empty = any)
+# trusted_proxies = ["172.17.0.0/16"] # proxies whose X-Forwarded-For the login lockout trusts; ["none"] = trust none (default: loopback + private ranges)
 
 # ─── Sessions ─────────────────────────────────────────────────────────
 [sessions]

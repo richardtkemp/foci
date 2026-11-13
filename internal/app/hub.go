@@ -78,6 +78,7 @@ type Hub struct {
 	pusher   *fcmPusher
 	devices  *deviceStore
 	authLim  *authLimiter
+	trust    *proxyTrust // trusted_proxies: whose X-Forwarded-For remoteIP honours (#3078)
 
 	// askgw holds the pending ask-gateway prompts, shown app-wide (#2707).
 	askgw askgwPromptSet
@@ -333,6 +334,7 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		tokens:        tokens,
 		devices:       newDeviceStore(devicePath),
 		authLim:       newAuthLimiter(authFailMax, authFailWindow),
+		trust:         &proxyTrust{},
 		agents:        make(map[string]*appConn),
 		convs:         make(map[string]*convBinding),
 		bySession:     make(map[string]*convBinding),
@@ -345,6 +347,7 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		wizardByScope: make(map[string]string),
 	}
 	h.pinSum.warnIfUnconfigured()
+	h.configureTrustedProxies(appCfg)
 	if appCfg != nil {
 		h.host = appCfg.Host
 		if appCfg.ReplayBuffer != nil && *appCfg.ReplayBuffer > 0 {
@@ -525,25 +528,35 @@ func (h *Hub) authToken(token string) (*device, bool) {
 // authenticate gates a request on a valid device token, with per-IP failure
 // lockout. On success it returns the device and true; on failure it writes the
 // HTTP error and returns false. (The active-hub nil check lives in withHub.)
+//
+// A valid device token is accepted even from a locked bucket (#3078): a bucket
+// can be shared (several clients behind one proxy that is not in
+// trusted_proxies), and bad logins from one client must not lock out a paired
+// device. This gives a locked-out guesser no help: a device token is 256 random
+// bits, so the lockout was never what stopped it being guessed; it throttles
+// noise. A locked bucket still answers every bad or missing token with 429
+// without counting it, and a valid login does not unlock the bucket for the
+// others in it. Pairing keys are short, so ServePair keeps the strict lockout.
 func (h *Hub) authenticate(w http.ResponseWriter, r *http.Request) (*device, bool) {
-	ip := remoteIP(r)
-	if h.authLim.blocked(ip) {
-		http.Error(w, "too many auth failures", http.StatusTooManyRequests)
-		return nil, false
-	}
+	ip := h.remoteIP(r)
+	blocked := h.authLim.blocked(ip)
 	token := bearerToken(r)
-	if token == "" {
-		http.Error(w, "authentication required", http.StatusUnauthorized)
-		return nil, false
-	}
 	d, ok := h.authToken(token)
-	if !ok {
+	switch {
+	case ok:
+		if !blocked {
+			h.authLim.reset(ip)
+		}
+		return d, true
+	case blocked:
+		http.Error(w, "too many auth failures", http.StatusTooManyRequests)
+	case token == "":
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+	default:
 		h.authLim.fail(ip)
 		http.Error(w, "invalid credentials", http.StatusForbidden)
-		return nil, false
 	}
-	h.authLim.reset(ip)
-	return d, true
+	return nil, false
 }
 
 // ServePair handles POST /app/pair: a single-use, short-TTL pairing key (minted
@@ -554,7 +567,7 @@ func (h *Hub) ServePair(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	ip := remoteIP(r)
+	ip := h.remoteIP(r)
 	if h.authLim.blocked(ip) {
 		http.Error(w, "too many auth failures", http.StatusTooManyRequests)
 		return
@@ -3565,7 +3578,7 @@ type wsClient struct {
 
 	// ip is the origin client address, resolved once at connect by
 	// clientIPForLog (which prefers CF-Connecting-IP — behind the tunnel the
-	// socket peer is the proxy). Written before the client is published to the
+	// socket peer is a proxy). Written before the client is published to the
 	// hub and never mutated, so the send path reads it without c.mu (#1782).
 	ip string
 
@@ -3884,7 +3897,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		appLog.Errorf("ws upgrade: %v", err)
 		return
 	}
-	client := newWsClient(ws, h, clientIPForLog(r))
+	client := newWsClient(ws, h, h.clientIPForLog(r))
 	// dev is never nil past this point: authenticate() returns ok only with a
 	// device, because there is no master key any more (#862). Everything below
 	// therefore uses it unconditionally — the `if dev != nil` guards that used
@@ -3909,7 +3922,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	// ip answers a question the deviceID cannot: whether a client that started
 	// misbehaving BROKE or simply MOVED NETWORK. Those have different owners and
 	// different fixes, and telling them apart from the log is what was missing on
-	// 2026-08-17/18 (#1728). See clientIPForLog for why it is not remoteIP.
+	// 2026-08-17/18 (#1728). See clientIPForLog for why it differs from remoteIP.
 	clientIP := client.ip
 	appLog.Infof("device connected: device=%s ip=%s", dev.DeviceID, clientIP)
 	safeGo("ws-writepump", client.writePump)

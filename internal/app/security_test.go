@@ -219,8 +219,9 @@ func TestSecurity_RevokedDeviceToken_Rejected(t *testing.T) {
 }
 
 //  5. Per-IP brute-force lockout: after authFailMax wrong-credential attempts from
-//     one IP, further attempts are 429 — and even a CORRECT device token is locked
-//     out for the window (the block check precedes the token check).
+//     one IP, further wrong attempts are 429. A CORRECT device token is still
+//     served (#3078): a bucket can be shared, and a 256-bit token is not what the
+//     lockout protects. Pairing keeps the strict lockout (TestServePair_LockoutStaysStrict).
 func TestSecurity_AuthLimiter_LocksOutBruteForce(t *testing.T) {
 	h, devTok := secHub(t)
 	const ip = "203.0.113.7:5000"
@@ -244,13 +245,21 @@ func TestSecurity_AuthLimiter_LocksOutBruteForce(t *testing.T) {
 		t.Errorf("blocked attempt code = %d, want 429", w.Code)
 	}
 
-	// Even a correct device token is refused while the IP is locked out.
+	// A correct device token is served while the IP is locked out (#3078)...
 	w = httptest.NewRecorder()
 	r = secReq(http.MethodGet, "/app/history?conversationId=c", "", "Bearer "+devTok)
 	r.RemoteAddr = ip
 	h.ServeHistory(w, r)
+	if w.Code == http.StatusTooManyRequests || w.Code == http.StatusForbidden || w.Code == http.StatusUnauthorized {
+		t.Errorf("device token while locked out code = %d, want it served", w.Code)
+	}
+	// ...and does not lift the lockout for the wrong guesses.
+	w = httptest.NewRecorder()
+	r = secReq(http.MethodGet, "/app/history?conversationId=c", "", "Bearer wrong")
+	r.RemoteAddr = ip
+	h.ServeHistory(w, r)
 	if w.Code != http.StatusTooManyRequests {
-		t.Errorf("device token while locked out code = %d, want 429", w.Code)
+		t.Errorf("wrong token after a valid login code = %d, want 429", w.Code)
 	}
 }
 
@@ -277,10 +286,10 @@ func TestSecurity_AuthLimiter_PerIPIsolation(t *testing.T) {
 
 //  7. EXPLOIT: an attacker on one real socket rotates X-Forwarded-For every
 //     request, trying to land in a fresh per-IP lockout bucket each time and so
-//     brute-force the master key without ever tripping the throttle. Traefik
-//     appends the real downstream socket to the RIGHT of XFF, so foci keys the
-//     limiter on that rightmost hop — the attacker's spoofed leftmost values are
-//     ignored and the lockout still fires. The test runs the exploit and FAILS if
+//     brute-force the master key without ever tripping the throttle. Here the
+//     attacker connects directly from a public address, which is not a trusted
+//     proxy, so its X-Forwarded-For is ignored and the lockout keys on the socket
+//     (#3078; the trusted-chain cases are in trustedproxy_test.go). The test runs the exploit and FAILS if
 //     it succeeds (i.e. if the limiter never blocks). See F1 in the audit doc.
 func TestSecurity_AuthLimiter_XFFRotationDoesNotBypass(t *testing.T) {
 	h, _ := secHub(t)

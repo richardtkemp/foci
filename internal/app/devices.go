@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
-	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -237,45 +236,20 @@ func (l *authLimiter) reset(ip string) {
 
 // clientIPForLog reports the best-effort ORIGIN client IP, for diagnostics only.
 //
-// Deliberately NOT remoteIP: that one answers a security question ("which
-// bucket does this request rate-limit against") and correctly trusts only the
-// rightmost X-Forwarded-For hop, which behind the Cloudflare tunnel is the
-// proxy rather than the user. Perfect for lockout, useless for "which network
-// is this device on" — the question that cost a wrong diagnosis and a reverted
-// production change on 2026-08-17/18 (#1728, #1744), when a phone silently
-// moved from Wi-Fi to 5G and the behaviour change was attributed to a config
-// edit instead.
-//
-// CF-Connecting-IP is set by Cloudflare and overwritten on every request, so a
-// client cannot forge it while the origin is reachable only through the tunnel.
-// That assumption is exactly why this value must never reach a security
-// decision: if the origin were ever exposed directly, the header becomes
-// caller-controlled. Logging a spoofed IP is harmless; rate-limiting on one is
-// not. Falls back to remoteIP when the header is absent (direct/tailnet/local
-// connections), which is also how a tailnet client shows its 100.x address.
-func clientIPForLog(r *http.Request) string {
+// It prefers CF-Connecting-IP, which Cloudflare sets and overwrites on every
+// request, so a client cannot forge it while the origin is reachable only
+// through the tunnel. That assumption is exactly why this value must never
+// reach a security decision: a client that reaches foci directly controls the
+// header. Logging a spoofed IP is harmless; rate-limiting on one is not. The
+// lockout uses Hub.remoteIP (trustedproxy.go), which honours forwarding
+// headers only from trusted proxies (#3078). Falls back to that value when the
+// header is absent (direct/tailnet/local connections), which is also how a
+// tailnet client shows its 100.x address. The log line exists for "which
+// network is this device on": a phone that silently moved from Wi-Fi to 5G was
+// once misdiagnosed as a config regression (#1728, #1744).
+func (h *Hub) clientIPForLog(r *http.Request) string {
 	if ip := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); ip != "" {
 		return ip
 	}
-	return remoteIP(r)
-}
-
-// remoteIP extracts the client IP for rate-limiting. foci sits behind Traefik,
-// which APPENDS the downstream socket address to the right of X-Forwarded-For;
-// everything to the left of that final hop is attacker-controlled. We therefore
-// trust the RIGHTMOST entry (Traefik's appended hop = the real client). Taking
-// the leftmost would let an attacker rotate a spoofed XFF to land in a fresh
-// rate-limit bucket each request, defeating the brute-force lockout. Falls back
-// to RemoteAddr when no proxy header is present (direct/local connections).
-func remoteIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.LastIndexByte(xff, ','); i >= 0 {
-			return strings.TrimSpace(xff[i+1:])
-		}
-		return strings.TrimSpace(xff)
-	}
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return host
-	}
-	return r.RemoteAddr
+	return h.remoteIP(r)
 }

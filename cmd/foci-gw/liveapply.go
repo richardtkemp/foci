@@ -184,6 +184,10 @@ var (
 	// sectioner (a derived handle).
 	liveApplyChatSectionsAddrs = []string{"platforms.app.chat_sections", "platforms.app.chat_sections_every", "platforms.app.chat_sections_after_break"}
 
+	// #3078: the proxies whose X-Forwarded-For the app's login lockout
+	// honours, pushed into the app hub's proxyTrust (a derived handle).
+	liveApplyTrustedProxiesAddrs = []string{"platforms.app.trusted_proxies"}
+
 	// Global rows only: the agent./platforms. debug override rows are dead
 	// (nothing reads them — tracker #1199), so their struct tags carry the
 	// ",global" scope marker and no applier exists for them.
@@ -492,6 +496,15 @@ func registerLiveAppliers(la *liveApply, agents *agentRegistry) {
 			appCfg = p.App
 		}
 		app.ConfigureChatSections(appCfg)
+		return nil
+	})
+
+	la.register(liveApplyTrustedProxiesAddrs, func(fresh *config.Config) error {
+		var appCfg *config.AppSpecific
+		if p := fresh.Platform("app"); p != nil {
+			appCfg = p.App
+		}
+		app.ConfigureTrustedProxies(appCfg)
 		return nil
 	})
 

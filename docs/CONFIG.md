@@ -235,6 +235,7 @@ Settings for the native FOCI app (WebSocket) platform.
 | `blob_ttl` | string | `"24h"` | How long an uploaded blob is kept on the server before deletion. |
 | `devices_path` | string | `"app-devices.json"` | File path, relative to `data_dir`, where paired app devices are stored. |
 | `allowed_devices` | string[] | `[]` | Device IDs permitted to pair. Empty allows any device. |
+| `trusted_proxies` | string[] | loopback + private ranges | Proxies (IPs or CIDR ranges) whose `X-Forwarded-For` the app login lockout trusts to name the real client (#3078). A request from any other peer is locked out by its own socket address; through a trusted chain the key is the first hop that is not a trusted proxy. Default: `127.0.0.0/8`, `::1`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7` (the tailnet and public addresses are not trusted). `["none"]` trusts no peer. Hot: applies to the next request. |
 | `checkbox_store_path` | string | `"app-checkboxes.db"` | File path, relative to `data_dir`, of the database that durably stores markdown-checkbox tick state (the cross-device checkbox mirror). |
 | `checkbox_replay_docs` | int | `200` | How many most-recently-updated checkbox documents one post-reconnect replay sends at most. |
 | `checkbox_replay_ttl` | string | `"2160h"` | Maximum age of a checkbox document still replayed to a device after it reconnects (90 days). |

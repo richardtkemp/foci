@@ -993,6 +993,10 @@ type AppSpecific struct {
 	// any). A slice → set in the TOML file, not via /config set, so no desc tag
 	// (mirrors AccessConfig.AllowedUsers).
 	AllowedDevices []string `toml:"allowed_devices"  desc:"Device IDs permitted to pair with this agent over the app protocol. Empty means no device allow-list"`
+	// TrustedProxies (#3078): the peers whose X-Forwarded-For the app's login
+	// lockout honours. Unset = the built-in private/loopback defaults
+	// (internal/app/trustedproxy.go); ["none"] trusts no peer.
+	TrustedProxies []string `toml:"trusted_proxies" hot:"immediate" desc:"Proxies, as IPs or CIDR ranges, whose X-Forwarded-For header the app's login lockout trusts to name the real client; a request from any other address is locked out by its own address. Set to [\"none\"] to trust no proxy (default: loopback and private ranges — 127.0.0.0/8, ::1, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7)"`
 }
 
 // ApplyDefaults fills zero-value fields from the given defaults.

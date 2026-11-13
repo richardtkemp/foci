@@ -147,9 +147,9 @@ func TestConnectLog_NamesClientIP(t *testing.T) {
 }
 
 // Behind the Cloudflare tunnel the ORIGIN client address arrives in
-// CF-Connecting-IP; the socket peer and the rightmost X-Forwarded-For hop are
-// both the proxy. Preferring it is the whole point of clientIPForLog — using
-// remoteIP here would log a constant and answer nothing.
+// CF-Connecting-IP. Preferring it is the point of clientIPForLog: it names the
+// origin even when no proxy in the chain is trusted, where remoteIP would log a
+// proxy address.
 func TestConnectLog_PrefersCFConnectingIP(t *testing.T) {
 	const origin = "203.0.113.77"
 	out, _ := dialAndCaptureConnectLogWithHeaders(t, "cf-ip-check", map[string]string{

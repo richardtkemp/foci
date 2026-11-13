@@ -2948,11 +2948,11 @@ earned.
 
 **The connect/disconnect lines also carry the client IP** (`clientIPForLog`,
 `devices.go`), which is deliberately NOT `remoteIP`. `remoteIP` answers a
-security question — which bucket to rate-limit against — and correctly trusts
-only the RIGHTMOST `X-Forwarded-For` hop, which behind the Cloudflare tunnel is
-the proxy, not the user. `clientIPForLog` prefers `CF-Connecting-IP` (set by
-Cloudflare, unforgeable while the origin is reachable only through the tunnel)
-and falls back to `remoteIP`, so a tailnet client shows its `100.x` address.
+security question — which bucket to rate-limit against — and honours
+`X-Forwarded-For` only from trusted proxies (`trustedproxy.go`, #3078).
+`clientIPForLog` prefers `CF-Connecting-IP` (set by Cloudflare, unforgeable
+while the origin is reachable only through the tunnel) and falls back to
+`remoteIP`, so a tailnet client shows its `100.x` address.
 It must never feed a security decision: logging a spoofed IP is harmless,
 rate-limiting on one is not. The field exists because deviceID answers "who"
 but not "from where", and a client that BROKE versus one that merely MOVED
@@ -3360,8 +3360,22 @@ which is why `authenticate` returning ok implies a non-nil device and `ServeWS`
 can seed `client.deviceID` and name the device unconditionally. `POST
 /app/pair/revoke` drops the token and force-closes the device's live socket(s)
 with `4403`; `GET /app/devices` lists pairings (tokens omitted). An `authLimiter` locks
-out a remote IP (`remoteIP`, X-Forwarded-For-aware) after repeated auth failures
-— the endpoint is internet-facing.
+out a remote IP (`Hub.remoteIP`, `trustedproxy.go`) after repeated auth failures
+— the endpoint is internet-facing. `remoteIP` (#3078) honours `X-Forwarded-For`
+only when the socket peer is in `[platforms.app] trusted_proxies` (unset =
+loopback and private ranges, which covers the NUC's cloudflared → traefik →
+socat-bridge chain; `["none"]` trusts no peer; the tailnet and public
+addresses are never trusted by default). Through a trusted chain it walks the
+header from the right and keys on the first hop that is not itself a trusted
+proxy; all header lines are read in order; with no header or an untrusted peer
+the key is the socket peer. `trusted_proxies` is hot: the
+`liveApplyTrustedProxiesAddrs` applier calls `app.ConfigureTrustedProxies`,
+which swaps the hub's `proxyTrust` (an atomic pointer). `authenticate` accepts
+a valid device token even from a locked bucket (a bucket can be shared, and a
+256-bit token is not what the lockout protects); a locked bucket answers every
+missing or bad token with 429 without counting it, and a valid login there does
+not reset the bucket. `ServePair` keeps the strict lockout (pairing keys are a
+~52-bit passphrase): a locked bucket refuses even a valid key.
 
 **Push (`push.go`, slice 5):** offline wake via FCM v1 data-messages. `fcmPusher`
 authenticates with a service-account token source (`golang.org/x/oauth2/google`,

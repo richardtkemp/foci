@@ -3234,25 +3234,6 @@ func TestAuthLimiter_Lockout(t *testing.T) {
 	}
 }
 
-// TestRemoteIP covers the parser cases NOT exercised by
-// TestSecurity_AuthLimiter_XFFRotationDoesNotBypass (which owns the
-// rightmost-hop / rotation-bypass property end-to-end): the single-entry chain
-// and the no-XFF fallback to the real socket.
-func TestRemoteIP(t *testing.T) {
-	// Single entry (no proxy chain) → that entry.
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r.Header.Set("X-Forwarded-For", "8.8.8.8")
-	if got := remoteIP(r); got != "8.8.8.8" {
-		t.Errorf("single XFF ip = %q, want 8.8.8.8", got)
-	}
-	// No XFF → fall back to the real socket.
-	r2 := httptest.NewRequest(http.MethodGet, "/", nil)
-	r2.RemoteAddr = "5.5.5.5:1234"
-	if got := remoteIP(r2); got != "5.5.5.5" {
-		t.Errorf("RemoteAddr ip = %q, want 5.5.5.5", got)
-	}
-}
-
 func equal(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
