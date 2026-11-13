@@ -120,6 +120,12 @@ const (
 	ErrMessageOutLength = "MessageOutputLengthError"
 	ErrAPI              = "APIError"
 	ErrUnknown          = "UnknownError"
+
+	// errServerExited is foci's own name for the synthetic session.error
+	// finalizeExit raises when the opencode subprocess ends; opencode never
+	// sends it. It lets onSessionError report the in-flight turn as
+	// interrupted rather than failed (#3070).
+	errServerExited = "foci.ServerExited"
 )
 
 // ProviderAuthErrorData is the typed payload for MessageError.Name ==

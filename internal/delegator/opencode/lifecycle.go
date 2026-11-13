@@ -443,7 +443,7 @@ func (s *Server) finalizeExit(reason error) {
 				Error *MessageError `json:"error"`
 			}{
 				Error: &MessageError{
-					Name: ErrUnknown,
+					Name: errServerExited,
 					Data: mustMarshalJSON(map[string]string{"message": msg}),
 				},
 			})

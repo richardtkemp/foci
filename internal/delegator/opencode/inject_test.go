@@ -793,3 +793,43 @@ func TestFlushSteerBuf_EmptyIsNoOp(t *testing.T) {
 		t.Errorf("flushSteerBuf on empty buffer POSTed %d times, want 0", got)
 	}
 }
+
+// #3070: a turn whose server ended under it (the synthetic session.error
+// finalizeExit raises) or whose session was closed under it completes as
+// interrupted, keeping its partial text; an error opencode itself reports, or
+// an abort, does not.
+func TestFailInFlightTurn_ServerEndMarksInterrupted(t *testing.T) {
+	rec := &recordingHandler{}
+	b := newReadyBackend(t, rec)
+
+	run := func(end func()) *delegator.TurnResult {
+		t.Helper()
+		var got *delegator.TurnResult
+		b.beginTurn(&delegator.TurnEvents{OnTurnComplete: func(r *delegator.TurnResult) { got = r }})
+		b.turnMu.Lock()
+		b.turnText.WriteString("partial")
+		b.turnMu.Unlock()
+		end()
+		if got == nil {
+			t.Fatal("OnTurnComplete never fired")
+		}
+		return got
+	}
+
+	exited := run(func() {
+		b.onSessionError(b.sessionID, &MessageError{Name: errServerExited, Data: mustMarshalJSON(map[string]string{"message": "subprocess exited unexpectedly"})})
+	})
+	if !errors.Is(exited.Interrupted, delegator.ErrTurnInterrupted) || exited.Text != "partial" {
+		t.Errorf("server exit: Interrupted=%v Text=%q, want an interruption keeping the partial text", exited.Interrupted, exited.Text)
+	}
+	closed := run(func() { b.failInFlightTurnAs("session closed", true) })
+	if !errors.Is(closed.Interrupted, delegator.ErrTurnInterrupted) {
+		t.Errorf("session closed: Interrupted=%v, want an interruption", closed.Interrupted)
+	}
+	for _, name := range []string{ErrUnknown, ErrMessageAborted} {
+		r := run(func() { b.failInFlightTurn(name) })
+		if r.Interrupted != nil {
+			t.Errorf("%s: Interrupted=%v, want nil (opencode ended the turn, not the server's end)", name, r.Interrupted)
+		}
+	}
+}

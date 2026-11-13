@@ -414,13 +414,20 @@ func (b *Backend) onReaderStopped(err error) {
 	}
 	b.threadMapMu.RUnlock()
 	facades[b] = struct{}{}
+	cause := "codex connection ended mid-turn"
+	if err != nil {
+		cause += ": " + err.Error()
+	}
 	for f := range facades {
 		f.turnMu.Lock()
 		active := f.turnActive
 		text := f.turnText.String()
 		f.turnMu.Unlock()
 		if active {
-			f.completeTurn(&delegator.TurnResult{Text: text})
+			// The partial text is kept, marked interrupted: the turn did not
+			// finish (#3070).
+			f.completeTurn(&delegator.TurnResult{Text: text,
+				Interrupted: delegator.TurnInterrupted(cause)})
 		}
 	}
 

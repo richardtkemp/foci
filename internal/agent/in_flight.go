@@ -371,6 +371,9 @@ func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator, tr
 			Trigger:   ts.Trigger,
 			Via:       triggerToPlatform(ts.Trigger),
 			Effort:    a.turnEffort(ts),
+			// A run its backend ended mid-way reports so, as a foci-begun
+			// turn does (#3070).
+			Err: ts.interruptedErr(),
 		})
 		if cleanup != nil {
 			cleanup()

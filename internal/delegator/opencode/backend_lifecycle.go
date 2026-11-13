@@ -328,7 +328,7 @@ func (b *Backend) Close() error {
 	// racing a genuine session.idle is safe. Delivery of the buffered text is
 	// gated downstream (silent wakes route through a BufferSink), so this
 	// closes the turn WITHOUT surfacing output. See foci bug #1051.
-	b.failInFlightTurn("session closed")
+	b.failInFlightTurnAs("session closed", true)
 	return nil
 }
 

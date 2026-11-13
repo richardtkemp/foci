@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"foci/internal/agent"
+	"foci/internal/delegator"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
@@ -374,11 +376,19 @@ func TestCallerWatch_TurnEnded(t *testing.T) {
 		shutdown bool
 		act      func(*callerWatch)
 		want     string // "" = no caller turn
+		unwant   string // must not appear in what the caller is told
 	}{
 		{name: "reply", act: func(w *callerWatch) { w.turnEnded(nil, true) }},
 		{name: "empty reply, available", act: func(w *callerWatch) { w.turnEnded(nil, false) }},
 		{name: "rate limited", act: func(w *callerWatch) { w.turnEnded(limit, false) }, want: "will not come to you"},
 		{name: "failed", act: func(w *callerWatch) { w.turnEnded(errors.New("boom"), false) }, want: "boom"},
+		// #3070: the target took the message and its backend died mid-turn.
+		{name: "interrupted", act: func(w *callerWatch) {
+			w.turnEnded(fmt.Errorf("turn: %w", delegator.TurnInterrupted("CC process exited unexpectedly")), false)
+		}, want: "received your message", unwant: "send it again"},
+		{name: "interrupted at shutdown", shutdown: true, act: func(w *callerWatch) {
+			w.turnEnded(delegator.TurnInterrupted("Session closed while turn was in flight"), false)
+		}, want: "may resume after a restart", unwant: "not delivered"},
 		{name: "empty reply in a hold", hold: true, act: func(w *callerWatch) { w.turnEnded(nil, false) }, want: "stopped working"},
 		{name: "failed in a hold", hold: true, act: func(w *callerWatch) { w.turnEnded(errors.New("boom"), false) }, want: "stopped working"},
 		{name: "shutting down, open", shutdown: true, act: func(w *callerWatch) { w.turnEnded(agent.ErrShuttingDown, false) }, want: "not delivered"},
@@ -398,8 +408,12 @@ func TestCallerWatch_TurnEnded(t *testing.T) {
 				expectNoCallerTurn(t, f, "nothing to tell")
 				return
 			}
-			if got := waitCallerNotice(t, f); !strings.Contains(got, tc.want) {
+			got := waitCallerNotice(t, f)
+			if !strings.Contains(got, tc.want) {
 				t.Errorf("caller told %q, want %q", got, tc.want)
+			}
+			if tc.unwant != "" && strings.Contains(got, tc.unwant) {
+				t.Errorf("caller told %q, must not say %q", got, tc.unwant)
 			}
 		})
 	}

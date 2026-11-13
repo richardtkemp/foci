@@ -746,6 +746,18 @@ func (b *Backend) onSessionError(sessionID string, err *MessageError) {
 		} else {
 			log.NewComponentLogger(component).Warnf("session error (API): %s (unparsable data)", err.Name)
 		}
+	case errServerExited:
+		// The subprocess ended: the turn is cut, not failed (#3070).
+		reason := "subprocess exited"
+		var data struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(err.Data, &data) == nil && data.Message != "" {
+			reason = data.Message
+		}
+		log.NewComponentLogger(component).Warnf("session error: opencode server ended (%s)", reason)
+		b.failInFlightTurnAs(reason, true)
+		return
 	default:
 		log.NewComponentLogger(component).Warnf("session error: %s", err.Name)
 	}
@@ -768,7 +780,12 @@ func (b *Backend) onSessionError(sessionID string, err *MessageError) {
 // (session error / subprocess death). It mirrors onSessionIdle's completion but
 // delivers the accumulated text (or the error name) rather than waiting for a
 // session.idle that will never arrive. No-op if no turn is active.
-func (b *Backend) failInFlightTurn(reason string) {
+func (b *Backend) failInFlightTurn(reason string) { b.failInFlightTurnAs(reason, false) }
+
+// failInFlightTurnAs is failInFlightTurn; interrupted marks a turn whose
+// session or server ended under it (TurnResult.Interrupted, #3070) rather
+// than one opencode itself ended with an error or an abort.
+func (b *Backend) failInFlightTurnAs(reason string, interrupted bool) {
 	b.turnMu.Lock()
 	if !b.turnActive {
 		b.turnMu.Unlock()
@@ -805,7 +822,11 @@ func (b *Backend) failInFlightTurn(reason string) {
 		text = "⚠️ opencode session ended unexpectedly (" + reason + ")"
 	}
 	if turn != nil && turn.OnTurnComplete != nil {
-		turn.OnTurnComplete(&delegator.TurnResult{Text: text})
+		result := &delegator.TurnResult{Text: text}
+		if interrupted {
+			result.Interrupted = delegator.TurnInterrupted("opencode session ended mid-turn (" + reason + ")")
+		}
+		turn.OnTurnComplete(result)
 	}
 	if ch != nil {
 		select {

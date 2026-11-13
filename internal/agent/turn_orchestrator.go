@@ -214,6 +214,16 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 
 	// Phase 4: Post-turn (sync for API, async for delegated)
 	a.runPostTurn(tc, ts)
+	// A turn its backend ended mid-way (process death, EOF, a Close under
+	// it) ran post-turn like any other, keeping its partial text, but it did
+	// not finish: it ends with the backend's error, so its consumers do not
+	// take it for a success. A background spawn cut this way during a
+	// shutdown is then kept for resume, as a ctx cancel would keep it
+	// (#3070, #2589).
+	if err := ts.interruptedErr(); err != nil {
+		a.logger().Warnf("session=%s turn interrupted: %v", ts.SessionKey, err)
+		return ts.FinalText, err
+	}
 	return ts.FinalText, nil
 }
 

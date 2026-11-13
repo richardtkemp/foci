@@ -851,6 +851,10 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 			if result != nil {
 				ts.FinalText = result.Text
 				ts.FinalModel = result.Model
+				if result.Interrupted != nil {
+					err := result.Interrupted
+					ts.interrupted.Store(&err)
+				}
 				if result.Usage != nil {
 					ts.FinalUsage = &provider.Usage{
 						InputTokens:              result.Usage.InputTokens,

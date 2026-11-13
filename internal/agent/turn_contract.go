@@ -235,6 +235,11 @@ type TurnState struct {
 	// OnTurnComplete then does not stamp again from the final usage (#2509).
 	sawModelUsage atomic.Bool
 
+	// interrupted holds the backend's TurnResult.Interrupted: the backend
+	// ended mid-turn, so the turn returns that error instead of reading as a
+	// success (#3070). Set inside completeOnce, before CompletionChan closes.
+	interrupted atomic.Pointer[error]
+
 	// --- Delegated-specific ---
 
 	Backend delegator.Delegator // backend instance for this session (nil for API)
@@ -473,4 +478,13 @@ func (ts *TurnState) RowID() string {
 		return ""
 	}
 	return ts.SessionKey + "@" + strconv.FormatInt(ts.StartedAt.UnixNano(), 10)
+}
+
+// interruptedErr is the error the backend reported the turn ended by
+// (TurnResult.Interrupted), or nil for a turn that finished (#3070).
+func (ts *TurnState) interruptedErr() error {
+	if p := ts.interrupted.Load(); p != nil {
+		return *p
+	}
+	return nil
 }

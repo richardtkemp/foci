@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"foci/internal/agent"
+	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
@@ -181,6 +182,12 @@ func (w *callerWatch) turnEnded(err error, hasReply bool) {
 		w.finish()
 	case errors.Is(err, agent.ErrShuttingDown):
 		w.refused()
+	case errors.Is(err, delegator.ErrTurnInterrupted):
+		// The target took the message, but its backend ended under the turn
+		// (#3070). Not "send it again": a restart may resume the cut turn
+		// (#2999), and a resend would then run it twice.
+		w.finish()
+		w.tell(fmt.Sprintf("Session %s received your message, but its turn stopped mid-way: %v. It may resume after a restart; the reply then goes to its own chat, not to you.", w.target, err))
 	case errors.As(err, &limited):
 		w.finish()
 		w.tell(fmt.Sprintf("Session %s cannot reply now: %s. Your message is queued and runs when the limit resets. The reply will not come to you.", w.target, limited.Error()))

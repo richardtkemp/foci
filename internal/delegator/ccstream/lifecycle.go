@@ -651,17 +651,22 @@ func (b *Backend) finalizeExit(reason error) {
 			b.ledger.Load().turnEnded(turn.TurnID)
 		}
 		if turn != nil && turn.OnTurnComplete != nil {
-			var msg string
+			var msg, cause string
 			if expected {
 				msg = "Session closed while turn was in flight"
+				cause = msg
 			} else {
-				msg = fmt.Sprintf("Error: CC process exited unexpectedly: %v", reason)
+				cause = fmt.Sprintf("CC process exited unexpectedly: %v", reason)
 				if exitErr != nil && exitErr != reason {
-					msg += " (" + describeExitError(exitErr) + ")"
+					cause += " (" + describeExitError(exitErr) + ")"
 				}
+				msg = "Error: " + cause
 			}
 			b.logger().Debugf("finalizeExit: pre-OnTurnComplete elapsed=%s", time.Since(start))
-			turn.OnTurnComplete(&delegator.TurnResult{Text: msg})
+			// The turn did not finish: it is reported as interrupted, not as
+			// a completion carrying the notice, so a spawn cut by a shutdown
+			// is kept for resume rather than finalized (#3070).
+			turn.OnTurnComplete(&delegator.TurnResult{Text: msg, Interrupted: delegator.TurnInterrupted(cause)})
 			b.logger().Debugf("finalizeExit: post-OnTurnComplete elapsed=%s", time.Since(start))
 		}
 

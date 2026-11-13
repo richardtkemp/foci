@@ -1023,7 +1023,30 @@ type TurnResult struct {
 	Usage      *TurnUsage // token usage (nil if unavailable)
 	Model      string     // model used (e.g. "claude-opus-4-6")
 	ThreadName string     // backend-generated session title (Codex auto-names threads)
+
+	// Interrupted is non-nil when the turn did not finish: the backend's
+	// process or connection ended under it (a crash, an EOF, a Close while
+	// the turn ran). Text then holds what the turn produced before that, or
+	// a notice, never a complete answer. errors.Is(Interrupted,
+	// ErrTurnInterrupted) holds. The agent turn returns it as the turn's
+	// error, so no consumer takes the cut turn for a success: a background
+	// spawn cut this way during foci shutdown is kept for resume (#3070).
+	Interrupted error
 }
+
+// ErrTurnInterrupted marks a turn its backend ended mid-turn
+// (TurnResult.Interrupted). Match it with errors.Is.
+var ErrTurnInterrupted = errors.New("delegator: turn interrupted by the backend's end")
+
+// TurnInterrupted is the TurnResult.Interrupted error for a turn whose
+// backend ended mid-turn. Its message is msg alone (the chat shows it as
+// "Error: <msg>"); errors.Is(err, ErrTurnInterrupted) holds.
+func TurnInterrupted(msg string) error { return &turnInterruptedError{msg: msg} }
+
+type turnInterruptedError struct{ msg string }
+
+func (e *turnInterruptedError) Error() string        { return e.msg }
+func (e *turnInterruptedError) Is(target error) bool { return target == ErrTurnInterrupted }
 
 // ThreadNameConsumer is an optional capability for backends whose
 // TurnResult.ThreadName is a one-time auto-generated title (Codex's
