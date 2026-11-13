@@ -437,6 +437,7 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 		}
 
 		saveData := body
+		binary := isBinaryContentType(contentType)
 
 		// Extract from JSON response if save_from_json_path is set
 		if saveFromJSONPath != "" {
@@ -447,10 +448,23 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 			// If it's a data: URI, decode it
 			if decoded, err := decodeDataURI(extracted); err == nil {
 				saveData = decoded
+				binary = true
 			} else {
 				// Not a data URI — save the extracted string as-is
 				saveData = []byte(extracted)
+				binary = false
 			}
+		}
+
+		// The saved file gets the inline result's echo protection (#3077): the
+		// agent can read it. Text is scrubbed. Binary data cannot be scrubbed
+		// without corrupting it, so a binary body that holds a secret value is
+		// refused and nothing is written. The error names no value.
+		if scrubbed := redactSecrets(string(saveData)); scrubbed != string(saveData) {
+			if binary {
+				return ToolResult{}, fmt.Errorf("response not saved: the binary body contains a configured secret value, and binary data cannot be redacted without corrupting it")
+			}
+			saveData = []byte(scrubbed)
 		}
 
 		if autoSave {
