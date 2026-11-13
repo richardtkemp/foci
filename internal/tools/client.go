@@ -206,7 +206,7 @@ var clientActions = []clientActionSpec{
 			}
 			return map[string]any{"text": *p.Text}, nil
 		}},
-	{name: "open_url", usage: "open_url <url> — open an http, https or geo: URL in the app that handles it",
+	{name: "open_url", usage: "open_url <url> — open an http, https, geo: or obsidian: URL in the app that handles it",
 		positional: []string{"url"},
 		build: func(p *clientParams) (map[string]any, error) {
 			u, err := checkOpenURL(p.URL)
@@ -343,12 +343,13 @@ func checkPhoneNumber(s string) (string, error) {
 	return s, nil
 }
 
-// checkOpenURL accepts http(s) URLs with a host and geo: URIs; any other
-// scheme (intent:, file:, content:, javascript:, ...) is refused.
+// checkOpenURL accepts http(s) URLs with a host, geo: URIs and obsidian://
+// URIs with an action (obsidian://open?vault=...); any other scheme
+// (intent:, file:, content:, javascript:, ...) is refused.
 func checkOpenURL(s string) (string, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return "", errors.New("url: empty; give an http, https or geo: URL")
+		return "", errors.New("url: empty; give an http, https, geo: or obsidian: URL")
 	}
 	u, err := url.Parse(s)
 	if err != nil {
@@ -363,8 +364,12 @@ func checkOpenURL(s string) (string, error) {
 		if u.Opaque == "" && u.RawQuery == "" {
 			return "", fmt.Errorf("url: %q has no position (e.g. geo:51.46,-0.11)", s)
 		}
+	case "obsidian":
+		if u.Host == "" {
+			return "", fmt.Errorf("url: %q has no action (e.g. obsidian://open?vault=Personal&file=Note)", s)
+		}
 	default:
-		return "", fmt.Errorf("url: scheme %q is not allowed (only http, https and geo)", u.Scheme)
+		return "", fmt.Errorf("url: scheme %q is not allowed (only http, https, geo and obsidian)", u.Scheme)
 	}
 	return s, nil
 }
@@ -587,7 +592,7 @@ func NewClientTool(invoker func() (AppInvoker, bool)) *Tool {
 				"number": {"type": "string", "description": "call: the phone number"},
 				"name": {"type": "string", "description": "contact_lookup: a name or part of one"},
 				"text": {"type": "string", "description": "clipboard: the text to copy"},
-				"url": {"type": "string", "description": "open_url: an http, https or geo: URL"},
+				"url": {"type": "string", "description": "open_url: an http, https, geo: or obsidian: URL"},
 				"seconds": {"type": "integer", "description": "ring_phone: how long to ring (default 30, at most 300)"},
 				"task": {"type": "string", "description": "tasker_perform: the Tasker task name, from tasker_list"},
 				"par1": {"type": "string", "description": "tasker_perform: first param (%par1). For structured args, JSON-stringify into this slot."},
