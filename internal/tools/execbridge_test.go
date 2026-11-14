@@ -1745,26 +1745,55 @@ func TestExecBridgeStdinTextGuard(t *testing.T) {
 	// is what makes the truncation a diagnosis instead of corruption. So assert BOTH
 	// that the partial body went through and that it was announced.
 	//
-	// The body must already be in the pipe when the bounded read starts, or a
-	// loaded scheduler can run the writer's echo after the bound and the case
-	// fails on an empty body. So the shell opens the fifo on fd 3 first (that
-	// open returns once the writer has opened its end), waits for the writer's
-	// marker file, written after the echo, and only then calls the function
-	// on fd 3. That ordering lets the bound be 0.2s (#2539).
+	// What is under test is the generator's handling of a cut-off read: rc 124
+	// means "warn and send what arrived". The body must be read BEFORE the cut,
+	// and a real clock cannot promise that: timeout(1) starts its clock, then
+	// forks and execs cat, so the bound also covers cat's start-up. The suite
+	// runs at nice 19 (seal-test.sh), and on a Mac saturated at normal priority
+	// that start-up took longer than any small bound: measured on pro under 18
+	// spinners, `$(timeout 0.2 cat)` on a pipe that already held the body came
+	// back empty 4 times in 10 at nice 19, 0 in 10 at nice 0 (#3105). So this
+	// case puts a stand-in timeout(1) first on PATH that cuts the read on an
+	// event, not a clock: it fires once cat has output the first byte, then exits
+	// 124 the way a real expiry does. Cases 7 and 8 keep the real timeout(1),
+	// where nothing has to happen inside the bound. The stand-in also records the
+	// duration it was given, so the FOCI_STDIN_WAIT seam stays pinned.
+	shimDir := t.TempDir()
+	shimArgs := filepath.Join(shimDir, "timeout.args")
+	shim := `#!/bin/sh
+# Stand-in for timeout(1) in TestExecBridgeStdinTextGuard case 9 (#3105): runs
+# the command, cuts it once it has output the first byte, exits 124 (expiry).
+# The 10s give-up only bounds a regression where the body never arrives.
+printf '%s\n' "$1" > "$SHIM_ARGS"
+shift
+out=$(mktemp) || exit 125
+# A non-interactive sh gives a background job /dev/null as stdin; pass fd 0 on.
+exec 9<&0
+"$@" <&9 > "$out" 9<&- &
+pid=$!
+n=0
+while [ ! -s "$out" ] && [ $n -lt 1000 ]; do sleep 0.01; n=$((n+1)); done
+kill -TERM "$pid" 2>/dev/null
+wait "$pid" 2>/dev/null
+cat "$out"
+rm -f "$out"
+exit 124
+`
+	if err := os.WriteFile(filepath.Join(shimDir, "timeout"), []byte(shim), 0o755); err != nil {
+		t.Fatalf("write timeout stand-in: %v", err)
+	}
 	mu.Lock()
 	capturedText = ""
 	mu.Unlock()
 	out9, err9 := runBash(fmt.Sprintf(
 		"set -o pipefail -o nounset; shopt -s failglob; source %s\n"+
-			"export FOCI_STDIN_WAIT=0.2\n"+
+			"export PATH=%q:\"$PATH\" SHIM_ARGS=%q FOCI_STDIN_WAIT=7\n"+
 			"__d=$(mktemp -d); mkfifo \"$__d/f\"\n"+
-			"{ echo 'partial body'; : > \"$__d/written\"; sleep 20; } > \"$__d/f\" 2>/dev/null &\n"+
-			"exec 3<\"$__d/f\"\n"+
-			"until [ -e \"$__d/written\" ]; do sleep 0.01; done\n"+
-			"foci_send_to_chat <&3; __rc=$?\n"+
+			"{ echo 'partial body'; sleep 20; } > \"$__d/f\" 2>/dev/null &\n"+
+			"foci_send_to_chat <\"$__d/f\"; __rc=$?\n"+
 			"rm -rf \"$__d\"\n"+
 			"exit $__rc",
-		bridge.FuncsPath(),
+		bridge.FuncsPath(), shimDir, shimArgs,
 	))
 	if err9 != nil {
 		t.Fatalf("stdin-as-body with a live unending stream should still send what arrived: %v\noutput: %s", err9, out9)
@@ -1777,6 +1806,9 @@ func TestExecBridgeStdinTextGuard(t *testing.T) {
 	mu.Unlock()
 	if !strings.Contains(gotText, "partial body") {
 		t.Errorf("text = %q, want it to contain 'partial body' (what arrived before the bound)", gotText)
+	}
+	if got, err := os.ReadFile(shimArgs); err != nil || strings.TrimSpace(string(got)) != "7" {
+		t.Errorf("stand-in timeout got duration %q (err %v), want FOCI_STDIN_WAIT's 7", got, err)
 	}
 }
 
