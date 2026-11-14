@@ -69,6 +69,8 @@ func (b *Backend) RunningSubagents() []delegator.RunningSubagent { return b.agen
 //     to trigger the automated re-login (#843).
 //   - OnLoginExpiry gets the date a claude.ai sign-in ends, from each result
 //     and the startup probe, for an advance warning (#2864).
+//   - OnLoginEmail gets the account's email from the startup probe, so
+//     login messages name the account (#3104).
 //   - OnRateLimitNotice gets a formatted rate_limit_event notice when CC
 //     reports the API is past the "allowed" threshold, with this Backend's
 //     foci session key so it reaches the session that triggered it (#1857).
@@ -88,6 +90,7 @@ func (b *Backend) RunningSubagents() []delegator.RunningSubagent { return b.agen
 func (b *Backend) SetHostHooks(h delegator.HostHooks) {
 	b.onAuthFailure = h.OnAuthFailure
 	b.onLoginExpiry = h.OnLoginExpiry
+	b.onLoginEmail = h.OnLoginEmail
 	b.onRateLimited = h.OnRateLimitNotice
 	b.onModelFallback = h.OnModelFallbackNotice
 	b.onSessionLimit = h.EngageRateLimit

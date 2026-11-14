@@ -786,8 +786,9 @@ func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 		a.enqueueObserver(env)
 	}
 
-	// CC re-login gate (#843). A 401 on the shared OAuth credential pauses every
-	// delegated agent while an automated re-login runs. DelegatedManager != nil
+	// CC re-login gate (#843). A 401 on a Claude Code account's credential
+	// pauses every agent on that account (its LoginGateOrDefault, #3104) while
+	// an automated re-login runs. DelegatedManager != nil
 	// is the cheap "this is a delegated (CC) agent" test — it avoids spinning up
 	// a backend just to classify. The one capture window diverts the triggering
 	// agent's next message as the pasted-back login code; everything else
@@ -808,14 +809,14 @@ func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 	// user-typed message guards both, so background and system sources never
 	// cause a repeat.
 	reloginHold := false
-	if a.UsesCCLogin() && relogin.G.Active() {
+	if g := a.LoginGateOrDefault(); a.UsesCCLogin() && g.Active() {
 		if env.Inject == nil && !env.Automated && env.Steer != platform.SteerNever &&
 			strings.TrimSpace(env.Text) != "" {
-			if relogin.G.CaptureCode(a.AgentID, env.SessionKey, env.Text) {
+			if g.CaptureCode(a.AgentID, env.SessionKey, env.Text) {
 				a.logger().Infof("inbox: captured CC login code sk=%s", env.SessionKey)
 				return true
 			}
-			if relogin.G.OfferLink(a.AgentID, env.SessionKey, a.ReloginLinkTarget) {
+			if g.OfferLink(a.AgentID, env.SessionKey, a.ReloginLinkTarget) {
 				a.logger().Infof("inbox: repeated the CC sign-in link sk=%s", env.SessionKey)
 			}
 		}
@@ -1220,8 +1221,17 @@ func (a *Agent) resolveSessionBackend(ctx context.Context, sk string) (delegator
 	return nil, nil
 }
 
-// UsesCCLogin reports whether this agent runs on the Claude Code credential
-// that relogin.G guards: a delegated agent whose backend declares CapRelogin
+// LoginGateOrDefault is the re-login gate of this agent's Claude Code
+// account: LoginGate, or relogin.G (the host account's) when unset.
+func (a *Agent) LoginGateOrDefault() *relogin.Gate {
+	if a.LoginGate != nil {
+		return a.LoginGate
+	}
+	return relogin.G
+}
+
+// UsesCCLogin reports whether this agent runs on a Claude Code credential
+// that a login gate (LoginGateOrDefault) guards: a delegated agent whose backend declares CapRelogin
 // (ReloginTrigger is set only then). Only these agents are held by a Claude
 // Code login (#3014, Dick 2026-11-10): API agents and the codex and opencode
 // backends do not use that credential, so a CC login neither holds their
@@ -1232,11 +1242,11 @@ func (a *Agent) UsesCCLogin() bool {
 }
 
 // reloginHoldClosed reports whether a CC re-login is in progress on an agent
-// that uses the CC login (#843/#1932): the shared OAuth credential is dead
+// that uses the CC login (#843/#1932): its account's OAuth credential is dead
 // until it completes, so dispatching now would only 401 again. Other agents
 // are never held (UsesCCLogin).
 func (a *Agent) reloginHoldClosed() bool {
-	return a.UsesCCLogin() && relogin.G.Active()
+	return a.UsesCCLogin() && a.LoginGateOrDefault().Active()
 }
 
 // reloginPendingAttempt reports, for an agent that uses the CC login, the
@@ -1246,7 +1256,7 @@ func (a *Agent) reloginPendingAttempt() (uint64, bool) {
 	if !a.UsesCCLogin() {
 		return 0, false
 	}
-	return relogin.G.PendingAttempt()
+	return a.LoginGateOrDefault().PendingAttempt()
 }
 
 // retryReloginAfterUserTurn starts one new login attempt when a user-typed
@@ -1273,7 +1283,7 @@ const reloginHeldBy = "\x00relogin"
 
 // DrainReloginDeferred re-enqueues every injection paused while a CC login was
 // pending, on all of this agent's sessions (#2384). Registered with
-// relogin.G.OnComplete by each agent that uses the CC login, on its first
+// its login gate's OnComplete by each agent that uses the CC login, on its first
 // paused injection.
 func (a *Agent) DrainReloginDeferred() {
 	a.inboxesMu.Lock()
@@ -1288,22 +1298,23 @@ func (a *Agent) DrainReloginDeferred() {
 }
 
 // waitReloginGate blocks while a CC re-login is in progress for an agent that
-// uses the CC login (#843/#1932, #3014). The shared OAuth credential is dead until it completes,
+// uses the CC login (#843/#1932, #3014). Its account's OAuth credential is dead until it completes,
 // so dispatching now would only 401 again; the envelope is held instead and
 // runs once the gate releases (success or abort — the driver always releases).
-// Event-driven via relogin.G.Released. Returns false if ctx ends while waiting.
+// Event-driven via the gate's Released. Returns false if ctx ends while waiting.
 func (a *Agent) waitReloginGate(ctx context.Context, sk string) bool {
 	if !a.UsesCCLogin() {
 		return true
 	}
-	if relogin.G.Active() {
+	g := a.LoginGateOrDefault()
+	if g.Active() {
 		log.Extra("inbox", "gate_wait sk=%s reason=cc_relogin — holding dispatch until re-login ends (#1932)", sk)
 	}
-	for relogin.G.Active() {
+	for g.Active() {
 		select {
 		case <-ctx.Done():
 			return false
-		case <-relogin.G.Released():
+		case <-g.Released():
 		}
 	}
 	return true
@@ -1543,7 +1554,7 @@ func (a *Agent) handleDequeued(ctx context.Context, inb *sessionInbox, env Envel
 	if !a.runUserBatch(ctx, inb, env) {
 		return false
 	}
-	if loginPending && !relogin.G.ClearPendingIf(attempt) {
+	if loginPending && !a.LoginGateOrDefault().ClearPendingIf(attempt) {
 		a.retryReloginAfterUserTurn(env, attempt)
 	}
 	// Injections the batch's drains pulled off the channel stay on the
@@ -1986,15 +1997,15 @@ func (a *Agent) runInject(inb *sessionInbox, env Envelope) {
 	// still dead. Running this would 401 and start another attempt with a new
 	// sign-in link. Every injection is paused, control ones included (they
 	// drive the same backend); DrainReloginDeferred resumes them.
-	if a.UsesCCLogin() && relogin.G.Pending() {
-		a.reloginDrainOnce.Do(func() { relogin.G.OnComplete(a.DrainReloginDeferred) })
+	if g := a.LoginGateOrDefault(); a.UsesCCLogin() && g.Pending() {
+		a.reloginDrainOnce.Do(func() { g.OnComplete(a.DrainReloginDeferred) })
 		inb.injMu.Lock()
 		inb.deferredInjects = append(inb.deferredInjects, deferredInject{env: env, heldBy: reloginHeldBy})
 		inb.injMu.Unlock()
 		a.logger().Infof("inbox: paused injection sk=%s trigger=%s: CC login pending", inb.sk, env.Inject.Trigger)
 		// The login may have completed between the check and the append,
 		// after its drain ran: release it now rather than strand it.
-		if !relogin.G.Pending() {
+		if !g.Pending() {
 			a.DrainDeferredInjects(inb.sk, reloginHeldBy)
 		}
 		return

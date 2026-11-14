@@ -31,8 +31,16 @@ import (
 // check is usually near-instant, but it can refresh the OAuth token over the
 // network. A probe that is not done in 15s reports 'indeterminate' here and runs
 // on detached, so this pass blocks for at most about 15s (see ccstream/readiness.go).
+//
+// Each Claude Code account is probed once (#3104 F4, Q19: "Check each, start
+// relogin"), by the first agent on it in agentOrder: its backend runs `claude
+// auth status` with that agent's environment and binary, so a logged-out
+// account starts one relogin, for that account only, and a logged-in one
+// reports its own sign-in end date. Agents sharing an account share its gate
+// (Agent.LoginGateOrDefault), which is what groups them here.
 func checkDelegatedReadiness(ctx context.Context, agents map[string]*agentInstance, agentOrder []string) {
 	var wg sync.WaitGroup
+	probed := map[any]bool{}
 	for _, agentID := range agentOrder {
 		inst := agents[agentID]
 		dm := inst.ag.DelegatedManager
@@ -45,6 +53,13 @@ func checkDelegatedReadiness(ctx context.Context, agents map[string]*agentInstan
 		// the first turn.
 		if !dm.Supports(delegator.CapUnstartedReadinessProbe) {
 			continue
+		}
+		if inst.ag.UsesCCLogin() {
+			g := inst.ag.LoginGateOrDefault()
+			if probed[g] {
+				continue // this account is probed by an earlier agent
+			}
+			probed[g] = true
 		}
 		wg.Add(1)
 		agentID := agentID

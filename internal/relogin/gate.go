@@ -1,28 +1,17 @@
 // Package relogin coordinates automated Claude Code (CC) re-authentication.
 //
-// All claude-code-backed agents share a single OAuth credential at
-// ~/.claude/.credentials.json. When that token can no longer be refreshed the
+// Each Claude Code ACCOUNT has its own login (#3104, Dick 2026-11-14, Q11: an
+// account is a login location — <config folder>/.credentials.json on Linux,
+// a Keychain item on macOS). Agents with no CLAUDE_CONFIG_DIR of their own
+// share the host's account; an agent whose backend_config.env names its own
+// folder has its own. When an account's token can no longer be refreshed the
 // `claude` subprocess returns a 401 ("Failed to authenticate"). foci's proactive
 // refresh (internal/anthropic/cctoken.go) only covers the still-valid-refresh-
 // token case; a genuine re-login needs a human to sign in. This package detects
 // nothing itself — the ccstream backend calls a hook on 401 — but it owns the
-// coordination: a process-wide gate that pauses inbound message processing for
-// every delegated agent, and a tmux-driven login flow that relays the sign-in
-// URL to the user and feeds back the pasted code.
-//
-// The gate is a HOLD gate, not a queue of its own: while a re-login is in
-// progress, delegated agents' session inbox workers hold dispatch (inbound
-// messages keep queuing on their inbox channels) until Released fires, except
-// for one capture window where the next message from the triggering agent is
-// taken as the login code.
-//
-// The gate also tracks a wider "login pending" state (#2384): it begins with
-// the first Start and lasts across failed attempts until a login completes
-// (Complete) or a later user turn shows the credential works again
-// (ClearPendingIf). An attempt that aborts releases the hold on user messages,
-// but system injections stay paused for the whole pending window: run against
-// the dead credential, each one 401s and starts another attempt with a new
-// sign-in link, which is how one expired token became ~30 links overnight.
+// coordination: one Gate per account, which pauses inbound message processing
+// for the agents on that account only (Q13), and a tmux-driven login flow that
+// relays the sign-in URL to the user and feeds back the pasted code.
 package relogin
 
 import (
@@ -30,12 +19,16 @@ import (
 	"time"
 )
 
-// Gate is the process-wide singleton that serializes CC re-login. One OAuth
-// credential is shared across all claude-code agents, so the gate is global,
-// not per-agent: the first 401 claims it (single-flight) and runs the driver;
-// concurrent 401s see it already active and no-op.
+// Gate serializes the re-login of ONE Claude Code account (#3104 Q13). All the
+// agents on that account share it: the first 401 claims it (single-flight) and
+// runs the driver; concurrent 401s see it already active and no-op. Agents on
+// another account have another Gate, so one account's login never holds,
+// clears or advances another's. The gateway builds one per account in use; G
+// is the host account's (agents with no CC folder of their own).
 type Gate struct {
 	mu       sync.Mutex
+	name     string // the account's location, for messages (SetName)
+	email    string // the account's email once known (SetEmail); preferred over name
 	active   bool
 	codeCh   chan string   // buffered(1); delivers the captured code to the driver
 	released chan struct{} // closed by Release; nil while inactive
@@ -56,8 +49,40 @@ type Gate struct {
 	link       *linkMessage // the sign-in link message of this pending login (link.go); cleared with pending
 }
 
-// G is the process-wide re-login gate.
+// G is the re-login gate of the host account: the account of every Claude
+// Code agent with no CLAUDE_CONFIG_DIR of its own, and the gate of an agent
+// whose gate is not set (agent.Agent.LoginGate nil).
 var G = &Gate{}
+
+// SetName sets the account's location as people read it (ccaccount
+// Account.String). Name falls back to it while no email is known.
+func (g *Gate) SetName(name string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.name = name
+}
+
+// SetEmail records the email the account is signed in with (from `claude
+// auth status`). An empty email changes nothing.
+func (g *Gate) SetEmail(email string) {
+	if email == "" {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.email = email
+}
+
+// Name names the account in messages (Dick 2026-11-14, Q15: "Email, path as
+// fallback"). "" when neither is known.
+func (g *Gate) Name() string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.email != "" {
+		return g.email
+	}
+	return g.name
+}
 
 // Start attempts to claim the gate for a re-login. Returns true if claimed (the
 // caller should run the driver); false if a re-login is already in progress.

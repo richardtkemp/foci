@@ -28,6 +28,13 @@ type HostHooks struct {
 	// block. Claude Code reports it from the startup probe and every result.
 	OnLoginExpiry func(expiresAt time.Time)
 
+	// OnLoginEmail reports the email the agent's Claude Code account is
+	// signed in with, when the backend learns it, so login and expiry
+	// messages can name the account by it (#3104, Q15). Set only for a
+	// backend declaring CapRelogin; Claude Code reports it from the startup
+	// probe. Must not block.
+	OnLoginEmail func(email string)
+
 	// OnRateLimitNotice delivers a human-facing utilisation notice (Claude
 	// Code's rate_limit_event past the "allowed" threshold; codex's
 	// account/rateLimits/updated crossing a usage threshold or reaching a

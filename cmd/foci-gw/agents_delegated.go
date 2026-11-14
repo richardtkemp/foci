@@ -9,12 +9,12 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/app"
+	"foci/internal/ccaccount"
 	"foci/internal/config"
 	"foci/internal/delegator"
 	"foci/internal/delegator/autoapprove"
 	"foci/internal/delegator/pretool"
 	"foci/internal/delegator/stoprule"
-	"foci/internal/fociroot"
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/provider"
@@ -155,23 +155,35 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 
 	// Automated re-login trigger (#843). Built once here so both the 401
 	// auth-failure callback and the manual /login command invoke the same
-	// path. The gate single-flights across all agents (shared OAuth
-	// credential), so only the first caller launches the driver; a second
-	// caller (concurrent 401, or /login while one is running) gets false.
+	// path. The gate single-flights across the agents on one Claude Code
+	// account (#3104 Q13), so only the first caller launches the driver; a
+	// second caller (concurrent 401, or /login while one is running) gets
+	// false. Agents on other accounts have other gates.
 	// Only for a backend declaring CapRelogin (Claude Code): the driver drives
 	// a `claude /login` TUI in tmux. The /login command is gated by
 	// RequiresBackend; this field stays nil for other backends so that
 	// command reports "unavailable" rather than mis-driving the wrong backend.
 	claudeBin := config.DerefStr(bc.Binary)
 	workDir := p.acfg.Workspace
-	// start claims the gate: relogin.G.Start for /login (always starts one),
-	// relogin.G.StartAuto for an automatic trigger (a 401, the startup probe:
-	// one attempt per expiry, nothing while a login is pending, #3006), and
+	// The agent's Claude Code account (#3104 phase 2): its own gate, login
+	// pane session and expiry warner. Only for a backend with the CC login.
+	var acct *loginAccount
+	if spec.Supports(delegator.CapRelogin) {
+		var err error
+		if acct, err = gwLoginAccounts.forAgent(p.cfg, bc.Env); err != nil {
+			log.NewComponentLogger("relogin/"+agentID).Warnf("resolve the Claude Code account: %v; using the host account's login", err)
+			acct = &loginAccount{gate: relogin.G, session: relogin.DefaultSession, warner: relogin.NewExpiryWarner(p.cfg.DataPath(hostLoginExpiryFile))}
+		}
+		ag.LoginGate = acct.gate
+	}
+	// start claims the account's gate: Start for /login (always starts one),
+	// StartAuto for an automatic trigger (a 401, the startup probe: one
+	// attempt per expiry, nothing while a login is pending, #3006), and
 	// StartAfterUserFailure for a user-typed message that met the expired
 	// login (#3015). auto marks the automatic trigger, for the refusal log.
 	startRelogin := func(reason, sessionKey string, start func() bool, auto bool) bool {
 		if !start() {
-			if auto && !relogin.G.Active() {
+			if auto && !acct.gate.Active() {
 				// INFO, not WARN: a warning here would become a proactive
 				// injection, which is what this rule exists to stop.
 				log.NewComponentLogger("relogin/"+agentID).Infof(
@@ -182,17 +194,20 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		// Logged under relogin/<agent> with the driver's lines, so the held
 		// warning is dropped with them once the login succeeds (#2384).
 		log.NewComponentLogger("relogin/"+agentID).Warnf("CC re-login starting: %s", reason)
-		go relogin.Run(context.Background(), relogin.Config{
+		go reloginRun(context.Background(), relogin.Config{
 			AgentID:   agentID,
 			WorkDir:   workDir,
 			ClaudeBin: claudeBin,
 			// The login pane's claude runs under a tmux server that may
-			// predate this process, so it is told CC's config folder (and
-			// the user's HOME) explicitly: a login written to the wrong
-			// folder would leave the agents logged out (#2580).
-			Env:  fociroot.CCEnv(),
-			Gate: relogin.G,
-			Link: reloginLinkTarget(connMgr, agentID, sessionKey),
+			// predate this process, so it is told the agent's CC config
+			// folder and secure-storage folder (and the user's HOME)
+			// explicitly: a login written to another account's folder
+			// would leave this agent logged out and overwrite that
+			// account's login (#2580, #3104 F2).
+			Env:     ccaccount.LoginEnv(bc.Env),
+			Gate:    acct.gate,
+			Session: acct.session,
+			Link:    reloginLinkTarget(connMgr, agentID, sessionKey),
 			SendMessage: func(text string) error {
 				// Resolve via the triggering session key so the login URL reaches
 				// the chat that asked for it. An empty key falls back to the
@@ -215,11 +230,11 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	}
 	if spec.Supports(delegator.CapRelogin) {
 		ag.ReloginTrigger = func(reason, sessionKey string) bool {
-			return startRelogin(reason, sessionKey, relogin.G.Start, false)
+			return startRelogin(reason, sessionKey, acct.gate.Start, false)
 		}
 		ag.ReloginRetry = func(sessionKey string, attempt uint64) bool {
 			return startRelogin("a user message met the expired login", sessionKey,
-				func() bool { return relogin.G.StartAfterUserFailure(attempt) }, false)
+				func() bool { return acct.gate.StartAfterUserFailure(attempt) }, false)
 		}
 		ag.ReloginLinkTarget = func(sessionKey string) *relogin.LinkTarget {
 			return reloginLinkTarget(connMgr, agentID, sessionKey)
@@ -290,9 +305,10 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	}
 	if spec.Supports(delegator.CapRelogin) {
 		hostHooks.OnAuthFailure = func(detail string) {
-			startRelogin("401 auth failure: "+firstLine(detail), "", relogin.G.StartAuto, true)
+			startRelogin("401 auth failure: "+firstLine(detail), "", acct.gate.StartAuto, true)
 		}
-		hostHooks.OnLoginExpiry = loginExpiryHook(loginExpiryWarner(p.cfg), connMgr, p.cfg.MasterAgent, agentID)
+		hostHooks.OnLoginExpiry = loginExpiryHook(acct.warner, connMgr, masterOnAccount(p.cfg, acct.account), agentID, acct.gate.Pending)
+		hostHooks.OnLoginEmail = acct.gate.SetEmail
 	}
 
 	// The manager's two prompt surfaces (#2275): approvals land in the
@@ -493,6 +509,11 @@ func resolveIdleTimeout(cfg *config.Config, bc config.BackendConfig) time.Durati
 	}
 	return 0
 }
+
+// reloginRun runs one login attempt (relogin.Run). A variable so a wiring
+// test can see the Config the gateway hands it (which gate, which pane env)
+// without starting tmux.
+var reloginRun = relogin.Run
 
 // foldGlobalBackendConfig folds the global section of the backend's config
 // family (Spec.ConfigFamily) into a copy of the per-agent backend_config —

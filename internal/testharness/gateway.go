@@ -613,13 +613,17 @@ func (h *Harness) spawnGateway() error {
 	// value must be removed.
 	baseEnv := os.Environ()[:0:0]
 	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "FOCI_TMPDIR=") {
+		if strings.HasPrefix(kv, "FOCI_TMPDIR=") || strings.HasPrefix(kv, "TMUX_TMPDIR=") || strings.HasPrefix(kv, "TMUX=") {
 			continue
 		}
 		baseEnv = append(baseEnv, kv)
 	}
 	cmd.Env = append(baseEnv,
 		"FOCI_TMPDIR="+h.execTmpDir,
+		// A private tmux server per gateway: the relogin pane (and any
+		// tmux the gateway runs) must never reach the host's default
+		// server, where a live foci keeps its own "foci-cc-login" (#3104).
+		"TMUX_TMPDIR="+h.execTmpDir,
 		"CCSTUB_RECORDER="+h.recorderPath,
 		"CCSTUB_SCRIPT_DIR="+h.scriptDir,
 		// Pin the early log-init path to the test tempdir so foci-gw

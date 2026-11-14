@@ -21,6 +21,8 @@
 package ccaccount
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"maps"
 	"path/filepath"
 	"runtime"
@@ -64,6 +66,36 @@ type Account struct {
 	Path string
 }
 
+// Key identifies the account in maps and file names: equal Accounts have
+// equal Keys, and different Accounts different ones.
+func (a Account) Key() string {
+	if a.Keychain {
+		return "keychain:" + a.Path
+	}
+	return "file:" + a.Path
+}
+
+// ShortKey is a short stable hash of Key, for names that must stay short (a
+// tmux session, a state file).
+func (a Account) ShortKey() string {
+	sum := sha256.Sum256([]byte(a.Key()))
+	return hex.EncodeToString(sum[:4])
+}
+
+// String names the account by its location, for a person (Dick 2026-11-14,
+// Q15: the email when it is known, this path as the fallback): the config
+// folder on Linux, the folder that names the Keychain item on macOS, or
+// "the default Keychain sign-in".
+func (a Account) String() string {
+	switch {
+	case a.Keychain && a.Path == "":
+		return "the default Keychain sign-in"
+	case a.Keychain:
+		return a.Path
+	}
+	return filepath.Dir(a.Path)
+}
+
 // ForAgent resolves the CC folder and account of an agent whose
 // backend_config.env is agentEnv (nil for no overrides), on this host.
 func ForAgent(agentEnv map[string]string) (Location, error) {
@@ -75,12 +107,72 @@ func ForAgent(agentEnv map[string]string) (Location, error) {
 // result is deterministic). ccstream's buildEnv layers the same two sources
 // in the same order, with only foci's own CC defaults (none of which name a
 // folder) between them.
+//
+// It applies OwnLogin, as buildEnv does.
 func Env(agentEnv map[string]string) []string {
 	env := procx.Env(procx.Operator)
 	for _, k := range slices.Sorted(maps.Keys(agentEnv)) {
 		env = append(env, k+"="+agentEnv[k])
 	}
-	return env
+	return OwnLogin(env, agentEnv)
+}
+
+// OwnLogin gives an agent with its own config folder its own login (Dick
+// 2026-11-14, #3104 Q12, "Its own login"). On a separate-root install the
+// gateway exports CLAUDE_SECURESTORAGE_CONFIG_DIR="" (fociroot.EnsureCCConfigEnv)
+// so that foci's CC keeps the user's default Keychain login, and every CC
+// child inherits it. An agent whose backend_config.env sets CLAUDE_CONFIG_DIR
+// and not CLAUDE_SECURESTORAGE_CONFIG_DIR must not get it: CC then names the
+// Keychain item after the agent's folder. So env (a final CC environment
+// built from the operator population and agentEnv) loses every inherited
+// CLAUDE_SECURESTORAGE_CONFIG_DIR entry in that case. An agent env that sets
+// CLAUDE_SECURESTORAGE_CONFIG_DIR (to a path or to "") keeps its value, and an
+// agent with no CLAUDE_CONFIG_DIR of its own is left as today. A map can
+// override a variable but cannot unset it, which is why this is code.
+func OwnLogin(env []string, agentEnv map[string]string) []string {
+	if !ownFolderOnly(agentEnv) {
+		return env
+	}
+	prefix := fociroot.CCSecureStorageEnv + "="
+	return slices.DeleteFunc(env, func(kv string) bool { return strings.HasPrefix(kv, prefix) })
+}
+
+// ownFolderOnly reports whether agentEnv names its own CC config folder and
+// leaves the secure-storage folder to CC (OwnLogin).
+func ownFolderOnly(agentEnv map[string]string) bool {
+	if agentEnv[fociroot.CCConfigDirEnv] == "" {
+		return false
+	}
+	_, set := agentEnv[fociroot.CCSecureStorageEnv]
+	return !set
+}
+
+// LoginEnv is what a Claude Code process started OUTSIDE foci's environment
+// must be told so that it reads and writes this agent's login: the relogin
+// pane's claude runs under a tmux server that may predate the gateway (#2580).
+// It starts from the host's variables (fociroot.CCEnv: HOME on a separate
+// root, the gateway's CLAUDE_CONFIG_DIR and CLAUDE_SECURESTORAGE_CONFIG_DIR),
+// so for an agent with no override it is exactly what main gave the pane.
+// The agent's backend_config.env then replaces CLAUDE_CONFIG_DIR and
+// CLAUDE_SECURESTORAGE_CONFIG_DIR where it sets them, and for an agent that
+// gets its own login (OwnLogin) the bare name "CLAUDE_SECURESTORAGE_CONFIG_DIR"
+// (no "=") asks the caller to UNSET it, as the tmux server may carry the
+// gateway's empty value.
+func LoginEnv(agentEnv map[string]string) []string {
+	out := fociroot.CCEnv()
+	set := func(key, kv string) {
+		out = slices.DeleteFunc(out, func(e string) bool { return e == key || strings.HasPrefix(e, key+"=") })
+		out = append(out, kv)
+	}
+	if v := agentEnv[fociroot.CCConfigDirEnv]; v != "" {
+		set(fociroot.CCConfigDirEnv, fociroot.CCConfigDirEnv+"="+v)
+	}
+	if v, ok := agentEnv[fociroot.CCSecureStorageEnv]; ok {
+		set(fociroot.CCSecureStorageEnv, fociroot.CCSecureStorageEnv+"="+v)
+	} else if ownFolderOnly(agentEnv) {
+		set(fociroot.CCSecureStorageEnv, fociroot.CCSecureStorageEnv)
+	}
+	return out
 }
 
 // FromEnv resolves the CC folder and account from a final CC environment

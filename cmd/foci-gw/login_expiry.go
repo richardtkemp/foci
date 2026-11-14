@@ -1,36 +1,26 @@
 package main
 
 import (
-	"sync"
 	"time"
 
-	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/relogin"
 )
 
 // Advance warning that the Claude Code sign-in is ending (#2864). The decision
-// is relogin.ExpiryWarner's; this file builds its one instance and delivers.
+// is relogin.ExpiryWarner's; each Claude Code account has its own
+// (login_account.go, #3104 Q16), and this file delivers.
 
-var (
-	loginExpiryWarnerOnce sync.Once
-	loginExpiryWarnerInst *relogin.ExpiryWarner
-)
+// hostLoginExpiryFile is the host account's state file, the one main has
+// always used, so an upgraded install keeps the stages it already sent.
+const hostLoginExpiryFile = "cc-login-expiry.json"
 
-// loginExpiryWarner returns the process's warner: all Claude Code agents share
-// one credential, so they share one record of what was sent.
-func loginExpiryWarner(cfg *config.Config) *relogin.ExpiryWarner {
-	loginExpiryWarnerOnce.Do(func() {
-		loginExpiryWarnerInst = relogin.NewExpiryWarner(cfg.DataPath("cc-login-expiry.json"))
-	})
-	return loginExpiryWarnerInst
-}
-
-// loginExpiryTarget is the agent whose chat gets the notice. The credential
-// belongs to the whole install, so the master agent's chat is the right one when
-// there is a master. Any agent can be the first to report the date, and its
-// chat may belong to someone who cannot sign in.
+// loginExpiryTarget is the agent whose chat gets the notice. masterAgent is
+// the master agent when it is on the account the notice is about (else "",
+// masterOnAccount): its chat is then the right one, as any agent can be the
+// first to report the date. Otherwise the reporting agent, which is on that
+// account (Dick 2026-11-14, #3104 Q16).
 func loginExpiryTarget(masterAgent, agentID string) string {
 	if masterAgent != "" {
 		return gwAgentRenames.resolve(masterAgent)
@@ -65,8 +55,9 @@ func observeLoginExpiry(warner *relogin.ExpiryWarner, connMgr platform.Connectio
 // loginExpiryHook builds delegator.HostHooks.OnLoginExpiry. It returns at once:
 // the hook runs on the path that reads Claude Code's stdout, and a send can
 // block.
-func loginExpiryHook(warner *relogin.ExpiryWarner, connMgr platform.ConnectionManager, masterAgent, agentID string) func(time.Time) {
+// loginPending is the account's gate's Pending.
+func loginExpiryHook(warner *relogin.ExpiryWarner, connMgr platform.ConnectionManager, masterAgent, agentID string, loginPending func() bool) func(time.Time) {
 	return func(expiresAt time.Time) {
-		go observeLoginExpiry(warner, connMgr, loginExpiryTarget(masterAgent, agentID), relogin.G.Pending, expiresAt, time.Now())
+		go observeLoginExpiry(warner, connMgr, loginExpiryTarget(masterAgent, agentID), loginPending, expiresAt, time.Now())
 	}
 }

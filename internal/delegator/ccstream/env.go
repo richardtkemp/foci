@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 
+	"foci/internal/ccaccount"
 	"foci/internal/procx"
 )
 
@@ -129,6 +130,11 @@ func buildEnv(extra, hookRules map[string]string) []string {
 	for k, v := range extra {
 		env = append(env, k+"="+v)
 	}
+	// An agent with its own CLAUDE_CONFIG_DIR gets its own login: the
+	// gateway's forced empty CLAUDE_SECURESTORAGE_CONFIG_DIR does not apply
+	// to it (#3104 Q12). ccaccount.Env applies the same rule, so the folder
+	// and account foci reads are the ones this process uses.
+	env = ccaccount.OwnLogin(env, extra)
 	// Hook rules come last so no per-agent env can displace them (#2414).
 	for k, v := range hookRules {
 		env = append(env, k+"="+v)

@@ -198,6 +198,12 @@ type Agent struct {
 	UsageHoldChangeFunc           []func(usagehold.Change)                // further reactions to a usage-hold phase change (#2491)
 	usageHold                     usageHoldState
 
+	// LoginGate is the re-login gate of this agent's Claude Code account
+	// (#3104 Q13): agents on one account share it, agents on another account
+	// have another. nil = relogin.G, the host account's. Set at setup, before
+	// the agent runs; read through LoginGateOrDefault.
+	LoginGate *relogin.Gate
+
 	// ReloginLinkTarget is set with ReloginTrigger: where a sign-in link
 	// repeated in one of this agent's sessions goes (#3011). nil: the agent
 	// cannot carry the link, and its messages are only held.
@@ -206,7 +212,7 @@ type Agent struct {
 	// ReloginRetry is set with ReloginTrigger: after a user-typed turn in
 	// sessionKey met an auth failure while a login was pending, it starts one
 	// new attempt whose link goes to that chat (#3015), through
-	// relogin.G.StartAfterUserFailure(attempt). Reports whether it started.
+	// StartAfterUserFailure(attempt) on its LoginGate. Reports whether it started.
 	ReloginRetry func(sessionKey string, attempt uint64) bool
 
 	// Restart restore of held input (#2491, usage_hold_store.go).
@@ -293,7 +299,7 @@ type Agent struct {
 	enqueueFoundHook      func(sk string)                                                   // test seam: runs after Enqueue finds the inbox, before it pins it
 	turnLockFetchedHook   func(sk string)                                                   // test seam: runs after lockTurn fetches the mutex, before it locks it
 	inboxStarted          bool                                                              // true once StartInbox has been called
-	reloginDrainOnce      sync.Once                                                         // registers DrainReloginDeferred with relogin.G once, on the first paused injection (#2384)
+	reloginDrainOnce      sync.Once                                                         // registers DrainReloginDeferred with its login gate once, on the first paused injection (#2384)
 	inboxCtx              context.Context                                                   //nolint:containedctx // parent ctx for session worker goroutines
 	inboxCancel           context.CancelFunc                                                // ends inboxCtx (StopInbox, #2787)
 	inboxSteerMode        bool                                                              // urgent-steer dispatch enabled

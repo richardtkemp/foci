@@ -55,6 +55,12 @@ func (p *tmuxPane) create(ctx context.Context) error {
 	}
 	var envPrefix string
 	for _, kv := range p.env {
+		if !strings.Contains(kv, "=") {
+			// A bare name: the tmux server may carry a value this
+			// login must not see (ccaccount.LoginEnv).
+			envPrefix += "unset " + shellQuote(kv) + "; "
+			continue
+		}
 		envPrefix += "export " + shellQuote(kv) + "; "
 	}
 	// Login shell so the user's PATH (and thus `claude`) resolves.

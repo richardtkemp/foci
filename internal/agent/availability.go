@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"foci/internal/delegator"
-	"foci/internal/relogin"
 )
 
 // Unavailable reports why this agent cannot run a turn now, for a sender that
@@ -16,7 +15,7 @@ func (a *Agent) Unavailable() (reason string, unavailable bool) {
 	if blocked, why := a.UsageHoldBlocks(false); blocked {
 		return why, true
 	}
-	if a.UsesCCLogin() && (relogin.G.Active() || relogin.G.Pending()) {
+	if g := a.LoginGateOrDefault(); a.UsesCCLogin() && (g.Active() || g.Pending()) {
 		return "its backend needs a new login", true
 	}
 	return "", false

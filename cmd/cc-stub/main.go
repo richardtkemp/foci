@@ -103,6 +103,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -322,6 +323,11 @@ type recorderEntry struct {
 	// argv_error only — why parseArgs rejected Flags.
 	Error string `json:"error,omitempty"`
 
+	// interactive_login only (#3104): the login pane's CLAUDE_CONFIG_DIR
+	// and CLAUDE_SECURESTORAGE_CONFIG_DIR ("<unset>" when absent).
+	ConfigDir     string `json:"config_dir,omitempty"`
+	SecureStorage string `json:"secure_storage,omitempty"`
+
 	// user_message-only
 	SessionID  string `json:"session_id,omitempty"`
 	TextPrefix string `json:"text_prefix,omitempty"`
@@ -389,9 +395,23 @@ func main() {
 	}
 	if a.authStatus {
 		// `claude auth status` — foci's startup readiness probe
-		// (ccstream/readiness.go). The stub is always signed in.
-		fmt.Println(authStatusJSON)
+		// (ccstream/readiness.go). The answer is per config folder
+		// (stubAuth): signed in unless the folder's state says otherwise.
+		// Like real CC, the exit code says whether it is signed in and the
+		// JSON body is printed either way.
+		st := loadStubAuth()
+		fmt.Println(st.statusJSON())
+		if !st.loggedIn() {
+			os.Exit(1)
+		}
 		os.Exit(0)
+	}
+	if len(os.Args) == 1 && stdinIsTerminal() {
+		// An interactive `claude` with no flags on a terminal: the
+		// relogin pane foci starts in tmux (internal/relogin). Emulate
+		// its /login screens for this config folder.
+		interactiveLogin()
+		return
 	}
 	resume, model, settings := a.resume, a.model, a.settings
 	skipPermissions, permissionMode := a.skipPermissions, a.permissionMode
@@ -688,6 +708,45 @@ func main() {
 				emit(out, map[string]any{
 					"type":       "result",
 					"result":     "",
+					"session_id": sessionID,
+					"usage": map[string]any{
+						"input_tokens":  0,
+						"output_tokens": 0,
+					},
+				})
+				turnCount++
+				if pump.takeFolded() {
+					_ = out.Flush()
+					continue
+				}
+				emitSessionState(out, sessionID, "idle")
+				inRun = false
+				pump.endRun()
+				_ = out.Flush()
+				continue
+			}
+			// The config folder's login is gone (stubAuth): CC answers
+			// every message with its synthetic "Not logged in" reply,
+			// flagged authentication_failed, and an error result (#3104).
+			if !loadStubAuth().loggedIn() {
+				emitInit()
+				emit(out, map[string]any{
+					"type":  "assistant",
+					"error": "authentication_failed",
+					"message": map[string]any{
+						"id":      "msg_stub_auth",
+						"type":    "message",
+						"role":    "assistant",
+						"model":   "<synthetic>",
+						"content": []map[string]any{{"type": "text", "text": stubNotLoggedIn}},
+					},
+					"session_id": sessionID,
+				})
+				emit(out, map[string]any{
+					"type":       "result",
+					"subtype":    "success",
+					"is_error":   true,
+					"result":     stubNotLoggedIn,
 					"session_id": sessionID,
 					"usage": map[string]any{
 						"input_tokens":  0,
@@ -1251,18 +1310,27 @@ func consumeMarked(p *stdinPump, marker, sessionID string) bool {
 	}
 }
 
+// stubConfigDir is the config folder real CC uses: $CLAUDE_CONFIG_DIR, else
+// ~/.claude.
+func stubConfigDir() (string, error) {
+	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
+		return d, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".claude"), nil
+}
+
 // appendTranscript appends rec to the session transcript at the path real CC
 // uses — <config dir>/projects/<workdir, every non-alphanumeric → "-">/<sessionID>.jsonl,
 // the config dir being $CLAUDE_CONFIG_DIR, else ~/.claude — which foci reads to
 // tell a folded message from a lost one (#2050).
 func appendTranscript(sessionID string, rec map[string]any) error {
-	cfgDir := os.Getenv("CLAUDE_CONFIG_DIR")
-	if cfgDir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		cfgDir = filepath.Join(home, ".claude")
+	cfgDir, err := stubConfigDir()
+	if err != nil {
+		return err
 	}
 	wd, err := os.Getwd()
 	if err != nil {
@@ -1398,8 +1466,123 @@ func extractUserContent(env map[string]any) (string, []string) {
 // argvErrorHint ends the stderr report of a rejected argv.
 const argvErrorHint = "a new foci flag must be declared in parseArgs (cmd/cc-stub/main.go)"
 
-// authStatusJSON is the stub's answer to `claude auth status`.
+// authStatusJSON is the stub's answer to `claude auth status` for a folder
+// with no stub auth state.
 const authStatusJSON = `{"loggedIn":true,"authMethod":"stub"}`
+
+// stubNotLoggedIn is CC's reply to a message when its login is gone.
+const stubNotLoggedIn = "Not logged in · Please run /login"
+
+// stubAuthFile is the file in a config folder that holds the stub's login
+// state for that folder (#3104): a test writes {"loggedIn":false} to log one
+// account out, and an "email" and "loginExpiresAt" (RFC 3339) for what
+// `claude auth status` reports. No file: signed in, as authStatusJSON. The
+// interactive /login emulation sets loggedIn back to true.
+const stubAuthFile = ".ccstub-auth.json"
+
+// stubAuth is one config folder's login state.
+type stubAuth struct {
+	LoggedIn       *bool  `json:"loggedIn,omitempty"`
+	Email          string `json:"email,omitempty"`
+	LoginExpiresAt string `json:"loginExpiresAt,omitempty"`
+	path           string
+}
+
+func (a stubAuth) loggedIn() bool { return a.LoggedIn == nil || *a.LoggedIn }
+
+// statusJSON is the `claude auth status` body for this state.
+func (a stubAuth) statusJSON() string {
+	if a.LoggedIn == nil && a.Email == "" && a.LoginExpiresAt == "" {
+		return authStatusJSON
+	}
+	out := map[string]any{"loggedIn": a.loggedIn(), "authMethod": "stub"}
+	if a.Email != "" {
+		out["email"] = a.Email
+	}
+	if a.LoginExpiresAt != "" {
+		out["loginExpiresAt"] = a.LoginExpiresAt
+	}
+	b, _ := json.Marshal(out)
+	return string(b)
+}
+
+// loadStubAuth reads the config folder's login state. A missing or bad file
+// means signed in.
+func loadStubAuth() stubAuth {
+	dir, err := stubConfigDir()
+	if err != nil {
+		return stubAuth{}
+	}
+	a := stubAuth{path: filepath.Join(dir, stubAuthFile)}
+	if data, err := os.ReadFile(a.path); err == nil {
+		_ = json.Unmarshal(data, &a)
+	}
+	return a
+}
+
+// stdinIsTerminal reports whether stdin is a terminal (a tmux pane), not
+// foci's stream-json pipe.
+func stdinIsTerminal() bool {
+	fi, err := os.Stdin.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+// interactiveLoginTimeout ends an interactive session nobody drives, so a
+// gateway killed mid-login leaves no stub (and so no tmux server) behind.
+const interactiveLoginTimeout = 3 * time.Minute
+
+// interactiveLogin emulates the screens foci's relogin driver reads
+// (internal/relogin/extract.go): after "/login" and a confirming Enter, the
+// sign-in anchor, a URL naming this folder, and the paste anchor; after a
+// code line, the folder is signed in and the success anchor is shown. The
+// session then idles until killed.
+func interactiveLogin() {
+	time.AfterFunc(interactiveLoginTimeout, func() { os.Exit(0) })
+	wd, _ := os.Getwd()
+	secure, ok := os.LookupEnv("CLAUDE_SECURESTORAGE_CONFIG_DIR")
+	if !ok {
+		secure = "<unset>"
+	}
+	writeRecorder(recorderEntry{
+		Kind:          "interactive_login",
+		Timestamp:     time.Now().UTC().Format(time.RFC3339Nano),
+		Workdir:       wd,
+		PID:           os.Getpid(),
+		Binary:        os.Args[0],
+		ConfigDir:     os.Getenv("CLAUDE_CONFIG_DIR"),
+		SecureStorage: secure,
+	})
+	fmt.Println("cc-stub interactive (login emulation)")
+	in := bufio.NewScanner(os.Stdin)
+	state := "idle"
+	for in.Scan() {
+		line := strings.TrimSpace(in.Text())
+		switch {
+		case state == "idle" && line == "/login":
+			state = "menu"
+			fmt.Println("Select login method: 1. Claude account")
+		case state == "menu":
+			state = "code"
+			dir, _ := stubConfigDir()
+			fmt.Println("Browser didn't open? Use the url below to sign in")
+			fmt.Println()
+			fmt.Println("https://claude.ai/oauth/authorize?stub=1&dir=" + url.QueryEscape(dir))
+			fmt.Println()
+			fmt.Println("Paste code here if prompted >")
+		case state == "code" && line != "":
+			a := loadStubAuth()
+			t := true
+			a.LoggedIn = &t
+			if data, err := json.Marshal(a); err == nil && a.path != "" {
+				_ = os.MkdirAll(filepath.Dir(a.path), 0o755)
+				_ = os.WriteFile(a.path, data, 0o600)
+			}
+			state = "done"
+			fmt.Println("Login successful. Press Enter to continue")
+		}
+	}
+	select {}
+}
 
 // stubArgs is the part of foci's argv the stub acts on.
 type stubArgs struct {
@@ -1927,7 +2110,11 @@ Flags accepted (most ignored — stub only cares about --resume, --model):
   -h / --help
 Any other flag or argument exits 1, as in real CC (an undeclared flag
 would otherwise drop every flag after it). "auth status" prints a
-logged-in status and exits 0.
+logged-in status and exits 0, unless the config folder's .ccstub-auth.json
+says otherwise ({"loggedIn":false,"email":...,"loginExpiresAt":...}); a
+logged-out folder answers every message with CC's "Not logged in" reply.
+With no arguments on a terminal (foci's relogin pane) it emulates the
+/login screens and signs the folder in when a code is typed.
 
 Foci points at this binary by setting [cc_backend].claude_binary in
 foci.toml. See cmd/cc-stub/main.go for the full protocol.`

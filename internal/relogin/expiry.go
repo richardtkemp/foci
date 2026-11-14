@@ -41,10 +41,12 @@ type expiryState struct {
 	Stage     int       `json:"stage"`
 }
 
-// ExpiryWarner decides when to tell the user that the sign-in is ending. One
-// serves the whole process, as all Claude Code agents share one credential.
+// ExpiryWarner decides when to tell the user that the sign-in is ending. Each
+// Claude Code account has its own (#3104 Q16): one account's date never
+// suppresses, resets or advances another's warnings.
 type ExpiryWarner struct {
 	path string
+	name func() string // names the account in the notice (SetAccountName); nil = no name
 
 	mu      sync.Mutex
 	state   expiryState
@@ -67,6 +69,14 @@ func NewExpiryWarner(path string) *ExpiryWarner {
 		w.state = expiryState{}
 	}
 	return w
+}
+
+// SetAccountName makes each notice name the account (#3104 Q15), read at send
+// time so an email learned later is used. Call it before the first Observe.
+func (w *ExpiryWarner) SetAccountName(name func() string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.name = name
 }
 
 // Observe takes a reported end date. If a notice is due it calls send, which
@@ -98,9 +108,14 @@ func (w *ExpiryWarner) Observe(expiresAt, now time.Time, send func(notice string
 		return
 	}
 	w.sending = true
+	nameFn := w.name
 	w.mu.Unlock()
 
-	delivered := send(expiryNotice(expiresAt, now))
+	name := ""
+	if nameFn != nil {
+		name = nameFn()
+	}
+	delivered := send(expiryNotice(name, expiresAt, now))
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -127,25 +142,27 @@ func expiryStage(expiresAt, now time.Time) int {
 	return expiryStageUrgent
 }
 
-// expiryNotice is the text the user reads. It names what to do, and that signing
-// in again is the only thing that helps.
-func expiryNotice(expiresAt, now time.Time) string {
+// expiryNotice is the text the user reads. It names the account (" (account:
+// name)" after "sign-in"; nothing for ""), what to do, and that signing in
+// again is the only thing that helps.
+func expiryNotice(name string, expiresAt, now time.Time) string {
 	const dateFormat = "2006-01-02"
 	earliest := expiresAt.Add(-expiryEarlyMargin)
 	from, until := earliest.UTC().Format(dateFormat), expiresAt.UTC().Format(dateFormat)
+	signIn := "The Claude Code sign-in" + accountSuffix(name)
 	const action = "Send /login to sign in again. Until someone does, Claude Code agents stop when it ends."
 	switch {
 	case !expiresAt.After(now):
-		return fmt.Sprintf("⚠️ The Claude Code sign-in may have ended between %s and %s. %s", from, until, action)
+		return fmt.Sprintf("⚠️ %s may have ended between %s and %s. %s", signIn, from, until, action)
 	case expiryStage(expiresAt, now) == expiryStageUrgent:
-		return fmt.Sprintf("⚠️ The Claude Code sign-in can end at any time from now until %s. %s", until, action)
+		return fmt.Sprintf("⚠️ %s can end at any time from now until %s. %s", signIn, until, action)
 	}
 	days := int(earliest.Sub(now) / (24 * time.Hour))
 	unit := "days"
 	if days == 1 {
 		unit = "day"
 	}
-	return fmt.Sprintf("⚠️ The Claude Code sign-in ends between %s and %s (in %d %s at the earliest). Renewing it does not move those dates. %s", from, until, days, unit, action)
+	return fmt.Sprintf("⚠️ %s ends between %s and %s (in %d %s at the earliest). Renewing it does not move those dates. %s", signIn, from, until, days, unit, action)
 }
 
 // save writes the state in one step. The caller holds mu.

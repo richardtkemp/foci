@@ -342,6 +342,7 @@ type Backend struct {
 	typingFunc      func(typing bool)
 	onAuthFailure   func(detail string)             // fired when CC reports a 401 auth failure (#843)
 	onLoginExpiry   func(expiresAt time.Time)       // fired with each sign-in end date CC reports (#2864)
+	onLoginEmail    func(email string)              // fired with the account's email from the startup probe (#3104)
 	onRateLimited   func(sessionKey, detail string) // fired with a rate_limit_event warning notice; sessionKey is this Backend's owning foci session (#1211/#1238/#1857)
 	onModelFallback func(sessionKey, notice string) // fired with a model refusal fallback notice for the session's chat (#2200)
 	onSessionLimit  func(signal ratelimit.Signal)   // fired when CC reports a session limit synthetic message

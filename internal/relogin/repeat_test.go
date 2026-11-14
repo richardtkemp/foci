@@ -74,10 +74,10 @@ func TestOfferLink_RepeatsSameLinkThenCapturesCode(t *testing.T) {
 	if g.OfferLink("clutch", "app/d", targetFor(newFakeChat())) {
 		t.Fatal("no repeat once a code is in")
 	}
-	if err := g.notifyCodeChat(completedText); err != nil {
+	if err := g.notifyCodeChat(completedText("")); err != nil {
 		t.Fatal(err)
 	}
-	if chatC.sends != 2 || chatC.text("m2") != completedText || chatB.sends != 1 {
+	if chatC.sends != 2 || chatC.text("m2") != completedText("") || chatB.sends != 1 {
 		t.Fatalf("outcome notice: c sends=%d %q, b sends=%d; want the notice in the code's chat only", chatC.sends, chatC.text("m2"), chatB.sends)
 	}
 }
@@ -202,11 +202,11 @@ func TestRun_CodeFromRepeatedChat(t *testing.T) {
 	if g.Pending() {
 		t.Fatal("login still pending after the second chat's code completed it")
 	}
-	if second.text("m2") != completedText {
+	if second.text("m2") != completedText("") {
 		t.Fatalf("second chat's last message = %q, want the completed notice", second.text("m2"))
 	}
 	mu.Lock()
-	if len(msgs) == 0 || msgs[len(msgs)-1] != completedText {
+	if len(msgs) == 0 || msgs[len(msgs)-1] != completedText("") {
 		t.Fatalf("first chat notices = %q, want the completed notice", msgs)
 	}
 	mu.Unlock()

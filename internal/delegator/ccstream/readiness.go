@@ -54,6 +54,9 @@ func (b *Backend) CheckReady(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if st.Email != "" && b.onLoginEmail != nil {
+		b.onLoginEmail(st.Email)
+	}
 	if st.LoggedIn {
 		b.logger().Infof("readiness check: authenticated (method=%s)", st.AuthMethod)
 		b.reportLoginExpiry(st.LoginExpiresAt)
@@ -72,9 +75,10 @@ func (b *Backend) CheckReady(ctx context.Context) (bool, error) {
 // logged, because a timed-out check stays indeterminate.
 //
 // It uses the same binary resolution as Start (resolveBinary) and the same
-// OPERATOR population — foci-gw runs as the agent's user, so HOME points at the
-// ~/.claude that holds the shared OAuth credential. procx.Spawn installs the
-// population's environment, so there is nothing to assign here.
+// environment a session of this agent gets (buildEnv over the agent's
+// backend_config.env): the agent's CLAUDE_CONFIG_DIR picks the account the
+// probe reads, and an agent with its own folder gets its own login (#3104,
+// F4, Q12). An agent with no override gets the operator population, as before.
 func (b *Backend) queryAuthStatus(ctx context.Context) (authStatus, error) {
 	if err := ctx.Err(); err != nil {
 		return authStatus{}, fmt.Errorf("ccstream: auth status not started: %w", err)
@@ -86,6 +90,7 @@ func (b *Backend) queryAuthStatus(ctx context.Context) (authStatus, error) {
 
 	// Operator: same binary and credentials as the session spawn.
 	cmd := procx.Spawn(pctx, procx.Operator, claudeBin, "auth", "status")
+	cmd.Env = buildEnv(b.agentEnv(), nil)
 	cmd.WaitDelay = authStatusWaitDelay
 	if b.workDir != "" {
 		cmd.Dir = b.workDir

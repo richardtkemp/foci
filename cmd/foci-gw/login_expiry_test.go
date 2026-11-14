@@ -87,7 +87,7 @@ func TestLoginExpiryHook_DeliversOutsideTheCaller(t *testing.T) {
 	mgr := &notifyChanMgr{rlConnMgr: &rlConnMgr{}, conn: conn}
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	warner := relogin.NewExpiryWarner(statePath)
-	hook := loginExpiryHook(warner, mgr, "clutch", "fotini")
+	hook := loginExpiryHook(warner, mgr, "clutch", "fotini", relogin.G.Pending)
 
 	hook(time.Now().Add(9 * 24 * time.Hour))
 

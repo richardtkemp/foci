@@ -173,7 +173,7 @@ func TestRun_SecondAttemptEditsLinkInPlace(t *testing.T) {
 // that would end or alter the link destination is shown raw instead.
 func TestSignInLinkText(t *testing.T) {
 	url := "https://claude.ai/oauth/authorize?code=true&client_id=9d1c_250a&redirect_uri=https%3A%2F%2Fconsole.anthropic.com%2Foauth%2Fcode%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile&state=Ab_cD-eF"
-	got := signInLinkText(url)
+	got := signInLinkText(url, "")
 	if !strings.Contains(got, "[Sign in to Claude Code]("+url+")") {
 		t.Fatalf("signInLinkText = %q, want a markdown link holding the exact URL", got)
 	}
@@ -181,7 +181,7 @@ func TestSignInLinkText(t *testing.T) {
 		t.Fatalf("signInLinkText = %q, want the URL once (no raw copy beside the link)", got)
 	}
 	for _, bad := range []string{"https://x/a?s=1)2", "https://x/a?s=(1", "https://x/a?s=<1>", `https://x/a?s=1\2`, "https://x/a?s=1 2"} {
-		got := signInLinkText(bad)
+		got := signInLinkText(bad, "")
 		if strings.Contains(got, "](") || !strings.HasSuffix(got, "\n\n"+bad) {
 			t.Errorf("signInLinkText(%q) = %q, want the raw URL on its own line, no markdown link", bad, got)
 		}

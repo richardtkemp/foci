@@ -3,6 +3,7 @@ package ccaccount
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"foci/internal/fociroot"
@@ -89,12 +90,12 @@ func TestAccount_MacKeychain(t *testing.T) {
 	}
 }
 
-// TestForAgent_MacSeparateRootTodayDefaultItem (H8c) is a CHARACTERISATION
-// test that phase 2 of #3104 changes (Q12): on the macOS separate-root install
-// the gateway exports CLAUDE_SECURESTORAGE_CONFIG_DIR="" (EnsureCCConfigEnv),
-// so an agent whose env sets only CLAUDE_CONFIG_DIR still gets the default
-// Keychain item. It pins today's value.
-func TestForAgent_MacSeparateRootTodayDefaultItem(t *testing.T) {
+// TestForAgent_MacSeparateRootOwnLogin (H8c, changed by phase 2 of #3104,
+// Q12 "Its own login"): on the macOS separate-root install the gateway exports
+// CLAUDE_SECURESTORAGE_CONFIG_DIR="" (EnsureCCConfigEnv). Phase 1 pinned that
+// an agent whose env sets only CLAUDE_CONFIG_DIR still got the default
+// Keychain item; it now gets the item of its own folder.
+func TestForAgent_MacSeparateRootOwnLogin(t *testing.T) {
 	isolate(t)
 	t.Setenv(fociroot.CCSecureStorageEnv, "")
 	t.Setenv(fociroot.CCConfigDirEnv, "/root/.claude")
@@ -102,8 +103,8 @@ func TestForAgent_MacSeparateRootTodayDefaultItem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loc.Dir != "/x" || loc.Account != (Account{Keychain: true}) {
-		t.Errorf("got %+v, want Dir /x and today's default Keychain item", loc)
+	if loc.Dir != "/x" || loc.Account != (Account{Keychain: true, Path: "/x"}) {
+		t.Errorf("got %+v, want Dir /x and the Keychain item of /x", loc)
 	}
 }
 
@@ -161,5 +162,112 @@ func TestEnv_AgentWinsOverOperator(t *testing.T) {
 	}
 	if loc, _ := FromEnv(Env(map[string]string{"CLAUDE_CONFIG_DIR": "/agent"}), "linux"); loc.Dir != "/agent" {
 		t.Errorf("override: Dir %q, want /agent", loc.Dir)
+	}
+}
+
+// separateRootMac simulates the work Mac's gateway environment: an install
+// root apart from HOME, so EnsureCCConfigEnv exports CLAUDE_CONFIG_DIR and an
+// empty CLAUDE_SECURESTORAGE_CONFIG_DIR.
+func separateRootMac(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "foci")
+	t.Setenv(fociroot.EnvVar, root)
+	if _, err := fociroot.EnsureCCConfigEnv(); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := os.LookupEnv(fociroot.CCSecureStorageEnv); !ok || v != "" {
+		t.Fatalf("EnsureCCConfigEnv did not export the empty secure-storage var (%q, %v)", v, ok)
+	}
+	return root
+}
+
+// TestOwnLogin_Q12 (H1, requirement 1): on a separate-root install, alpha (no
+// override) keeps the gateway's empty CLAUDE_SECURESTORAGE_CONFIG_DIR and the
+// default Keychain item; beta (only CLAUDE_CONFIG_DIR) loses it and gets the
+// item of its folder; gamma (sets the empty value itself) keeps it.
+func TestOwnLogin_Q12(t *testing.T) {
+	isolate(t)
+	root := separateRootMac(t)
+	cases := []struct {
+		name    string
+		agent   map[string]string
+		present bool
+		want    Account
+	}{
+		{"alpha", nil, true, Account{Keychain: true}},
+		{"beta", map[string]string{"CLAUDE_CONFIG_DIR": "/x"}, false, Account{Keychain: true, Path: "/x"}},
+		{"gamma", map[string]string{"CLAUDE_CONFIG_DIR": "/x", "CLAUDE_SECURESTORAGE_CONFIG_DIR": ""}, true, Account{Keychain: true}},
+	}
+	for _, c := range cases {
+		env := Env(c.agent)
+		_, present := lookup(env, fociroot.CCSecureStorageEnv)
+		if present != c.present {
+			t.Errorf("%s: CLAUDE_SECURESTORAGE_CONFIG_DIR present = %v, want %v", c.name, present, c.present)
+		}
+		loc, err := FromEnv(env, "darwin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if loc.Account != c.want {
+			t.Errorf("%s: account %+v, want %+v", c.name, loc.Account, c.want)
+		}
+	}
+	if loc, _ := FromEnv(Env(nil), "darwin"); loc.Dir != filepath.Join(root, ".claude") {
+		t.Errorf("alpha folder %q, want the install root's", loc.Dir)
+	}
+}
+
+// TestLoginEnv (H1, H2): the login pane's variables. alpha's equal
+// fociroot.CCEnv(), on a single-home and a separate-root install; beta's name
+// its folder and unset the secure-storage variable; gamma's keep its empty
+// value.
+func TestLoginEnv(t *testing.T) {
+	isolate(t)
+	if got, want := LoginEnv(nil), fociroot.CCEnv(); !slices.Equal(got, want) {
+		t.Errorf("single home, alpha: %q, want fociroot.CCEnv() %q", got, want)
+	}
+	separateRootMac(t)
+	if got, want := LoginEnv(nil), fociroot.CCEnv(); !slices.Equal(got, want) {
+		t.Errorf("separate root, alpha: %q, want fociroot.CCEnv() %q", got, want)
+	}
+	home, _ := os.UserHomeDir()
+	beta := LoginEnv(map[string]string{"CLAUDE_CONFIG_DIR": "/x"})
+	if want := []string{"HOME=" + home, "CLAUDE_CONFIG_DIR=/x", "CLAUDE_SECURESTORAGE_CONFIG_DIR"}; !slices.Equal(beta, want) {
+		t.Errorf("beta: %q, want %q", beta, want)
+	}
+	gamma := LoginEnv(map[string]string{"CLAUDE_CONFIG_DIR": "/x", "CLAUDE_SECURESTORAGE_CONFIG_DIR": ""})
+	if want := []string{"HOME=" + home, "CLAUDE_CONFIG_DIR=/x", "CLAUDE_SECURESTORAGE_CONFIG_DIR="}; !slices.Equal(gamma, want) {
+		t.Errorf("gamma: %q, want %q", gamma, want)
+	}
+}
+
+// TestAccount_KeyAndString: equal accounts share a Key, different ones do
+// not; String names the location (Q15's fallback).
+func TestAccount_KeyAndString(t *testing.T) {
+	accts := []Account{
+		{Path: "/x/.credentials.json"},
+		{Path: "/y/.credentials.json"},
+		{Keychain: true},
+		{Keychain: true, Path: "/x"},
+	}
+	seen := map[string]bool{}
+	short := map[string]bool{}
+	for _, a := range accts {
+		if seen[a.Key()] || short[a.ShortKey()] {
+			t.Errorf("%+v: key %q / %q not unique", a, a.Key(), a.ShortKey())
+		}
+		seen[a.Key()], short[a.ShortKey()] = true, true
+		if a.Key() != (Account{Keychain: a.Keychain, Path: a.Path}).Key() {
+			t.Errorf("%+v: key not stable", a)
+		}
+	}
+	for a, want := range map[Account]string{
+		{Path: "/x/.credentials.json"}: "/x",
+		{Keychain: true}:               "the default Keychain sign-in",
+		{Keychain: true, Path: "/x"}:   "/x",
+	} {
+		if a.String() != want {
+			t.Errorf("%+v: String %q, want %q", a, a.String(), want)
+		}
 	}
 }

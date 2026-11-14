@@ -15,6 +15,9 @@ const LogComponent = "relogin"
 
 const logComponent = LogComponent
 
+// DefaultSession is the tmux session of the host account's login.
+const DefaultSession = "foci-cc-login"
+
 // maxScreenDump caps how much of a captured TUI screen we write to the log on a
 // failure path. Enough to diagnose which state the login screen was actually in
 // without flooding the log with the full scrollback.
@@ -25,8 +28,13 @@ type Config struct {
 	AgentID   string // the agent whose 401 triggered this; owns the capture window
 	WorkDir   string // working directory for the login `claude` process
 	ClaudeBin string // claude binary override (empty → "claude")
-	Env       []string
-	Gate      *Gate // the claimed gate (driver releases it on every exit path)
+	// Env is exported in the login pane before claude starts. A bare KEY
+	// (no "=") is unset instead (ccaccount.LoginEnv).
+	Env  []string
+	Gate *Gate // the claimed gate (driver releases it on every exit path)
+	// Session names the login's tmux session. Each account has its own, so
+	// two accounts' logins can run at once ("" → "foci-cc-login").
+	Session string
 
 	// SendMessage pushes a system notice to the triggering agent's user
 	// (Connection.SendInjectedMessage: the app shows it with the system role,
@@ -70,8 +78,12 @@ func (c *Config) defaults() {
 	}
 	if c.newPane == nil {
 		c.newPane = func(cfg *Config) pane {
+			session := cfg.Session
+			if session == "" {
+				session = DefaultSession
+			}
 			return &tmuxPane{
-				session: "foci-cc-login",
+				session: session,
 				workDir: cfg.WorkDir,
 				binary:  cfg.ClaudeBin,
 				env:     cfg.Env,
@@ -135,8 +147,8 @@ func Run(ctx context.Context, c Config) {
 				log.NewComponentLogger(comp).Warnf("could not mark the sign-in link expired: %v", err)
 			}
 		}
-		notify(failText(reason))
-		notifyCodeChat(failText(reason))
+		notify(failText(reason, g.Name()))
+		notifyCodeChat(failText(reason, g.Name()))
 	}
 	// dumpScreen writes a captured TUI screen to the log on a failure path so the
 	// reason an anchor never appeared is diagnosable after the fact.
@@ -198,7 +210,7 @@ func Run(ctx context.Context, c Config) {
 
 	// Step 7: open the capture window and ask the user to sign in. A failure to
 	// relay the URL is fatal — the user can never complete login without it.
-	linkText := signInLinkText(url)
+	linkText := signInLinkText(url, g.Name())
 	linkSession := ""
 	if c.Link != nil {
 		linkSession = c.Link.SessionKey
@@ -248,8 +260,8 @@ func Run(ctx context.Context, c Config) {
 	// Steps 9–11: pane killed by defer, gate released by defer. Complete ends
 	// the pending state so paused injections resume (#2384).
 	g.Complete()
-	notify(completedText)
-	notifyCodeChat(completedText)
+	notify(completedText(g.Name()))
+	notifyCodeChat(completedText(g.Name()))
 	log.NewComponentLogger(comp).Infof("re-login completed for agent %s", c.AgentID)
 }
 
@@ -288,16 +300,31 @@ func (c *Config) waitFor(ctx context.Context, pn pane, anchor string) (string, b
 // the link says to paste the code back, the expired edit only marks the link
 // dead, and the failure notice alone says to send /login again. The auto-401
 // path has no /login reply, so nothing else may carry the paste instruction.
-const (
-	// expiredLinkText replaces a link whose attempt ended without a login.
-	// It carries no instruction: the failure notice that follows it does.
-	expiredLinkText = "🔐 This Claude Code sign-in link has expired."
-	completedText   = "✅ Claude Code login completed."
-)
+//
+// Each text that is about one login names its account (#3104, Q14/Q15), as
+// " (account: <name>)", so the user knows which sign-in is asked for when
+// several accounts are in use. An account with no known name adds nothing.
+
+// expiredLinkText replaces a link whose attempt ended without a login.
+// It carries no instruction: the failure notice that follows it does.
+const expiredLinkText = "🔐 This Claude Code sign-in link has expired."
+
+// accountSuffix is " (account: name)", or "" for no name.
+func accountSuffix(name string) string {
+	if name == "" {
+		return ""
+	}
+	return " (account: " + name + ")"
+}
+
+// completedText is the notice for a login of account name that completed.
+func completedText(name string) string {
+	return "✅ Claude Code login completed" + accountSuffix(name) + "."
+}
 
 // failText is the notice for an attempt that ended without a login.
-func failText(reason string) string {
-	return "🔐 Claude Code login failed: " + reason + ". Send /login to try again."
+func failText(reason, name string) string {
+	return "🔐 Claude Code login failed" + accountSuffix(name) + ": " + reason + ". Send /login to try again."
 }
 
 // signInLinkText is the sign-in message for url. Where the chat renders
@@ -305,11 +332,11 @@ func failText(reason string) string {
 // screen. The URL goes into the link byte for byte (#1931: a changed state
 // param breaks the login), so a URL with a character that would end or
 // alter a markdown link destination is shown raw instead.
-func signInLinkText(url string) string {
+func signInLinkText(url, name string) string {
 	if strings.ContainsAny(url, "()<>\\ \t\r\n") {
-		return "🔐 Sign in to Claude Code, then paste the code here:\n\n" + url
+		return "🔐 Sign in to Claude Code" + accountSuffix(name) + ", then paste the code here:\n\n" + url
 	}
-	return "🔐 [Sign in to Claude Code](" + url + "), then paste the code here."
+	return "🔐 [Sign in to Claude Code](" + url + ")" + accountSuffix(name) + ", then paste the code here."
 }
 
 // firstLineOf returns the first line of s, for compact single-line logging.

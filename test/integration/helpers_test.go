@@ -182,6 +182,10 @@ type recorderEntry struct {
 	// user_message kind: answered inside an already-open run (a steer
 	// folded as real CC folds it, #3056).
 	Folded bool `json:"folded,omitempty"`
+	// interactive_login kind (#3104): the relogin pane's CC folder
+	// variables ("<unset>" when absent).
+	ConfigDir     string `json:"config_dir,omitempty"`
+	SecureStorage string `json:"secure_storage,omitempty"`
 }
 
 // readRecorderEntries parses every JSONL line from the recorder file.

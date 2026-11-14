@@ -10,7 +10,6 @@ import (
 
 	"foci/internal/procx"
 	"foci/internal/ratelimit"
-	"foci/internal/relogin"
 	"foci/internal/session"
 )
 
@@ -268,7 +267,7 @@ func (a *Agent) reloginBlocksBackground() (bool, string) {
 	if !a.UsesCCLogin() {
 		return false, ""
 	}
-	if relogin.G.Active() || relogin.G.Pending() {
+	if g := a.LoginGateOrDefault(); g.Active() || g.Pending() {
 		return true, "Claude Code login pending (send /login)"
 	}
 	return false, ""

@@ -115,7 +115,7 @@ func TestRunHappyPath(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(msgs) == 0 || msgs[len(msgs)-1] != completedText {
+	if len(msgs) == 0 || msgs[len(msgs)-1] != completedText("") {
 		t.Errorf("expected success message last, got %v", msgs)
 	}
 	// The URL should have been relayed to the user.
