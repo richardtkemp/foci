@@ -316,6 +316,9 @@ type recorderEntry struct {
 	// tests to assert foci forwarded a non-text block alongside the
 	// caption.
 	ContentBlockTypes []string `json:"content_block_types,omitempty"`
+	// Folded marks a user message that arrived while a run was open and
+	// was answered inside that run, as real CC folds a steer (#3056).
+	Folded bool `json:"folded,omitempty"`
 
 	// permission_request / control_response shared
 	ControlRequestID string `json:"control_request_id,omitempty"`
@@ -456,9 +459,10 @@ func main() {
 	defer func() { _ = out.Flush() }()
 
 	// Process the first envelope — should be control_request initialize.
-	// Respond with control_response immediately so foci's readyCh closes,
-	// then emit system/init so foci stores our session_id. (Real CC emits
-	// these in the opposite order for resumes; foci tolerates either.)
+	// Answer it in real CC's shape, which carries no session_id: real CC
+	// sends no system/init at the handshake, fresh or resumed (probed on CC
+	// 2.1.314, #3056). foci's WaitReady unblocks on this response, and it
+	// learns the session id from the first run's init.
 	if !in.Scan() {
 		// Stdin closed before we got the init handshake — exit cleanly.
 		// This is what foci sees when it kills the subprocess at teardown.
@@ -470,11 +474,11 @@ func main() {
 	// Best-effort: send a control_response only if we saw an init request.
 	if reqID, _ := extractInitRequestID(first); reqID != "" {
 		emit(out, map[string]any{
-			"type":       "control_response",
-			"request_id": reqID,
+			"type": "control_response",
 			"response": map[string]any{
-				"subtype":    "initialize_success",
-				"session_id": sessionID,
+				"subtype":    "success",
+				"request_id": reqID,
+				"response":   map[string]any{"pid": os.Getpid()},
 			},
 		})
 		// Record system prompt at handshake. Tests use this to assert
@@ -483,14 +487,23 @@ func main() {
 		sp, asp := extractInitSystemPrompt(first)
 		recordInitSystem(sp, asp)
 	}
-	emit(out, map[string]any{
-		"type":       "system",
-		"subtype":    "init",
-		"session_id": sessionID,
-		"model":      ifEmpty(model, "stub-model"),
-		"tools":      []string{},
-	})
 	_ = out.Flush()
+	// Real CC emits system/init at the start of every run, after "running"
+	// (and again for each message folded into an open run).
+	emitInit := func() {
+		m := map[string]any{
+			"type":       "system",
+			"subtype":    "init",
+			"session_id": sessionID,
+			"model":      ifEmpty(model, "stub-model"),
+			"tools":      []string{},
+		}
+		if ackUUID != "" {
+			m["user_message_uuids"] = []string{ackUUID}
+		}
+		emit(out, m)
+	}
+	pump := newStdinPump(in)
 
 	// Now loop on user messages. For each, emit one assistant text block
 	// (plus any scripted tool_use blocks), followed by a result message
@@ -560,9 +573,19 @@ func main() {
 		}
 	}
 	turnCount := 0
-	for in.Scan() {
+	// inRun is true while a run stays open for a folded user message: that
+	// message is answered without a fresh "running" (#3056).
+	inRun := false
+	// lateText is a script's late_text, sent as its own run after the idle
+	// that closes the run whose script carried it.
+	lateText := ""
+	for {
+		line, ok := pump.next()
+		if !ok {
+			break
+		}
 		var env map[string]any
-		if err := json.Unmarshal(in.Bytes(), &env); err != nil {
+		if err := json.Unmarshal(line, &env); err != nil {
 			continue
 		}
 		switch env["type"] {
@@ -595,7 +618,7 @@ func main() {
 			if !batch && !isCompact && !willPanic {
 				script = loadScript(userText)
 			}
-			recordUserMessage(sessionID, userText, blockTypes)
+			recordUserMessage(sessionID, userText, blockTypes, inRun)
 			// CCSTUB_PANIC_ON_USER_MESSAGE: simulate a crashing CC.
 			// Writes a Go-style panic preamble to stderr (foci's reader
 			// surfaces a tail of stderr in the error log) before exiting
@@ -607,7 +630,11 @@ func main() {
 			}
 			// A user message starts a run. Real CC emits "running" first,
 			// before even the run's system/init (probed on CC 2.1.314, #3055).
-			emitSessionState(out, sessionID, "running")
+			// A message folded into an open run gets no "running".
+			if !inRun {
+				emitSessionState(out, sessionID, "running")
+			}
+			inRun = true
 			// CCSTUB_EMIT_COMPACT_BOUNDARY: a "/compact ..." user message is
 			// CC's compaction trigger (foci injects it via SourceCompact). Emit
 			// the same system envelopes real CC produces — status "compacting"
@@ -622,6 +649,8 @@ func main() {
 					"status":     compacting,
 					"session_id": sessionID,
 				})
+				// Real CC: status compacting, then init, then the boundary.
+				emitInit()
 				_ = out.Flush()
 				emit(out, map[string]any{
 					"type":    "system",
@@ -641,11 +670,18 @@ func main() {
 						"output_tokens": 0,
 					},
 				})
-				emitSessionState(out, sessionID, "idle")
-				_ = out.Flush()
 				turnCount++
+				if pump.takeFolded() {
+					_ = out.Flush()
+					continue
+				}
+				emitSessionState(out, sessionID, "idle")
+				inRun = false
+				pump.endRun()
+				_ = out.Flush()
 				continue
 			}
+			emitInit()
 			reply := respText
 			if batch && reply == "" {
 				reply = "[]"
@@ -698,7 +734,7 @@ func main() {
 					_ = out.Flush()
 				}
 				if script.SleepMs > 0 {
-					time.Sleep(time.Duration(script.SleepMs) * time.Millisecond)
+					pump.sleep(time.Duration(script.SleepMs) * time.Millisecond)
 				}
 			}
 			// Pre-emit token-level stream_event deltas. Each becomes a
@@ -816,10 +852,10 @@ func main() {
 			})
 			_ = out.Flush()
 			if script != nil && script.CrashOnUnconsumed != "" {
-				crashOnUnconsumed(in, script.CrashOnUnconsumed)
+				crashOnUnconsumed(pump, script.CrashOnUnconsumed)
 			}
 			if script != nil && script.CrashAfterConsuming != "" {
-				crashAfterConsuming(in, script.CrashAfterConsuming, sessionID)
+				crashAfterConsuming(pump, script.CrashAfterConsuming, sessionID)
 			}
 			// CCSTUB_EXIT_AFTER_ASSISTANT: exit 0 between assistant and
 			// result envelopes on the first turn. Foci sees stdout EOF
@@ -828,12 +864,90 @@ func main() {
 			if exitAfterAssistant {
 				os.Exit(0)
 			}
+			// Scripted permission requests come inside the run, after the
+			// assistant message, as real CC asks while a tool_use waits:
+			// "requires_action", the can_use_tool control_request(s), then
+			// "running" once foci has answered (probed on CC 2.1.314,
+			// #3056). The run stays open until every request not cancelled
+			// below is answered; a request nobody answers holds the run
+			// open, as it holds real CC's. Foci processes them on its
+			// reader goroutine and dispatches each to permPromptFn — which
+			// routes through SendInteractiveMessageWithID, so each
+			// request_id becomes a registered Telegram prompt that
+			// PushCallbackQuery can resolve. Multiple entries in one script
+			// land as multiple concurrent pending permissions (testing the
+			// queue/concurrency assertions in N1).
+			if script != nil && (len(script.PermissionRequests) > 0 || len(script.ControlCancelRequests) > 0) {
+				var waitFor []string
+				if len(script.PermissionRequests) > 0 {
+					emitSessionState(out, sessionID, "requires_action")
+				}
+				cancelled := map[string]bool{}
+				for _, id := range script.ControlCancelRequests {
+					cancelled[id] = true
+				}
+				for i, pr := range script.PermissionRequests {
+					reqID := pr.RequestID
+					if reqID == "" {
+						reqID = fmt.Sprintf("perm_stub_%d_%d", time.Now().UnixNano(), i)
+					}
+					toolUseID := pr.ToolUseID
+					if toolUseID == "" {
+						toolUseID = fmt.Sprintf("toolu_stub_%d_%d", time.Now().UnixNano(), i)
+					}
+					payload := map[string]any{
+						"subtype":     "can_use_tool",
+						"tool_name":   pr.ToolName,
+						"input":       pr.Input,
+						"tool_use_id": toolUseID,
+					}
+					if len(pr.Suggestions) > 0 {
+						payload["permission_suggestions"] = pr.Suggestions
+					}
+					emit(out, map[string]any{
+						"type":       "control_request",
+						"request_id": reqID,
+						"request":    payload,
+					})
+					recordPermissionRequest(reqID, pr.ToolName)
+					if !cancelled[reqID] {
+						waitFor = append(waitFor, reqID)
+					}
+				}
+				_ = out.Flush()
+				// Emit any scripted control_cancel_requests. Foci's reader
+				// routes each to OnControlCancelRequest →
+				// CancelInteractiveMessage, which clears the inline
+				// keyboard for the matching prompt. A subsequent
+				// callback_query against that prompt is then a no-op
+				// (HandleInteractiveCallback returns false because the
+				// listener was unregistered).
+				for _, cancelID := range script.ControlCancelRequests {
+					emit(out, map[string]any{
+						"type":       "control_cancel_request",
+						"request_id": cancelID,
+					})
+					recordPermissionCancel(cancelID)
+				}
+				_ = out.Flush()
+				if !pump.waitAnswered(waitFor) {
+					// foci closed stdin with a request unanswered: the
+					// process is being torn down.
+					_ = out.Flush()
+					return
+				}
+				if len(script.PermissionRequests) > 0 {
+					emitSessionState(out, sessionID, "running")
+					_ = out.Flush()
+				}
+			}
 			// CCSTUB_HANG_DURING_TURN: sleep AFTER the assistant envelope
 			// has been flushed but BEFORE the result envelope. Foci's
 			// IsProcessing flag stays true for the duration, so concurrent
-			// /reset or steer messages can race the in-flight turn.
+			// /reset or steer messages can race the in-flight turn. A user
+			// message foci writes meanwhile is folded into this run.
 			if hangDuringTurn > 0 {
-				time.Sleep(hangDuringTurn)
+				pump.sleep(hangDuringTurn)
 			}
 			// Per-tool hook_response — one envelope per Bash run, carrying
 			// the install_id foci embedded in --settings so the backend's
@@ -867,88 +981,53 @@ func main() {
 				resultEnv["session_id"] = sessionID
 			}
 			emit(out, resultEnv)
-			// The run ends: real CC emits "idle" right after the result; it
-			// is ccstream's turn-completion signal. Scripted permission
-			// requests and late text below come after it, outside the run.
-			emitSessionState(out, sessionID, "idle")
-			_ = out.Flush()
-			// Emit any scripted can_use_tool control_requests AFTER the
-			// assistant + result envelopes. Foci processes them on its
-			// reader goroutine and dispatches each to permPromptFn —
-			// which routes through SendInteractiveMessageWithID, so
-			// each request_id becomes a registered Telegram prompt that
-			// PushCallbackQuery can resolve. Multiple entries in one
-			// script land as multiple concurrent pending permissions
-			// (testing the queue/concurrency assertions in N1).
-			if script != nil {
-				for i, pr := range script.PermissionRequests {
-					reqID := pr.RequestID
-					if reqID == "" {
-						reqID = fmt.Sprintf("perm_stub_%d_%d", time.Now().UnixNano(), i)
-					}
-					toolUseID := pr.ToolUseID
-					if toolUseID == "" {
-						toolUseID = fmt.Sprintf("toolu_stub_%d_%d", time.Now().UnixNano(), i)
-					}
-					payload := map[string]any{
-						"subtype":     "can_use_tool",
-						"tool_name":   pr.ToolName,
-						"input":       pr.Input,
-						"tool_use_id": toolUseID,
-					}
-					if len(pr.Suggestions) > 0 {
-						payload["permission_suggestions"] = pr.Suggestions
-					}
-					emit(out, map[string]any{
-						"type":       "control_request",
-						"request_id": reqID,
-						"request":    payload,
-					})
-					recordPermissionRequest(reqID, pr.ToolName)
-				}
-				if len(script.PermissionRequests) > 0 {
-					_ = out.Flush()
-				}
-				// Emit any scripted control_cancel_requests. Foci's reader
-				// routes each to OnControlCancelRequest →
-				// CancelInteractiveMessage, which clears the inline
-				// keyboard for the matching prompt. A subsequent
-				// callback_query against that prompt is then a no-op
-				// (HandleInteractiveCallback returns false because the
-				// listener was unregistered).
-				for _, cancelID := range script.ControlCancelRequests {
-					emit(out, map[string]any{
-						"type":       "control_cancel_request",
-						"request_id": cancelID,
-					})
-					recordPermissionCancel(cancelID)
-				}
-				if len(script.ControlCancelRequests) > 0 {
-					_ = out.Flush()
-				}
+			if script != nil && script.LateText != "" {
+				lateText = script.LateText
 			}
+			turnCount++
+			// A user message foci wrote while this run was open is answered
+			// next, inside the same run: real CC sends this result, then
+			// init, assistant and result for the folded message, then ONE
+			// idle (probed on CC 2.1.314 with a text-only turn, #3056).
+			if pump.takeFolded() {
+				_ = out.Flush()
+				continue
+			}
+			// The run ends: real CC emits "idle" right after the result; it
+			// is ccstream's turn-completion signal. Late text below comes
+			// after it, outside the run.
+			emitSessionState(out, sessionID, "idle")
+			inRun = false
+			pump.endRun()
+			_ = out.Flush()
 			// Late-text injection: emit a SECOND assistant message AFTER
-			// result + permissions. Foci has already seen the result
-			// envelope and torn down the per-turn sink; this assistant
-			// arrives with no current sink registered and must route
-			// through the session router's late-delivery fallback to
-			// reach the platform. Simulates CC-harness-internal injections
-			// (task-notifications, system reminders) that produce
-			// assistant text outside any foci-side user message.
+			// the run's result. Foci has already seen the result envelope
+			// and torn down the per-turn sink; this assistant arrives with
+			// no current sink registered and must route through the session
+			// router's late-delivery fallback to reach the platform.
+			// Simulates CC-harness-internal injections (task-notifications,
+			// system reminders) that produce assistant text outside any
+			// foci-side user message.
 			//
 			// With session-state events on, the late text is what real CC
-			// sends for such an injection: a run of its own (running,
-			// assistant, result, idle), which ccstream adopts as an
-			// autonomous turn with its own sink.
-			if script != nil && script.LateText != "" {
+			// sends for such an injection: a run of its own (running, init,
+			// assistant, result, idle; init carries no user_message_uuids,
+			// probed on CC 2.1.314 with a background task's notification,
+			// #3056), which ccstream adopts as an autonomous turn with its
+			// own sink.
+			if lateText != "" {
+				text := lateText
+				lateText = ""
 				time.Sleep(200 * time.Millisecond)
+				ackUUID = ""
 				emitSessionState(out, sessionID, "running")
+				emitInit()
 				emit(out, map[string]any{
 					"type": "assistant",
 					"message": map[string]any{
 						"role": "assistant",
 						"content": []map[string]any{
-							{"type": "text", "text": script.LateText},
+							{"type": "text", "text": text},
 						},
 					},
 					"session_id": sessionID,
@@ -956,7 +1035,7 @@ func main() {
 				if sessionStateEvents {
 					emit(out, map[string]any{
 						"type":       "result",
-						"result":     script.LateText,
+						"result":     text,
 						"session_id": sessionID,
 						"usage": map[string]any{
 							"input_tokens":            0,
@@ -969,17 +1048,17 @@ func main() {
 				_ = out.Flush()
 			}
 			// CCSTUB_EXIT_AFTER_N_TURNS: bookend the turn loop so a
-			// clean exit happens AFTER the result envelope has been
+			// clean exit happens AFTER the run's idle has been
 			// flushed. Foci processes the completion, persists the
 			// session id, and marks the backend dead when it reaps the
 			// process — DelegatedManager.Get then observes
 			// IsRunning()==false on the next inbound message and
 			// respawns with --resume. Anything foci wrote to stdin
-			// before that (a steer mid-turn, a turn begun just before
-			// the exit) is never read: tests must wait for foci to
-			// observe the exit before sending the next message
-			// (waitForStubExitObserved, foci_todo #2044).
-			turnCount++
+			// before that (a turn begun just before the exit) is never
+			// read: tests must wait for foci to observe the exit before
+			// sending the next message (waitForStubExitObserved,
+			// foci_todo #2044). A message folded into the run counts as a
+			// turn of its own.
 			if exitAfterTurns > 0 && turnCount >= exitAfterTurns {
 				_ = out.Flush()
 				os.Exit(0)
@@ -1046,10 +1125,14 @@ func main() {
 // "held_user_message" and otherwise ignored — the turn is deliberately stuck,
 // as a real CC is mid-tool when a steer lands. If stdin
 // closes first the stub exits 0, as it would at the end of the main loop.
-func crashOnUnconsumed(in *bufio.Scanner, marker string) {
-	for in.Scan() {
+func crashOnUnconsumed(p *stdinPump, marker string) {
+	for {
+		line, ok := p.raw()
+		if !ok {
+			break
+		}
 		var env map[string]any
-		if err := json.Unmarshal(in.Bytes(), &env); err != nil || env["type"] != "user" {
+		if err := json.Unmarshal(line, &env); err != nil || env["type"] != "user" {
 			continue
 		}
 		text, _ := extractUserContent(env)
@@ -1079,17 +1162,21 @@ func crashOnUnconsumed(in *bufio.Scanner, marker string) {
 // crashAfterConsuming implements stubScript.CrashAfterConsuming: with the turn
 // held open, read stdin until a user message containing marker arrives, record
 // it as consumed, write its transcript record, and exit 1 before any ack.
-func crashAfterConsuming(in *bufio.Scanner, marker, sessionID string) {
-	for in.Scan() {
+func crashAfterConsuming(p *stdinPump, marker, sessionID string) {
+	for {
+		line, ok := p.raw()
+		if !ok {
+			break
+		}
 		var env map[string]any
-		if err := json.Unmarshal(in.Bytes(), &env); err != nil || env["type"] != "user" {
+		if err := json.Unmarshal(line, &env); err != nil || env["type"] != "user" {
 			continue
 		}
 		text, blockTypes := extractUserContent(env)
 		if !strings.Contains(text, marker) {
 			continue
 		}
-		recordUserMessage(sessionID, text, blockTypes)
+		recordUserMessage(sessionID, text, blockTypes, false)
 		id, _ := env["uuid"].(string)
 		if err := appendTranscript(sessionID, map[string]any{"type": "user", "uuid": id, "sessionId": sessionID}); err != nil {
 			fmt.Fprintf(os.Stderr, "cc-stub: transcript write failed: %v\n", err)
@@ -1403,7 +1490,7 @@ func recordInitSystem(systemPrompt, appendSystemPrompt string) {
 // blockTypes is the list of content-block types observed in the user
 // envelope (e.g. ["text", "image"] for a photo + caption). Empty for
 // flat-string content; populated only when the user payload is structured.
-func recordUserMessage(sessionID, text string, blockTypes []string) {
+func recordUserMessage(sessionID, text string, blockTypes []string, folded bool) {
 	wd, _ := os.Getwd()
 	prefix := text
 	// send_to_session prepends a ~600-char SYSTEM INJECTION context
@@ -1419,6 +1506,7 @@ func recordUserMessage(sessionID, text string, blockTypes []string) {
 		SessionID:         sessionID,
 		TextPrefix:        prefix,
 		ContentBlockTypes: blockTypes,
+		Folded:            folded,
 	})
 }
 

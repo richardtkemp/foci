@@ -30,7 +30,15 @@ func runOneTelegramTurn(t *testing.T, h *testharness.Harness, userID int64, text
 			Text: text,
 		},
 	})
-	deadline := time.Now().Add(20 * time.Second)
+	if !waitForStubReply(h, text, 20*time.Second) {
+		t.Fatalf("reply to %q never reached Telegram; stderr tail:\n%s", text, stderrTail(h.Stderr()))
+	}
+}
+
+// waitForStubReply waits for cc-stub's echo of text to reach alpha's chat.
+func waitForStubReply(h *testharness.Harness, text string, timeout time.Duration) bool {
+	token := h.AgentBotToken("alpha")
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		for _, call := range h.TelegramStub().PeekSent(token) {
 			if call.Method != "sendMessage" {
@@ -41,12 +49,12 @@ func runOneTelegramTurn(t *testing.T, h *testharness.Harness, userID int64, text
 				continue
 			}
 			if s, _ := body["text"].(string); strings.Contains(s, "stub-reply") && strings.Contains(s, text) {
-				return
+				return true
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("reply to %q never reached Telegram; stderr tail:\n%s", text, stderrTail(h.Stderr()))
+	return false
 }
 
 // TestL2_SessionState_StubRunsProductionCompletionPath pins #3055: cc-stub
@@ -86,5 +94,44 @@ func TestL2_SessionState_OptOutRunsLegacyCompletionPath(t *testing.T) {
 	runOneTelegramTurn(t, h, 5572, "result keyed two")
 	if !waitForStderr(h, legacyCompletionWarning, 5*time.Second) {
 		t.Fatalf("expected the legacy complete-on-result warning with session-state events off; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+}
+
+// TestL2_SessionState_SteerFoldedIntoOpenRun runs production's steer path end
+// to end (#3056): a message sent while a turn is open reaches cc-stub
+// mid-run, cc-stub folds it into that run as real CC does (result, init,
+// assistant, result, ONE idle), and foci still delivers both replies.
+func TestL2_SessionState_SteerFoldedIntoOpenRun(t *testing.T) {
+	testharness.ParallelWait(t)
+	const userID = 5573
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:       "alpha",
+			UserID:   userID,
+			ExtraEnv: map[string]string{"CCSTUB_HANG_DURING_TURN": "2s"},
+		}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	pushUserMessage(t, h, "alpha", userID, "FOLD_FIRST")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "FOLD_FIRST", 20*time.Second) {
+		t.Fatalf("first turn never reached cc-stub; recorder:\n%s", recorderTail(t, h.RecorderPath()))
+	}
+	pushUserMessage(t, h, "alpha", userID, "FOLD_STEER")
+	for _, m := range []string{"FOLD_FIRST", "FOLD_STEER"} {
+		if !waitForStubReply(h, m, 30*time.Second) {
+			t.Fatalf("reply to %s never reached Telegram; recorder:\n%s\nstderr:\n%s",
+				m, recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+		}
+	}
+	// The steer must have reached cc-stub while the first run was open;
+	// otherwise this test ran the old "steer = next run" shape.
+	var folded bool
+	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+		if e.Kind == "user_message" && strings.Contains(e.TextPrefix, "FOLD_STEER") {
+			folded = e.Folded
+		}
+	}
+	if !folded {
+		t.Fatalf("FOLD_STEER was not folded into the open run; recorder:\n%s", recorderTail(t, h.RecorderPath()))
 	}
 }

@@ -179,6 +179,9 @@ type recorderEntry struct {
 	BashCommand string `json:"bash_command,omitempty"`
 	BashOutput  string `json:"bash_output,omitempty"`
 	IsError     bool   `json:"is_error,omitempty"`
+	// user_message kind: answered inside an already-open run (a steer
+	// folded as real CC folds it, #3056).
+	Folded bool `json:"folded,omitempty"`
 }
 
 // readRecorderEntries parses every JSONL line from the recorder file.
