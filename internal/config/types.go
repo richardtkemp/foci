@@ -1639,12 +1639,6 @@ type UsageHoldConfig struct {
 type DebugConfig struct {
 	LogAPIKeySuffix *bool `toml:"log_api_key_suffix"      hot:"immediate" scope:"global" desc:"Log the last 4 characters of the API key on every model provider request, useful for confirming which key was used"`                   // log last 4 chars of API keys on each provider call (default false)
 	MessagesInLog   *bool `toml:"messages_in_log"         hot:"immediate" scope:"global,agent" desc:"Include the full text of user messages in the event log. Off by default to avoid writing personal conversation content to logs"` // log user message content to event log (default false for privacy)
-	// CacheBustDetect is no longer read (#3110): [notify] cache_bust_notify
-	// (#2933) alerts on every booked call's cache bust. The key is still
-	// accepted, so a config that sets it still loads (a removed key would fail
-	// check-config and abort a deploy); removedKeyWarnings warns at load that
-	// it does nothing. No desc tag: it is not a settable registry row.
-	CacheBustDetect *bool `toml:"cache_bust_detect"`
 
 	// EnablePprof exposes the net/http/pprof endpoints under /debug/pprof/*.
 	// Off by default: they allow CPU/heap profiling and goroutine dumps, so they

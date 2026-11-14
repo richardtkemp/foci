@@ -263,7 +263,6 @@ system_files = [
 # Per-agent debug overrides (from [debug]):
 # [agents.debug]
 # messages_in_log = false                 # log user message content (privacy)
-# cache_bust_detect = false               # alert on cache_read drop
 
 # Per-agent environment overrides (from [environment]):
 # [agents.environment]
@@ -612,7 +611,6 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # [debug]
 # log_api_key_suffix = false               # log last 4 chars of API keys on provider calls
 # messages_in_log = false                  # log user message content (privacy)
-# cache_bust_detect = false                # alert on cache_read drop >50% vs previous request
 # enable_pprof = false                     # expose /debug/pprof/* (profiling data can be sensitive)
 # extra_ccstream_logging = false           # verbose Claude Code stream transport logging (xtra:ccstream)
 # extra_inbox_logging = false              # verbose inbound message routing logging (xtra:inbox)

@@ -128,7 +128,7 @@ The ledger cache watch (`internal/delegator/accounting/cachewatch.go`, #2933) ch
 cache_bust_notify = true           # default; set false to stop the chat alerts (hot-applied)
 ```
 
-The older `[debug] cache_bust_detect` (an API-loop-only check) was removed in #3110. A config that still sets it loads, with a startup warning that it does nothing.
+The older `[debug] cache_bust_detect` (an API-loop-only check) was removed in #3110.
 
 ## Monitoring
 
