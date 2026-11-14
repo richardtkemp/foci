@@ -27,6 +27,7 @@ func (s *Spawner) SendTool() *Tool {
 		Name:        "spawn_send",
 		ExecExport:  true,
 		Positional:  []string{"message"},
+		StdinParam:  "message", // piped stdin is the message when none is given (#3107)
 		Description: "Send a message to one of your background spawns (from spawn), by its name or id. A running spawn gets it during its current work; a finished one resumes on its branch, with its earlier context, and reports a new [SPAWN RESULT] when done.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
@@ -37,7 +38,7 @@ func (s *Spawner) SendTool() *Tool {
 				},
 				"message": {
 					"type": "string",
-					"description": "What to tell the spawn."
+					"description": "What to tell the spawn. From the shell, piped stdin (e.g. a quoted heredoc) populates it when no message is given."
 				}
 			},
 			"required": ["id", "message"]

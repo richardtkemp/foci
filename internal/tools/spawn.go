@@ -500,7 +500,7 @@ func spawnParams(modes []string, delegated bool) json.RawMessage {
 	schema := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"prompt": map[string]any{"type": "string", "description": "The task. Write it to carry everything the spawn needs: only a clone sees this conversation."},
+			"prompt": map[string]any{"type": "string", "description": "The task. Write it to carry everything the spawn needs: only a clone sees this conversation. From the shell, piped stdin (e.g. a quoted heredoc) populates it when no prompt is given."},
 			"name":   map[string]any{"type": "string", "description": spawnNameDoc},
 			"model":  map[string]any{"type": "string", "description": modelDoc},
 			"context": map[string]any{
@@ -604,6 +604,7 @@ func (s *Spawner) SpawnTool() *Tool {
 		Name:        "spawn",
 		ExecExport:  true,
 		Positional:  []string{"prompt"},
+		StdinParam:  "prompt", // piped stdin is the prompt when none is given, e.g. a quoted heredoc (#3107)
 		Description: spawnToolDescription(modes),
 		Parameters:  spawnParams(modes, s.deps.Delegated != nil),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {

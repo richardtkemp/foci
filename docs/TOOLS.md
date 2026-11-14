@@ -194,9 +194,12 @@ foci_todo remove 5
 ```
 
 #### `foci_spawn <prompt> --name N [--model M] [--context C] [--background]`
-Spawn a sub-call to a model (default context `character`). `--name` is required and unique in the session; `foci_spawn_status`, `foci_spawn_send --id` and `foci_spawn_stop` take it in place of the id.
+Spawn a sub-call to a model (default context `character`). `--name` is required and unique in the session; `foci_spawn_status`, `foci_spawn_send --id` and `foci_spawn_stop` take it in place of the id. With no positional prompt and no `--prompt`, piped stdin is the prompt (`foci_spawn_send`: the message), so a long prompt can go through a quoted heredoc; piped stdin beside a prompt is refused, not dropped (#3107).
 ```bash
 foci_spawn "Summarize this data" --name summary --model haiku --context raw
+foci_spawn --name reviewer --background <<'EOF'
+A long prompt, as many lines as needed, apostrophes and all.
+EOF
 foci_spawn_status summary
 ```
 
