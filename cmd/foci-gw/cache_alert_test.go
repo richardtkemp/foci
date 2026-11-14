@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/config"
 	"foci/internal/delegator/accounting"
 	"foci/internal/platform"
 )
@@ -157,5 +158,38 @@ func TestCacheBustCause(t *testing.T) {
 	r.Cause, r.Source = accounting.CacheCauseForkMiss, "main/c1"
 	if got := cacheBustCause(r); !strings.Contains(got, "fork of main/c1") {
 		t.Errorf("fork miss cause = %q", got)
+	}
+}
+
+// TestCacheAlert_NotifyLiveApply pins that [notify] cache_bust_notify is hot
+// (#3110): the gate the real wiring uses (cacheBustNotifyLive over the agent's
+// resolved snapshot) sees a config edit applied by the live applier at the
+// next bust, with no restart and no rebuilt sink.
+func TestCacheAlert_NotifyLiveApply(t *testing.T) {
+	off, on := false, true
+	base := &config.Config{Agents: []config.AgentConfig{{ID: "a", Notify: config.NotifyConfig{CacheBustNotify: &off}}}}
+	inst := &agentInstance{id: "a", resolved: config.NewLiveValue(config.Resolve(base, base.Agents[0]))}
+
+	hub := &alertHub{bound: map[string]bool{"a/c1": true}}
+	sink := newCacheAlertSink(alertDeps(hub, ""), cacheBustNotifyLive(inst.resolved))
+	sink(bustReport("a/c1"))
+	if len(hub.shownIn) != 0 {
+		t.Fatalf("alert sent with cache_bust_notify = false: %v", hub.shownIn)
+	}
+
+	la := newLiveApply("", nil)
+	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{"a": inst}))
+	applier := la.appliers["agent.notify.cache_bust_notify"]
+	if applier == nil {
+		t.Fatal("no applier registered for agent.notify.cache_bust_notify")
+	}
+	fresh := &config.Config{Agents: []config.AgentConfig{{ID: "a", Notify: config.NotifyConfig{CacheBustNotify: &on}}}}
+	if err := applier(fresh); err != nil {
+		t.Fatalf("applier: %v", err)
+	}
+
+	sink(bustReport("a/c1"))
+	if len(hub.shownIn) != 1 {
+		t.Fatalf("alert not sent at the next bust after cache_bust_notify was set true live: %v", hub.shownIn)
 	}
 }

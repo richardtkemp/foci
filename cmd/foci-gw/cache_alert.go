@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 
+	"foci/internal/config"
 	"foci/internal/delegator"
 	"foci/internal/delegator/accounting"
 	"foci/internal/log"
@@ -73,6 +74,19 @@ func cacheAlertSinkFor(r accounting.CacheReport) (func(accounting.CacheReport), 
 		return nil, false
 	}
 	return v.(func(accounting.CacheReport)), true
+}
+
+// cacheBustNotifyLive is the sink's enabled gate: [notify] cache_bust_notify
+// read from the agent's live resolved snapshot at each bust, so a config edit
+// (the resolved applier swaps the snapshot) applies to the next bust with no
+// restart. A nil snapshot (tests) means on, the key's default.
+func cacheBustNotifyLive(resolvedLive *config.LiveValue[*config.ResolvedAgentConfig]) func() bool {
+	return func() bool {
+		if resolvedLive == nil {
+			return true
+		}
+		return resolvedLive.Load().Notify.CacheBustNotify
+	}
 }
 
 // newCacheAlertSink is one agent's sink: when enabled() (read at each bust, so

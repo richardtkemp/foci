@@ -72,6 +72,37 @@ func validateTTSMaxChars(cfg *Config) error {
 	return nil
 }
 
+// removedKeyWarnings lists keys foci still accepts but no longer reads, for a
+// load-time warning. A removed key stays a field (so check-config passes and a
+// deploy is not aborted) and is named here, once, with every place it is set.
+//   - [debug] cache_bust_detect (#3110): the old API-loop cache alert,
+//     replaced by [notify] cache_bust_notify (#2933).
+func removedKeyWarnings(cfg *Config) []string {
+	var where []string
+	if cfg.Debug.CacheBustDetect != nil {
+		where = append(where, "[debug]")
+	}
+	for _, p := range cfg.Platforms {
+		if p.Debug.CacheBustDetect != nil {
+			where = append(where, fmt.Sprintf("platform %q [debug]", p.ID))
+		}
+	}
+	for _, a := range cfg.Agents {
+		if a.Debug.CacheBustDetect != nil {
+			where = append(where, fmt.Sprintf("agent %q [debug]", a.ID))
+		}
+		for _, p := range a.Platforms {
+			if p.Debug.CacheBustDetect != nil {
+				where = append(where, fmt.Sprintf("agent %q platform %q [debug]", a.ID, p.ID))
+			}
+		}
+	}
+	if len(where) == 0 {
+		return nil
+	}
+	return []string{fmt.Sprintf("cache_bust_detect does nothing and can be removed (set in %s): cache busts are reported by [notify] cache_bust_notify, which is on by default", strings.Join(where, ", "))}
+}
+
 // ttsOrderWarnings lists the [[tts]] ordering config that does nothing, for a
 // load-time warning (#2974): a `fallback` key, which priority replaced, and a
 // voice.tts / voice.tts_order id that names no [[tts]] entry or the built-in
@@ -411,6 +442,9 @@ func (cfg *Config) Validate(knownBackends []string) error {
 		return err
 	}
 	for _, w := range ttsOrderWarnings(cfg) {
+		configLog.Warnf("%s", w)
+	}
+	for _, w := range removedKeyWarnings(cfg) {
 		configLog.Warnf("%s", w)
 	}
 	if err := validateTTSLocalSpeedControl(cfg); err != nil {

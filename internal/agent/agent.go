@@ -93,11 +93,6 @@ func (a *Agent) wrapBundledNudge(reminder string) string {
 	return a.nudgePreamble() + "\n" + reminder
 }
 
-// CacheBustFunc is called when a cache bust is detected (cache_read drops
-// significantly compared to the previous request).
-// session is the session key, prevRead is what we had, curRead is what we got.
-type CacheBustFunc func(session string, prevRead, curRead int)
-
 // Agent is the core agent loop.
 type Agent struct {
 	Client          provider.Client
@@ -126,8 +121,6 @@ type Agent struct {
 	DailyDigestFunc               func(sessionKey string) string          // per-session daily-memory digest (#2827), appended last; nil or "" = none
 	ExtraSystemBlocks             []provider.SystemBlock                  // additional system blocks (e.g. skills list), injected before cache marker
 	CacheStrategy                 string                                  // "auto" (top-level) or "explicit" (manual breakpoints) — from primary model config
-	CacheBustDetect               bool                                    // detect cache busts (cache_read drop >50%)
-	CacheBustAlert                HookList[CacheBustFunc]                 // callbacks for cache bust alerts
 	DuplicateMessages             bool                                    // send user text twice per API call (improves instruction following)
 	BatchPartialAssistantMessages bool                                    // accumulate mid-turn text; send concatenated on turn end (default false = send immediately)
 	BatchPartialJoiner            string                                  // separator between batched partial messages (default "")
@@ -474,17 +467,6 @@ func (a *Agent) maxToolLoops() int {
 		return a.LiveConfigFn().Loop.MaxToolLoops
 	}
 	return a.MaxToolLoops
-}
-
-func (a *Agent) cacheBustDetect() bool {
-	if a.LiveConfigFn != nil {
-		return a.LiveConfigFn().Debug.CacheBustDetect
-	}
-	return a.CacheBustDetect
-}
-
-func (a *Agent) cacheBustIdleThreshold(sessionKey string) time.Duration {
-	return time.Duration(float64(a.cacheTTLFor(sessionKey)) * 0.95)
 }
 
 func (a *Agent) canRunBackground() string {

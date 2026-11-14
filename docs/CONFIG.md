@@ -601,7 +601,6 @@ Developer and debugging knobs. All off by default.
 |-----|------|---------|-------------|
 | `log_api_key_suffix` | bool | `false` | Log the last 4 characters of API keys at DEBUG level on each provider API call. Applies to all providers (Anthropic, OpenAI, Gemini, voice) and secrets used in `http_request` tool calls. Useful for diagnosing which credential is being used when multiple keys are configured. |
 | `messages_in_log` | bool | `false` | Log user message content to the event log. When `false`, messages are logged at DEBUG level with no content for privacy. When `true`, messages are logged at INFO level with content (truncated to 100 chars). Per-agent override via `[agents.debug]`. |
-| `cache_bust_detect` | bool | `false` | Alert via Telegram when `cache_read` drops >50% vs previous request (indicates prefix changed). Per-agent override via `[agents.debug]`. |
 | `enable_pprof` | bool | `false` | Expose the `net/http/pprof` profiling endpoints under `/debug/pprof/*` on the gateway HTTP server. Off by default — they allow CPU/heap profiling and goroutine dumps, so enable only when actively profiling. Process-global (top-level `[debug]` only). |
 
 
@@ -1340,7 +1339,6 @@ Notification fields (`startup_notify`, `inject_agent_warnings`, etc.) are part o
 | `warning_max_per_window` | int | `3` | `[notify]` | Max identical warnings per time window before suppression. `0` disables rate-limiting. Part of `NotifyConfig` — follows the 5-level cascade. |
 | `rate_limit_notify_to` | string | `"session"` | `[notify]` | Where an Anthropic usage-limit warning (Claude Code's `rate_limit_event`) is delivered. `"session"` sends it to the chat whose session crossed the threshold, falling back to the agent's default chat when that session has no live connection; `"default"` always sends it to the default chat (the behaviour before #1857); `"both"` sends it to the session chat and the default chat when they differ — except for a session on a platform that confines replies to the session's own conversation (Slack, #2459): the notice stays in that session's conversation and is never copied to the default chat. The warning throttle is per-agent because the limit is account-wide, so under `"session"` only the session that *first* crossed a utilization bucket is told. Hot-applied. Part of `NotifyConfig` — global or per-agent. |
 | `cache_bust_notify` | bool | `true` | `[notify]` | Send a chat notification when a model call reads less of the prompt cache than its request should have (a cache bust, #2933): it names the tokens read, expected and rewritten, the rewrite's cost, the likely cause (model switch, system prompt change, fork miss, or a changed request) and the session. It goes to the session's chat; a session with no visible chat of its own (an app fork or spawn) sends it up the family tree to the nearest chat that shows it, else to the agent's default chat. A cache that expired after its time-to-live is logged but not alerted. Hot-applied. Part of `NotifyConfig` — global or per-agent. |
-| `cache_bust_detect` | bool | `false` | `[debug]` | Alert when `cache_read` drops >50% vs previous request. Part of `DebugConfig` — per-agent override via `[agents.debug]`. |
 | `facet_no_compact` | bool | `true` | `[sessions]` | Set `no_compact` on facet sessions. Facet sessions are short-lived parallel forks that shouldn't trigger compaction. Set to `false` if you want facet sessions to compact normally. |
 
 ### Per-agent platform overrides
@@ -2355,9 +2353,6 @@ api_file = "/home/foci/api.jsonl"
 conversation_log = true
 full_payload = true
 payload_file = "/home/foci/api-payload.jsonl"
-
-[debug]
-cache_bust_detect = true
 
 [[tts]]
 id = "openrouter"

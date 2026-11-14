@@ -247,7 +247,7 @@ procx.PassOpenFileLimitToChildren()                       ← internal/procx, ri
              not "connected"); the Platform names are kept on agentInstance.platforms for startup decisions
          → wireAgentPlatformCallbacks(ag, acfg, cfg, plat, connMgr, sessionIndex)
            → ag.AddPlatform() for each connection
-           → wires CacheBustAlert, RateLimitFunc, etc. using plat.NotifyAgent()
+           → registers the cache-bust alert sink (registerCacheAlert, gated live by cacheBustNotifyLive), wires RateLimitFunc, etc. using plat.NotifyAgent()
   → agent.RestoreSessionOverrides(defaultSessionKey())   ← restore per-session effort/thinking/model from state store (main.go, after setupAgent)
   → agent.SeedSessionMeta(defaultSessionKey())           ← seed gap from session history (correct gap after restart)
 

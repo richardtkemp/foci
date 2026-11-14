@@ -137,7 +137,7 @@ func TestMetaRace_CacheBaselineVsBranchRead(t *testing.T) {
 	writers := map[string]func(a *Agent, sm *sessionMeta){
 		"processAPIResponse": func(a *Agent, sm *sessionMeta) {
 			resp := &provider.MessageResponse{Usage: provider.Usage{CacheReadInputTokens: 700}}
-			a.processAPIResponse(orchestratorTestKey, sm, resp, 0, time.Now(), 0)
+			a.processAPIResponse(orchestratorTestKey, sm, resp, 0, 0)
 		},
 		"ResetCacheBaseline": func(a *Agent, _ *sessionMeta) { a.ResetCacheBaseline(orchestratorTestKey) },
 		"delegated UpdateSessionMeta": func(a *Agent, sm *sessionMeta) {

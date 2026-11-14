@@ -121,18 +121,14 @@ When idle, a lightweight branch session fires to keep the cache prefix warm — 
 
 ### Cache bust alerts
 
-When `cache_read` drops versus the previous request on a session, foci sends an alert to whatever platform owns the session (Telegram, app, etc.). This is a plain notification, not an agent turn — zero tokens spent.
+The ledger cache watch (`internal/delegator/accounting/cachewatch.go`, #2933) checks every booked model call, API and delegated backends alike. When a call reads less of the prompt cache than its request should have, foci posts an alert to the session's chat, else to the nearest visible chat up the session's family tree, else to the agent's default chat. It names the tokens read, expected and rewritten, the rewrite's cost and the likely cause. This is a plain notification, not an agent turn — zero tokens spent. A cache that expired after its time-to-live is logged, not alerted.
 
 ```toml
-[debug]
-cache_bust_detect = true           # alert when cache_read drops vs previous request (set false to disable)
+[notify]
+cache_bust_notify = true           # default; set false to stop the chat alerts (hot-applied)
 ```
 
-```
-⚠️ main/i0/0: cache bust, cache_read dropped 43201 → 0
-```
-
-Detection fires on **any** drop in `cache_read` compared to the previous request on the same session — there is no fixed token threshold. To avoid false positives when the cache simply expired due to idle time, alerts are suppressed if the session has been idle longer than 95 % of its cache TTL (computed dynamically per session). The only way to disable detection is `cache_bust_detect = false`; there is no threshold-to-zero knob.
+The older `[debug] cache_bust_detect` (an API-loop-only check) was removed in #3110. A config that still sets it loads, with a startup warning that it does nothing.
 
 ## Monitoring
 

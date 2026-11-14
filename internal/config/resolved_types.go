@@ -338,14 +338,12 @@ func resolveCompaction(m CompactionConfig) ResolvedCompaction {
 type ResolvedDebug struct {
 	LogAPIKeySuffix bool
 	MessagesInLog   bool
-	CacheBustDetect bool
 }
 
 func resolveDebug(m DebugConfig) ResolvedDebug {
 	return ResolvedDebug{
 		LogAPIKeySuffix: DerefBool(m.LogAPIKeySuffix),
 		MessagesInLog:   DerefBool(m.MessagesInLog),
-		CacheBustDetect: DerefBool(m.CacheBustDetect),
 	}
 }
 

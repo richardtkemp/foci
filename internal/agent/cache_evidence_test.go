@@ -159,12 +159,12 @@ func TestProcessAPIResponse_StampsCacheEvidence(t *testing.T) {
 	a, idx := newCacheEvidenceTestAgent(t)
 	sm := &sessionMeta{}
 
-	a.processAPIResponse(orchestratorTestKey, sm, &provider.MessageResponse{}, 0, time.Now(), 0)
+	a.processAPIResponse(orchestratorTestKey, sm, &provider.MessageResponse{}, 0, 0)
 	if _, ok := idx.LastCacheTouch(orchestratorTestKey); ok {
 		t.Fatal("a response with no cache tokens stamped last_cache_touch")
 	}
 	resp := &provider.MessageResponse{Usage: provider.Usage{CacheReadInputTokens: 700}}
-	a.processAPIResponse(orchestratorTestKey, sm, resp, 0, time.Now(), 0)
+	a.processAPIResponse(orchestratorTestKey, sm, resp, 0, 0)
 	if _, ok := idx.LastCacheTouch(orchestratorTestKey); !ok {
 		t.Fatal("a response with cache-read tokens did not stamp last_cache_touch")
 	}

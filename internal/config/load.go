@@ -32,7 +32,6 @@ var boolKeys = map[string]bool{
 	"auto_refresh":                    true,
 	"enable_stop_aliases":             true,
 	"full_payload":                    true,
-	"cache_bust_detect":               true,
 	"log_rotation":                    true,
 	"ws_enabled":                      true,
 	"enabled":                         true,

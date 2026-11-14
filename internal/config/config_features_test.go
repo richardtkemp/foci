@@ -284,7 +284,7 @@ func TestNormalizeBoolStrings(t *testing.T) {
 		{"string value preserved", `name = "hello"`, `name = "hello"`},
 		{"url preserved", `endpoint = "https://on.example.com"`, `endpoint = "https://on.example.com"`},
 		{"non-bool string preserved", `mode = "preview"`, `mode = "preview"`},
-		{"multiline bool keys", "enabled = \"on\"\nlog_rotation = \"off\"\ncache_bust_detect = true", "enabled = true\nlog_rotation = false\ncache_bust_detect = true"},
+		{"multiline bool keys", "enabled = \"on\"\nlog_rotation = \"off\"\nstreaming = true", "enabled = true\nlog_rotation = false\nstreaming = true"},
 		{"mixed bool and string keys", "enabled = \"on\"\nthinking = \"off\"", "enabled = true\nthinking = \"off\""},
 	}
 	for _, tt := range tests {

@@ -67,7 +67,7 @@ type AgentSetupParams struct {
 // cannot hold up foci startup. A non-nil result therefore means "configured",
 // not "connected".
 //
-// Note: notification callback wiring (CacheBustAlert, ManaWarnFunc, etc.) and
+// Note: notification callback wiring (the cache-bust alert sink, ManaWarnFunc, etc.) and
 // ag.AddPlatform are handled by the caller (agents.go wireAgentPlatformCallbacks),
 // not here — this keeps the platform layer decoupled from agent internals.
 func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {

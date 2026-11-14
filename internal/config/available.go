@@ -117,9 +117,6 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	if !cfg.Logging.FullPayload {
 		opts = append(opts, availableOption{"logging", "full_payload", "false", "write full API payloads to file"})
 	}
-	if !DerefBool(cfg.Debug.CacheBustDetect) {
-		opts = append(opts, availableOption{"debug", "cache_bust_detect", "false", "alert on cache_read drop"})
-	}
 	if !DerefBool(cfg.Debug.ExtraCcstreamLogging) {
 		opts = append(opts, availableOption{"debug", "extra_ccstream_logging", "false", "verbose ccstream logs (xtra:ccstream)"})
 	}

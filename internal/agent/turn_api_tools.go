@@ -3,40 +3,17 @@ package agent
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"foci/internal/provider"
 	"foci/internal/tools"
 )
 
-// processAPIResponse handles post-API-call checks: cache bust detection and
-// max_tokens warning. It updates the session metadata cache baseline.
-func (a *Agent) processAPIResponse(sessionKey string, sm *sessionMeta, resp *provider.MessageResponse, cost float64, now time.Time, maxOutput int) { // nolint:unparam
-
-	// Cache bust detection: cache_read dropped significantly vs previous request.
-	// Works for any provider that reports CacheReadInputTokens (Anthropic, OpenAI).
-	// The prevCacheRead > 0 guard ensures we only fire when there was prior cache data.
-	a.metaMu.Lock()
-	prevCacheRead, prevRequestTime := sm.prevCacheRead, sm.prevRequestTime
-	a.metaMu.Unlock()
-	if a.cacheBustDetect() && len(a.CacheBustAlert) > 0 && prevCacheRead > 0 {
-		idleThresh := a.cacheBustIdleThreshold(sessionKey)
-		if idleThresh == 0 {
-			idleThresh = 10 * time.Minute
-		}
-		// Idle is measured from the PREVIOUS request (prevRequestTime = the
-		// last_cache_touch captured at this turn's entry), not the message
-		// received-time — the cache TTL clock starts when a request refreshes the
-		// cache, so request time is the correct basis for "did it lapse naturally".
-		idle := !prevRequestTime.IsZero() && now.Sub(prevRequestTime) > idleThresh
-		if !idle && resp.Usage.CacheReadInputTokens < prevCacheRead {
-			for _, fn := range a.CacheBustAlert {
-				fn(sessionKey, prevCacheRead, resp.Usage.CacheReadInputTokens)
-			}
-		}
-	}
-	// Update cache baseline after every API call so subsequent iterations
-	// within the same tool_use turn don't re-fire the detection.
+// processAPIResponse handles post-API-call checks: the cache baseline, cache
+// warmth evidence and the max_tokens warning. Cache busts are detected by the
+// ledger cache watch (accounting/cachewatch.go, #2933), not here (#3110).
+func (a *Agent) processAPIResponse(sessionKey string, sm *sessionMeta, resp *provider.MessageResponse, cost float64, maxOutput int) { // nolint:unparam
+	// Record this call's cache read as the session's latest (statusline, cache
+	// evidence).
 	a.metaMu.Lock()
 	sm.prevCacheRead = resp.Usage.CacheReadInputTokens
 	a.metaMu.Unlock()

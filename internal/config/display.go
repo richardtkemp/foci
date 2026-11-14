@@ -231,7 +231,6 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 		add("logging", "payload_file", cfg.Logging.PayloadFile)
 	}
 	add("debug", "messages_in_log", cfg.Debug.MessagesInLog)
-	add("debug", "cache_bust_detect", DerefBool(cfg.Debug.CacheBustDetect))
 	add("debug", "extra_ccstream_logging", DerefBool(cfg.Debug.ExtraCcstreamLogging))
 	add("debug", "extra_telegram_logging", DerefBool(cfg.Debug.ExtraTelegramLogging))
 	add("debug", "extra_inbox_logging", DerefBool(cfg.Debug.ExtraInboxLogging))
@@ -474,9 +473,6 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	}
 	if agent.Debug.MessagesInLog != nil {
 		add("messages_in_log", *agent.Debug.MessagesInLog)
-	}
-	if agent.Debug.CacheBustDetect != nil {
-		add("cache_bust_detect", *agent.Debug.CacheBustDetect)
 	}
 	if agent.Environment.Enabled != nil {
 		add("environment.enabled", *agent.Environment.Enabled)

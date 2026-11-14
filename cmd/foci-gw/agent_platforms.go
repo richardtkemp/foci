@@ -72,17 +72,6 @@ func wireAgentPlatformCallbacks(
 		}
 	}
 
-	// Cache bust — session-specific, not a broadcast: the bust concerns ONE
-	// session's cache prefix, so the notice goes to that session's chat
-	// (SessionNotifier where supported, #911), not to every surface.
-	if ag.CacheBustDetect {
-		ag.CacheBustAlert.Add(func(sess string, prev, cur int) {
-			msg := fmt.Sprintf("⚠️ %s: cache bust, cache_read dropped %d → %d", sess, prev, cur)
-			agentLog.Warnf("%s", msg)
-			route.NotifySessionChat(connMgr, acfg.ID, sess, msg)
-		})
-	}
-
 	// Cache bust alert (#2933): every booked call's cache read is checked
 	// (accounting/cachewatch.go); a bust is posted to the session's chat, else
 	// up the family tree, else the default chat. [notify] cache_bust_notify is
@@ -92,12 +81,7 @@ func wireAgentPlatformCallbacks(
 		live:           depthSessionLive,
 		owner:          tools.SpawnBranchOwner,
 		defaultSession: func() string { return defaultSessionKeyFor(ag, acfg.ID) },
-	}, func() bool {
-		if resolvedLive == nil {
-			return true
-		}
-		return resolvedLive.Load().Notify.CacheBustNotify
-	}))
+	}, cacheBustNotifyLive(resolvedLive)))
 
 	// Usage hold (#2491): each agent posts its own start/end notice in its
 	// default chat.
