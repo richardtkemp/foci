@@ -495,7 +495,7 @@ main
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
  ├── slack         → agent, chatmeta, config, log, netretry, platform, session, turn, turnevent, usercmd
  │                  (Slack Socket Mode provider — see Slack Bot section; registers via init() like telegram/discord; blank-imported in main.go)
- ├── app           → agent, chatmeta, turnevent, command, config, delegator, delegator/accounting, dispatch, epdispatch, fap, fastload, log, memory, mermaid, platform, provider, question, ratelimit, secrets, session, skills, sqlite, telemetry, tempdir, toolformat, tools, turn, voice, usercmd (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
+ ├── app           → agent, chatmeta, clock, turnevent, command, config, delegator, delegator/accounting, dispatch, epdispatch, fap, fastload, log, memory, mermaid, platform, provider, question, ratelimit, secrets, session, skills, sqlite, telemetry, tempdir, toolformat, tools, turn, voice, usercmd (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
  ├── netretry      → log (startup-connect retry shared by telegram + discord + slack: Backoff schedule, Do loop, PermanentMarkers auth/transient split)
  ├── askgw         → clock, log, peercred, question (opt-in ask-gateway for external Apps — see Ask Gateway section)
  ├── telemetry     → turnevent, delegator/accounting, log, modelinfo, provider, session, go.opentelemetry.io/otel (+ sdk, otlptracehttp) — OpenTelemetry export of every turn to an OTLP/HTTP collector (Langfuse) plus scores/score configs over its REST API; wired from cmd/foci-gw (init), agent (turn spans), tools + cmd/foci-gw (cross-agent links). See "Tracing".
@@ -3398,6 +3398,35 @@ missing or bad token with 429 without counting it, and a valid login there does
 not reset the bucket. `ServePair` keeps the strict lockout (pairing keys are a
 ~52-bit passphrase): a locked bucket refuses even a valid key.
 
+**Waiting on something other than the user (`waiting.go`, #3112).** The app's
+stay-busy alert asks whether a chat's agent waits for the user or for something
+else. The hub answers per conversation: `ConversationInfo.waitingOnOther` in
+every roster (always sent, true or false; absent = an older server) and a live
+`waitingOnOther` frame (`{conversationId, waitingOnOther}`) on every change, sent
+only to a conversation whose client advertised hello feature `waitingOnOther`
+(`featureWaitingOnOther`; older clients get no new frame). The value is TRUE
+while any of these holds for the session: a turn in flight (warming and a
+rate-limit retry included); an Agent-tool subagent; a background spawn; a wait
+for another agent's reply; a background shell command younger than the
+threshold; a pending async tool result started less than the threshold ago
+(`AsyncNotifier.YoungestPending`); a wake reminder (pending, held or fired) due
+within the threshold (`remindersFor`); input the usage hold holds
+(`Agent.UsageHeldInput`, a mirror of the inbox's `usageHeld` list and the
+injects the hold parked); or, for a depth root, any of its leaves TRUE by the
+rows above. Otherwise FALSE: an ended turn with nothing running waits for the
+user, whatever its text, unread state or open asks. The threshold is
+`behavior.stay_busy_wait_threshold` (default `1h`, global and per agent,
+hot-reloaded through the resolved snapshot, `Agent.StayBusyWaitThreshold`).
+Triggers: `convBinding.applyActivity` on a resolved-activity change
+(`onActivityChange` → `Hub.refreshWaiting`), `Hub.pushReminders`, and
+`app.NotifyWaitInputsChanged` (wired by `Agent.SetOnWaitInputsChanged` in
+`agent_lifecycle.go` to the notifier's pending changes and the usage-held
+mirror). A sweep (`startWaitingSweep`, every 30s on the hub's clock, started
+by `StartAll`) sends changes that time alone causes, so a device hears them
+within a minute. A leaf's refresh also refreshes its root. This is a stay-busy
+rule, not a display rule: the Activity frame, `activityIdle` and the auto-close
+sweep do not change (an old background command is still shown running).
+
 **Push (`push.go`, slice 5):** offline wake via FCM v1 data-messages. `fcmPusher`
 authenticates with a service-account token source (`golang.org/x/oauth2/google`,
 auto-refreshing). `newFCMPusherForApp` resolves the credential in priority
@@ -3426,7 +3455,12 @@ conversation PER DEVICE per `push_coalesce` window, default 15s; keyed
 `pushKey{convID, deviceID}` so one device's wake never swallows another's, and
 the `hello` branch calls `pusher.deviceConnected` to clear that device's windows
 because its replay consumed the wake, #1204) and sends a hint
-(`conversationId` + short preview, never full text). The app wakes, reconnects,
+(`conversationId` + short preview, never full text). The message wake also
+carries `data.seq` (#3112): the decimal server seq of the frame that caused it
+(`pushPayload.Seq`, set in `convBinding.sendThen`), in the conversation's frame
+seq space (the roster's `lastSeq`), so a device that lacks the message knows
+which later frame or read covers it. A coalesced wake carries the seq of the
+message whose push was sent. The app wakes, reconnects,
 and replays for content. `hello.caps.push` advertises `["fcm"]` when enabled.
 Every push carries `data.type`: `"message"` for that wake, `"read"` for a **read
 wake** (#2182). `handleRead`, after a watermark advance and its `ReadSync`

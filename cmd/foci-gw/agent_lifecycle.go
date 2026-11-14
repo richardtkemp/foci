@@ -185,6 +185,9 @@ func (e *agentEnv) buildAgent(acfg config.AgentConfig) *agentInstance {
 	// Show each chat's pending wake reminders in the app, kept current on
 	// every set, fire, cancel and run (#2600).
 	app.SetReminderStore(acfg.ID, am.reminders, inst.ag.SystemInputHeld)
+	// Re-check a chat's waiting-on-other value (the app's stay-busy rule,
+	// #3112) when its pending async results or usage-held input change.
+	inst.ag.SetOnWaitInputsChanged(app.NotifyWaitInputsChanged)
 	// Push a backend-generated alias (Codex thread name) to the app at once,
 	// not on its next reconnect (#2157).
 	inst.ag.SetOnAliasChanged(app.NotifyAliasChanged)

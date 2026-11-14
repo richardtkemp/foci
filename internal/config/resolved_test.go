@@ -3,6 +3,7 @@ package config
 import (
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestResolve_AgentOverridesGlobal(t *testing.T) {
@@ -419,5 +420,25 @@ func TestResolve_PromptSuggestionMaxUsage(t *testing.T) {
 	}
 	if got := Resolve(cfg, AgentConfig{Behavior: BehaviorConfig{PromptSuggestionMaxUsage: Ptr(0)}}).Behavior.PromptSuggestionMaxUsage; got != 0 {
 		t.Errorf("agent 0 over global 70 = %d, want 0", got)
+	}
+}
+
+// #3112: behavior.stay_busy_wait_threshold defaults to 1h, a global value
+// applies to every agent, and an agent's own value wins.
+func TestResolve_StayBusyWaitThreshold(t *testing.T) {
+	if got := Resolve(&Config{}, AgentConfig{ID: "a"}).Behavior.StayBusyWaitThresholdDuration(); got != time.Hour {
+		t.Fatalf("unset: %s, want 1h", got)
+	}
+	global := &Config{Behavior: BehaviorConfig{StayBusyWaitThreshold: Ptr("30m")}}
+	if got := Resolve(global, AgentConfig{ID: "a"}).Behavior.StayBusyWaitThresholdDuration(); got != 30*time.Minute {
+		t.Fatalf("global 30m: %s", got)
+	}
+	agent := AgentConfig{ID: "a", Behavior: BehaviorConfig{StayBusyWaitThreshold: Ptr("10m")}}
+	if got := Resolve(global, agent).Behavior.StayBusyWaitThresholdDuration(); got != 10*time.Minute {
+		t.Fatalf("agent 10m over global 30m: %s", got)
+	}
+	bad := &Config{Behavior: BehaviorConfig{StayBusyWaitThreshold: Ptr("soon")}}
+	if got := Resolve(bad, AgentConfig{ID: "a"}).Behavior.StayBusyWaitThresholdDuration(); got != time.Hour {
+		t.Fatalf("unparseable: %s, want the 1h default", got)
 	}
 }

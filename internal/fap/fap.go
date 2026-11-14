@@ -99,6 +99,10 @@ const (
 	// pending wake reminders (#2600), re-sent on every change; an empty list
 	// clears the indicator. Snapshot half: ConversationInfo.Reminders.
 	TypeReminders = "reminders"
+	// TypeWaitingOnOther (server->app) says whether a conversation's agent is
+	// waiting on something other than the user (#3112), re-sent on every
+	// change. Snapshot half: ConversationInfo.WaitingOnOther.
+	TypeWaitingOnOther = "waitingOnOther"
 	// TypePromptSuggestion carries the agent backend's prediction of what the
 	// user will type next (#2916). The app shows it until the conversation moves on.
 	TypePromptSuggestion = "prompt.suggestion"
@@ -402,6 +406,13 @@ type ConversationInfo struct {
 	// conversation of the tree's root. Such a conversation is not listed in the
 	// roster; the root's depth view shows it. Empty on every ordinary chat.
 	DepthRootID string `json:"depthRootId,omitempty"`
+	// WaitingOnOther is the roster snapshot of the WaitingOnOther frame
+	// (#3112): true while the agent waits on something other than the user
+	// (a turn, subagent, spawn, awaited agent, young background command or
+	// async result, a wake due soon, a usage-held message, or a working depth
+	// leaf), false while it waits for the user. Always sent, never omitted,
+	// so a client can tell a false value from a server that predates it.
+	WaitingOnOther bool `json:"waitingOnOther"`
 }
 
 // Tokens is the token accounting carried by `meta`.
@@ -764,6 +775,19 @@ type Reminders struct {
 }
 
 func (Reminders) Type() string { return TypeReminders }
+
+// WaitingOnOther carries one conversation's waiting-on-something-else value
+// (#3112), sent whenever it changes, including a change that comes only from
+// time passing (a background command or async result ageing past the stay-busy
+// threshold, a wake coming within it). false means the agent is waiting for
+// the user. The Activity frame is unaffected: this is the stay-busy rule, not
+// what the app shows. App-only.
+type WaitingOnOther struct {
+	ConversationID string `json:"conversationId"`
+	WaitingOnOther bool   `json:"waitingOnOther"`
+}
+
+func (WaitingOnOther) Type() string { return TypeWaitingOnOther }
 
 // AskgwPrompt is one pending ask-gateway question (#2707). PromptID is the
 // server's routing key, echoed in AskgwResponse. Header is a short title

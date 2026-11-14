@@ -140,6 +140,9 @@ func (h *Hub) pushReminders(agentID string) {
 	h.mu.RUnlock()
 	for _, b := range bindings {
 		b.setReminders(remindersFor(agentID, b.key()))
+		// A wake set, fired, cancelled or run can move the conversation's
+		// waiting-on-other value (#3112).
+		h.refreshWaiting(b)
 	}
 }
 

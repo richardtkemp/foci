@@ -20,6 +20,7 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/chatmeta"
+	"foci/internal/clock"
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/delegator"
@@ -189,6 +190,14 @@ type Hub struct {
 	// concurrent config.* frames cannot interleave their plans over one file.
 	// Leaf-level like pinsMu — taken and released inside one handler call.
 	configEditMu sync.Mutex
+
+	// Waiting-on-other (#3112, waiting.go). waitClock is the clock the rule
+	// and its sweep run on (nil = the wall clock; tests set a fake);
+	// waitInputsFor replaces the agent lookup in tests (nil = the agent's
+	// own); waitSweepOnce starts the sweep once.
+	waitClock     clock.Clock
+	waitInputsFor func(agentID string) waitInputs
+	waitSweepOnce sync.Once
 
 	wizardMu      sync.Mutex
 	wizards       map[string]*wizardSession // wizardId → live out-of-band wizard session
@@ -996,6 +1005,7 @@ func (h *Hub) HasFacet(string) bool                 { return false }
 // with no gateway context start no loop (startAutoCloseSweep).
 func (h *Hub) StartAll(context.Context) {
 	defer h.startAutoCloseSweep()
+	defer h.startWaitingSweep()
 	// Aged-checkbox sweep (#1360): documents not updated for the resolved
 	// retention age ([platforms.app].checkbox_retention; zero = the code
 	// default) go at hub start (the spec's allowed cadence). Before the
@@ -1194,8 +1204,18 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 	// of its full thread list; the roster advertises agents + currently-bound
 	// conversations and any the app resumes are re-attached on hello).
 	byAgent := make(map[string][]fap.ConversationInfo)
+	// Pending wake reminders (#2600), listed live from the store like the
+	// cache expiry below, so a reconnect after a restart sees the truth. A
+	// depth leaf's conversation carries its own (#2646). Read first: the
+	// waiting-on-other value (#3112) needs every conversation's list.
+	remindersByConv := make(map[string][]fap.PendingReminder, len(h.convs))
+	for id, b := range h.convs {
+		remindersByConv[id] = remindersFor(b.identity())
+	}
+	waiting := h.rosterWaitingLocked(remindersByConv)
 	for _, b := range h.convs {
 		ci := b.info()
+		ci.WaitingOnOther = waiting[b.convID]
 		ci.Title = h.aliasFor(b)
 		// b.cacheExpiryMs is a push-dedup cache (set by setCacheExpiry on a live
 		// touch) — it does NOT get rehydrated when ensureBinding rebuilds a
@@ -1209,11 +1229,9 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 		if conn := h.agents[b.agent()]; conn != nil && conn.agentRef != nil {
 			ci.CacheExpiryMs = conn.agentRef.CacheExpiryMs(b.key(), time.Now())
 		}
-		// Pending wake reminders (#2600), listed live from the store like the
-		// cache expiry above, so a reconnect after a restart sees the truth. A
-		// depth leaf's conversation carries its own (#2646).
-		// The list becomes the push cache too (#2602): the device now holds it.
-		rs := remindersFor(b.identity())
+		// The pending wake list read above becomes the push cache too
+		// (#2602): the device now holds it.
+		rs := remindersByConv[b.convID]
 		if len(rs) > 0 {
 			ci.Reminders = rs
 		}
@@ -1729,7 +1747,7 @@ func (h *Hub) ensureBinding(client *wsClient, agentID, convID string) *convBindi
 		}
 		return existing
 	}
-	b = &convBinding{convID: convID, chatID: chatID, replayDepth: h.replayDepth, replayTTL: h.replayTTL, store: h.frames, seq: h.frames.MaxSeq(convID), seen: make(map[string]struct{}), notifyOffline: h.pushNotify, onMessageStored: h.chatMessageStored}
+	b = &convBinding{convID: convID, chatID: chatID, replayDepth: h.replayDepth, replayTTL: h.replayTTL, store: h.frames, seq: h.frames.MaxSeq(convID), seen: make(map[string]struct{}), notifyOffline: h.pushNotify, onMessageStored: h.chatMessageStored, onActivityChange: h.refreshWaiting}
 	b.setIdent(agentID, sk)
 	if preview, sentMs, ok := h.frames.LastVisible(convID); ok {
 		b.lastPreview = preview
@@ -2739,6 +2757,18 @@ type convBinding struct {
 	// leaf holds the depth manager's hooks while the leaf's view is registered
 	// (nil otherwise, and on every ordinary chat). See depth.go. Guarded by mu.
 	leaf *leafView
+
+	// Waiting-on-other (#3112, waiting.go). onActivityChange runs after a
+	// change of the resolved activity (applyActivity), off mu; nil = none
+	// (the hub sets Hub.refreshWaiting). waitingOther is the value the
+	// devices hold (the last WaitingOnOther frame; false before any).
+	// commandSeenMs is when each background command with no start time of
+	// its own was first seen. waitMu serialises a refresh's evaluate-and-send.
+	// waitingOther and commandSeenMs are guarded by mu.
+	onActivityChange func(b *convBinding)
+	waitMu           sync.Mutex
+	waitingOther     bool
+	commandSeenMs    map[string]int64
 }
 
 // agent returns the binding's owning agent id ("" when unset).
@@ -3108,6 +3138,7 @@ func (b *convBinding) setSubagents(detail string, running []fap.RunningSubagent)
 	b.applyActivity(func() {
 		b.subagentDetail = detail
 		b.subagents = running
+		b.noteCommandsSeenLocked(time.Now())
 	})
 }
 
@@ -3173,9 +3204,13 @@ func (b *convBinding) applyActivity(mutate func()) {
 	if changed {
 		b.activitySent = a
 	}
+	hook := b.onActivityChange
 	b.mu.Unlock()
 	if changed {
 		b.send(a)
+		if hook != nil {
+			hook(b)
+		}
 	}
 }
 
@@ -3326,6 +3361,7 @@ func (b *convBinding) sendThen(frame fap.ServerFrame, onRecorded func()) {
 			Preview:    preview,
 			AgentID:    b.agent(),
 			SessionKey: sessionKey,
+			Seq:        seq,
 			ChatID:     b.chatID,
 		})
 	}

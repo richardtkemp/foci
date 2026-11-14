@@ -296,6 +296,9 @@ var (
 		"behavior.turn_lock_warn_threshold", "agent.behavior.turn_lock_warn_threshold",
 		// #2931: read per turn by Agent.promptSuggestionMaxUsage, carried on the inject.
 		"behavior.prompt_suggestion_max_usage", "agent.behavior.prompt_suggestion_max_usage",
+		// #3112: read per evaluation of the app's waiting-on-other value by
+		// Agent.StayBusyWaitThreshold (the resolved snapshot).
+		"behavior.stay_busy_wait_threshold", "agent.behavior.stay_busy_wait_threshold",
 		"display.show_tool_calls", "agent.display.show_tool_calls", "platforms.display.show_tool_calls",
 		"display.statusline", "agent.display.statusline", "platforms.display.statusline",
 		// #1241: reflection session-end + compaction fields, read live at the

@@ -402,6 +402,7 @@ func (a *Agent) dispatchInject(ctx context.Context, inb *sessionInbox, env Envel
 		}
 		inb.held = append(inb.held, env)
 		inb.heldGen++
+		a.syncUsageHeldMirror(inb)
 		a.ensureHeldWatch(ctx, inb)
 		return true
 	}
@@ -477,6 +478,7 @@ func (a *Agent) releaseHeld(ctx context.Context, inb *sessionInbox) bool {
 	if len(inb.held) == 0 {
 		stopHeldWatch(inb)
 	}
+	a.syncUsageHeldMirror(inb)
 	return ok
 }
 
@@ -492,6 +494,7 @@ func (a *Agent) refuseHeld(inb *sessionInbox) {
 		a.refuseDroppedInject(env)
 	}
 	inb.held = nil
+	a.syncUsageHeldMirror(inb)
 }
 
 // refuseDroppedInject releases an injection's waiter when the inbox must drop

@@ -3,6 +3,7 @@ package tools
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"foci/internal/clock"
 )
@@ -16,8 +17,14 @@ import (
 type AsyncNotifier struct {
 	fn func(targetSession, message, replyToSession, trigger string, origin *AgentOrigin)
 
-	mu      sync.Mutex
-	pending map[string]int // session key → count of pending results
+	mu sync.Mutex
+	// pending holds, per session key, the start time of each pending result,
+	// oldest first. Its length is the pending count; the times feed
+	// YoungestPending (#3112).
+	pending map[string][]time.Time
+	// onChange is called with the session key after its pending set changed
+	// (SetOnChange); nil = none.
+	onChange func(sessionKey string)
 
 	// clk arms RunInBackground's auto-background threshold timer. nil means
 	// the wall clock; tests set a *clock.Fake through WithClock.
@@ -128,35 +135,79 @@ func (n *AsyncNotifier) clock() clock.Clock {
 func NewAsyncNotifier(fn func(targetSession, message, replyToSession, trigger string, origin *AgentOrigin)) *AsyncNotifier {
 	return &AsyncNotifier{
 		fn:      fn,
-		pending: make(map[string]int),
+		pending: make(map[string][]time.Time),
 	}
 }
 
-// MarkPending increments the pending async result count for a session.
-// Call this before dispatching async work. Safe to call on a nil receiver.
-func (n *AsyncNotifier) MarkPending(sessionKey string) {
+// SetOnChange registers fn to be called, outside the notifier's lock, with
+// the session key whenever a session's pending results change (MarkPending,
+// MarkDone). The app's waiting-on-other value re-reads YoungestPending then
+// (#3112). Safe on a nil receiver.
+func (n *AsyncNotifier) SetOnChange(fn func(sessionKey string)) {
 	if n == nil {
 		return
 	}
 	n.mu.Lock()
-	n.pending[sessionKey]++
+	n.onChange = fn
 	n.mu.Unlock()
 }
 
-// MarkDone decrements the pending async result count for a session.
+// YoungestPending returns the start time of the session's most recently
+// started pending result, and false when none is pending. Safe on a nil
+// receiver.
+func (n *AsyncNotifier) YoungestPending(sessionKey string) (time.Time, bool) {
+	if n == nil {
+		return time.Time{}, false
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	list := n.pending[sessionKey]
+	if len(list) == 0 {
+		return time.Time{}, false
+	}
+	return list[len(list)-1], true
+}
+
+// MarkPending increments the pending async result count for a session,
+// recording the start time on the notifier's clock. Call this before
+// dispatching async work. Safe to call on a nil receiver.
+func (n *AsyncNotifier) MarkPending(sessionKey string) {
+	if n == nil {
+		return
+	}
+	now := n.clock().Now()
+	n.mu.Lock()
+	n.pending[sessionKey] = append(n.pending[sessionKey], now)
+	fn := n.onChange
+	n.mu.Unlock()
+	if fn != nil {
+		fn(sessionKey)
+	}
+}
+
+// MarkDone decrements the pending async result count for a session. Results
+// are not told apart, so the oldest start time goes: the youngest remaining
+// start, which YoungestPending reports, can only be later than the truth.
 // Safe to call on a nil receiver.
 func (n *AsyncNotifier) MarkDone(sessionKey string) {
 	if n == nil {
 		return
 	}
 	n.mu.Lock()
-	if n.pending[sessionKey] > 0 {
-		n.pending[sessionKey]--
-		if n.pending[sessionKey] == 0 {
+	changed := false
+	if list := n.pending[sessionKey]; len(list) > 0 {
+		changed = true
+		if len(list) == 1 {
 			delete(n.pending, sessionKey)
+		} else {
+			n.pending[sessionKey] = list[1:]
 		}
 	}
+	fn := n.onChange
 	n.mu.Unlock()
+	if changed && fn != nil {
+		fn(sessionKey)
+	}
 }
 
 // HasPending returns true if the session has any pending async results.
@@ -167,7 +218,7 @@ func (n *AsyncNotifier) HasPending(sessionKey string) bool {
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	return n.pending[sessionKey] > 0
+	return len(n.pending[sessionKey]) > 0
 }
 
 // InjectToAgent delivers a message to the specified agent session for processing.

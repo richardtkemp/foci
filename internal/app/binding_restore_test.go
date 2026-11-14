@@ -316,7 +316,8 @@ func TestConvBindingFieldCensus(t *testing.T) {
 		"convID": true, "ident": true, "chatID": true, // ident: agent + session key, set by ensureBinding (setIdent)
 		"replayDepth": true, "replayTTL": true, "store": true,
 		"notifyOffline": true, "seq": true, "seen": true,
-		"onMessageStored": true, // h.chatMessageStored (#2962, #2993)
+		"onMessageStored":  true, // h.chatMessageStored (#2962, #2993)
+		"onActivityChange": true, // h.refreshWaiting (#3112)
 	}
 	// durableBacked: correctness depends on a value from persistent storage
 	// (frameStore / SessionIndex) that predates this process — MUST be
@@ -365,6 +366,11 @@ func TestConvBindingFieldCensus(t *testing.T) {
 		// builds: only registerDepthLeaf sets it, which the depth manager's
 		// Restore re-runs from its own records after a restart (#2588, #2611).
 		"leaf": true,
+		// Waiting-on-other (#3112): waitingOther is the devices' copy, false
+		// until a frame is sent; the roster on hello computes the truth and the
+		// sweep sends any change. commandSeenMs belongs to running background
+		// commands, which the backend re-reports; waitMu is a lock.
+		"waitMu": true, "waitingOther": true, "commandSeenMs": true,
 	}
 
 	rt := reflect.TypeOf(convBinding{})

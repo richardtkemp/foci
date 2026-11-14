@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -218,7 +219,13 @@ type pushPayload struct {
 	AgentName    string
 	SessionKey   string
 	SessionTitle string
-	ChatID       int64 // internal; not sent to FCM
+	// Seq is the server seq of the frame that caused the wake (#3112), in the
+	// conversation's frame seq space (the roster's lastSeq). Sent as the "seq"
+	// data key, so a phone that lacks the message knows which later read or
+	// frame covers it. A coalesced wake carries the seq of the message that
+	// caused the push that was sent.
+	Seq    int64
+	ChatID int64 // internal; not sent to FCM
 }
 
 // fcmPusher sends data-only FCM v1 messages, authenticating with a
@@ -570,6 +577,7 @@ func (p *fcmPusher) send(token string, payload pushPayload) {
 		"agentName":      payload.AgentName,
 		"sessionKey":     payload.SessionKey,
 		"sessionTitle":   payload.SessionTitle,
+		"seq":            strconv.FormatInt(payload.Seq, 10),
 	}, map[string]any{"priority": "high"})
 }
 

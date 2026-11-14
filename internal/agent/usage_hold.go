@@ -54,6 +54,11 @@ type usageHoldState struct {
 	// (UsageHoldPause).
 	turns  map[*holdTurn]bool
 	paused map[string]string
+	// heldBySession mirrors, per session, how much input the hold holds
+	// (inb.usageHeld plus the injects it parked), for UsageHeldInput (#3112).
+	// The lists are worker-confined; the mirror is what other goroutines read.
+	mirrorMu      sync.Mutex
+	heldBySession map[string]int
 }
 
 // usageRegistry is the registry this agent reports to: UsageHoldRegistry when
@@ -315,6 +320,7 @@ func (a *Agent) parkUsageHeld(inb *sessionInbox, env Envelope) {
 	} else {
 		inb.usageHeld = append(inb.usageHeld, env)
 	}
+	a.syncUsageHeldMirror(inb)
 	st := a.UsageHold()
 	a.logger().Infof("inbox: usage hold (%s) holds a message sk=%s (%dB, resume=%v, %d held)", st.Phase, env.SessionKey, len(env.Text), env.usageResume, len(inb.usageHeld))
 	if fn := a.TurnQueuedNotifyFunc; fn != nil && !env.Automated && !env.usageResume && !restored {
@@ -335,6 +341,7 @@ func (a *Agent) releaseUsageHeld(ctx context.Context, inb *sessionInbox) bool {
 	}
 	held := inb.usageHeld
 	inb.usageHeld = nil
+	a.syncUsageHeldMirror(inb)
 	if held[0].usageResume && len(held) > 1 {
 		head, src := &held[0], held[1]
 		head.Driver, head.UserID, head.Username, head.SenderName = src.Driver, src.UserID, src.Username, src.SenderName

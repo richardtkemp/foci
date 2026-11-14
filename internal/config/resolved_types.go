@@ -1,5 +1,7 @@
 package config
 
+import "time"
+
 // Resolved* types are concrete (non-pointer) versions of the pointer-based
 // config sub-types. Produced by Resolve() with all defaults baked in.
 // Consumers read fields directly — no DerefBool/DerefStr/DerefInt needed.
@@ -58,6 +60,26 @@ type ResolvedBehavior struct {
 	// a Claude Code backend predicts no next prompt (#2931); 0, the default, is
 	// off (#2951).
 	PromptSuggestionMaxUsage int
+	// StayBusyWaitThreshold is behavior.stay_busy_wait_threshold (#3112), a
+	// duration string: how far ahead a wake, and how old a background command
+	// or async result, still counts as waiting on something other than the
+	// user. Parse with StayBusyWaitThresholdDuration.
+	StayBusyWaitThreshold string
+}
+
+// DefaultStayBusyWaitThreshold is behavior.stay_busy_wait_threshold's
+// default, also used when the value is empty or does not parse.
+const DefaultStayBusyWaitThreshold = time.Hour
+
+// StayBusyWaitThresholdDuration parses StayBusyWaitThreshold, falling back
+// to DefaultStayBusyWaitThreshold for an empty, unparseable or non-positive
+// value (validation rejects a bad value at load; this guards a config built
+// without it).
+func (b ResolvedBehavior) StayBusyWaitThresholdDuration() time.Duration {
+	if d, err := time.ParseDuration(b.StayBusyWaitThreshold); err == nil && d > 0 {
+		return d
+	}
+	return DefaultStayBusyWaitThreshold
 }
 
 // DefaultPromptSuggestionMaxUsage is behavior.prompt_suggestion_max_usage's
@@ -81,6 +103,7 @@ func resolveBehavior(m BehaviorConfig) ResolvedBehavior {
 		MaxConcurrentTurns:    DerefInt(m.MaxConcurrentTurns),
 
 		PromptSuggestionMaxUsage: derefIntOr(m.PromptSuggestionMaxUsage, DefaultPromptSuggestionMaxUsage),
+		StayBusyWaitThreshold:    DerefStr(m.StayBusyWaitThreshold),
 	}
 }
 

@@ -191,6 +191,9 @@ type Agent struct {
 	UsageHoldNotifyFunc           func(text string)                       // posts a usage-hold start/end notice in the agent's default chat (#2491); nil = none
 	UsageHoldChangeFunc           []func(usagehold.Change)                // further reactions to a usage-hold phase change (#2491)
 	usageHold                     usageHoldState
+	// waitInputsChanged is the app's stay-busy hook (SetOnWaitInputsChanged,
+	// #3112); nil = none.
+	waitInputsChanged atomic.Pointer[func(sessionKey string)]
 
 	// LoginGate is the re-login gate of this agent's Claude Code account
 	// (#3104 Q13): agents on one account share it, agents on another account
