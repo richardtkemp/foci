@@ -98,8 +98,13 @@ func countSentMethod(h *testharness.Harness, token, method string) int {
 
 // sentCallSummary renders the stub's call log for failure messages.
 func sentCallSummary(h *testharness.Harness, token string) string {
+	return formatSentCalls(h.TelegramStub().PeekSent(token))
+}
+
+// formatSentCalls renders a list of recorded stub calls, one per line.
+func formatSentCalls(calls []testharness.SentCall) string {
 	var sb strings.Builder
-	for _, c := range h.TelegramStub().PeekSent(token) {
+	for _, c := range calls {
 		sb.WriteString("  ")
 		sb.WriteString(c.Method)
 		sb.WriteString(" ")
@@ -720,10 +725,16 @@ func TestL2_Files_SendToChatAudio_RoutesToSendAudio(t *testing.T) {
 // sendMessage. Counterpart of the long-text fallback test below.
 func TestL2_Files_SendToChatFile_WithCaption_CaptionIncluded(t *testing.T) {
 	testharness.ParallelWait(t)
+	// DEBUG plus ccstream/inbox logging, dumped by the harness on failure:
+	// this test fails rarely and only under load, and the INFO log cannot
+	// show which path sent the priming reply twice (#3116).
+	logDir := t.TempDir()
 	const userID = 8006
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
 		ReadyTimeout: 30 * time.Second,
+		ExtraConfigTOML: scopedLoggingTOML(logDir, logDir+"/foci.log", false) +
+			"level = \"DEBUG\"\n[debug]\nextra_ccstream_logging = true\nextra_inbox_logging = true\n",
 	})
 	token := h.AgentBotToken("alpha")
 
@@ -735,7 +746,10 @@ func TestL2_Files_SendToChatFile_WithCaption_CaptionIncluded(t *testing.T) {
 	primeChatID(t, h, "alpha", userID)
 	// Reset any stub call log accumulated by the priming turn so the
 	// "no sendMessage was made" assertion only sees the scripted turn.
-	h.TelegramStub().DrainSent(token)
+	// The drained calls are kept for the failure message (#3116): they show
+	// which sendMessage satisfied primeChatID's wait if the priming reply
+	// later lands after the reset.
+	primed := h.TelegramStub().DrainSent(token)
 
 	caption := "short caption please attach"
 	writeSendToChatScript(t, h, "alpha",
@@ -758,8 +772,8 @@ func TestL2_Files_SendToChatFile_WithCaption_CaptionIncluded(t *testing.T) {
 	// assert "zero sendMessage" — the assistant-reply path can race.
 	time.Sleep(500 * time.Millisecond)
 	if n := countSentMethod(h, token, "sendMessage"); n != 0 {
-		t.Errorf("expected 0 sendMessage calls (caption should ride on sendDocument) but saw %d\n--- sent ---\n%s",
-			n, sentCallSummary(h, token))
+		t.Errorf("expected 0 sendMessage calls (caption should ride on sendDocument) but saw %d\n--- sent ---\n%s--- drained after priming ---\n%s",
+			n, sentCallSummary(h, token), formatSentCalls(primed))
 	}
 }
 
