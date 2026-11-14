@@ -336,6 +336,10 @@ type SandboxConfig struct {
 // "use the backend's default". Used in [agents.backend_config].
 // Pointer types are required for the config cascade (Merge[T] uses
 // reflect.Value.IsNil to distinguish "not set" from zero).
+//
+// Env stays restart-only, with no hot tag (Dick 2026-11-14, #3104 Q17): it can
+// name a Claude Code agent's own config folder (CLAUDE_CONFIG_DIR), read when
+// the agent is set up.
 type BackendConfig struct {
 	// Backend policy is captured by long-lived shared app-server/facade instances;
 	// changing this field requires a restart, like the existing sandbox setting.
@@ -348,7 +352,7 @@ type BackendConfig struct {
 	Binary            *string           `toml:"binary"             desc:"Path to the backend executable (default: resolved via $PATH)"`
 	IdleTimeout       *string           `toml:"idle_timeout"       desc:"How long a delegated session can sit idle before shutdown. Empty = 3h" type:"duration"`
 	SkipPermissions   *bool             `toml:"skip_permissions"   desc:"Skip all permission prompts (CC --dangerously-skip-permissions). For unattended agents only"`
-	Env               map[string]string `toml:"env"                desc:"Environment variables passed to the backend subprocess"`
+	Env               map[string]string `toml:"env"                desc:"Environment variables passed to the backend subprocess. Restart required. For Claude Code, CLAUDE_CONFIG_DIR here gives the agent its own CC config folder (transcripts, settings.json): foci reads that agent's CC state there. After a change of CLAUDE_CONFIG_DIR the agent's existing chats cannot resume (their transcripts stay in the old folder) and start fresh; foci moves and copies nothing"`
 	Hostname          *string           `toml:"hostname"           desc:"Bind address for the opencode serve subprocess (default 127.0.0.1)"`
 	ServerAuth        *string           `toml:"server_auth"        desc:"HTTP basic auth password for the opencode server (empty = no auth)"`
 	LogLevel          *string           `toml:"log_level"          desc:"opencode serve --log-level (empty = INFO)"`

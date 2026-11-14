@@ -137,10 +137,10 @@ func initSessions(cfg *config.Config) sessionInfra {
 		}
 
 		// Background integrity sweep — prune index entries for deleted files.
+		// Logged even when nothing was pruned: the line marks the sweep done,
+		// which the L2 tests of rows surviving a restart wait for (#3104).
 		go func() {
-			if n := sessionIndex.PruneOrphans(); n > 0 {
-				mainLog.Infof("session index: pruned %d orphan entries", n)
-			}
+			mainLog.Infof("session index: pruned %d orphan entries", sessionIndex.PruneOrphans())
 		}()
 
 		// Start archive sweep goroutine

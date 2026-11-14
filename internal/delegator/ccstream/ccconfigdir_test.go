@@ -33,7 +33,7 @@ func TestCCStateFollowsClaudeConfigDir(t *testing.T) {
 	if got, want := b.SessionFilePath(), filepath.Join(slugDir, "sess-1.jsonl"); got != want {
 		t.Errorf("SessionFilePath = %q, want %q", got, want)
 	}
-	if got, err := ccTranscriptPath(workDir, "sess-1"); err != nil || got != filepath.Join(slugDir, "sess-1.jsonl") {
+	if got, err := ccTranscriptPath(nil, workDir, "sess-1"); err != nil || got != filepath.Join(slugDir, "sess-1.jsonl") {
 		t.Errorf("ccTranscriptPath = %q, %v", got, err)
 	}
 	if got, want := b.subagentFilePath("a1", ".jsonl"), filepath.Join(slugDir, "sess-1", "subagents", "agent-a1.jsonl"); got != want {
@@ -65,7 +65,7 @@ func TestCCStateFollowsClaudeConfigDir(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(ccDir, "settings.json"), []byte(`{"cleanupPeriodDays": 7}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := CleanupPeriod(); got != 7*24*time.Hour {
+	if got := CleanupPeriod(nil); got != 7*24*time.Hour {
 		t.Errorf("CleanupPeriod = %v, want 7 days from CLAUDE_CONFIG_DIR/settings.json", got)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude")); !os.IsNotExist(err) {

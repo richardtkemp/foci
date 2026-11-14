@@ -2,6 +2,9 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"io/fs"
+	"os"
 	"sync"
 	"time"
 
@@ -435,10 +438,7 @@ func (a *Agent) recordTurnActivity(ts *TurnState) {
 	}
 	a.metaMu.Unlock()
 
-	filePath := ""
-	if a.DelegatedManager != nil {
-		filePath = a.DelegatedManager.SessionFilePath(ts.SessionKey)
-	}
+	filePath := a.indexFilePath(ts.SessionKey)
 	bumpUser := isInteractiveTrigger(ts.Trigger) || HumanSourceFromContext(ts.Ctx)
 	entry := session.SessionIndexEntry{
 		SessionKey:  ts.SessionKey,
@@ -448,6 +448,35 @@ func (a *Agent) recordTurnActivity(ts *TurnState) {
 		Status:      session.SessionStatusActive,
 	}
 	a.SessionIndex.RecordTurnReceipt(entry, countsAsActivity(ts.Trigger), bumpUser)
+}
+
+// indexFilePath is the backend transcript path a turn records in the
+// session index row (file_path), which startup's PruneOrphans stats: a row
+// whose file is gone is purged with its metadata and resume history.
+//
+// The row keeps the path it already holds when the backend names none (no
+// backend is running yet: a turn's entry after a restart) or names one that
+// is not on disk yet. The backend can name such a path before it has written
+// anything there: Claude Code's path is inferred from the resume id before CC
+// reports its session (#2469), and after an agent's CC config folder changes
+// (#3104) that inferred path is in the new folder, where the old session
+// never was. Recording it would let a restart in that window purge a chat
+// whose transcript still exists. Once the backend writes the file, the next
+// turn or round records it.
+func (a *Agent) indexFilePath(sessionKey string) string {
+	if a.DelegatedManager == nil {
+		return ""
+	}
+	path := a.DelegatedManager.SessionFilePath(sessionKey)
+	if path != "" {
+		if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
+			return path
+		}
+	}
+	if e, err := a.SessionIndex.Get(sessionKey); err == nil {
+		return e.FilePath
+	}
+	return ""
 }
 
 // recordTurnRan performs the write that claims a delegated turn RAN, once its
@@ -480,10 +509,7 @@ func (a *Agent) touchTurnActivity(sessionKey, trigger string) {
 	if a.SessionIndex == nil || sessionKey == "" {
 		return
 	}
-	filePath := ""
-	if a.DelegatedManager != nil {
-		filePath = a.DelegatedManager.SessionFilePath(sessionKey)
-	}
+	filePath := a.indexFilePath(sessionKey)
 	a.SessionIndex.RecordTurnReceipt(session.SessionIndexEntry{
 		SessionKey:  sessionKey,
 		FilePath:    filePath,

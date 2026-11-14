@@ -145,10 +145,17 @@ root.2026-03-13T10-30-00Z.jsonl.gz (gzipped, original deleted)
 ## Coding-Agent Transcripts (ccstream)
 
 For the `claude-code` (ccstream) backend the conversation lives in Claude
-Code's own transcript, `~/.claude/projects/<cwd-slug>/<sessionID>.jsonl`, not a
-foci `root.jsonl`. `Backend.SessionFilePath()` derives that path from the live
-session id + workdir (the same construction `ForkSession` uses to locate a
-parent), so the session-index row carries it like any native file. Consequences:
+Code's own transcript, `<CC config folder>/projects/<cwd-slug>/<sessionID>.jsonl`,
+not a foci `root.jsonl`. The CC config folder is per agent (#3104,
+`ccaccount.ForAgent`): the agent's `[agents.<id>.backend_config] env`
+`CLAUDE_CONFIG_DIR` when set, else a `CLAUDE_CONFIG_DIR` from the operator's
+shell rc file, else the host folder (`~/.claude`, or `<install root>/.claude`
+on a separate-root install). `Backend.SessionFilePath()` derives that path from
+the live session id + workdir (the same construction `ForkSession` uses to
+locate a parent), so the session-index row carries it like any native file. A
+turn records the path only once the file exists; until then (no backend yet,
+or a path CC has not written, as after an agent's folder changes) the row keeps
+the path it holds. Consequences:
 
 - **ArchiveSweep** gzips a CC transcript once its chat is idle beyond
   `archive_after` — subject to the same guards (never the current session per
@@ -158,7 +165,8 @@ parent), so the session-index row carries it like any native file. Consequences:
   transcripts in the same project dir are never swept as "archive files"
   (`gzipArchiveFiles` keys on `<stem>.`, which a distinct UUID can't match).
 - **PruneOrphans** drops the index row (and its `cc_resume_id`) if the
-  transcript is manually deleted. It only scans `status='active'`, so archived
+  transcript is deleted (by hand, or by CC's own retention). A change of the
+  agent's CC folder does not: the row still names the old, existing file. It only scans `status='active'`, so archived
   rows don't collide.
 - The `opencode` backend has no transcript file (server-stored); its
   `SessionFilePath()` stays `""` and these sweeps skip it.

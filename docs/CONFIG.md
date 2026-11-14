@@ -1703,10 +1703,13 @@ workspace = "/home/coder/projects/myapp"
 # batch_model = "haiku"       # Model for foci's own small background jobs (see below)
 # claude_ai_skills = false    # Claude Code only: list the claude.ai account's skills (see below)
 
-# Environment variables passed to the backend subprocess:
+# Environment variables passed to the backend subprocess (restart required):
 # [agents.backend_config.env]
 # CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS = "1"
+# CLAUDE_CONFIG_DIR = "/home/foci/.claude-second"  # this agent's own CC config folder
 ```
+
+`env` is read when the agent is set up, so a change needs a foci restart. For a Claude Code agent, `CLAUDE_CONFIG_DIR` in `env` gives the agent its own Claude Code config folder: its transcripts (`projects/`) and `settings.json` live there, separate from the other agents on the host. foci reads that agent's Claude Code state in that folder: session files, delivery and cost tracking, compaction summaries, subagent transcripts, branches, transcript retention (`cleanupPeriodDays`) and `foci rename-agent`. An agent without it uses the host's folder (`~/.claude`, or `<install root>/.claude` on a separate-root install), unless the operator's shell rc file exports `CLAUDE_CONFIG_DIR`: then that folder, which is the one Claude Code is given. When an agent's `CLAUDE_CONFIG_DIR` changes, its existing chats cannot resume (their transcripts stay in the old folder) and start fresh on their next message; foci keeps their session records and moves or copies nothing.
 
 `claude_ai_skills` (Claude Code only, default `false`) decides whether the agent's Claude Code sessions list the skills Claude Code syncs from the claude.ai account (`anthropic-skills:pdf`, `docx`, `xlsx`, `computer-use`, ... — 13 skills, about 10k characters of skill listing on CC 2.1.314). foci passes `syncClaudeAiSkills` with this value in the `--settings` of every Claude Code launch, so the skills are hidden on every host, whatever `~/.claude/settings.json` says. A `false` in any settings source wins (probed on CC 2.1.314): `true` lists the skills only on a host whose `~/.claude/settings.json` does not set `syncClaudeAiSkills = false` itself. Plugin skills (for example Cloudflare's) and Claude Code's bundled skills are not affected. The value is read from the config file at each Claude Code launch, so a change (by `/config set`, the app editor or a hand edit) reaches the next new or resumed session; a running session keeps its listing.
 

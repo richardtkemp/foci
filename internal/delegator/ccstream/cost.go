@@ -8,7 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
+
+	"foci/internal/ccaccount"
 )
 
 // What a CC process's cost reports start from (#1674, #2012).
@@ -26,13 +27,19 @@ import (
 // multiple turns.
 
 // ccTranscriptPath is where CC keeps the transcript of sessionID for a process
-// run in workDir: <CC config dir>/projects/<slug>/<sessionID>.jsonl.
-func ccTranscriptPath(workDir, sessionID string) (string, error) {
-	projects, err := ccProjectsDir()
+// run in workDir by an agent whose backend_config.env is agentEnv:
+// <that agent's CC config dir>/projects/<slug>/<sessionID>.jsonl (#3104).
+func ccTranscriptPath(agentEnv map[string]string, workDir, sessionID string) (string, error) {
+	loc, err := ccaccount.ForAgent(agentEnv)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(projects, projectSlug(workDir), sessionID+".jsonl"), nil
+	return loc.TranscriptPath(workDir, sessionID), nil
+}
+
+// transcriptPath is ccTranscriptPath for this backend's agent.
+func (b *Backend) transcriptPath(workDir, sessionID string) (string, error) {
+	return ccTranscriptPath(b.agentEnv(), workDir, sessionID)
 }
 
 // costStateEntry is the transcript record CC writes as it shuts down (type
@@ -109,7 +116,7 @@ func (b *Backend) resumeBaselineFor(workDir, sessionID string) map[string]ModelU
 	if sessionID == "" {
 		return nil
 	}
-	path, err := ccTranscriptPath(workDir, sessionID)
+	path, err := b.transcriptPath(workDir, sessionID)
 	if err == nil {
 		var base map[string]ModelUsage
 		if base, err = resumeBaseline(path, sessionID); err == nil {

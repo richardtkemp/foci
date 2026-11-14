@@ -17,7 +17,7 @@ import (
 // for agentID (== the task_started task_id, == the SubagentStop agent_id),
 // which CC writes at
 //
-//	~/.claude/projects/<slug>/<parent-session-uuid>/subagents/agent-<agent_id>.jsonl
+//	<agent's CC config dir>/projects/<slug>/<parent-session-uuid>/subagents/agent-<agent_id>.jsonl
 //
 // Returns "" if the session id isn't known yet or the home dir can't be found.
 func (b *Backend) subagentTranscriptPath(agentID string) string {
@@ -26,7 +26,7 @@ func (b *Backend) subagentTranscriptPath(agentID string) string {
 
 // subagentFilePath returns the path of a per-subagent file CC writes under
 //
-//	~/.claude/projects/<slug>/<parent-session-uuid>/subagents/agent-<agent_id><suffix>
+//	<agent's CC config dir>/projects/<slug>/<parent-session-uuid>/subagents/agent-<agent_id><suffix>
 //
 // for a given suffix (".jsonl" for the transcript, ".meta.json" for the metadata
 // sidecar). Returns "" if the session id isn't known yet or the CC config dir can't be
@@ -43,11 +43,11 @@ func (b *Backend) subagentFilePath(agentID, suffix string) string {
 	if sessionID == "" || b.workDir == "" {
 		return ""
 	}
-	projects, err := ccProjectsDir()
+	loc, err := b.ccLocation()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(projects, projectSlug(b.workDir), sessionID,
+	return filepath.Join(loc.ProjectsDir(), projectSlug(b.workDir), sessionID,
 		"subagents", "agent-"+agentID+suffix)
 }
 
@@ -106,7 +106,7 @@ func (b *Backend) readSubagentMeta(taskID string) (subagentMeta, bool) {
 // The subagent's full message stream IS written — line by line, flushed
 // per-message — to its own transcript at
 //
-//	~/.claude/projects/<slug>/<parent-session-uuid>/subagents/agent-<agent_id>.jsonl
+//	<agent's CC config dir>/projects/<slug>/<parent-session-uuid>/subagents/agent-<agent_id>.jsonl
 //
 // So to populate a foreground subagent's chit live, we tail that file and
 // forward each newly-appended assistant text block via OnSubagentText under the

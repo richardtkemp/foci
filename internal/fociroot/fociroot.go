@@ -28,18 +28,18 @@ import (
 // EnvVar names the environment variable that sets foci's install root.
 const EnvVar = "FOCI_HOME"
 
-// ccConfigEnv is Claude Code's own variable for its config folder (settings,
+// CCConfigDirEnv is Claude Code's own variable for its config folder (settings,
 // .claude.json, projects/ transcripts, plugins). CC falls back to ~/.claude.
-const ccConfigEnv = "CLAUDE_CONFIG_DIR"
+const CCConfigDirEnv = "CLAUDE_CONFIG_DIR"
 
-// ccSecureStorageEnv is Claude Code's variable that picks which stored login
+// CCSecureStorageEnv is Claude Code's variable that picks which stored login
 // it uses. Without it, a set CLAUDE_CONFIG_DIR makes CC name its macOS
 // keychain item "Claude Code-credentials-<8 hex of sha256(config dir)>", so
 // a CC with its own config folder finds no login. Set and EMPTY, CC uses the
 // default item, "Claude Code-credentials" - the login the user already has
 // (CC 2.1.310, read from the binary 2026-10-27). CC tests whether it is set,
 // not whether it is empty, so the empty value is what matters.
-const ccSecureStorageEnv = "CLAUDE_SECURESTORAGE_CONFIG_DIR"
+const CCSecureStorageEnv = "CLAUDE_SECURESTORAGE_CONFIG_DIR"
 
 // Dir returns foci's install root: $FOCI_HOME when set (made absolute), else
 // the user's home directory — exactly the old behaviour, so a host that sets
@@ -66,13 +66,16 @@ func Separate() bool {
 	return filepath.Clean(root) != filepath.Clean(home)
 }
 
-// CCConfigDir returns the config folder of the Claude Code that foci runs:
-// $CLAUDE_CONFIG_DIR when set (that is the folder CC itself uses), else
+// CCConfigDir returns the HOST's Claude Code config folder, the one this
+// gateway process's own environment names: $CLAUDE_CONFIG_DIR when set, else
 // <install root>/.claude. On a single-home install that is ~/.claude, as
-// before. Everything foci reads of CC's on-disk state (projects/ transcripts,
-// settings.json, .credentials.json) is under it.
+// before. It is the folder of an agent with no override of its own, but it
+// never sees an agent's backend_config.env or the operator's shell overlay:
+// a reader of one agent's CC state (transcripts, settings.json, its login)
+// asks internal/ccaccount instead (#3104). The users left here are the
+// host-wide ones: the API agents' CC token fallback and EnsureCCConfigEnv.
 func CCConfigDir() (string, error) {
-	if v := os.Getenv(ccConfigEnv); v != "" {
+	if v := os.Getenv(CCConfigDirEnv); v != "" {
 		return filepath.Abs(v)
 	}
 	root, err := Dir()
@@ -103,20 +106,20 @@ var ccNonAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)
 // variable would move that state file into the folder. Returns the value set,
 // or "" when nothing was set.
 func EnsureCCConfigEnv() (string, error) {
-	if os.Getenv(ccConfigEnv) != "" || !Separate() {
+	if os.Getenv(CCConfigDirEnv) != "" || !Separate() {
 		return "", nil
 	}
 	dir, err := CCConfigDir()
 	if err != nil {
 		return "", err
 	}
-	// Keep the user's existing CC login (see ccSecureStorageEnv).
-	if _, ok := os.LookupEnv(ccSecureStorageEnv); !ok {
-		if err := os.Setenv(ccSecureStorageEnv, ""); err != nil {
+	// Keep the user's existing CC login (see CCSecureStorageEnv).
+	if _, ok := os.LookupEnv(CCSecureStorageEnv); !ok {
+		if err := os.Setenv(CCSecureStorageEnv, ""); err != nil {
 			return "", err
 		}
 	}
-	return dir, os.Setenv(ccConfigEnv, dir)
+	return dir, os.Setenv(CCConfigDirEnv, dir)
 }
 
 // CCEnv returns the KEY=VALUE pairs a Claude Code process needs to see when
@@ -133,11 +136,11 @@ func CCEnv() []string {
 			env = append(env, "HOME="+home)
 		}
 	}
-	if v := os.Getenv(ccConfigEnv); v != "" {
-		env = append(env, ccConfigEnv+"="+v)
+	if v := os.Getenv(CCConfigDirEnv); v != "" {
+		env = append(env, CCConfigDirEnv+"="+v)
 	}
-	if v, ok := os.LookupEnv(ccSecureStorageEnv); ok {
-		env = append(env, ccSecureStorageEnv+"="+v)
+	if v, ok := os.LookupEnv(CCSecureStorageEnv); ok {
+		env = append(env, CCSecureStorageEnv+"="+v)
 	}
 	return env
 }

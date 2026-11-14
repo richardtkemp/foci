@@ -83,5 +83,7 @@ type DeliveryTracker interface {
 // workDir already holds the input with id — i.e. a process folded it in before
 // it died. Used to decide, after a gateway restart, whether a persisted
 // PendingInput still needs re-sending. found=false with a nil error means the
-// transcript was read and the input is not in it.
-type TranscriptChecker func(workDir, sessionID, id string) (found bool, err error)
+// transcript was read and the input is not in it. agentEnv is the agent's
+// backend_config.env: it can move where the backend keeps its transcripts
+// (Claude Code's CLAUDE_CONFIG_DIR, #3104).
+type TranscriptChecker func(agentEnv map[string]string, workDir, sessionID, id string) (found bool, err error)

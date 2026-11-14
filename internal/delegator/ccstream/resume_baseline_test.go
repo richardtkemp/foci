@@ -111,7 +111,7 @@ func TestStart_ResumeSeedsTheRestoredTotals(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workDir := filepath.Join(home, "work")
-	path, err := ccTranscriptPath(workDir, probeSID)
+	path, err := ccTranscriptPath(nil, workDir, probeSID)
 	if err != nil {
 		t.Fatal(err)
 	}

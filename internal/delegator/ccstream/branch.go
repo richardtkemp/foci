@@ -16,21 +16,40 @@ import (
 
 	"github.com/google/uuid"
 
+	"foci/internal/ccaccount"
 	"foci/internal/delegator"
 	"foci/internal/fociroot"
 	"foci/internal/log"
 )
 
-// ccProjectsDir returns where Claude Code stores per-project session
-// transcripts: <CC config dir>/projects/<cwd-slug>/<uuid>.jsonl. The config
-// dir is fociroot.CCConfigDir — ~/.claude on a single-home install, the
-// install root's own .claude when foci runs with a separate FOCI_HOME (#2580).
-func ccProjectsDir() (string, error) {
-	dir, err := fociroot.CCConfigDir()
-	if err != nil {
-		return "", err
+// agentEnv is this agent's backend_config.env (cfg["env"]): the per-agent
+// layer of the CC process's environment, and so the part of it that can give
+// the agent its own CC config folder (CLAUDE_CONFIG_DIR, #3104). A Backend made
+// by NewBackend has it before any Start, so file operations that start no CC
+// process (fork, cleanup, transcript reads) see the same folder CC does.
+func (b *Backend) agentEnv() map[string]string {
+	switch e := b.cfg["env"].(type) {
+	case map[string]string:
+		return e
+	case map[string]any:
+		out := make(map[string]string, len(e))
+		for k, v := range e {
+			if s, ok := v.(string); ok {
+				out[k] = s
+			}
+		}
+		return out
 	}
-	return filepath.Join(dir, "projects"), nil
+	return nil
+}
+
+// ccLocation resolves this agent's CC config folder and account
+// (ccaccount.ForAgent): <folder>/projects/<cwd-slug>/<uuid>.jsonl holds its
+// transcripts. With no CLAUDE_CONFIG_DIR of its own, that is the host's
+// folder: ~/.claude on a single-home install, the install root's own .claude
+// when foci runs with a separate FOCI_HOME (#2580).
+func (b *Backend) ccLocation() (ccaccount.Location, error) {
+	return ccaccount.ForAgent(b.agentEnv())
 }
 
 // projectSlug converts a workspace path to Claude Code's project directory
@@ -42,7 +61,7 @@ func projectSlug(path string) string {
 // ForkSession implements delegator.BackendBrancher for the CC stream backend.
 //
 // It forks a Claude Code conversation by copying the parent's transcript
-// (~/.claude/projects/<slug>/<parent>.jsonl) to a new UUID-named file, with
+// (<agent's CC config dir>/projects/<slug>/<parent>.jsonl, ccLocation) to a new UUID-named file, with
 // every line's "sessionId" field rewritten to the new UUID. Claude Code has
 // no session registry gate — a transcript present in the correct project-slug
 // directory can be resumed with `claude --resume <uuid>`, so foci does not
@@ -66,11 +85,11 @@ func (b *Backend) ForkSession(ctx context.Context, req delegator.ForkRequest) (d
 		return delegator.ForkResult{}, fmt.Errorf("ccstream fork: TruncateAfter>0 not supported")
 	}
 
-	projects, err := ccProjectsDir()
+	loc, err := b.ccLocation()
 	if err != nil {
 		return delegator.ForkResult{}, fmt.Errorf("ccstream fork: CC config dir: %w", err)
 	}
-	dir := filepath.Join(projects, projectSlug(req.WorkDir))
+	dir := filepath.Join(loc.ProjectsDir(), projectSlug(req.WorkDir))
 	parentPath := filepath.Join(dir, req.ParentSessionID+".jsonl")
 
 	newID := uuid.NewString()
@@ -84,18 +103,18 @@ func (b *Backend) ForkSession(ctx context.Context, req delegator.ForkRequest) (d
 }
 
 // CleanupSession implements delegator.BackendBrancher: it deletes the CC
-// transcript for req.SessionID (~/.claude/projects/<slug>/<uuid>.jsonl),
+// transcript for req.SessionID (<agent's CC config dir>/projects/<slug>/<uuid>.jsonl),
 // reclaiming an ephemeral fork. A missing file is not an error. Pure
 // filesystem operation — no running backend required.
 func (b *Backend) CleanupSession(_ context.Context, req delegator.CleanupRequest) error {
 	if req.SessionID == "" || req.WorkDir == "" {
 		return fmt.Errorf("ccstream cleanup: empty session id or workdir")
 	}
-	projects, err := ccProjectsDir()
+	loc, err := b.ccLocation()
 	if err != nil {
 		return fmt.Errorf("ccstream cleanup: CC config dir: %w", err)
 	}
-	path := filepath.Join(projects, projectSlug(req.WorkDir), req.SessionID+".jsonl")
+	path := loc.TranscriptPath(req.WorkDir, req.SessionID)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("ccstream cleanup: remove %s: %w", path, err)
 	}

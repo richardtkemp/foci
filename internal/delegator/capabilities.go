@@ -290,10 +290,13 @@ type Spec struct {
 	// notice, the model gets such a message as ordinary user input (#2833).
 	SpawnSteerNotice string
 
-	TranscriptChecker TranscriptChecker    // required iff CapDeliveryTracking
-	ResumeRetention   func() time.Duration // the backend's own transcript retention; nil = unknown
-	PlanDelivery      PlanDelivery         // required iff CapPlanMode
-	UsageQuery        UsageQuery           // required iff CapUsageQuery
+	TranscriptChecker TranscriptChecker // required iff CapDeliveryTracking
+	// ResumeRetention is the backend's own transcript retention for the agent
+	// whose backend_config.env is agentEnv (it can name the agent's own
+	// config folder, #3104); nil = unknown.
+	ResumeRetention func(agentEnv map[string]string) time.Duration
+	PlanDelivery    PlanDelivery // required iff CapPlanMode
+	UsageQuery      UsageQuery   // required iff CapUsageQuery
 	// UsageOperatorWide: UsageQuery reports the operator's one account, the
 	// same for every agent on this backend (it ignores agentID), so one read
 	// serves them all (the spawn allowance check's schedule, #2662).

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"foci/internal/usagehold"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -443,7 +442,8 @@ func (b *Backend) SessionID() string {
 }
 
 // SessionFilePath returns the on-disk path of this session's Claude Code
-// transcript (~/.claude/projects/<slug>/<sessionID>.jsonl), or "" if the
+// transcript (<agent's CC config dir>/projects/<slug>/<sessionID>.jsonl,
+// ccLocation), or "" if the
 // session id isn't known yet. Unlike SessionID(), which callers use to resume,
 // this path lets foci's session-index sweeps (ArchiveSweep, PruneOrphans)
 // manage CC transcripts on the same lifecycle as native session files: old
@@ -465,11 +465,11 @@ func (b *Backend) SessionFilePath() string {
 	if sid == "" || b.workDir == "" {
 		return ""
 	}
-	projects, err := ccProjectsDir()
+	loc, err := b.ccLocation()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(projects, projectSlug(b.workDir), sid+".jsonl")
+	return loc.TranscriptPath(b.workDir, sid)
 }
 
 // subagentTails returns the lazily-created foreground subagent transcript

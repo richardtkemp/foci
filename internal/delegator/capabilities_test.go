@@ -84,7 +84,7 @@ func TestSpecValidate_FailArms(t *testing.T) {
 		}, "plan_mode must be declared Yes exactly when PlanDelivery"},
 		{"usage without query", func(s *Spec) { s.Caps[CapUsageQuery] = Yes() }, "usage_query must be declared Yes exactly when UsageQuery"},
 		{"transcript checker without tracking", func(s *Spec) {
-			s.TranscriptChecker = func(string, string, string) (bool, error) { return false, nil }
+			s.TranscriptChecker = func(map[string]string, string, string, string) (bool, error) { return false, nil }
 		}, "delivery_tracking must be declared Yes exactly when TranscriptChecker"},
 		{"fork needs running without branch", func(s *Spec) { s.ForkNeedsRunning = true }, "ForkNeedsRunning without branch"},
 		{"no name", func(s *Spec) { s.Name = "" }, "empty Name"},

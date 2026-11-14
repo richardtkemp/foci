@@ -163,7 +163,7 @@ func TestRestoreUndelivered(t *testing.T) {
 	mgr.upsertUndelivered(deliverySK, delegator.PendingInput{ID: "spent", WorkDir: "/w", SessionID: "s1", Redeliveries: delegator.MaxRedeliveries})
 	mgr.upsertUndelivered("other-agent/c1", delegator.PendingInput{ID: "not-mine"})
 	var checked []string
-	mgr.Spec.TranscriptChecker = func(workDir, sessionID, id string) (bool, error) {
+	mgr.Spec.TranscriptChecker = func(_ map[string]string, workDir, sessionID, id string) (bool, error) {
 		checked = append(checked, workDir+"|"+sessionID+"|"+id)
 		return id == "folded", nil
 	}
@@ -200,7 +200,7 @@ func TestTakeUndelivered(t *testing.T) {
 	mgr.upsertUndelivered(deliverySK, delegator.PendingInput{ID: "a", WorkDir: "/w", SessionID: "s1", Text: "first"})
 	mgr.upsertUndelivered(deliverySK, delegator.PendingInput{ID: "folded", WorkDir: "/w", SessionID: "s1", Text: "seen"})
 	mgr.upsertUndelivered(deliverySK, delegator.PendingInput{ID: "b", WorkDir: "/w", SessionID: "s1", Text: "second"})
-	mgr.Spec.TranscriptChecker = func(_, _, id string) (bool, error) { return id == "folded", nil }
+	mgr.Spec.TranscriptChecker = func(_ map[string]string, _, _, id string) (bool, error) { return id == "folded", nil }
 
 	got := mgr.TakeUndelivered(deliverySK)
 	if len(got) != 2 || got[0] != "first" || got[1] != "second" {

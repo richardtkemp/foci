@@ -21,7 +21,7 @@ The table below contrasts the API backend with the delegated backends in general
 |---|---|---|
 | LLM inference | Foci → `provider.Send` | Subprocess (CC / `codex app-server` / `opencode serve`) |
 | Tool registry & execution | Foci's `tools/` package | Backend's built-in tools + MCP |
-| Session history | Foci-managed JSONL in `data/sessions/` | Backend-managed (CC: `~/.claude/projects/`; Codex/OpenCode: their own stores) |
+| Session history | Foci-managed JSONL in `data/sessions/` | Backend-managed (CC: `<agent's CC config folder>/projects/`: the agent's `backend_config.env` `CLAUDE_CONFIG_DIR`, else the host's `~/.claude`, #3104; Codex/OpenCode: their own stores) |
 | Context / compaction | Foci `compaction/compact.go` | Backend's own context manager (CC: `/compact`; Codex: `thread/compact/start`; OpenCode: its own mechanism) |
 | Rate limiting | Foci per-endpoint gate | Backend's own limiter |
 | Turn serialization | Foci per-session lock | Backend serializes internally |

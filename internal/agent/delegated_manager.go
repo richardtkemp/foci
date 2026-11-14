@@ -382,7 +382,7 @@ func (m *DelegatedManager) resumeRetention() time.Duration {
 	if m.Spec.ResumeRetention == nil {
 		return 0
 	}
-	return m.Spec.ResumeRetention()
+	return m.Spec.ResumeRetention(m.StartOpts.Env)
 }
 
 // Supports reports whether the agent's backend declares capability c.

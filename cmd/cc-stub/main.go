@@ -29,6 +29,12 @@
 //	CCSTUB_EXIT_CODE_ONCE_MARKER — one-shot gate for CCSTUB_EXIT_CODE: first
 //	                               spawn exits, subsequent spawns proceed normally
 //	CCSTUB_FAIL_ON_RESUME — if "1"/"true" and --resume is set, exit 1 (simulates missing JSONL)
+//	CCSTUB_WRITE_TRANSCRIPT — if truthy, every user message the main loop
+//	                        consumes is appended to the session transcript where
+//	                        real CC keeps it (appendTranscript: under
+//	                        $CLAUDE_CONFIG_DIR, else ~/.claude), as real CC does
+//	                        for every turn. Off by default: tests written before
+//	                        it rely on the stub keeping no transcript.
 //	CCSTUB_HANG           — duration to sleep before the handshake (e.g. "5s")
 //	CCSTUB_EMIT_COMPACT_BOUNDARY — if truthy, a "/compact ..." user message is
 //	                        handled as a compaction turn: emit system/status
@@ -257,6 +263,15 @@ type stubScript struct {
 	// user_message_uuids ack. foci must find it in the transcript and not
 	// redeliver it.
 	CrashAfterConsuming string `json:"crash_after_consuming,omitempty"`
+
+	// HoldAfterConsuming is CrashAfterConsuming without the crash: the first
+	// user message containing this substring is recorded as a consumed
+	// "user_message" and appended to the session transcript, with no ack, and
+	// the turn then stays open (later user lines are recorded as
+	// "held_user_message") until stdin closes. It models a CC that folded a
+	// steer in and is still working when foci shuts down, so the next foci
+	// process must find the steer in the transcript and not resend it (#3104).
+	HoldAfterConsuming string `json:"hold_after_consuming,omitempty"`
 }
 
 // recorderEntry is one line written to the recorder file. Two event
@@ -565,6 +580,7 @@ func main() {
 	// This mirrors real CC's /compact handling and lets an L2 test exercise
 	// the #828 Part B reload-on-compact bounce end-to-end. pre_tokens comes
 	// from CCSTUB_COMPACT_PRE_TOKENS (default 50000).
+	writeTranscript := isTruthy(os.Getenv("CCSTUB_WRITE_TRANSCRIPT"))
 	emitCompactBoundary := isTruthy(os.Getenv("CCSTUB_EMIT_COMPACT_BOUNDARY"))
 	compactPreTokens := 50000
 	if v := os.Getenv("CCSTUB_COMPACT_PRE_TOKENS"); v != "" {
@@ -627,6 +643,14 @@ func main() {
 			if willPanic {
 				fmt.Fprintf(os.Stderr, "panic: cc-stub forced crash on user message matching %q\n\ngoroutine 1 [running]:\nmain.main()\n\t/cc-stub/main.go:0 +0x0\n", panicOnMatch)
 				os.Exit(2)
+			}
+			// CCSTUB_WRITE_TRANSCRIPT: CC appends each message it consumes
+			// to the session transcript, the file foci's session index row
+			// names and its restart checks read (#3104).
+			if writeTranscript {
+				if err := appendTranscript(sessionID, map[string]any{"type": "user", "uuid": ackUUID, "sessionId": sessionID}); err != nil {
+					fmt.Fprintf(os.Stderr, "cc-stub: transcript write failed: %v\n", err)
+				}
 			}
 			// A user message starts a run. Real CC emits "running" first,
 			// before even the run's system/init (probed on CC 2.1.314, #3055).
@@ -856,6 +880,9 @@ func main() {
 			}
 			if script != nil && script.CrashAfterConsuming != "" {
 				crashAfterConsuming(pump, script.CrashAfterConsuming, sessionID)
+			}
+			if script != nil && script.HoldAfterConsuming != "" {
+				holdAfterConsuming(pump, script.HoldAfterConsuming, sessionID)
 			}
 			// CCSTUB_EXIT_AFTER_ASSISTANT: exit 0 between assistant and
 			// result envelopes on the first turn. Foci sees stdout EOF
@@ -1163,10 +1190,49 @@ func crashOnUnconsumed(p *stdinPump, marker string) {
 // held open, read stdin until a user message containing marker arrives, record
 // it as consumed, write its transcript record, and exit 1 before any ack.
 func crashAfterConsuming(p *stdinPump, marker, sessionID string) {
+	if consumeMarked(p, marker, sessionID) {
+		fmt.Fprintf(os.Stderr, "cc-stub: dying after consuming user message matching %q (no ack)\n", marker)
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+// holdAfterConsuming implements stubScript.HoldAfterConsuming: consume the
+// marked message as crashAfterConsuming does, then keep the turn open, reading
+// (and holding) user lines until stdin closes.
+func holdAfterConsuming(p *stdinPump, marker, sessionID string) {
+	if consumeMarked(p, marker, sessionID) {
+		fmt.Fprintf(os.Stderr, "cc-stub: consumed user message matching %q (no ack); holding the turn open\n", marker)
+		for {
+			line, ok := p.raw()
+			if !ok {
+				break
+			}
+			var env map[string]any
+			if err := json.Unmarshal(line, &env); err != nil || env["type"] != "user" {
+				continue
+			}
+			text, _ := extractUserContent(env)
+			wd, _ := os.Getwd()
+			writeRecorder(recorderEntry{
+				Kind:       "held_user_message",
+				Timestamp:  time.Now().UTC().Format(time.RFC3339Nano),
+				Workdir:    wd,
+				TextPrefix: text,
+			})
+		}
+	}
+	os.Exit(0)
+}
+
+// consumeMarked reads stdin until a user message containing marker arrives,
+// records it as a consumed user_message and appends its transcript record (the
+// one real CC writes before the API request). False when stdin closes first.
+func consumeMarked(p *stdinPump, marker, sessionID string) bool {
 	for {
 		line, ok := p.raw()
 		if !ok {
-			break
+			return false
 		}
 		var env map[string]any
 		if err := json.Unmarshal(line, &env); err != nil || env["type"] != "user" {
@@ -1181,10 +1247,8 @@ func crashAfterConsuming(p *stdinPump, marker, sessionID string) {
 		if err := appendTranscript(sessionID, map[string]any{"type": "user", "uuid": id, "sessionId": sessionID}); err != nil {
 			fmt.Fprintf(os.Stderr, "cc-stub: transcript write failed: %v\n", err)
 		}
-		fmt.Fprintf(os.Stderr, "cc-stub: dying after consuming user message matching %q (no ack)\n", marker)
-		os.Exit(1)
+		return true
 	}
-	os.Exit(0)
 }
 
 // appendTranscript appends rec to the session transcript at the path real CC
@@ -1844,6 +1908,8 @@ Env vars (all optional):
   CCSTUB_RECORDER       path to JSONL file; one line appended per invocation
   CCSTUB_EXIT_CODE      exit with this code before handshake (lifecycle tests)
   CCSTUB_FAIL_ON_RESUME if truthy and --resume is set, exit 1
+  CCSTUB_WRITE_TRANSCRIPT if truthy, append each consumed user message to
+                        the session transcript (under $CLAUDE_CONFIG_DIR)
   CCSTUB_HANG           sleep this duration before handshake (e.g. "5s")
   CCSTUB_EMIT_COMPACT_BOUNDARY  if truthy, "/compact" emits status+compact_boundary
   CCSTUB_COMPACT_PRE_TOKENS     pre_tokens in compact_boundary (default 50000)

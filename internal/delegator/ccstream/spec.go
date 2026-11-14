@@ -104,7 +104,9 @@ var spec = delegator.Spec{
 	PostCompactNeedsToolCall: true,
 	CacheTTL:                 ccStreamCacheTTL,
 	ConfigFamily:             delegator.ConfigFamilyClaudeCode,
-	ConfigKeys:               []string{"allowed_tools", "binary", "skip_permissions"},
+	// "env": besides StartOptions.Env, the backend reads its agent's env from
+	// cfg to find that agent's CC config folder without a running CC (#3104).
+	ConfigKeys: []string{"allowed_tools", "binary", "skip_permissions", "env"},
 	StartFields: []string{
 		"WorkDir", "SystemPrompt", "Model", "AgentID", "Label", "ResumeSessionID", "SessionKey",
 		"SkipPermissions", "BatchAccess", "DepthLeaf", "PromptSuggestions", "Env", "AutoApproveRules", "SubagentMaxAge", "Effort",

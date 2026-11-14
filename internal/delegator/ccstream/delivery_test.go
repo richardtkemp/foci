@@ -74,7 +74,7 @@ func ids(ps []delegator.PendingInput) []string {
 
 func writeSessionTranscript(t *testing.T, workDir, sessionID string, lines ...string) {
 	t.Helper()
-	path, err := ccTranscriptPath(workDir, sessionID)
+	path, err := ccTranscriptPath(nil, workDir, sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -105,7 +105,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		old.close()
 	}
 	if opts.ResumeSessionID != "" {
-		if path, err := ccTranscriptPath(opts.WorkDir, opts.ResumeSessionID); err == nil {
+		if path, err := b.transcriptPath(opts.WorkDir, opts.ResumeSessionID); err == nil {
 			var offset int64
 			if fi, err := os.Stat(path); err == nil {
 				offset = fi.Size()

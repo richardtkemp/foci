@@ -14,9 +14,9 @@ func isolate(t *testing.T) string {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv(EnvVar, "")
-	t.Setenv(ccConfigEnv, "")
-	t.Setenv(ccSecureStorageEnv, "") // registers the restore
-	os.Unsetenv(ccSecureStorageEnv)
+	t.Setenv(CCConfigDirEnv, "")
+	t.Setenv(CCSecureStorageEnv, "") // registers the restore
+	os.Unsetenv(CCSecureStorageEnv)
 	return home
 }
 
@@ -33,11 +33,11 @@ func TestSingleHomeIsUnchanged(t *testing.T) {
 	if got, _ := CCConfigDir(); got != filepath.Join(home, ".claude") {
 		t.Fatalf("CCConfigDir() = %q; want ~/.claude", got)
 	}
-	if set, err := EnsureCCConfigEnv(); err != nil || set != "" || os.Getenv(ccConfigEnv) != "" {
-		t.Fatalf("EnsureCCConfigEnv() set %q (%v), env %q; want nothing", set, err, os.Getenv(ccConfigEnv))
+	if set, err := EnsureCCConfigEnv(); err != nil || set != "" || os.Getenv(CCConfigDirEnv) != "" {
+		t.Fatalf("EnsureCCConfigEnv() set %q (%v), env %q; want nothing", set, err, os.Getenv(CCConfigDirEnv))
 	}
-	if _, ok := os.LookupEnv(ccSecureStorageEnv); ok {
-		t.Fatalf("%s set on a single-home install", ccSecureStorageEnv)
+	if _, ok := os.LookupEnv(CCSecureStorageEnv); ok {
+		t.Fatalf("%s set on a single-home install", CCSecureStorageEnv)
 	}
 	if env := CCEnv(); env != nil {
 		t.Fatalf("CCEnv() = %v; want nil", env)
@@ -75,14 +75,14 @@ func TestSeparateInstallRoot(t *testing.T) {
 		t.Fatalf("CCConfigDir() = %q; want %q", got, want)
 	}
 	set, err := EnsureCCConfigEnv()
-	if err != nil || set != want || os.Getenv(ccConfigEnv) != want {
-		t.Fatalf("EnsureCCConfigEnv() = %q, %v; env %q; want %q", set, err, os.Getenv(ccConfigEnv), want)
+	if err != nil || set != want || os.Getenv(CCConfigDirEnv) != want {
+		t.Fatalf("EnsureCCConfigEnv() = %q, %v; env %q; want %q", set, err, os.Getenv(CCConfigDirEnv), want)
 	}
-	if v, ok := os.LookupEnv(ccSecureStorageEnv); !ok || v != "" {
-		t.Fatalf("%s = %q (set %v); want set and empty, so CC keeps the default keychain login", ccSecureStorageEnv, v, ok)
+	if v, ok := os.LookupEnv(CCSecureStorageEnv); !ok || v != "" {
+		t.Fatalf("%s = %q (set %v); want set and empty, so CC keeps the default keychain login", CCSecureStorageEnv, v, ok)
 	}
 	env := CCEnv()
-	if !slices.Equal(env, []string{"HOME=" + home, ccConfigEnv + "=" + want, ccSecureStorageEnv + "="}) {
+	if !slices.Equal(env, []string{"HOME=" + home, CCConfigDirEnv + "=" + want, CCSecureStorageEnv + "="}) {
 		t.Fatalf("CCEnv() = %v", env)
 	}
 }
@@ -94,13 +94,13 @@ func TestExplicitCCConfigDirWins(t *testing.T) {
 	isolate(t)
 	t.Setenv(EnvVar, filepath.Join(t.TempDir(), "foci"))
 	own := t.TempDir()
-	t.Setenv(ccConfigEnv, own)
+	t.Setenv(CCConfigDirEnv, own)
 
 	if got, _ := CCConfigDir(); got != own {
 		t.Fatalf("CCConfigDir() = %q; want %q", got, own)
 	}
-	if set, _ := EnsureCCConfigEnv(); set != "" || os.Getenv(ccConfigEnv) != own {
-		t.Fatalf("EnsureCCConfigEnv() overwrote CLAUDE_CONFIG_DIR: set %q, env %q", set, os.Getenv(ccConfigEnv))
+	if set, _ := EnsureCCConfigEnv(); set != "" || os.Getenv(CCConfigDirEnv) != own {
+		t.Fatalf("EnsureCCConfigEnv() overwrote CLAUDE_CONFIG_DIR: set %q, env %q", set, os.Getenv(CCConfigDirEnv))
 	}
 }
 

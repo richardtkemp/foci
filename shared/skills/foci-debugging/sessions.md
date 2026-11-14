@@ -27,7 +27,7 @@ tail -5 /path/to/root.jsonl | jq -r '.role + ": " + (.content[]? | select(.type=
 
 On the CC backend the raw CC transcript is richer than foci's store: per-block `thinking`/`text`/`tool_use`/`tool_result`, RFC3339 UTC `timestamp`, thinking `signature`. Use it for turn-level *structure*.
 
-**Path:** `/home/foci/.claude/projects/<workspace-slug>/*.jsonl`: under the foci OS user's home, shared by all agents, NOT in the agent's workspace. Workspace `/home/foci/clutch` → `-home-foci-clutch`. Newest mtime = most recent session.
+**Path:** `<agent's CC config folder>/projects/<workspace-slug>/*.jsonl`, NOT in the agent's workspace. The folder is per agent: the agent's `[agents.<id>.backend_config] env` `CLAUDE_CONFIG_DIR` if set, else the host's `/home/foci/.claude` (the foci OS user's home; agents without an override share it). Workspace `/home/foci/clutch` → `-home-foci-clutch`. Newest mtime = most recent session. The session index row's `file_path` (`foci debug at <session-key>` or state.db `session_index`) names the exact file.
 
 ```bash
 # Map a turn's block structure (the key move)

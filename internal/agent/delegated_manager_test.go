@@ -2273,7 +2273,7 @@ func TestGet_ResumeFallback_NoticeUsesLastUse(t *testing.T) {
 		IdleTimeout:      time.Hour,
 		SystemNoticeFunc: func(_, text string) { noticeText = text },
 		LastUseFunc:      func(string) (time.Time, bool) { return time.Now().Add(-45 * 24 * time.Hour), true },
-		Spec:             delegator.Spec{ResumeRetention: func() time.Duration { return 30 * 24 * time.Hour }},
+		Spec:             delegator.Spec{ResumeRetention: func(map[string]string) time.Duration { return 30 * 24 * time.Hour }},
 	}
 	t.Cleanup(func() { mgr.Close() })
 	base := "test-agent/c222"

@@ -23,6 +23,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"foci/internal/ccaccount"
 	"foci/internal/config"
 	"foci/internal/fociroot"
 )
@@ -229,7 +230,9 @@ func resolvePaths(cfg *config.Config, o Options) (paths, error) {
 	if err != nil {
 		return paths{}, err
 	}
-	cc, err := fociroot.CCConfigDir()
+	// The agent's own CC config folder: its backend_config.env can name one
+	// (CLAUDE_CONFIG_DIR, #3104); without it, the host's.
+	cc, err := ccaccount.ForAgent(a.BackendConfig.Env)
 	if err != nil {
 		return paths{}, err
 	}
@@ -239,7 +242,7 @@ func resolvePaths(cfg *config.Config, o Options) (paths, error) {
 		SessionsDir: cfg.Sessions.Dir,
 		OldWS:       ws,
 		NewWS:       ws,
-		CCProjects:  filepath.Join(cc, "projects"),
+		CCProjects:  cc.ProjectsDir(),
 		StateDB:     cfg.DataPath("state.db"),
 		APIDB:       cfg.Logging.APIDB,
 		APIShadowDB: cfg.Logging.APIShadowDB,
