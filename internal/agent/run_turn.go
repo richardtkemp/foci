@@ -92,7 +92,14 @@ func (a *Agent) RunTurn(
 			// registration is still current, so an autonomous run adopted
 			// while this turn ran keeps its own sink registered (#2233).
 			defer router.Register(sink)()
-			dispatchSink = router
+			// This turn's own TurnComplete goes to the sink it registered,
+			// not to whatever the router holds when the turn ends. A message
+			// steered in as the run ended can start a run that is adopted as
+			// an autonomous turn (its Register replaces this one) and ends
+			// before this turn's post-turn work does; the router then holds
+			// nothing, and the completion reached the late-delivery fallback,
+			// which sent the already-streamed reply a second time (#3116).
+			dispatchSink = &ownCompletionSink{router: router, own: sink}
 		}
 	}
 

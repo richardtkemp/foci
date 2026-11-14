@@ -285,3 +285,38 @@ func TestSessionRouter_RoutesTo_FalseForUnrelatedSinks(t *testing.T) {
 		t.Errorf("fresh sink events = %d, want 1", fresh.count.Load())
 	}
 }
+
+// TestOwnCompletionSink_TurnCompleteReachesOwnSinkAfterReplacement pins #3116:
+// a platform turn's TurnComplete reaches the sink the turn registered even
+// when a later registration (an adopted autonomous run) replaced it and was
+// released, while other events still follow the router.
+func TestOwnCompletionSink_TurnCompleteReachesOwnSinkAfterReplacement(t *testing.T) {
+	t.Parallel()
+	fallback := &recordingRouterSink{id: "fallback"}
+	own := &recordingRouterSink{id: "turn"}
+	adopted := &recordingRouterSink{id: "adopted"}
+	r := newSessionRouter(fallback)
+	ctx := context.Background()
+
+	release := r.Register(own)
+	defer release()
+	ctxSink := &ownCompletionSink{router: r, own: own}
+	if !r.routesTo(ctxSink) {
+		t.Fatal("ownCompletionSink must unwrap to the router (Phase 3.5 and fold checks use routesTo)")
+	}
+
+	releaseAdopted := r.Register(adopted)
+	ctxSink.Emit(ctx, turnevent.TextBlock{Text: "adopted run text"})
+	releaseAdopted()
+	ctxSink.Emit(ctx, turnevent.TurnComplete{FinalText: "the reply"})
+
+	if got := own.count.Load(); got != 1 {
+		t.Errorf("own sink events = %d, want 1 (its TurnComplete)", got)
+	}
+	if got := adopted.count.Load(); got != 1 {
+		t.Errorf("adopted sink events = %d, want 1 (the text emitted while it was current)", got)
+	}
+	if got := fallback.count.Load(); got != 0 {
+		t.Errorf("fallback events = %d, want 0: the completion re-sent the reply as late delivery", got)
+	}
+}

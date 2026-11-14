@@ -572,6 +572,13 @@ func main() {
 	//       assistant envelope and BEFORE the result envelope. Lets
 	//       a test trigger /reset or send a message while a turn is
 	//       intentionally in-flight (IsProcessing == true).
+	//   CCSTUB_DELAY_IDLE=duration — after a run's last result, sleep this
+	//       long BEFORE the "idle" envelope, WITHOUT reading stdin. foci
+	//       still sees its turn in flight, so a user message it receives
+	//       meanwhile is written as a steer; the stub, whose run has ended,
+	//       does not fold it, and answers it as the next run after the
+	//       idle ("a line written just as the run ended starts the next
+	//       run", ccstream sweepPendingAtIdle). #3116.
 	//   CCSTUB_PANIC_ON_USER_MESSAGE=substring — if the user text
 	//       contains the substring, write a Go-style "panic:"
 	//       traceback to stderr and exit with code 2. Mimics a real
@@ -587,6 +594,12 @@ func main() {
 	if v := os.Getenv("CCSTUB_HANG_DURING_TURN"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			hangDuringTurn = d
+		}
+	}
+	var delayIdle time.Duration
+	if v := os.Getenv("CCSTUB_DELAY_IDLE"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			delayIdle = d
 		}
 	}
 	// Panic-on-message also gates on resume so the respawn after the
@@ -1085,6 +1098,13 @@ func main() {
 			// The run ends: real CC emits "idle" right after the result; it
 			// is ccstream's turn-completion signal. Late text below comes
 			// after it, outside the run.
+			if delayIdle > 0 {
+				// The result must reach foci before the wait: plain
+				// time.Sleep, not pump.sleep, so nothing written now is
+				// folded into the ended run.
+				_ = out.Flush()
+				time.Sleep(delayIdle)
+			}
 			emitSessionState(out, sessionID, "idle")
 			inRun = false
 			pump.endRun()

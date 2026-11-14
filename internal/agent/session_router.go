@@ -151,3 +151,28 @@ func (r *sessionRouter) DeliversToPlatform() bool {
 	}
 	return r.fallback.DeliversToPlatform()
 }
+
+// ownCompletionSink is the ctx sink of a platform turn that registered its own
+// sink on the session router. Every event goes through the router, except the
+// turn's TurnComplete, which goes to the turn's own sink: by the time the turn
+// ends, a later registration (an adopted autonomous run) may have replaced it,
+// or replaced and released it. Without this, the completion reached that other
+// sink, or the late-delivery fallback, which re-sent the turn's streamed reply
+// (#3116). Unwrap returns the router, so routesTo still sees the ctx sink as the
+// router (Phase 3.5 skips its own registration; a folded turn stays folded).
+type ownCompletionSink struct {
+	router *sessionRouter
+	own    turnevent.Sink
+}
+
+func (s *ownCompletionSink) Emit(ctx context.Context, ev turnevent.Event) {
+	if _, ok := ev.(turnevent.TurnComplete); ok {
+		s.own.Emit(ctx, ev)
+		return
+	}
+	s.router.Emit(ctx, ev)
+}
+
+func (s *ownCompletionSink) DeliversToPlatform() bool { return s.router.DeliversToPlatform() }
+
+func (s *ownCompletionSink) Unwrap() turnevent.Sink { return s.router }
