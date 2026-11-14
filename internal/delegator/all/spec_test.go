@@ -56,6 +56,7 @@ var proofs = map[string]map[delegator.Capability]string{
 		delegator.CapIsolatedBatch:            "TestStart_AccessLaunchArgs",
 		delegator.CapReadOnlyBatch:            "TestStart_AccessLaunchArgs",
 		delegator.CapLimitReset:               "TestParseUsagePayload_UsageAvailability",
+		delegator.CapMidTurnSteer:             "TestInject_Steer_InFlight_NoInterrupt_PriorityNext",
 	},
 	"codex": {
 		delegator.CapEphemeralSessions:        "TestEphemeralForkAdoptsLiveThread",
@@ -66,6 +67,7 @@ var proofs = map[string]map[delegator.Capability]string{
 		delegator.CapUnstartedReadinessProbe:  "TestCheckReady_BinaryInPath",
 		delegator.CapCommandApprovalAllowlist: "TestOnCommandApproval_AutoApproveRuleAccepts",
 		delegator.CapReadOnlyBatch:            "TestStartThread_ReadOnlyBatchSandbox",
+		delegator.CapMidTurnSteer:             "TestImmediateInject_InFlight_SteerAndUserFold",
 	},
 	"opencode": {
 		delegator.CapPreAnswerNudge:           "TestOnSessionIdle_PreAnswerReDispatches",

@@ -35,6 +35,12 @@ type AgentOrigin struct {
 	// CallerTold is set when the tool result already told the caller that the
 	// target is unavailable, so the same condition is not told twice.
 	CallerTold bool
+	// SteerText is the message as it goes when it folds into a turn that is
+	// already running (#3114): the delivered message without its "reply
+	// [[NO_RESPONSE]] if nothing is needed" instruction, which in a running
+	// turn could silence that turn's answer to the human. Empty: the folded
+	// message is the delivered one unchanged.
+	SteerText string
 }
 
 // NewAgentOrigin builds an AgentOrigin, deriving the agent id from sessionKey.

@@ -221,6 +221,13 @@ func (a *Agent) waitHeldGate(ctx context.Context, env Envelope) bool {
 	if env.Inject == nil {
 		return a.waitInjectGate(ctx, env.SessionKey)
 	}
+	if env.Inject.SkipHolds {
+		// A SkipHolds message (#3114) is also released when a run it can
+		// steer into starts: the adoption edge wakes this loop.
+		return a.gateWaitLoop(ctx, env.SessionKey, "autonomous_or_pending", func() bool {
+			return a.injectHeld(env) && !a.peerSteerTarget(env)
+		})
+	}
 	if !isKeepaliveTrigger(env.Inject.Trigger) && !a.usageHoldsTrigger(env.Inject.Trigger, env.Inject.HoldPermit) {
 		// The full hold, but only until this inject's pending-work limit
 		// runs out (#2792): the poll backstop sees the limit pass.
@@ -391,7 +398,15 @@ func (a *Agent) dispatchInject(ctx context.Context, inb *sessionInbox, env Envel
 		a.runInject(inb, env)
 		return true
 	}
-	if injectGateApplies(env.Inject) && (a.injectHeld(env) || (heldSiblingPins(inb.held, env) && !a.usageHoldPassesPast(env))) {
+	// A message within this agent or an async tool result (#3114) steers
+	// into an adopted run in flight instead of parking behind it — unless an
+	// earlier one is parked, which keeps them in order: the release walk
+	// steers both.
+	pinned := heldSiblingPins(inb.held, env)
+	if env.Inject.SkipHolds && !pinned && a.tryPeerSteerHeld(inb, &env) {
+		return true
+	}
+	if injectGateApplies(env.Inject) && (a.injectHeld(env) || (pinned && !a.usageHoldPassesPast(env))) {
 		// An injection a usage hold parks is stored when it has a
 		// serialisable form, so it survives a restart (#2491).
 		if env.Inject.Durable != nil && a.usageHoldPhase() != usagehold.Open {
@@ -427,10 +442,13 @@ func (a *Agent) dispatchInject(ctx context.Context, inb *sessionInbox, env Envel
 // between the sibling's park and env's arrival. A keepalive NEVER queues
 // behind a plain sibling parked by pending work alone: that half of the hold
 // does not apply to it, and queueing there would hold the cache-warming pass
-// for the sibling's whole background-work window (#2233 review F1).
+// for the sibling's whole background-work window (#2233 review F1). A
+// SkipHolds message (#3114) is its own class (injectClass): it queues only
+// behind an earlier SkipHolds message, never behind a cron or wake that
+// a hold keeps, and they never queue behind it.
 func heldSiblingPins(held []Envelope, env Envelope) bool {
 	for _, h := range held {
-		if isKeepaliveTrigger(h.Inject.Trigger) == isKeepaliveTrigger(env.Inject.Trigger) {
+		if injectClass(h.Inject) == injectClass(env.Inject) {
 			return true
 		}
 	}
@@ -447,7 +465,9 @@ func heldSiblingPins(held []Envelope, env Envelope) bool {
 // (an earlier entry kept, a later one of its class must stay behind it),
 // while a keepalive whose
 // adopted-run half cleared runs PAST a sibling still parked by pending work —
-// exactly the exemption requirement 4 grants it (#2233 review F1). During
+// exactly the exemption requirement 4 grants it (#2233 review F1). A
+// SkipHolds entry (#3114) that a run it can steer into is now running
+// (peerSteerTarget) is folded into that run and leaves the list. During
 // shutdown injectHeld reads false, so each held inject is released into
 // runInject, whose drain gate refuses it (#2059) — the same release the
 // blocking gate used to perform.
@@ -461,7 +481,11 @@ func (a *Agent) releaseHeld(ctx context.Context, inb *sessionInbox) bool {
 	kept := make([]Envelope, 0, len(inb.held))
 	ok := true
 	for i, env := range inb.held {
-		if a.injectHeld(env) || (heldSiblingPins(kept, env) && !a.usageHoldPassesPast(env)) {
+		pinned := heldSiblingPins(kept, env)
+		if env.Inject.SkipHolds && !pinned && a.tryPeerSteerHeld(inb, &env) {
+			continue
+		}
+		if a.injectHeld(env) || (pinned && !a.usageHoldPassesPast(env)) {
 			kept = append(kept, env)
 			continue
 		}

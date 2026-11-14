@@ -72,6 +72,7 @@ const (
 	CapQuestionPrompt
 
 	// Input and delivery.
+	CapMidTurnSteer
 	CapFoldAttachments
 	CapDeliveryTracking
 	CapThreadNaming
@@ -163,6 +164,7 @@ var capabilityTable = [numCapabilities]CapabilityInfo{
 	CapPlanPermission:     {Name: "plan_permission", Kind: KindInterface, Iface: ifaceOf[PlanResponder](), Doc: "turns a typed reply into plan-revision feedback (PlanResponder)"},
 	CapQuestionPrompt:     {Name: "question_prompt", Kind: KindInterface, Iface: ifaceOf[QuestionPromptSetter](), Doc: "presents its own questions (AskUserQuestion, elicitation, the question tool) through a separate question prompt function (QuestionPromptSetter)"},
 
+	CapMidTurnSteer:     {Name: "mid_turn_steer", Kind: KindBehaviour, Doc: "folds a message into the running turn natively (ImmediateInject SourceSteer), without aborting the turn; without it, a mid-turn message waits for the turn to end"},
 	CapFoldAttachments:  {Name: "fold_attachments", Kind: KindInterface, Iface: ifaceOf[FoldAttachmentCarrier](), Doc: "delivers attachments folded into a running turn (FoldAttachmentCarrier)"},
 	CapDeliveryTracking: {Name: "delivery_tracking", Kind: KindInterface, Iface: ifaceOf[DeliveryTracker](), Doc: "proves each input reached the model and hands back the rest (DeliveryTracker + Spec.TranscriptChecker)"},
 	CapThreadNaming:     {Name: "thread_naming", Kind: KindInterface, Iface: ifaceOf[ThreadNameConsumer](), Doc: "names its own sessions (ThreadNameConsumer)"},

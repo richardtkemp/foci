@@ -176,7 +176,9 @@ func (s *Spawner) messageFromSpawn(parent, id string, direct bool, from, text st
 		spawnLog.Infof("spawn=%s message to spawner %s kept for its result (%d chars)", id, parent, len(text))
 		return TextResult("Kept: " + keepWhy + ". It will head your result."), nil
 	}
-	s.deps.Notifier.InjectAgentMessage(owner, formatSpawnerMessage(info, direct, text), "", spawnOrigin(info, from, text))
+	origin := spawnOrigin(info, from, text)
+	origin.SteerText = formatSpawnerMessageSteer(info, direct, text)
+	s.deps.Notifier.InjectAgentMessage(owner, formatSpawnerMessage(info, direct, text), "", origin)
 	tr.appendLog(parent, id, "to-spawner", text)
 	spawnLog.Infof("spawn=%s message to spawner %s delivered (%d chars)", id, owner, len(text))
 	return TextResult("Sent to your spawner (" + owner + ")."), nil
@@ -212,6 +214,19 @@ func (s *Spawner) callerTurnRunning(parent string) bool {
 
 // formatSpawnerMessage is what the spawner's session receives from its spawn.
 func formatSpawnerMessage(info RunningSpawn, direct bool, text string) string {
+	return formatSpawnerMessageNote(info, direct, text,
+		" Your reply here goes to your own chat as usual: if your human needs nothing from this, reply [[NO_RESPONSE]].")
+}
+
+// formatSpawnerMessageSteer is formatSpawnerMessage for a message that folds
+// into a turn already running (#3114): without the [[NO_RESPONSE]]
+// instruction, which there could silence the turn's answer to the human.
+func formatSpawnerMessageSteer(info RunningSpawn, direct bool, text string) string {
+	return formatSpawnerMessageNote(info, direct, text,
+		" It arrived while you were working: carry on with your current work, and act on it or mention it to your human only if it matters.")
+}
+
+func formatSpawnerMessageNote(info RunningSpawn, direct bool, text, reply string) string {
 	who := "spawn " + info.ID
 	if info.Agent != "" {
 		who += ", running as " + info.Agent
@@ -221,7 +236,7 @@ func formatSpawnerMessage(info RunningSpawn, direct bool, text string) string {
 		answer = "It returns its result to the call that started it, and takes no spawn_send."
 	}
 	note := "[SYSTEM INJECTION — a message from a spawn you started (" + who + "), NOT from your human. Your human has not seen it. " +
-		"The spawn is still running. " + answer + " Your reply here goes to your own chat as usual: if your human needs nothing from this, reply [[NO_RESPONSE]].]"
+		"The spawn is still running. " + answer + reply + "]"
 	return prompts.FormatInjectedMessage("MESSAGE FROM YOUR SPAWN "+info.ID, time.Now(), text, note)
 }
 

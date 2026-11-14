@@ -37,6 +37,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -132,6 +133,18 @@ type Envelope struct {
 	// maxAskHold from then (#2828, see askHoldExpired).
 	askHeldSince time.Time
 
+	// peerSteerFailed is set when a parked SkipHolds injection's steer into
+	// a running turn failed (#3114). The held watch then stops reading that
+	// run as a reason to release it, so a backend that keeps refusing the
+	// fold cannot spin the worker; it waits for its hold to clear instead.
+	peerSteerFailed bool
+
+	// jumpQueue marks a SkipHolds injection on a backend with no native
+	// mid-turn steer (#3114, Q45): it runs right after the current turn,
+	// ahead of everything else queued. pushPending places it after the
+	// queue's other jumpQueue entries (FIFO among them) and before the rest.
+	jumpQueue bool
+
 	// enqSeq is the session-local order Enqueue put this user message on the
 	// channel in (1-based; 0 = never queued through Enqueue). A /stop that
 	// drops a queued batch drops every message queued up to it, including
@@ -213,6 +226,26 @@ type InjectMeta struct {
 	// the plan-cancel or pending-ask captures (injections skip them by
 	// construction), and never answers a backend prompt.
 	UserInput bool
+	// SkipHolds marks a message sent within this agent (a spawn to its
+	// parent or to another spawn, send_to_session between the agent's own
+	// sessions, a [SPAWN RESULT], [DEPTH RESULTS]) or an async tool result
+	// (#3114, Dick 2026-11-14). It skips the holds a system injection waits
+	// for: it steers into a running user turn or adopted autonomous run
+	// (Envelope.Text carries the message), and an open foci_ask does not
+	// defer it. A running system turn is never steered: the message runs
+	// right after it (#2591). The usage hold and a CC re-login still hold
+	// it. Background work with no run in flight still parks it, because a
+	// system turn begun in that window swallows the coming autonomous run's
+	// output (#1068); it then steers into that run when it starts, or runs
+	// when the window closes (or the #2792 limit passes). With Text empty
+	// (a reply_to=caller target turn, whose reply must be captured) it never
+	// steers and skips only the ask hold.
+	SkipHolds bool
+	// Steered, if set, is called when the inbox folds the injection into a
+	// running turn instead of running Run: the work Run would have done
+	// around the turn (a chit, a completion hook) is done here. Only a
+	// SkipHolds injection steers.
+	Steered func()
 }
 
 // controlInjectTriggers are exempt from ask-deferral: they resume/drive the agent
@@ -571,14 +604,25 @@ func (inb *sessionInbox) drainAvailable() []Envelope {
 	}
 }
 
-// pushPending appends envs to the worker's queue (#2362), in order.
+// pushPending appends envs to the worker's queue (#2362), in order. A
+// jumpQueue envelope (#3114) goes ahead of every entry that is not one.
 func (inb *sessionInbox) pushPending(envs ...Envelope) {
 	if len(envs) == 0 {
 		return
 	}
 	inb.pendMu.Lock()
-	inb.pending = append(inb.pending, envs...)
-	inb.pendMu.Unlock()
+	defer inb.pendMu.Unlock()
+	for _, env := range envs {
+		if !env.jumpQueue {
+			inb.pending = append(inb.pending, env)
+			continue
+		}
+		i := 0
+		for i < len(inb.pending) && inb.pending[i].jumpQueue {
+			i++
+		}
+		inb.pending = slices.Insert(inb.pending, i, env)
+	}
 }
 
 // popPending removes and returns the head of the worker's queue.
@@ -1056,6 +1100,17 @@ func (a *Agent) trySteer(inb *sessionInbox, env Envelope, active, compacting boo
 // a re-login hold, as for user messages — the backend it would write to cannot
 // authenticate.
 func (a *Agent) enqueueInjection(inb *sessionInbox, env Envelope, reloginHold bool) bool {
+	// A message within this agent or an async tool result (#3114) steers
+	// into a running user turn or adopted run, like typed text; otherwise it
+	// queues, and the worker runs it after the turn in flight.
+	if env.Inject.SkipHolds && !reloginHold && a.steerPeerInject(inb, env) {
+		return true
+	}
+	// On a backend with no native mid-turn steer (Q45) it is never steered:
+	// it runs right after the current turn, ahead of the queue.
+	if env.Inject.SkipHolds && !a.backendSteersMidTurn() {
+		env.jumpQueue = true
+	}
 	if env.Inject.UserInput && !reloginHold {
 		active := a.sessionTurnActive(inb, env.SessionKey)
 		if a.trySteer(inb, env, active, a.IsCompacting(env.SessionKey)) {
@@ -1084,16 +1139,23 @@ func (a *Agent) steerToBackend(be delegator.Delegator, env Envelope) bool {
 	// User input folding into the running turn: its reply shows typing
 	// (#2320). The turn is never a system one (trySteer, #2591), but may be an
 	// adopted run whose typing was off. Restored below if the fold does not
-	// land.
-	prevTyping := a.DelegatedManager.SetTypingAllowed(env.SessionKey, true)
+	// land. A SkipHolds message (#3114) is not user input: it leaves typing as
+	// the running turn set it.
+	userInput := isUserSteer(env)
+	var prevTyping bool
+	if userInput {
+		prevTyping = a.DelegatedManager.SetTypingAllowed(env.SessionKey, true)
+	}
 	err := be.ImmediateInject(a.inboxCtx, inj)
-	if err != nil {
+	if err != nil && userInput {
 		a.DelegatedManager.SetTypingAllowed(env.SessionKey, prevTyping)
 	}
 	switch {
 	case err == nil:
 		a.logger().Debugf("inbox: urgent dispatch sk=%s sent %dB attachments=%d", env.SessionKey, len(inj.Text), len(inj.Attachments))
-		a.noteUserInputDelivered(env.SessionKey)
+		if userInput {
+			a.noteUserInputDelivered(env.SessionKey)
+		}
 		a.reportDelivery(env.SessionKey, envRefs(env), DeliverySteered, a.LiveTurnID(env.SessionKey))
 		// The sender's text as a turn records it (attributedText), not
 		// inj.Text: a fresh turn's recv row holds what the sender wrote, not
@@ -1116,6 +1178,13 @@ func (a *Agent) steerToBackend(be delegator.Delegator, env Envelope) bool {
 	return false
 }
 
+// isUserSteer reports whether a steer of env carries the user's input: a
+// platform message or an ask answer (#2233). A SkipHolds injection (#3114) is
+// not: it neither turns typing on nor asks for a prompt suggestion.
+func isUserSteer(env Envelope) bool {
+	return env.Inject == nil || env.Inject.UserInput
+}
+
 // steerInject builds the SourceSteer inject for env. A text-only message is
 // its text. A message with attachments folds only on a
 // delegator.FoldAttachmentCarrier that accepts every binary attachment
@@ -1124,7 +1193,7 @@ func (a *Agent) steerToBackend(be delegator.Delegator, env Envelope) bool {
 // the saved-to-disk notes, then the sender's text.
 func (a *Agent) steerInject(be delegator.Delegator, env Envelope) (inj delegator.Inject, ok bool) {
 	inj = delegator.Inject{Source: delegator.SourceSteer, Text: env.Text,
-		PromptSuggestion: a.wantsPromptSuggestion(true, env.SessionKey), PromptSuggestionMaxUsage: a.promptSuggestionMaxUsage()}
+		PromptSuggestion: a.wantsPromptSuggestion(isUserSteer(env), env.SessionKey), PromptSuggestionMaxUsage: a.promptSuggestionMaxUsage()}
 	if env.Ref.MessageID != "" {
 		inj.Refs = []delegator.InputRef{env.Ref}
 	}
@@ -1461,6 +1530,10 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 		if ctx.Err() != nil {
 			return
 		}
+		// What the channel holds joins the queue first, in order, so a
+		// jumpQueue envelope (#3114) that arrived during the last turn runs
+		// before anything queued ahead of it.
+		inb.pushPending(inb.drainAvailable()...)
 		if env, ok := inb.popPending(); ok {
 			if !a.handleDequeued(ctx, inb, env) {
 				return
@@ -2010,7 +2083,9 @@ func (a *Agent) runInject(inb *sessionInbox, env Envelope) {
 		}
 		return
 	}
-	if pending := a.pendingAskFor(env.SessionKey); pending != "" && !IsControlInjectTrigger(env.Inject.Trigger) &&
+	// A message within this agent or an async tool result is not deferred
+	// by an open ask (#3114).
+	if pending := a.pendingAskFor(env.SessionKey); pending != "" && !IsControlInjectTrigger(env.Inject.Trigger) && !env.Inject.SkipHolds &&
 		(env.Inject.AskReqID == "" || env.Inject.AskReqID == pending) {
 		if a.askHoldExpired(env) {
 			// Held by asks for maxAskHold already (#2828): delivered as

@@ -231,12 +231,26 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 				p.Message,
 				contextNote,
 			)
+			// The same message as it goes when it folds into a running turn
+			// (#3114): a reply_to=caller message never folds (its reply is
+			// captured), so only the "session" note has a fold variant,
+			// without its [[NO_RESPONSE]] instruction.
+			var steerTagged string
+			if p.ReplyTo != "caller" || oneshotCaller {
+				steerTagged = prompts.FormatInjectedMessage(
+					fmt.Sprintf("MESSAGE FROM SESSION %s", originSession),
+					time.Now(),
+					p.Message,
+					sessionNoteSteer,
+				)
+			}
 
 			// The chit origin: the caller's raw message, unwrapped. Built
 			// after every refusal gate above so a refused call surfaces
 			// nothing, and carried on the delivery so the chit appears when
 			// the target's turn starts, not when the tool is called.
 			origin := NewAgentOrigin(originSession, p.Message)
+			origin.SteerText = steerTagged
 			// A later notice needs a caller that can take a turn: not a oneshot,
 			// whichever way the reply goes.
 			origin.NotifyCaller = originSession != "" && !spawnCaller &&
@@ -299,3 +313,9 @@ func targetAgentOf(sessionKey string) string {
 	}
 	return sessionKey
 }
+
+// sessionNoteSteer is the note a send_to_session message carries when it folds
+// into a turn that is already running (#3114): the reply_to=session note
+// without its [[NO_RESPONSE]] instruction, which there could silence the
+// running turn's answer to the user.
+const sessionNoteSteer = "[SYSTEM INJECTION — This is a user-role message sent by another session, NOT by the user. The user has not seen it. It arrived while you were working: carry on with your current work, and tell the user about it in your reply if it matters to them (e.g. \"I received a notification that...\"). Do NOT passively comment on or observe the content.]"

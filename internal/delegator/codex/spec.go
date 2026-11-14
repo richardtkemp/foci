@@ -67,6 +67,7 @@ var spec = delegator.Spec{
 		delegator.CapPlanPermission:     delegator.NotApplicable("no plan mode"),
 		delegator.CapQuestionPrompt:     delegator.No("the app-server has no question prompts"),
 
+		delegator.CapMidTurnSteer:     delegator.Yes(),
 		delegator.CapFoldAttachments:  delegator.No("a message folded into a running turn carries text only"),
 		delegator.CapDeliveryTracking: delegator.No("inputs are fire-and-forget: no proof of consumption"),
 		delegator.CapThreadNaming:     delegator.Yes(),

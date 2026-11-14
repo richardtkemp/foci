@@ -125,6 +125,26 @@ func WithUserInput(ctx context.Context) context.Context {
 	return context.WithValue(ctx, userInputKey{}, true)
 }
 
+// skipHoldsKey is the context key marking an injected message as one that
+// skips the injection holds (#3114): a message within one agent (spawn to
+// parent, spawn to spawn, send_to_session between the agent's own sessions,
+// [SPAWN RESULT], [DEPTH RESULTS]) or an async tool result. Read by the
+// injection wiring (cmd/foci-gw deliverToSessionChatThen), which sets
+// InjectMeta.SkipHolds.
+type skipHoldsKey struct{}
+
+// WithSkipHolds marks ctx's injected message as one that skips the injection
+// holds (#3114, see InjectMeta.SkipHolds).
+func WithSkipHolds(ctx context.Context) context.Context {
+	return context.WithValue(ctx, skipHoldsKey{}, true)
+}
+
+// SkipHoldsFromContext reports whether ctx carries the skip-holds marker.
+func SkipHoldsFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(skipHoldsKey{}).(bool)
+	return v
+}
+
 // UserInputFromContext reports whether the turn's ctx carries the user-input
 // marker (false if absent).
 func UserInputFromContext(ctx context.Context) bool {

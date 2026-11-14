@@ -171,16 +171,28 @@ func newAsyncNotifier(
 		if !ok {
 			return
 		}
+		// Within this agent, a message or an async tool result skips the
+		// injection holds (#3114); one to another agent keeps them.
+		skip := targetAgentID == agentID && skipHoldsTrigger(trigger)
+		deliverCtx := ctx
+		if skip {
+			deliverCtx = agent.WithSkipHolds(ctx)
+		}
 
 		if replyToSession != "" {
 			// CAPTURE-AND-RELAY: run on the target, hand its output to the caller.
 			w := newCallerWatch(ctx, connMgr, trigger, getAgent(), agentID, replyToSession, targetAg, target, true, origin != nil && origin.CallerTold)
 			go w.run()
-			relayResponseToCaller(getAgent, ctx, connMgr, deliverChit, agentID, targetAg, target, replyToSession, message, trigger, origin, w)
+			var opts []injectOption
+			if skip {
+				opts = append(opts, skipsHoldsTarget)
+			}
+			relayResponseToCaller(getAgent, deliverCtx, connMgr, deliverChit, agentID, targetAg, target, replyToSession, message, trigger, origin, w, opts...)
 			return
 		}
 		// DELIVER-TO-CHAT: the result belongs to the target's own chat.
-		deliverToSessionChat(targetAg, ctx, trigger, connMgr, targetAgentID, target, message, agentChitFor(origin, deliverChit), "")
+		deliverToSessionChat(targetAg, deliverCtx, trigger, connMgr, targetAgentID, target, message, agentChitFor(origin, deliverChit), "",
+			steerTextOf(origin))
 	}).WithDeliverThen(func(targetSession, message, trigger string, done func(bool)) {
 		// DELIVER-TO-CHAT that reports whether the turn took the message
 		// (InjectToAgentThen): a spawn result stays persisted until it did
@@ -193,9 +205,15 @@ func newAsyncNotifier(
 		if !ok {
 			return
 		}
+		// A [SPAWN RESULT] or [DEPTH RESULTS] within this agent skips the
+		// injection holds (#3114); a steered one counts as delivered (Q41).
+		deliverCtx := ctx
+		if targetAgentID == agentID && skipHoldsTrigger(trigger) {
+			deliverCtx = agent.WithSkipHolds(ctx)
+		}
 		var once sync.Once
 		finish := func(delivered bool) { once.Do(func() { done(delivered) }) }
-		deliverToSessionChatThen(targetAg, ctx, trigger, connMgr, targetAgentID, target, message, nil, "",
+		deliverToSessionChatThen(targetAg, deliverCtx, trigger, connMgr, targetAgentID, target, message, nil, "",
 			func(err error) { finish(!errors.Is(err, agent.ErrShuttingDown)) },
 			onInjectRefused(func() { finish(false) }))
 	}).WithTargetCheck(func(targetSession string) (string, error) {
@@ -320,10 +338,16 @@ func newSessionNotifyFn(
 	deliverChit chitDeliverer,
 ) tools.SessionNotifyFn {
 	return tools.SessionNotifyFn(func(targetSessionKey, message string, origin *tools.AgentOrigin) {
+		ctx := ctx
+		if origin != nil && origin.AgentID != "" && origin.AgentID == session.AgentIDFromKey(targetSessionKey) {
+			// Between this agent's own sessions: skips the injection holds
+			// (#3114). A message to another agent keeps them.
+			ctx = agent.WithSkipHolds(ctx)
+		}
 		if origin != nil && origin.NotifyCaller && deliverWatched(agentResolverFn, ctx, connMgr, trigger, targetSessionKey, message, origin, deliverChit) {
 			return
 		}
-		deliverToResolvedSession(agentResolverFn, ctx, connMgr, trigger, targetSessionKey, "", message, agentChitFor(origin, deliverChit))
+		deliverToResolvedSession(agentResolverFn, ctx, connMgr, trigger, targetSessionKey, "", message, agentChitFor(origin, deliverChit), steerTextOf(origin))
 	})
 }
 
@@ -351,7 +375,7 @@ func deliverWatched(
 	}
 	w := newCallerWatch(ctx, connMgr, trigger, callerInst.ag, origin.AgentID, origin.SessionKey, targetInst.ag, target, false, origin.CallerTold)
 	go w.run()
-	opts := append(w.options(), withDurable(sessionChatDurable(trigger, message, "", nil)))
+	opts := append(w.options(), withDurable(sessionChatDurable(trigger, message, "", nil)), steerTextOf(origin))
 	deliverToSessionChatThen(targetInst.ag, ctx, trigger, connMgr, targetSK.AgentID, target, message, agentChitFor(origin, deliverChit), "",
 		func(err error) { w.turnEnded(err, true) }, opts...)
 	return true
@@ -402,6 +426,7 @@ func deliverToResolvedSession(
 	connMgr platform.ConnectionManager,
 	trigger, targetSessionKey, askReqID, message string,
 	chit *agentChit,
+	opts ...injectOption,
 ) {
 	sk, err := session.ParseSessionKey(targetSessionKey)
 	if err != nil {
@@ -413,7 +438,7 @@ func deliverToResolvedSession(
 		log.NewComponentLogger(trigger).Errorf("unknown agent %q for session %s", sk.AgentID, targetSessionKey)
 		return
 	}
-	deliverToSessionChat(inst.ag, ctx, trigger, connMgr, sk.AgentID, targetSessionKey, message, chit, askReqID)
+	deliverToSessionChat(inst.ag, ctx, trigger, connMgr, sk.AgentID, targetSessionKey, message, chit, askReqID, opts...)
 }
 
 // turnSinkForConn returns the best turn-event sink for a connection. For app
@@ -487,6 +512,45 @@ func asUserInput(message string) injectOption {
 	}
 }
 
+// skipsHolds marks the injection as a message within this agent or an async
+// tool result (#3114, InjectMeta.SkipHolds): Envelope.Text carries the message
+// so the inbox can steer it into a running turn, and steered runs in place of
+// the injection's Run when it does.
+func skipsHolds(message string, steered func()) injectOption {
+	return func(env *agent.Envelope) {
+		env.Text = message
+		env.Inject.SkipHolds = true
+		env.Inject.Steered = steered
+	}
+}
+
+// steerTextOf gives a SkipHolds injection the text it folds into a running
+// turn with: origin.SteerText, the message without its [[NO_RESPONSE]]
+// instruction (#3114). A no-op without one, and on an injection that does not
+// skip the holds (it never steers; its text stays empty).
+func steerTextOf(origin *tools.AgentOrigin) injectOption {
+	return func(env *agent.Envelope) {
+		if origin != nil && origin.SteerText != "" && env.Inject.SkipHolds && env.Text != "" {
+			env.Text = origin.SteerText
+		}
+	}
+}
+
+// skipsHoldsTarget marks the target turn of a reply_to=caller message within
+// this agent (#3114): it skips the ask hold, but never steers (no Text) — its
+// reply must be captured for the caller, and a steered message has no turn
+// of its own to capture.
+func skipsHoldsTarget(env *agent.Envelope) { env.Inject.SkipHolds = true }
+
+// skipHoldsTrigger reports whether trigger names a delivery that skips the
+// injection holds when it stays within one agent (#3114): "async_notify"
+// (async tool results, send_to_spawner, [SPAWN RESULT], send_to_session
+// reply_to=caller) and "depth_results". Other triggers (tmux_watch,
+// compaction-resume, plan-command, ...) keep their holds.
+func skipHoldsTrigger(trigger string) bool {
+	return trigger == "async_notify" || trigger == "depth_results"
+}
+
 // onInjectRefused arranges fn to fire when the inbox declines to run the
 // injection — a full inbox at enqueue, or a shutdown/ctx-end drop (#2059) —
 // so a caller holding runtime state on the assumption the turn would run can
@@ -549,8 +613,9 @@ func deliverToSessionChat(
 	agentID, sessionKey, message string,
 	chit *agentChit,
 	askReqID string,
+	opts ...injectOption,
 ) {
-	deliverToSessionChatThen(ag, ctx, trigger, connMgr, agentID, sessionKey, message, chit, askReqID, nil)
+	deliverToSessionChatThen(ag, ctx, trigger, connMgr, agentID, sessionKey, message, chit, askReqID, nil, opts...)
 }
 
 // deliverToSessionChatThen is deliverToSessionChat with a completion hook:
@@ -578,6 +643,20 @@ func deliverToSessionChatThen(
 ) {
 	if agent.UserInputFromContext(ctx) {
 		opts = append([]injectOption{asUserInput(message)}, opts...)
+	} else if agent.SkipHoldsFromContext(ctx) {
+		// A message within this agent or an async tool result (#3114): it
+		// may steer into the running turn. A steered message never runs the
+		// closure below, so Steered does its chit and completion hook. A
+		// usage hold that parks one still stores it (durable form below).
+		opts = append([]injectOption{skipsHolds(message, func() {
+			chit.fire(sessionKey)
+			if after != nil {
+				after(nil)
+			}
+		})}, opts...)
+		if d := sessionChatDurable(trigger, message, askReqID, after); d != nil {
+			opts = append([]injectOption{func(env *agent.Envelope) { env.Inject.Durable = d }}, opts...)
+		}
 	} else if d := sessionChatDurable(trigger, message, askReqID, after); d != nil {
 		opts = append([]injectOption{func(env *agent.Envelope) { env.Inject.Durable = d }}, opts...)
 	}

@@ -374,7 +374,8 @@ func (m *mockBackendDT) WaitForTurn(ctx context.Context) error {
 }
 
 // mockSpecFor is the Spec a mock backend's manager declares: the mid-turn
-// nudges ccstream supports (so the nudge tests see them armed), with the
+// nudges and native steering ccstream supports (so the nudge and steer tests
+// see them armed), with the
 // ledger data the ledger-booking mocks stand for, and nothing at all for
 // capabilitylessBackend.
 func mockSpecFor(be delegator.Delegator) delegator.Spec {
@@ -382,6 +383,7 @@ func mockSpecFor(be delegator.Delegator) delegator.Spec {
 		delegator.CapPostToolNudge:  delegator.Yes(),
 		delegator.CapPreAnswerNudge: delegator.Yes(),
 		delegator.CapStreaming:      delegator.Yes(),
+		delegator.CapMidTurnSteer:   delegator.Yes(),
 	}}
 	switch be.(type) {
 	case capabilitylessBackend:

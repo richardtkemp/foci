@@ -73,6 +73,7 @@ var spec = delegator.Spec{
 		delegator.CapPlanPermission:     delegator.Yes(),
 		delegator.CapQuestionPrompt:     delegator.Yes(),
 
+		delegator.CapMidTurnSteer:     delegator.Yes(),
 		delegator.CapFoldAttachments:  delegator.Yes(),
 		delegator.CapDeliveryTracking: delegator.Yes(),
 		delegator.CapThreadNaming:     delegator.No("CC does not name its sessions; agents get the set_session_alias tool instead"),
