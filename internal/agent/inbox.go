@@ -2426,6 +2426,7 @@ func (a *Agent) AttachDelivery(be delegator.Delegator, sk string) {
 		se = &delegator.SessionEvents{
 			OnText: func(text string) {
 				a.noteBackendProgress(sk)
+				a.noteCutTurnOutput(sk)
 				router.Emit(context.Background(), turnevent.TextBlock{Text: text, Phase: turnevent.PhaseIntermediate})
 			},
 			OnSubagentStart: func(groupKey, label, prompt string, runIndex int) {
@@ -2449,15 +2450,18 @@ func (a *Agent) AttachDelivery(be delegator.Delegator, sk string) {
 			},
 			OnTextDelta: func(delta string) {
 				a.noteBackendProgress(sk)
+				a.noteCutTurnOutput(sk)
 				router.Emit(context.Background(), turnevent.TextDelta{Delta: delta})
 			},
 			OnThinkingDelta: func(delta string) {
 				a.noteBackendProgress(sk)
+				a.noteCutTurnOutput(sk)
 				router.Emit(context.Background(), turnevent.ThinkingDelta{Delta: delta})
 				buf.WriteString(delta)
 			},
 			OnToolStart: func(id, name, input string) {
 				a.noteBackendProgress(sk)
+				a.noteCutTurnOutput(sk)
 				tally.start(id, name)
 				router.Emit(context.Background(), turnevent.ToolCall{ID: id, Name: name, Args: []byte(input)})
 			},

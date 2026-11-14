@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/delegator"
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
@@ -396,5 +397,80 @@ func TestCutTurn_APITurnRecordedThroughOrchestrator(t *testing.T) {
 	rec, ok := ag.loadCutTurn(sk)
 	if !ok || rec.Input != "summarise the logs" || rec.Trigger != "app" {
 		t.Fatalf("record = %+v (ok=%v), want the cut turn's input and trigger", rec, ok)
+	}
+}
+
+// #3102: a delegated backend may not have saved a turn's input when a cut
+// lands before the turn's first output (CC 2.1.325 probe), so the record
+// notes the first output and the resume quotes the input until then.
+func TestCutTurn_OutputMarksRecord(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		emit func(se *delegator.SessionEvents)
+		want bool
+	}{
+		{"no output", func(*delegator.SessionEvents) {}, false},
+		{"text delta", func(se *delegator.SessionEvents) { se.OnTextDelta("hi") }, true},
+		{"thinking delta", func(se *delegator.SessionEvents) { se.OnThinkingDelta("hm") }, true},
+		{"text block", func(se *delegator.SessionEvents) { se.OnText("hi") }, true},
+		{"tool start", func(se *delegator.SessionEvents) { se.OnToolStart("t1", "Read", "{}") }, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := cutTurnAgent(t, cutTurnIndex(t))
+			const sk = "test/c1"
+			be := &mockBackendDT{}
+			a.AttachDelivery(be, sk)
+			simTurn(a, context.Background(), sk, "app", []string{"the codeword is PELICAN"}, true, func() {
+				tc.emit(be.sessionEvents)
+				tc.emit(be.sessionEvents) // a second event writes nothing new
+				a.MarkTurnsCut()
+			})
+			rec, ok := hasCutTurn(t, a, sk)
+			if !ok {
+				t.Fatal("cut turn left no record")
+			}
+			if rec.Output != tc.want {
+				t.Errorf("record Output = %v, want %v", rec.Output, tc.want)
+			}
+			if got := restartResumeQuotes(false, true, rec); got != !tc.want {
+				t.Errorf("delegated resumable resume quotes = %v, want %v", got, !tc.want)
+			}
+		})
+	}
+}
+
+// Output between turns (an autonomous run) creates no record and marks none.
+func TestCutTurn_OutputBetweenTurnsNoRecord(t *testing.T) {
+	a := cutTurnAgent(t, cutTurnIndex(t))
+	const sk = "test/c1"
+	be := &mockBackendDT{}
+	a.AttachDelivery(be, sk)
+	be.sessionEvents.OnTextDelta("autonomous")
+	if rec, ok := hasCutTurn(t, a, sk); ok {
+		t.Fatalf("output between turns wrote a record: %+v", rec)
+	}
+	// A later turn starts unmarked: the mark of an earlier turn is gone.
+	simTurn(a, context.Background(), sk, "app", []string{"one"}, true, func() {
+		be.sessionEvents.OnTextDelta("x")
+	})
+	simTurn(a, context.Background(), sk, "app", []string{"two"}, true, a.MarkTurnsCut)
+	rec, ok := hasCutTurn(t, a, sk)
+	if !ok || rec.Output || rec.Input != "two" {
+		t.Fatalf("record = %+v (ok=%v), want input two with no output", rec, ok)
+	}
+}
+
+func TestRestartResumeQuotes(t *testing.T) {
+	for _, tc := range []struct {
+		api, resumable, output, want bool
+	}{
+		{true, true, true, true},   // API transport: always
+		{false, false, true, true}, // delegated, no conversation to resume
+		{false, true, false, true}, // delegated, cut before output (#3102)
+		{false, true, true, false}, // delegated, conversation holds the input
+	} {
+		if got := restartResumeQuotes(tc.api, tc.resumable, cutTurnRecord{Output: tc.output}); got != tc.want {
+			t.Errorf("restartResumeQuotes(api=%v, resumable=%v, output=%v) = %v, want %v", tc.api, tc.resumable, tc.output, got, tc.want)
+		}
 	}
 }

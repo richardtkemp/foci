@@ -56,6 +56,14 @@ type cutTurnRecord struct {
 	// with Resumes > 0 was written by RestoreCutTurns; the resume turn that
 	// begins on it keeps it as it is.
 	Resumes int `json:"resumes,omitempty"`
+	// Output is set at the turn's first backend output (text, thinking or a
+	// tool call: noteCutTurnOutput). Until then a delegated backend may not
+	// have saved the input: CC 2.1.325 killed within ~0.15 s of the input
+	// on a warm process, or ~1 s of a cold start, has no trace of it in its
+	// transcript, and a fresh session has no transcript to resume (#3102
+	// probe). Its first output follows its API request, which follows the
+	// saved input. So the resume quotes the input while Output is false.
+	Output bool `json:"output,omitempty"`
 }
 
 // cutTurnState is the agent's in-memory side of the cut_turn records.
@@ -67,6 +75,9 @@ type cutTurnState struct {
 	// cut is set by MarkTurnsCut: from then on an ending turn keeps its
 	// record.
 	cut atomic.Bool
+	// output marks the sessions whose running record already has Output
+	// set, so the per-delta callback writes the record once per turn.
+	output map[string]bool
 }
 
 // cutTurnExcludedTriggers are the triggers whose turns a restart does not
@@ -160,12 +171,39 @@ func (a *Agent) trackCutTurn(ts *TurnState) (end func()) {
 			return
 		}
 		delete(a.cutTurn.running, sk)
+		delete(a.cutTurn.output, sk)
 		if a.cutTurn.cut.Load() {
 			a.logger().Infof("session=%s turn cut by the shutdown — it resumes after the restart", sk)
 			return
 		}
 		a.dropCutTurn(sk)
 	}
+}
+
+// noteCutTurnOutput records that sk's running turn has produced backend
+// output, so its input is in the backend's conversation (cutTurnRecord.Output).
+// Called from the session's delivery callbacks on every text, thinking delta
+// and tool start; it writes the record at most once per turn, and does
+// nothing between turns.
+func (a *Agent) noteCutTurnOutput(sk string) {
+	if a.SessionIndex == nil {
+		return
+	}
+	a.cutTurn.mu.Lock()
+	defer a.cutTurn.mu.Unlock()
+	if a.cutTurn.running[sk] == 0 || a.cutTurn.output[sk] {
+		return
+	}
+	if a.cutTurn.output == nil {
+		a.cutTurn.output = map[string]bool{}
+	}
+	a.cutTurn.output[sk] = true
+	rec, ok := a.loadCutTurn(sk)
+	if !ok || rec.Output {
+		return
+	}
+	rec.Output = true
+	a.saveCutTurn(sk, rec)
 }
 
 // appendCutTurnInputLocked adds a folded follow-up's text to the record of
@@ -244,7 +282,8 @@ func (a *Agent) saveCutTurn(sk string, rec cutTurnRecord) {
 // restart cut its turn (#2999). quote repeats the cut turn's input: for a
 // conversation the cut may have lost it from (the API transport saves a
 // turn when it ends; a delegated session without a resume id starts
-// afresh). A delegated backend with a kept conversation already has it,
+// afresh; a delegated turn cut before any output may not have saved it,
+// #3102). A delegated backend whose turn produced output already has it,
 // and repeating it there would hand the agent the same input twice.
 func restartResumeLine(rec cutTurnRecord, quote bool) string {
 	var b strings.Builder
@@ -346,7 +385,7 @@ func (a *Agent) restoreCutTurn(sk string) {
 		a.logger().Warnf("cut turn: no driver for the resume of %s — kept for the next start", sk)
 		return
 	}
-	quote := a.DelegatedManager == nil || !a.HasResumableSession(sk)
+	quote := restartResumeQuotes(a.DelegatedManager == nil, a.HasResumableSession(sk), rec)
 	env := restartResumeEnvelope(sk, a.UsageHeldDriver(sk), rec, quote)
 	a.logger().Infof("cut turn: resuming %s (trigger=%s, started %s, resume %d)", sk, rec.Trigger, rec.StartedAt.Format(time.RFC3339), rec.Resumes)
 	if !a.Enqueue(env) {
@@ -354,6 +393,13 @@ func (a *Agent) restoreCutTurn(sk string) {
 		return
 	}
 	a.restartResumeNotify(sk, restartResumeNotice)
+}
+
+// restartResumeQuotes reports whether a resume line repeats rec's input: on
+// the API transport, on a delegated session with no conversation to resume,
+// and on a delegated turn cut before its first output (cutTurnRecord.Output).
+func restartResumeQuotes(api, resumable bool, rec cutTurnRecord) bool {
+	return api || !resumable || !rec.Output
 }
 
 func (a *Agent) dropCutTurn(sk string) {

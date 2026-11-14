@@ -90,3 +90,58 @@ func TestParseSessionLimitReset_Dated(t *testing.T) {
 		t.Errorf("reset = %v, want %v", sig.ResetAt, want)
 	}
 }
+
+// TestOnAssistant_FableLimitTextClosesGate is #3102: the Fable limit texts
+// close the gate. The first case is the -p text CC 2.1.325 builds for a
+// rejected seven_day_overage_included window (the 2.1.323 change "says when
+// the limit resets"): "You've hit your " + "Fable limit" + " · resets <t>",
+// then the headless suffix. The second is the older "reached" wording
+// (2.1.314's usage-credits path), which the regex must also accept.
+func TestOnAssistant_FableLimitTextClosesGate(t *testing.T) {
+	cases := []struct {
+		name, text string
+		wantReset  bool
+	}{
+		{"cc-2.1.325 -p", "You've hit your Fable limit · resets Nov 20, 5pm (Europe/London). Switch to another model, or manage usage credits at https://claude.ai/settings/usage, to continue.", true},
+		{"reached wording", "You've reached your Fable limit. Fable 5 requires usage credits. Switch to another model to continue.", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := &Backend{}
+			applyHandler(b, &testHandler{})
+			var fired ratelimit.Signal
+			b.onSessionLimit = func(s ratelimit.Signal) { fired = s }
+			b.OnAssistant(&AssistantMessage{Message: BetaMessage{
+				Model:   syntheticModel,
+				Content: []ContentBlock{{Type: "text", Text: tc.text}},
+			}})
+			if fired.Kind != ratelimit.KindUsage {
+				t.Fatalf("Fable limit text did not engage the gate: %+v", fired)
+			}
+			if !tc.wantReset {
+				return
+			}
+			loc, _ := time.LoadLocation("Europe/London")
+			got := fired.ResetAt.In(loc)
+			if got.Month() != time.November || got.Day() != 20 || got.Hour() != 17 || got.Minute() != 0 {
+				t.Errorf("reset = %v, want the next Nov 20 17:00 Europe/London", got)
+			}
+		})
+	}
+}
+
+// TestOnAssistant_ReplyReachedLimitDoesNotCloseGate: the widened "reached"
+// arm still needs the synthetic model; a real reply never closes the gate.
+func TestOnAssistant_ReplyReachedLimitDoesNotCloseGate(t *testing.T) {
+	b := &Backend{}
+	applyHandler(b, &testHandler{})
+	fired := false
+	b.onSessionLimit = func(ratelimit.Signal) { fired = true }
+	b.OnAssistant(&AssistantMessage{Message: BetaMessage{
+		Model:   "claude-opus-4-20250514",
+		Content: []ContentBlock{{Type: "text", Text: "You've reached your Fable limit, it seems."}},
+	}})
+	if fired {
+		t.Error("a real reply mentioning a reached limit engaged the gate")
+	}
+}

@@ -69,8 +69,9 @@ func rejectedWindowSignal(info RateLimitInfo, now time.Time) ratelimit.Signal {
 
 // syntheticLimitRe matches CC's synthetic limit phrase for any limit kind:
 // "hit your session limit", "hit your weekly limit", "hit your five-hour
-// limit" (#2488).
-var syntheticLimitRe = regexp.MustCompile(`(?i)\bhit your [a-z0-9-]+ limit\b`)
+// limit" (#2488), "hit your Fable limit · resets …" (CC 2.1.325 -p), and the
+// "reached your Fable limit" wording CC also uses (#3102).
+var syntheticLimitRe = regexp.MustCompile(`(?i)\b(?:hit|reached) your [a-z0-9-]+ limit\b`)
 
 // sessionLimitResetDateRe matches the dated reset clause of CC's longer
 // limits, e.g. "resets Oct 12, 12am (Europe/London)" (#2488).

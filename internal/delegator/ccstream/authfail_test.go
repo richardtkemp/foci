@@ -170,3 +170,35 @@ func TestOnResult_AuthFailureReadsTheResultNotTheTurnText(t *testing.T) {
 		})
 	}
 }
+
+// TestStoredLoginRefusals_DoNotFireRelogin is #3102 item 3. CC 2.1.325 refuses
+// a session's move to another sign-in with a StoredLoginHeldBackError, sent as
+// an assistant frame with error "invalid_request" (apiError
+// "stored_login_refused"), not "authentication_failed". These are its texts,
+// read from the 2.1.325 binary: none may start a re-login, from the frame or
+// from the result/stderr text.
+func TestStoredLoginRefusals_DoNotFireRelogin(t *testing.T) {
+	t.Parallel()
+	for _, text := range []string{
+		"Nothing was sent: this session's profile isn't here, changed organization, or is overruled by settings. Sign in to that profile again, or stop this session first and reopen it as you started it.",
+		"Nothing was sent: this session's profile isn't here, changed organization, or is overruled by this folder's settings. Reopen it as you started it: same launcher, or same ANTHROPIC_PROFILE.",
+		"Nothing was sent: this background session can't use its API key, token or workload identity here. To go on, stop it, then run claude --resume in a terminal that has it.",
+		"This session belongs to another account, so nothing was sent. Send a message to choose which account to use.",
+		"Restart Claude Code to finish signing in.",
+		"this session was on another sign-in than the one it would be started with; to go on, run claude --resume as you started it",
+	} {
+		if isAuthFailure(text) {
+			t.Errorf("isAuthFailure(%q) = true, want false", text)
+		}
+		fired := false
+		b := &Backend{}
+		b.onAuthFailure = func(string) { fired = true }
+		errField := "invalid_request"
+		b.OnAssistant(&AssistantMessage{Error: &errField, Message: BetaMessage{
+			Model: syntheticModel, Content: []ContentBlock{{Type: "text", Text: text}},
+		}})
+		if fired {
+			t.Errorf("a stored_login_refused frame started a re-login: %q", text)
+		}
+	}
+}
