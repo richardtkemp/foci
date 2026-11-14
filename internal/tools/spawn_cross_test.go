@@ -416,7 +416,9 @@ func TestCrossAgentSpawnSessionMessages(t *testing.T) {
 // --- allowance (#2662 part 2) ---
 
 func usageOf(five, week int) *delegator.UsageInfo {
-	reset := time.Date(2026, 10, 30, 15, 0, 0, 0, time.UTC)
+	// Reset times in the future on the wall clock: a window whose reset has
+	// passed is not low (#3109), and the spawn check reads the wall clock.
+	reset := time.Now().Truncate(time.Hour).Add(3 * time.Hour)
 	return &delegator.UsageInfo{
 		Backend:  "Claude Code",
 		FiveHour: delegator.UsageWindow{Percent: five, ResetsAt: reset},
@@ -426,11 +428,33 @@ func usageOf(five, week int) *delegator.UsageInfo {
 
 func TestLowWindows(t *testing.T) {
 	t.Parallel()
+	now := time.Now()
+	past := now.Add(-3 * time.Minute)
+	future := now.Add(time.Hour)
 	cases := []struct {
 		name string
 		info *delegator.UsageInfo
 		want []string
 	}{
+		// #3109: a reading taken before its window reset says nothing about
+		// the window now. 5% left, reset 3 minutes ago: not low.
+		{"5-hour reset passed", &delegator.UsageInfo{
+			FiveHour: delegator.UsageWindow{Percent: 95, ResetsAt: past},
+			SevenDay: delegator.UsageWindow{Percent: 20, ResetsAt: future},
+		}, nil},
+		{"reset exactly now", &delegator.UsageInfo{
+			FiveHour: delegator.UsageWindow{Percent: 95, ResetsAt: now},
+		}, nil},
+		{"weekly reset passed, 5-hour still low", &delegator.UsageInfo{
+			FiveHour: delegator.UsageWindow{Percent: 95, ResetsAt: future},
+			SevenDay: delegator.UsageWindow{Percent: 99, ResetsAt: past},
+		}, []string{"5-hour"}},
+		{"low with no reset time", &delegator.UsageInfo{
+			FiveHour: delegator.UsageWindow{Percent: 95},
+		}, []string{"5-hour"}},
+		{"codex window reset passed", &delegator.UsageInfo{Allowance: &delegator.Allowance{Buckets: []delegator.AllowanceBucket{
+			{Windows: []delegator.AllowanceWindow{{Label: "5h", Percent: 99, ResetsAt: past}, {Label: "7d", Percent: 93, ResetsAt: future}}},
+		}}}, []string{"7d"}},
 		{"plenty", usageOf(50, 80), nil},
 		{"exactly 10 left", usageOf(90, 0), nil},
 		{"5-hour low", usageOf(91, 10), []string{"5-hour"}},
@@ -438,12 +462,12 @@ func TestLowWindows(t *testing.T) {
 		{"both", usageOf(99, 100), []string{"5-hour", "weekly"}},
 		{"unreported", &delegator.UsageInfo{}, nil},
 		{"codex", &delegator.UsageInfo{Allowance: &delegator.Allowance{Buckets: []delegator.AllowanceBucket{
-			{Windows: []delegator.AllowanceWindow{{Label: "5h", Percent: 20, ResetsAt: time.Now()}, {Label: "7d", Percent: 93, ResetsAt: time.Now()}}},
+			{Windows: []delegator.AllowanceWindow{{Label: "5h", Percent: 20, ResetsAt: future}, {Label: "7d", Percent: 93, ResetsAt: future}}},
 		}}}, []string{"7d"}},
 	}
 	for _, c := range cases {
 		var got []string
-		for _, w := range lowWindows(c.info, 10) {
+		for _, w := range lowWindows(c.info, 10, now) {
 			got = append(got, w.Name)
 		}
 		if strings.Join(got, ",") != strings.Join(c.want, ",") {
@@ -498,6 +522,15 @@ func TestSpawnAllowanceCheck(t *testing.T) {
 	s, _ = newS(fixedUsage(UsageRead{Pending: true}))
 	if res, err := s.SpawnTool().Execute(ctx, json.RawMessage(`{"name":"cross16","prompt":"p"}`)); err != nil || !strings.Contains(res.Text, "still running") {
 		t.Errorf("pending read: %q, %v; want it run with a note", res.Text, err)
+	}
+
+	// #3109: a cached reading whose low window has already reset does not
+	// refuse (observed: "5% left (resets 02:49)" refused at 02:52).
+	stale := usageOf(95, 20)
+	stale.FiveHour.ResetsAt = time.Now().Add(-3 * time.Minute)
+	s, runner = newS(fixedUsage(UsageRead{Info: stale, Age: 4 * time.Minute}))
+	if res, err := s.SpawnTool().Execute(ctx, json.RawMessage(`{"name":"reset3109","prompt":"p"}`)); err != nil || len(runner.reqs) != 1 || strings.Contains(res.Text, "not checked") {
+		t.Errorf("reading whose low window reset: %q, %v, batches %d; want it run, checked", res.Text, err, len(runner.reqs))
 	}
 
 	// The reserve is the caller's setting; 0 turns the check off.

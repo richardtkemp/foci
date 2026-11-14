@@ -316,10 +316,13 @@ type lowWindow struct {
 	ResetsAt time.Time
 }
 
-// lowWindows lists the windows of info with less than reserve percent left.
-// A window the backend did not report (Claude Code: no reset time and no use)
-// is skipped.
-func lowWindows(info *delegator.UsageInfo, reserve int) []lowWindow {
+// lowWindows lists the windows of info with less than reserve percent left
+// at now. A window the backend did not report (Claude Code: no reset time and
+// no use) is skipped. So is a window whose reset time is at or before now
+// (#3109): the reading predates the reset (a cached one can be up to
+// usageStale old), so the window it shows is already over and says nothing
+// about the new one, which starts empty.
+func lowWindows(info *delegator.UsageInfo, reserve int, now time.Time) []lowWindow {
 	if info == nil {
 		return nil
 	}
@@ -327,6 +330,9 @@ func lowWindows(info *delegator.UsageInfo, reserve int) []lowWindow {
 	check := func(name string, used int, resets time.Time) {
 		if used == 0 && resets.IsZero() {
 			return // not reported
+		}
+		if !resets.IsZero() && !resets.After(now) {
+			return // reset since the reading
 		}
 		if left := 100 - used; left < reserve {
 			out = append(out, lowWindow{Name: name, Left: max(left, 0), ResetsAt: resets})
@@ -390,7 +396,7 @@ func (s *Spawner) checkAllowance(ctx context.Context, reserve int, useReserve bo
 		spawnLog.Warnf("agent=%s spawn allowance check: usage read failed: %v", s.deps.AgentID, r.Err)
 		return fmt.Sprintf("\n\n(The backend allowance was not checked: the usage read failed: %v)", r.Err), nil
 	}
-	if low := lowWindows(r.Info, reserve); len(low) > 0 {
+	if low := lowWindows(r.Info, reserve, time.Now()); len(low) > 0 {
 		backend := ""
 		if r.Info != nil {
 			backend = r.Info.Backend
