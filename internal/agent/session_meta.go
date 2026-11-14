@@ -576,6 +576,9 @@ func (a *Agent) SetSessionModel(sessionKey, value, endpoint, format string, clie
 	sm.client = client
 	sm.modelGen++
 	a.metaMu.Unlock()
+	// Any change of model ends a model block (#3106): the block is on the
+	// model the session had.
+	a.liftModelBlock(sessionKey)
 
 	if a.SessionIndex == nil {
 		return

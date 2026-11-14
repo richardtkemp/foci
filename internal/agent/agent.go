@@ -249,6 +249,7 @@ type Agent struct {
 
 	rateLimitGates     map[string]*RateLimitGate // per-endpoint gates; key = endpoint name, lazy-init
 	rateLimitGatesMu   sync.RWMutex              // protects rateLimitGates map access
+	modelBlocks        sync.Map                  // session key → backend refusal text: the session's model needs usage credits (#3106, model_block.go)
 	inFlightMu         sync.Mutex                // protects inFlight + inFlightDelivering + inFlightChanged + lastTurnEndAt map access
 	inFlight           map[string]int32          // per-session count of in-flight OrchestrateFullTurn calls — see IsTurnInFlight
 	inFlightDelivering map[string]int32          // per-session-base count of in-flight turns whose sink reports DeliversToPlatform=true — see IsInFlightDelivering

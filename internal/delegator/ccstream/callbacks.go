@@ -82,6 +82,10 @@ func (b *Backend) RunningSubagents() []delegator.RunningSubagent { return b.agen
 //     "You've hit your <session|weekly|…> limit · resets <time>" message
 //     (which unlike a direct-API 429 never reaches classifyAPIError), or a
 //     rate_limit_event rejecting the five-hour or weekly window (#2488).
+//   - OnModelBlocked fires when CC reports the session's model needs usage
+//     credits ("Fable 5 requires usage credits. Switch to another model…"),
+//     with this Backend's foci session key (#3106). It does not close the
+//     rate-limit gate: the block has no reset time, a model switch ends it.
 //   - PreToolRules (#2028) and StopRules (#2089) are read at every Start and
 //     baked into that CC process's hook command line, so a source that reads
 //     the live config makes an edit reach the next session (#2033).
@@ -94,6 +98,7 @@ func (b *Backend) SetHostHooks(h delegator.HostHooks) {
 	b.onRateLimited = h.OnRateLimitNotice
 	b.onModelFallback = h.OnModelFallbackNotice
 	b.onSessionLimit = h.EngageRateLimit
+	b.onModelBlocked = h.OnModelBlocked
 	b.onUsageWindow = h.OnUsageWindow
 	b.preToolRules = h.PreToolRules
 	b.stopRules = h.StopRules

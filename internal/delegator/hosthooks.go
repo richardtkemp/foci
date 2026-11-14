@@ -50,6 +50,13 @@ type HostHooks struct {
 	// (Claude Code's session limit, opencode's rejected usage limit).
 	EngageRateLimit func(signal ratelimit.Signal)
 
+	// OnModelBlocked reports that the session's model needs usage credits the
+	// account does not have (Claude Code's "Fable 5 requires usage credits.
+	// Switch to another model… to continue.", #3106). It has no reset time;
+	// switching model ends it. The agent sends the session no more turns on
+	// that model and posts one notice. Must not block.
+	OnModelBlocked func(sessionKey, detail string)
+
 	// OnUsageWindow reports one usage window of the account (#2491): its use,
 	// whether its limit is reached, and when it resets. The agent feeds it to
 	// the account-wide usage hold (internal/usagehold). Claude Code reports

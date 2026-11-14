@@ -3,6 +3,7 @@ package ccstream
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -77,23 +78,49 @@ func isSyntheticNoResponse(m BetaMessage) bool {
 // message on the stream and never reaches classifyAPIError, so the delegated
 // backend detects it here to engage the rate-limit gate.
 func syntheticSessionLimitText(m BetaMessage) string {
+	s := syntheticText(m)
+	if syntheticLimitRe.MatchString(s) {
+		return s
+	}
+	return ""
+}
+
+// syntheticModelBlockRe matches CC's "<model> requires usage credits" text
+// (model_requires_usage_credits, CC 2.1.325, #3106), e.g. "Fable 5 requires
+// usage credits. Switch to another model, or manage usage credits at <url>,
+// to continue." The pattern is CC's own matcher for this message, read from
+// the 2.1.325 binary: a model family at the start, an optional version of up
+// to 40 characters, then the phrase. "Fast mode requires usage credits" and
+// "You're out of usage credits" are other messages and do not match.
+var syntheticModelBlockRe = regexp.MustCompile(`^(?:Fable|Haiku|Mythos|Opus|Sonnet)(?: [^\x{00B7}\n]{1,40})? requires usage credits\b`)
+
+// syntheticModelBlockText returns the text of m when it is CC's synthetic
+// "<model> requires usage credits" message, else "". As for limits, only the
+// synthetic sentinel model is read, never a real reply.
+func syntheticModelBlockText(m BetaMessage) string {
+	s := syntheticText(m)
+	if syntheticModelBlockRe.MatchString(s) {
+		return s
+	}
+	return ""
+}
+
+// syntheticText is the trimmed text of m when m is a synthetic-model message
+// with no tool_use block, else "".
+func syntheticText(m BetaMessage) string {
 	if m.Model != syntheticModel {
 		return ""
 	}
 	var text strings.Builder
 	for _, block := range m.Content {
 		if block.Type == "tool_use" {
-			return "" // real work in the turn — not a bare limit notice
+			return ""
 		}
 		if block.Type == "text" {
 			text.WriteString(block.Text)
 		}
 	}
-	s := strings.TrimSpace(text.String())
-	if syntheticLimitRe.MatchString(s) {
-		return s
-	}
-	return ""
+	return strings.TrimSpace(text.String())
 }
 
 // usageIsZero reports a message that billed nothing: no input, cache or output.
@@ -157,6 +184,16 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 				signal = parsed
 			}
 			b.fireSessionLimit(signal)
+			return
+		}
+		// The session's model needs usage credits (#3106): a model block,
+		// not a time limit, so it does not close the gate. The agent stops
+		// sending this session turns until its model changes, and posts one
+		// notice; the frame itself is not a reply.
+		if s := syntheticModelBlockText(msg.Message); s != "" {
+			if b.onModelBlocked != nil {
+				b.onModelBlocked(b.startOpts.SessionKey, s)
+			}
 			return
 		}
 	}

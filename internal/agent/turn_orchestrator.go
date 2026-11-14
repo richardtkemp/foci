@@ -68,6 +68,17 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 		a.logger().Infof("session=%s %s turn not started: %v", ts.SessionKey, ts.Trigger, err)
 		return "", err
 	}
+	// Model block (#3106): the session's model needs usage credits, so no
+	// turn reaches the backend until the model changes. A user turn gets the
+	// refusal as its error reply; the one notice was posted at the block.
+	if err := a.modelBlockRefusesTurn(ts); err != nil {
+		if isUserTrigger(ts.Trigger) {
+			a.logger().Infof("session=%s %s turn not started: model blocked", ts.SessionKey, ts.Trigger)
+		} else {
+			a.logger().Debugf("session=%s %s turn not started: model blocked", ts.SessionKey, ts.Trigger)
+		}
+		return "", err
+	}
 	// markInFlight is the sole in-flight tracker; it covers both API and
 	// delegated transports. Session keys are stable identities: a facet/branch
 	// (a 'b' child on its own backend, an independent conversation) has its own

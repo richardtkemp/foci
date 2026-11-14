@@ -294,6 +294,15 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		OnModelFallbackNotice: func(sessionKey, notice string) {
 			deliverModelFallbackNotice(connMgr, agentID, sessionKey, notice)
 		},
+		// The session's model needs usage credits (CC's "Fable 5 requires
+		// usage credits", #3106): the agent sends that session no more turns
+		// on the model, and the session's chat gets one notice saying to
+		// switch model (Dick, 2026-11-14, option 1).
+		OnModelBlocked: func(sessionKey, detail string) {
+			if ag.BlockSessionModel(sessionKey, detail) {
+				deliverModelFallbackNotice(connMgr, agentID, sessionKey, agent.ModelBlockNotice(detail))
+			}
+		},
 		// A hard limit (CC session limit, opencode rejected usage) engages the
 		// rate-limit gate so background/periodic work pauses until the window
 		// resets; the gate's own hooks notify the user.
@@ -1170,8 +1179,9 @@ func deliverRateLimitNotice(connMgr platform.ConnectionManager, agentID, session
 	}
 }
 
-// deliverModelFallbackNotice shows a model refusal fallback notice in the chat
-// of the session it happened in, falling back to the agent's primary chat.
+// deliverModelFallbackNotice shows a model notice (a model refusal fallback,
+// #2200, or a model block, #3106) in the chat of the session it happened in,
+// falling back to the agent's primary chat.
 func deliverModelFallbackNotice(connMgr platform.ConnectionManager, agentID, sessionKey, notice string) {
 	conn, outcome := route.ConnFor(connMgr, agentID, sessionKey, route.PolicyFallback)
 	if conn == nil {

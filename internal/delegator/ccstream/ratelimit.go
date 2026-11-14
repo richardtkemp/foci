@@ -112,8 +112,12 @@ func rejectedWindowSignal(info RateLimitInfo, now time.Time) ratelimit.Signal {
 var syntheticLimitRe = regexp.MustCompile(`(?i)\b(?:hit|reached) your [a-z0-9-]+ limit\b`)
 
 // sessionLimitResetDateRe matches the dated reset clause of CC's longer
-// limits, e.g. "resets Oct 12, 12am (Europe/London)" (#2488).
-var sessionLimitResetDateRe = regexp.MustCompile(`(?i)resets\s+([a-z]{3})[a-z]*\s+(\d{1,2}),?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([^)]+)\)`)
+// limits, e.g. "resets Oct 12, 12am (Europe/London)" (#2488), and the form
+// with a year CC writes when the reset is not in the current year, e.g.
+// "resets Jan 2, 2027, 3pm (Europe/London)" (#3106, F2 of #3102).
+// Submatches: 1 month, 2 day, 3 year (optional), 4 hour, 5 minute
+// (optional), 6 am/pm, 7 zone.
+var sessionLimitResetDateRe = regexp.MustCompile(`(?i)resets\s+([a-z]{3})[a-z]*\s+(\d{1,2}),?\s+(?:(\d{4}),?\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([^)]+)\)`)
 
 // sessionLimitResetRe matches CC's session-limit reset clause, e.g.
 // "resets 11:30pm (Europe/London)" or "resets 6pm (Europe/London)".
@@ -156,29 +160,34 @@ func parseSessionLimitReset(text string, now time.Time) (ratelimit.Signal, bool)
 }
 
 // parseDatedLimitReset resolves a dated reset clause (sessionLimitResetDateRe
-// submatches d) to its next future occurrence: the named month and day at the
-// wall-clock time in the named zone, this year or, when that has passed, next
-// year.
+// submatches d) to an instant: the named month and day at the wall-clock time
+// in the named zone. With a year in the clause, that year; without one, this
+// year or, when that has passed, next year.
 func parseDatedLimitReset(text string, d []string, now time.Time) (ratelimit.Signal, bool) {
 	month, err := time.Parse("Jan", strings.ToUpper(d[1][:1])+strings.ToLower(d[1][1:3]))
 	if err != nil {
 		return ratelimit.Signal{}, false
 	}
 	day, _ := strconv.Atoi(d[2])
-	hour, _ := strconv.Atoi(d[3])
+	hour, _ := strconv.Atoi(d[4])
 	minute := 0
-	if d[4] != "" {
-		minute, _ = strconv.Atoi(d[4])
+	if d[5] != "" {
+		minute, _ = strconv.Atoi(d[5])
 	}
 	switch {
-	case strings.EqualFold(d[5], "pm") && hour != 12:
+	case strings.EqualFold(d[6], "pm") && hour != 12:
 		hour += 12
-	case strings.EqualFold(d[5], "am") && hour == 12:
+	case strings.EqualFold(d[6], "am") && hour == 12:
 		hour = 0
 	}
-	loc, err := time.LoadLocation(strings.TrimSpace(d[6]))
+	loc, err := time.LoadLocation(strings.TrimSpace(d[7]))
 	if err != nil {
 		return ratelimit.Signal{}, false
+	}
+	if d[3] != "" {
+		year, _ := strconv.Atoi(d[3])
+		reset := time.Date(year, month.Month(), day, hour, minute, 0, 0, loc)
+		return ratelimit.Signal{Kind: ratelimit.KindUsage, ResetAt: reset, Detail: text}, true
 	}
 	n := now.In(loc)
 	reset := time.Date(n.Year(), month.Month(), day, hour, minute, 0, 0, loc)

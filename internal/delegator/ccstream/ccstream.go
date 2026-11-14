@@ -347,6 +347,7 @@ type Backend struct {
 	onRateLimited   func(sessionKey, detail string) // fired with a rate_limit_event warning notice; sessionKey is this Backend's owning foci session (#1211/#1238/#1857)
 	onModelFallback func(sessionKey, notice string) // fired with a model refusal fallback notice for the session's chat (#2200)
 	onSessionLimit  func(signal ratelimit.Signal)   // fired when CC reports a session limit synthetic message
+	onModelBlocked  func(sessionKey, detail string) // fired when CC reports the session's model needs usage credits (#3106)
 	// promptSuggestions records that this process was launched with
 	// --prompt-suggestions: only then is there a switch to work (#2922).
 	// suggestionsOn is the switch's last written value; see setPromptSuggestions.
