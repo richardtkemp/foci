@@ -101,6 +101,10 @@ const (
 	// kindMetaKey: an agent_metadata key "<kind>:<session key>", in rows
 	// selected by where.
 	kindMetaKey
+	// kindBackendKey: the cell equals backendExpr || '/' || from, where
+	// backendExpr is SQL naming the row's backend (a column, or a correlated
+	// subquery); that becomes backendExpr || '/' || to (usage accounts).
+	kindBackendKey
 )
 
 // rule rewrites one column of one table.
@@ -112,6 +116,9 @@ type rule struct {
 	// whereArgs). Empty means every row.
 	where     string
 	whereArgs []any
+	// backendExpr is the SQL for a kindBackendKey rule's backend (trusted:
+	// written in this package, never from input).
+	backendExpr string
 	// idRule marks a rule whose from is the agent id or its key prefix: the
 	// NEW-id collision check runs these with from = the new id.
 	idRule bool
@@ -136,6 +143,10 @@ func (u rule) count(ctx context.Context, q queryer) (int, error) {
 		var n int
 		err := q.QueryRowContext(ctx, fmt.Sprintf(`SELECT count(*) FROM %q WHERE substr(%q, 1, length(?1)) = ?1`, u.table, u.col), u.from).Scan(&n)
 		return n, err
+	case kindBackendKey:
+		var n int
+		err := q.QueryRowContext(ctx, fmt.Sprintf(`SELECT count(*) FROM %q WHERE %q = %s || '/' || ?`, u.table, u.col, u.backendExpr), u.from).Scan(&n)
+		return n, err
 	default:
 		ch, err := u.valueChanges(ctx, q)
 		return len(ch), err
@@ -153,6 +164,10 @@ func (u rule) apply(ctx context.Context, q queryer) (int, error) {
 		res, err = q.ExecContext(ctx, fmt.Sprintf(
 			`UPDATE %q SET %q = ?2 || substr(%q, length(?1) + 1) WHERE substr(%q, 1, length(?1)) = ?1`,
 			u.table, u.col, u.col, u.col), u.from, u.to)
+	case kindBackendKey:
+		res, err = q.ExecContext(ctx, fmt.Sprintf(
+			`UPDATE %q SET %q = %s || '/' || ?2 WHERE %q = %s || '/' || ?1`,
+			u.table, u.col, u.backendExpr, u.col, u.backendExpr), u.from, u.to)
 	default:
 		ch, cerr := u.valueChanges(ctx, q)
 		if cerr != nil {

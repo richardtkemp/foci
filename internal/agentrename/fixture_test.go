@@ -25,6 +25,7 @@ import (
 	"foci/internal/fociroot"
 	"foci/internal/memory"
 	"foci/internal/session"
+	"foci/internal/usagelog"
 )
 
 // fixtureConfig is the fixture's foci.toml: agent bob (renamed in the tests)
@@ -235,6 +236,24 @@ func newFixtureAt(t *testing.T, root string) *fixture {
 	must(t, ds.Close())
 	execAll(t, filepath.Join(f.data, "deferred-sends.db"),
 		`INSERT INTO deferred_sends (agent_id, session_key, text, created_at, deadline_at) VALUES ('bob','bob/c1','x','t','t'), ('bobby','bobby/c1','y','t','t')`)
+
+	// usage-history.db (#3111): bob's codex and opencode reports are
+	// stored under "<backend>/bob"; its Claude Code report under the login
+	// key, which names no agent; bobby's under "codex/bobby".
+	uh := filepath.Join(f.data, usagelog.FileName)
+	us, err := usagelog.Open(uh)
+	must(t, err)
+	must(t, us.Close())
+	execAll(t, uh,
+		`INSERT INTO usage_reports (id, received_at, backend, account, agent_id, source) VALUES
+			(1, 1, 'codex', 'codex/bob', 'bob', 's'),
+			(2, 2, 'opencode', 'opencode/bob', 'bob', 's'),
+			(3, 3, 'claude-code', 'claude-code:file:/h/bob/.credentials.json', 'bob', 's'),
+			(4, 4, 'codex', 'codex/bobby', 'bobby', 's')`,
+		`INSERT INTO usage_windows (report_id, account, received_at, window) VALUES
+			(1, 'codex/bob', 1, 'primary'), (2, 'opencode/bob', 2, 'primary'),
+			(3, 'claude-code:file:/h/bob/.credentials.json', 3, 'five_hour'), (4, 'codex/bobby', 4, 'primary')`,
+	)
 
 	// Workspaces.
 	f.workspaceDBs(filepath.Join(root, "bob"), "bob")

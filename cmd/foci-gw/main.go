@@ -42,6 +42,7 @@ import (
 	"foci/internal/tempdir"
 	"foci/internal/timeutil"
 	"foci/internal/tools"
+	"foci/internal/usagelog"
 	"foci/shared/prompts"
 )
 
@@ -320,7 +321,7 @@ Subcommands:
 	app.SetSessionChats(appMediaChats(si.sessionIndex))
 	setupUsageHold(cfg, si.sessionIndex)
 	// The usage history (#3103): every usage figure received, kept forever.
-	if st := openUsageHistory(cfg.DataPath("usage-history.db")); st != nil {
+	if st := openUsageHistory(cfg.DataPath(usagelog.FileName)); st != nil {
 		defer func() { _ = st.Close() }()
 	}
 	applyUserCommandTimeout(cfg)

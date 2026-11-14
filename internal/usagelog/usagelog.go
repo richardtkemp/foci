@@ -28,6 +28,9 @@ import (
 	"foci/internal/sqlite"
 )
 
+// FileName is the usage history's file in the data dir.
+const FileName = "usage-history.db"
+
 // Store is the SQLite usage history.
 type Store struct {
 	db *sql.DB

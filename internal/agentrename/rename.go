@@ -26,6 +26,7 @@ import (
 	"foci/internal/ccaccount"
 	"foci/internal/config"
 	"foci/internal/fociroot"
+	"foci/internal/usagelog"
 )
 
 // journalName is the in-progress record under the data dir.
@@ -247,6 +248,7 @@ func resolvePaths(cfg *config.Config, o Options) (paths, error) {
 		APIDB:       cfg.Logging.APIDB,
 		APIShadowDB: cfg.Logging.APIShadowDB,
 		DeferDB:     cfg.DataPath("deferred-sends.db"),
+		UsageDB:     cfg.DataPath(usagelog.FileName),
 	}
 	replay := config.DefaultReplayStoreFile
 	if pl := cfg.Platform("app"); pl != nil && pl.App != nil && pl.App.ReplayStorePath != "" {

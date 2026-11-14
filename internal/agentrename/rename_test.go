@@ -55,6 +55,10 @@ func oldIDChecks(f *fixture, ws string) []oldIDCheck {
 	frames, defer_ := filepath.Join(f.data, "app-frames.db"), filepath.Join(f.data, "deferred-sends.db")
 	cs = append(cs, eq(frames, "app_frames", "agent_id"), eq(frames, "app_prompts", "agent_id"),
 		eq(defer_, "deferred_sends", "agent_id"), pre(defer_, "deferred_sends", "session_key"))
+	uh := filepath.Join(f.data, "usage-history.db")
+	cs = append(cs, eq(uh, "usage_reports", "agent_id"),
+		oldIDCheck{uh, "usage_reports", "account", "account IN ('codex/bob', 'opencode/bob')"},
+		oldIDCheck{uh, "usage_windows", "account", "account IN ('codex/bob', 'opencode/bob')"})
 	d := func(n string) string { return filepath.Join(ws, ".data", n) }
 	cs = append(cs, eq(d("todo.db"), "todos", "agent_id"), eq(d("reminders.db"), "reminders", "agent_id"),
 		pre(d("reminders.db"), "reminders", "session_key"), eq(d("scratchpad.db"), "scratchpad", "agent_id"),
@@ -124,6 +128,18 @@ func assertRenamed(t *testing.T, f *fixture, ws string, before map[string]dbStat
 	}
 	if got := queryString(t, state, `SELECT value FROM chat_metadata WHERE agent_id='rob' AND chat_id=2`); got != "/c2/b1" {
 		t.Errorf("empty-agent session_key row changed: %s", got)
+	}
+	// Usage history (#3111): every backend's "<backend>/bob" account moves
+	// with the agent, in reports and windows; a login key (no agent in it)
+	// keeps its account; the report's agent_id follows.
+	uh := filepath.Join(f.data, "usage-history.db")
+	for _, acct := range []string{"codex/rob", "opencode/rob"} {
+		if n := queryInt(t, uh, `SELECT count(*) FROM usage_reports r JOIN usage_windows w ON w.report_id = r.id WHERE r.account = ?1 AND w.account = ?1 AND r.agent_id = 'rob'`, acct); n != 1 {
+			t.Errorf("usage history: %d report+window pair(s) under %s, want 1", n, acct)
+		}
+	}
+	if n := queryInt(t, uh, `SELECT count(*) FROM usage_reports r JOIN usage_windows w ON w.report_id = r.id WHERE r.account = ?1 AND w.account = ?1 AND r.agent_id = 'rob'`, "claude-code:file:/h/bob/.credentials.json"); n != 1 {
+		t.Errorf("usage history: the Claude Code login account changed, or its agent_id did not follow (%d row(s))", n)
 	}
 	// Integrity: foreign keys and unique indexes hold.
 	for _, name := range []string{"api.db", "api-shadow.db"} {
@@ -278,6 +294,13 @@ func TestRenameValidationRefusesBeforeAnyChange(t *testing.T) {
 			p := filepath.Join(f.data, "app-frames.db")
 			execAll(t, p, `INSERT INTO app_frames (conv_id, seq, wire, sent_ms, agent_id) VALUES ('conv-r',1,'{}',1,'rob')`)
 			return func() { execAll(t, p, `DELETE FROM app_frames WHERE agent_id='rob'`) }
+		}},
+		{name: "new id's usage account in the usage history", old: "bob", new: "rob", want: "already used", setup: func(t *testing.T, f *fixture) func() {
+			// A report that came through another agent but is stored under
+			// codex/rob: only the account rule can see it.
+			p := filepath.Join(f.data, "usage-history.db")
+			execAll(t, p, `INSERT INTO usage_reports (id, received_at, backend, account, agent_id, source) VALUES (99, 9, 'codex', 'codex/rob', 'bobby', 's')`)
+			return func() { execAll(t, p, `DELETE FROM usage_reports WHERE id = 99`) }
 		}},
 	}
 	f := newFixture(t)

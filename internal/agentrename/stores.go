@@ -26,6 +26,9 @@ type paths struct {
 	// DefaultMemorySource is set when the agent uses the default memory
 	// source, whose name is the agent id (and so follows the rename).
 	DefaultMemorySource bool `json:"default_memory_source"`
+	// UsageDB is the usage history (#3103, #3111). Empty in a journal
+	// written before it was renamed: a resumed run then skips it.
+	UsageDB string `json:"usage_db,omitempty"`
 }
 
 // dbSpec is one database step: a file and the rules that rewrite it.
@@ -119,6 +122,7 @@ func dbSpecs(p paths, r ids, wsDir string, move bool) []dbSpec {
 		{id: "db:api-shadow", path: p.APIShadowDB, rules: api(), fk: true},
 		{id: "db:app-frames", path: p.FramesDB, rules: []rule{eq("app_frames", "agent_id"), eq("app_prompts", "agent_id")}},
 		{id: "db:deferred-sends", path: p.DeferDB, rules: []rule{eq("deferred_sends", "agent_id"), pre("deferred_sends", "session_key")}},
+		{id: "db:usage-history", path: p.UsageDB, rules: usageRules(r)},
 	}
 	wsRules := map[string][]rule{
 		"todo.db":         {eq("todos", "agent_id")},
@@ -158,4 +162,22 @@ func dbSpecs(p paths, r ids, wsDir string, move bool) []dbSpec {
 		}
 	}
 	return specs
+}
+
+// usageRules rewrite the usage history (#3111). A report is stored under
+// usagelog.AccountKey: the backend's usage account when it has one (a Claude
+// Code login, which holds no agent id and is left alone), else
+// "<backend>/<agent id>" — codex always, any backend whose account cannot
+// be resolved. So an account equal to its own row's backend + "/" + OLD
+// becomes backend + "/" + NEW, for every backend. usage_windows has no
+// backend column: it takes its report's.
+func usageRules(r ids) []rule {
+	acct := func(t, backend string) rule {
+		return rule{table: t, col: "account", kind: kindBackendKey, backendExpr: backend, from: r.old, to: r.new, idRule: true, r: r}
+	}
+	return []rule{
+		acct("usage_windows", `(SELECT b.backend FROM usage_reports b WHERE b.id = usage_windows.report_id)`),
+		acct("usage_reports", "backend"),
+		{table: "usage_reports", col: "agent_id", kind: kindEq, from: r.old, to: r.new, idRule: true, r: r},
+	}
 }
