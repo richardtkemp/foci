@@ -252,37 +252,12 @@ type Backend struct {
 	seenTextParts map[string]bool   // reset in beginTurn; dedupes OnText
 	partTypes     map[string]string // reset in beginTurn; partID→Type for message.part.delta routing
 
-	// Steer buffer (plan §6 divergence). opencode has no mid-turn
-	// queue, so SourceUser / SourceSteer arriving during an in-flight
-	// turn are buffered here and flushed by flushSteerBuf when the
-	// dispatcher's OnSessionIdle fires. Guarded by turnMu.
-	steerBuf []string
-
-	// Abort-drain state for a mid-turn SourceSteer. Empirically (opencode
-	// 1.17.11): opencode queues a mid-turn prompt_async behind the active
-	// turn, and POST /abort discards that queue, so a steer must ABORT the
-	// active turn, drain the abort's event burst (session.error +
-	// 2× session.idle), then send the buffered steer as a fresh turn. A
-	// turn sent before/during the abort is lost; a turn sent after survives.
-	// aborting gates the drain; abortIdlesSeen counts burst idles;
-	// abortTimer is the backstop; abortDrainTimeout is the backstop delay
-	// (default 500ms, overridable for tests). Guarded by turnMu.
-	aborting          bool
-	abortIdlesSeen    int
-	abortTimer        *time.Timer
-	abortDrainTimeout time.Duration
-	// awaitFreshBusy: the backstop flushed a steer before the abort's burst
-	// finished, and the follow-up has not gone busy yet. Until it does, a
-	// session.idle or MessageAbortedError belongs to the aborted turn.
-	awaitFreshBusy bool
-
-	// steerAbortDeferred: a mid-turn steer is buffered but its abort waits
-	// for the running subagents (#2753). opencode's POST /abort cascades to
-	// every child session, so aborting while a task tool runs returns "Task
-	// cancelled" to the parent and discards the subagents' work. The abort
-	// fires when the last task tool ends (handleToolPart); if the turn goes
-	// idle first, the steer flushes at that idle instead. Guarded by turnMu.
-	steerAbortDeferred bool
+	// Follow-up buffer. opencode has no mid-turn input, so a SourceUser
+	// follow-up arriving during an in-flight turn waits here and
+	// flushFollowUps sends it as the next turn when the dispatcher's
+	// OnSessionIdle fires. foci never aborts a turn to deliver a message
+	// (#3115). Guarded by turnMu.
+	followUps []string
 
 	// Callbacks — set before Start, read-only after. Each is referenced
 	// by the matching Set* method below; that's enough production-code

@@ -39,8 +39,9 @@ import (
 // not steer, no turn is aborted for one: the message runs right after the
 // current turn, ahead of the queue (Envelope.jumpQueue).
 //
-// Same name and meaning as #3115's helper (internal/agent/spawn_steer.go,
-// keyed there for trySteer and SteerTurn): whichever lands second keeps one.
+// The one mid-turn steer check: trySteer (a typed or user-input message
+// queues for the next turn, in arrival order, #3115), SteerTurn (spawn_send
+// queues for the spawn's next turn) and peerSteerAllowed all key on it.
 func (a *Agent) backendSteersMidTurn() bool {
 	switch a.delegatedSpec().Support(delegator.CapMidTurnSteer).State() {
 	case delegator.Unsupported, delegator.NotApplicableState:

@@ -56,7 +56,7 @@ var spec = delegator.Spec{
 		delegator.CapQuestionPrompt:     delegator.Yes(),
 
 		delegator.CapMidTurnSteer:     delegator.No("no native mid-turn steer: a message waits for the turn to end"),
-		delegator.CapFoldAttachments:  delegator.No("a message folded into a running turn carries text only"),
+		delegator.CapFoldAttachments:  delegator.No("no mid-turn steer to carry attachments"),
 		delegator.CapDeliveryTracking: delegator.No("inputs are fire-and-forget: no proof of consumption"),
 		delegator.CapThreadNaming:     delegator.No("foci does not take opencode's session titles"),
 		delegator.CapContextWindow:    delegator.Yes(),

@@ -1,4 +1,4 @@
-// inject.go — Inject routing + sendPrompt / sendCommand / flushSteerBuf.
+// inject.go — Inject routing + sendPrompt / sendCommand / flushFollowUps.
 //
 // Inject is the single funnel for every user-role event foci sends to
 // opencode (primary user turns, urgent steers, queued follow-ups, slash
@@ -11,12 +11,13 @@
 // command. The async endpoint returns 204 immediately — turn
 // completion arrives as session.idle SSE events handled in handlers.go.
 //
-// Steer divergence from ccstream (plan §Steer): opencode has no
-// mid-turn queue, so SourceSteer arriving mid-turn is buffered in
-// b.steerBuf and flushed via flushSteerBuf when the dispatcher's
-// OnSessionIdle fires (handlers.go), or when the abort drain's backstop
-// timer fires first (abortDrainComplete). ccstream's "fold into the current
-// ask()" has no opencode equivalent.
+// No mid-turn steer (#3115): opencode has no way to add input to a running
+// turn, and foci never aborts a turn to deliver a message. The Spec declares
+// delegator.CapMidTurnSteer No, so the agent layer queues a mid-turn message
+// as the next turn instead of steering it; a SourceSteer that reaches the
+// backend mid-turn anyway is refused (ErrTurnInFlight). A SourceUser
+// follow-up that arrives mid-turn waits in b.followUps and is sent as the
+// next turn when the dispatcher's OnSessionIdle fires (flushFollowUps).
 
 package opencode
 
@@ -28,7 +29,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 
 	"foci/internal/delegator"
 	"foci/internal/log"
@@ -49,7 +49,7 @@ func (b *Backend) AttachSessionEvents(events *delegator.SessionEvents) {
 // beginTurn sets per-turn bookkeeping under turnMu. Resets accumulated
 // state from any prior turn so a fresh turn starts clean — part of the
 // beginTurn contract asserted by TestBeginTurnResetsState. Called from
-// injectUser / injectSteer / flushSteerBuf before sendPrompt, so events
+// injectUser / injectSteer / flushFollowUps before sendPrompt, so events
 // arriving in response to the POST find an active turn.
 func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
 	b.turnMu.Lock()
@@ -108,12 +108,11 @@ func (b *Backend) cancelTurn() {
 	defer b.turnMu.Unlock()
 	b.turnActive = false
 	b.turnEvents = nil
-	b.awaitFreshBusy = false
 }
 
 // IsTurnInFlight reports whether a turn is registered but hasn't
 // completed. ImmediateInject consults this to route between begin-turn and the
-// steerBuf-queue path.
+// follow-up queue path.
 func (b *Backend) IsTurnInFlight() bool {
 	b.turnMu.Lock()
 	defer b.turnMu.Unlock()
@@ -150,8 +149,8 @@ func (b *Backend) WaitForTurn(ctx context.Context) error {
 //	Source   | Turn state | Action
 //	---------|------------|-------------------------------------------
 //	User     | idle       | beginTurn + sendPrompt
-//	User     | in-flight  | queue in steerBuf (flushed at session.idle)
-//	Steer    | in-flight  | same as User in-flight
+//	User     | in-flight  | queue in followUps (flushed at session.idle)
+//	Steer    | in-flight  | ErrTurnInFlight — no mid-turn steer (#3115)
 //	Steer    | idle + Turn      | degrade to User-idle (begin turn)
 //	Steer    | idle + no Turn   | return ErrTurnNotInFlight
 //	System   | idle       | begin turn, atomically (tryBeginTurn)
@@ -189,16 +188,17 @@ func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) err
 
 // injectUser handles SourceUser — the most common path. At idle it
 // begins a fresh turn and POSTs /prompt_async; mid-turn it queues in
-// steerBuf for flushSteerBuf (OnSessionIdle in handlers.go calls it).
+// followUps for flushFollowUps (OnSessionIdle in handlers.go calls it).
 func (b *Backend) injectUser(ctx context.Context, inj delegator.Inject) error {
 	if b.IsTurnInFlight() {
 		// Mid-turn — queue for the follow-up flush. We don't beginTurn
-		// here; OnSessionIdle (handlers.go) calls flushSteerBuf which sends
+		// here; OnSessionIdle (handlers.go) calls flushFollowUps which sends
 		// the combined message and begins a fresh turn.
 		b.turnMu.Lock()
-		b.steerBuf = append(b.steerBuf, inj.Text)
+		b.followUps = append(b.followUps, inj.Text)
+		n := len(b.followUps)
 		b.turnMu.Unlock()
-		log.NewComponentLogger(b.logComponent()).Debugf("inject: user text queued mid-turn (%d in buffer)", len(b.steerBuf))
+		log.NewComponentLogger(b.logComponent()).Debugf("inject: user text queued mid-turn (%d in buffer)", n)
 		return nil
 	}
 	// Idle — begin a fresh turn. A failed send reverses the begin so a
@@ -229,46 +229,16 @@ func (b *Backend) injectSystem(ctx context.Context, inj delegator.Inject) error 
 	return nil
 }
 
-// injectSteer handles SourceSteer. At idle + Turn present it degrades
-// to User-idle (mirroring ccstream's race-fix semantics). At idle +
-// no Turn it returns ErrTurnNotInFlight so the caller (Agent.Inbox)
-// re-routes through the normal idle path. Mid-turn it buffers the steer
-// and aborts the active turn — after the running subagents end, because
-// the abort cascades to them (#2753, startDeferredSteerAbort). opencode
-// queues a mid-turn prompt_async behind the active turn and POST /abort discards that queue, so the
-// steer can only land as a fresh turn AFTER the abort. The drain
-// (handlers.go + the backstop timer below) flushes the buffered steer
-// once the abort's event burst settles (pattern or 500ms, whichever
-// first). See inject.go header + handlers.go onSessionIdle.
+// injectSteer handles SourceSteer. opencode has no mid-turn steer (#3115,
+// Spec CapMidTurnSteer No): mid-turn it refuses with ErrTurnInFlight and
+// never touches the running turn, so the caller queues the message for the
+// next turn. At idle + Turn present it degrades to User-idle (mirroring
+// ccstream's race-fix semantics). At idle + no Turn it returns
+// ErrTurnNotInFlight so the caller (Agent.Inbox) re-routes through the
+// normal idle path.
 func (b *Backend) injectSteer(ctx context.Context, inj delegator.Inject) error {
 	if b.IsTurnInFlight() {
-		// Mid-turn: buffer the steer and abort the active turn. A second
-		// steer arriving during the drain (or while the abort waits for
-		// subagents) just appends (the flush combines all buffered
-		// messages), so the abort fires only once.
-		// Read the tracker before taking turnMu: it has its own lock and
-		// may fire the status callback.
-		running := b.agents.Pending()
-		b.turnMu.Lock()
-		b.steerBuf = append(b.steerBuf, inj.Text)
-		if b.aborting || b.steerAbortDeferred {
-			b.turnMu.Unlock()
-			log.NewComponentLogger(b.logComponent()).Debugf("inject: steer appended mid-turn (abort pending, %d buffered)", len(b.steerBuf))
-			return nil
-		}
-		// #2753: POST /abort cascades to every running child session, so
-		// aborting now would return "Task cancelled" for each running task
-		// tool and discard its work. Wait for the last one to end
-		// (handleToolPart calls startDeferredSteerAbort).
-		if running > 0 {
-			b.steerAbortDeferred = true
-			b.turnMu.Unlock()
-			log.NewComponentLogger(b.logComponent()).Infof("inject: steer mid-turn while %d subagent(s) run → abort deferred until they end", running)
-			return nil
-		}
-		b.turnMu.Unlock()
-		b.startSteerAbort(ctx)
-		return nil
+		return fmt.Errorf("opencode has no mid-turn steer: %w", delegator.ErrTurnInFlight)
 	}
 	// Idle.
 	if inj.Turn == nil {
@@ -456,38 +426,32 @@ func buildPromptBody(text string, attachments []delegator.Attachment, noReply bo
 }
 
 // ---------------------------------------------------------------------------
-// Steer buffer flush (called by OnSessionIdle in handlers.go)
+// Follow-up flush (called by OnSessionIdle in handlers.go)
 // ---------------------------------------------------------------------------
 
-// flushSteerBuf drains b.steerBuf and sends the combined text as a
+// flushFollowUps drains b.followUps and sends the combined text as a
 // single follow-up turn. Called from OnSessionIdle (handlers.go) after a
-// turn completes — any user/steer messages that arrived during the
-// prior turn are flushed now as a new turn.
+// turn completes — any user messages that arrived during the prior turn
+// are flushed now as a new turn.
 //
 // Design decision (plan §6.2): combine into one message with \n\n
 // separators — they were all meant for the same model context, and
 // sending N separate turns would multiply model round-trips.
 //
-// Returns nil if steerBuf was empty (no-op). On a sendPrompt error it
+// Returns nil if followUps was empty (no-op). On a sendPrompt error it
 // unwinds the turn it began (cancelTurn) and puts the messages back at the
-// front of steerBuf, so a rejected follow-up neither leaves a phantom active
+// front of followUps, so a rejected follow-up neither leaves a phantom active
 // turn nor loses the text: the next session.idle flush retries it (#3072).
 // Callers must not cancelTurn again — a turn begun after the unwind is not
 // theirs. A nil turnEvents means "begin a fresh turn but with no
-// completion callback"; in practice OnSessionIdle always passes a non-nil
-// TurnEvents that fires OnTurnComplete.
+// completion callback".
 //
-// flushSteerBuf has callers on two goroutines: onSessionIdle on the dispatcher
-// goroutine (handlers.go), and abortDrainComplete, which also runs on the abort
-// backstop timer's goroutine. It therefore does NOT have the handler methods'
-// serial-execution guarantee. Taking the buffer under turnMu is what stops a
-// steer being sent twice: only one caller gets a non-empty buffer, and the
-// other returns without sending. beginTurn takes turnMu again itself, so the
-// two steps are not one atomic hold.
-func (b *Backend) flushSteerBuf(ctx context.Context, turnFactory func() *delegator.TurnEvents) error {
+// Runs on the dispatcher goroutine only (onSessionIdle). The buffer is still
+// taken under turnMu because injectUser appends to it from the inbox.
+func (b *Backend) flushFollowUps(ctx context.Context, turnFactory func() *delegator.TurnEvents) error {
 	b.turnMu.Lock()
-	buf := b.steerBuf
-	b.steerBuf = nil
+	buf := b.followUps
+	b.followUps = nil
 	b.turnMu.Unlock()
 
 	if len(buf) == 0 {
@@ -502,7 +466,7 @@ func (b *Backend) flushSteerBuf(ctx context.Context, turnFactory func() *delegat
 
 	turn := turnFactory()
 	b.beginTurn(turn)
-	log.NewComponentLogger(b.logComponent()).Infof("flushSteerBuf: sending %d queued message(s) as follow-up turn", len(buf))
+	log.NewComponentLogger(b.logComponent()).Infof("flushFollowUps: sending %d queued message(s) as follow-up turn", len(buf))
 	if err := b.sendPrompt(ctx, combined, nil, b.systemPrompt); err != nil {
 		// opencode rejected the follow-up, so no event will ever end the turn
 		// begun above: unwind it, or every later inject queues behind a turn
@@ -511,125 +475,9 @@ func (b *Backend) flushSteerBuf(ctx context.Context, turnFactory func() *delegat
 		// in their original order instead of losing them.
 		b.cancelTurn()
 		b.turnMu.Lock()
-		b.steerBuf = append(buf, b.steerBuf...)
+		b.followUps = append(buf, b.followUps...)
 		b.turnMu.Unlock()
 		return err
 	}
 	return nil
-}
-
-// ---------------------------------------------------------------------------
-// Mid-turn steer abort-drain (opencode 1.17.11)
-// ---------------------------------------------------------------------------
-
-// startSteerAbort arms the abort drain and POSTs /abort for a buffered
-// mid-turn steer. Called by injectSteer (no subagents running) and by
-// startDeferredSteerAbort (the last subagent has ended).
-func (b *Backend) startSteerAbort(ctx context.Context) {
-	b.turnMu.Lock()
-	b.aborting = true
-	b.abortIdlesSeen = 0
-	b.turnMu.Unlock()
-	log.NewComponentLogger(b.logComponent()).Debugf("inject: steer mid-turn → aborting active turn, drain pending")
-	err := b.Interrupt(ctx)
-	b.turnMu.Lock()
-	defer b.turnMu.Unlock()
-	if err != nil {
-		// Abort failed — clear drain state and fall back to flushing at
-		// the next natural OnSessionIdle (legacy behaviour).
-		b.disarmAbortLocked()
-		log.NewComponentLogger(b.logComponent()).Warnf("inject: steer abort failed (%v); will flush at next idle", err)
-		return
-	}
-	// Arm only now: opencode discards a prompt_async that reaches it before
-	// /abort, so a backstop counting from before the POST could lose the steer.
-	// The burst may already have finished the drain while the POST was open.
-	if b.aborting {
-		b.armAbortTimerLocked()
-	}
-}
-
-// startDeferredSteerAbort fires a steer abort that injectSteer deferred
-// because subagents were running (#2753). handleToolPart calls it after a
-// task tool ends; it acts only once no subagent is left running and the
-// turn is still in flight.
-func (b *Backend) startDeferredSteerAbort() {
-	if b.agents.Pending() > 0 {
-		return
-	}
-	b.turnMu.Lock()
-	if !b.steerAbortDeferred {
-		b.turnMu.Unlock()
-		return
-	}
-	b.steerAbortDeferred = false
-	inFlight := b.turnActive
-	b.turnMu.Unlock()
-	if !inFlight {
-		return // the turn already ended; onSessionIdle flushed the steer
-	}
-	log.NewComponentLogger(b.logComponent()).Infof("inject: last subagent ended → firing the deferred steer abort")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	b.startSteerAbort(ctx)
-}
-
-// armAbortTimerLocked arms the backstop timer that flushes the buffered steer
-// if the abort's idle burst never arrives (or arrives too slowly). It counts
-// from the return of POST /abort. Default 500ms; overridable via abortDrainTimeout (tests). Caller must hold turnMu.
-func (b *Backend) armAbortTimerLocked() {
-	d := b.abortDrainTimeout
-	if d == 0 {
-		d = 500 * time.Millisecond
-	}
-	b.abortTimer = time.AfterFunc(d, b.abortDrainComplete)
-}
-
-// disarmAbortLocked clears abort-drain state and stops the timer. Caller must
-// hold turnMu.
-func (b *Backend) disarmAbortLocked() {
-	if b.abortTimer != nil {
-		b.abortTimer.Stop()
-		b.abortTimer = nil
-	}
-	b.aborting = false
-	b.abortIdlesSeen = 0
-}
-
-// abortDrainComplete flushes the buffered steer as a fresh turn once the abort
-// burst has drained. Called from exactly one of: onSessionIdle (after the 2nd
-// burst idle) or the backstop timer — whichever fires first wins; the other is
-// a no-op via the aborting flag. Safe to call from the dispatcher or timer
-// goroutine.
-//
-// When the burst was cut short the backstop won, so the aborted turn may not
-// have been completed yet, and its remaining events can still arrive after the
-// flush. It is completed here, and awaitFreshBusy keeps those events off the
-// fresh turn (onSessionIdle, onSessionError).
-func (b *Backend) abortDrainComplete() {
-	b.turnMu.Lock()
-	if !b.aborting {
-		b.turnMu.Unlock()
-		return
-	}
-	if b.abortTimer != nil {
-		b.abortTimer.Stop()
-		b.abortTimer = nil
-	}
-	b.aborting = false
-	burstCutShort := b.abortIdlesSeen < 2
-	b.abortIdlesSeen = 0
-	bufLen := len(b.steerBuf)
-	b.turnMu.Unlock()
-	log.NewComponentLogger(b.logComponent()).Infof("steer: abort drain complete (flushing %d buffered message(s))", bufLen)
-	if burstCutShort {
-		b.failInFlightTurn(ErrMessageAborted)
-		b.turnMu.Lock()
-		b.awaitFreshBusy = len(b.steerBuf) > 0
-		b.turnMu.Unlock()
-	}
-	if err := b.flushSteerBuf(context.Background(), func() *delegator.TurnEvents { return nil }); err != nil {
-		// flushSteerBuf has already unwound the turn and kept the messages.
-		log.NewComponentLogger(b.logComponent()).Warnf("steer: flushSteerBuf after abort drain: %v (messages kept for the next idle)", err)
-	}
 }

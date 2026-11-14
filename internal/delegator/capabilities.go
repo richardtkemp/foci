@@ -165,7 +165,7 @@ var capabilityTable = [numCapabilities]CapabilityInfo{
 	CapQuestionPrompt:     {Name: "question_prompt", Kind: KindInterface, Iface: ifaceOf[QuestionPromptSetter](), Doc: "presents its own questions (AskUserQuestion, elicitation, the question tool) through a separate question prompt function (QuestionPromptSetter)"},
 
 	CapMidTurnSteer:     {Name: "mid_turn_steer", Kind: KindBehaviour, Doc: "folds a message into the running turn natively (ImmediateInject SourceSteer), without aborting the turn; without it, a mid-turn message waits for the turn to end"},
-	CapFoldAttachments:  {Name: "fold_attachments", Kind: KindInterface, Iface: ifaceOf[FoldAttachmentCarrier](), Doc: "delivers attachments folded into a running turn (FoldAttachmentCarrier)"},
+	CapFoldAttachments:  {Name: "fold_attachments", Kind: KindInterface, Requires: []Capability{CapMidTurnSteer}, Iface: ifaceOf[FoldAttachmentCarrier](), Doc: "delivers attachments folded into a running turn (FoldAttachmentCarrier)"},
 	CapDeliveryTracking: {Name: "delivery_tracking", Kind: KindInterface, Iface: ifaceOf[DeliveryTracker](), Doc: "proves each input reached the model and hands back the rest (DeliveryTracker + Spec.TranscriptChecker)"},
 	CapThreadNaming:     {Name: "thread_naming", Kind: KindInterface, Iface: ifaceOf[ThreadNameConsumer](), Doc: "names its own sessions (ThreadNameConsumer)"},
 	CapContextWindow:    {Name: "context_window", Kind: KindInterface, Iface: ifaceOf[ContextWindowQuerier](), Doc: "reports the model's context window and usage (ContextWindowQuerier)"},

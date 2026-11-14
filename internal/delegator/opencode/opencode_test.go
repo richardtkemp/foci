@@ -375,7 +375,7 @@ func TestWaitForTurn_ContextCancellation(t *testing.T) {
 // // TestInject_User_Idle_WithAttachments verifies Inject routes attachments
 // // through the structured-content path when a turn is being begun. The
 // // writer should see image/document blocks alongside the text.
-// DISABLED(opencode): asserts CC mid-turn drain via sendUserMessage; opencode buffers to steerBuf instead.
+// DISABLED(opencode): asserts CC mid-turn drain via sendUserMessage; opencode buffers to followUps instead.
 // // TestInject_User_InFlight_FoldsViaSendUser verifies Inject(SourceUser)
 // // during an in-flight turn queues the text via SendUser at default
 // // priority (no priority field on the wire; CC defaults to "next"). CC's
@@ -389,14 +389,14 @@ func TestWaitForTurn_ContextCancellation(t *testing.T) {
 // // mid-turn drain instead). The steer text is queued at priority "now"
 // // so it dequeues ahead of any other queued items at the next tool
 // // boundary, without aborting the in-flight tool.
-// TODO(opencode): rewrite — opencode has no mid-turn queue; steers buffer-and-flush instead; see plan section 6.
+// TODO(opencode): rewrite — opencode has no mid-turn steer (#3115); covered by inject_test.go.
 // // TestInject_Steer_Idle_BeginsTurn verifies the edge case where a steer
 // // arrives at idle (race between turn end and platform queue dispatch) and
 // // carries turn bookkeeping (here via the legacy Handler, which the shim turns
 // // into a Turn): Inject degrades to a fresh begin-turn rather than calling
 // // Interrupt on a non-existent in-flight turn. (The Turn-less inbox shape is
 // // covered by TestInject_Steer_Idle_NoTurn_ReturnsErrTurnNotInFlight.)
-// TODO(opencode): rewrite — opencode has no mid-turn queue; steers buffer-and-flush instead; see plan section 6.
+// TODO(opencode): rewrite — opencode has no mid-turn steer (#3115); covered by inject_test.go.
 // // TestInject_Steer_Idle_NoTurn_ReturnsErrTurnNotInFlight verifies the inbox
 // // race fix: a steer that arrives at idle with neither Turn nor Handler (the
 // // shape the inbox builds) is declined with ErrTurnNotInFlight rather than

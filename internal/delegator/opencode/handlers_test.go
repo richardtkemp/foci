@@ -706,15 +706,15 @@ func TestOnSessionIdle_WrongSessionIgnored(t *testing.T) {
 	}
 }
 
-func TestOnSessionIdle_FlushesSteerBuf(t *testing.T) {
-	// Verifies OnSessionIdle flushes the steerBuf after completing
+func TestOnSessionIdle_FlushesFollowUps(t *testing.T) {
+	// Verifies OnSessionIdle flushes followUps after completing
 	// the current turn. Since we can't call sendPrompt without a real
-	// server, this test asserts the steerBuf is drained (flushSteerBuf
+	// server, this test asserts followUps is drained (flushFollowUps
 	// calls sendPrompt which will panic on nil server — we catch it).
 	b := newHandlerTestBackend(t)
 
 	b.turnMu.Lock()
-	b.steerBuf = []string{"queued steer 1", "queued steer 2"}
+	b.followUps = []string{"queued 1", "queued 2"}
 	b.turnMu.Unlock()
 
 	// Catch the expected panic from sendPrompt (nil server).
@@ -724,10 +724,10 @@ func TestOnSessionIdle_FlushesSteerBuf(t *testing.T) {
 	}()
 
 	b.turnMu.Lock()
-	remaining := len(b.steerBuf)
+	remaining := len(b.followUps)
 	b.turnMu.Unlock()
 	if remaining != 0 {
-		t.Errorf("steerBuf not drained: %d items remain", remaining)
+		t.Errorf("followUps not drained: %d items remain", remaining)
 	}
 }
 

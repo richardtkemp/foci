@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"foci/internal/delegator"
 )
@@ -26,10 +25,10 @@ func rejectPrompts(rec *recordingHandler, reject *atomic.Bool) {
 	}
 }
 
-func steerBufSnapshot(b *Backend) []string {
+func followUpsSnapshot(b *Backend) []string {
 	b.turnMu.Lock()
 	defer b.turnMu.Unlock()
-	return append([]string(nil), b.steerBuf...)
+	return append([]string(nil), b.followUps...)
 }
 
 func lastPromptText(t *testing.T, rec *recordingHandler) string {
@@ -76,8 +75,8 @@ func TestNaturalIdleFlush_Rejected_NoPhantomTurn_TextKept(t *testing.T) {
 	if b.IsTurnInFlight() {
 		t.Error("IsTurnInFlight = true after a rejected flush: phantom turn (#3072)")
 	}
-	if got := steerBufSnapshot(b); len(got) != 1 || got[0] != "follow-up" {
-		t.Errorf("steerBuf = %q after a rejected flush, want [follow-up] (text lost, #3072)", got)
+	if got := followUpsSnapshot(b); len(got) != 1 || got[0] != "follow-up" {
+		t.Errorf("followUps = %q after a rejected flush, want [follow-up] (text lost, #3072)", got)
 	}
 
 	// A later system inject must begin a turn, not wait behind a phantom.
@@ -96,8 +95,8 @@ func TestNaturalIdleFlush_Rejected_NoPhantomTurn_TextKept(t *testing.T) {
 	if got := lastPromptText(t, rec); got != "follow-up" {
 		t.Errorf("retried text = %q, want %q", got, "follow-up")
 	}
-	if got := steerBufSnapshot(b); len(got) != 0 {
-		t.Errorf("steerBuf = %q after the retry, want empty", got)
+	if got := followUpsSnapshot(b); len(got) != 0 {
+		t.Errorf("followUps = %q after the retry, want empty", got)
 	}
 }
 
@@ -122,7 +121,7 @@ func TestNaturalIdleFlush_Rejected_KeepsOrderWithLaterMessages(t *testing.T) {
 
 	b.beginTurn(&delegator.TurnEvents{})
 	b.turnMu.Lock()
-	b.steerBuf = []string{"first"}
+	b.followUps = []string{"first"}
 	b.turnMu.Unlock()
 
 	b.onSessionIdle(b.sessionID)
@@ -130,37 +129,7 @@ func TestNaturalIdleFlush_Rejected_KeepsOrderWithLaterMessages(t *testing.T) {
 	if b.IsTurnInFlight() {
 		t.Error("IsTurnInFlight = true after a rejected flush")
 	}
-	if got := steerBufSnapshot(b); len(got) != 2 || got[0] != "first" || got[1] != "second" {
-		t.Errorf("steerBuf = %q, want [first second]", got)
-	}
-}
-
-// The abort-drain flush keeps a rejected steer too, and leaves no turn.
-func TestAbortDrainFlush_Rejected_TextKept(t *testing.T) {
-	rec := &recordingHandler{}
-	var reject atomic.Bool
-	reject.Store(true)
-	rejectPrompts(rec, &reject)
-	b := newReadyBackend(t, rec)
-	b.abortDrainTimeout = time.Hour
-
-	b.beginTurn(&delegator.TurnEvents{})
-	if err := b.ImmediateInject(context.Background(), delegator.Inject{
-		Source: delegator.SourceSteer, Text: "steer",
-	}); err != nil {
-		t.Fatalf("Inject steer: %v", err)
-	}
-	b.onSessionError(b.sessionID, &MessageError{Name: ErrMessageAborted})
-	b.onSessionIdle(b.sessionID)
-	b.onSessionIdle(b.sessionID)
-
-	if got := rec.countPath("/session/sess-inject/prompt_async"); got != 1 {
-		t.Fatalf("/prompt_async POSTs = %d, want 1", got)
-	}
-	if b.IsTurnInFlight() {
-		t.Error("IsTurnInFlight = true after a rejected abort-drain flush")
-	}
-	if got := steerBufSnapshot(b); len(got) != 1 || got[0] != "steer" {
-		t.Errorf("steerBuf = %q, want [steer]", got)
+	if got := followUpsSnapshot(b); len(got) != 2 || got[0] != "first" || got[1] != "second" {
+		t.Errorf("followUps = %q, want [first second]", got)
 	}
 }

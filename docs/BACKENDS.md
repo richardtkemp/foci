@@ -71,7 +71,7 @@ All of this works unchanged when you delegate to CC (other delegated backends: s
 - **Platform connections** — Telegram, Discord, Android, HTTP, voice — the reply stream is the same.
 - **Command dispatch** — `/sessions`, `/config`, `/stop`, `/reset`, `/facet`, etc. Foci handles them normally. `/model` goes via the ControlSender pattern. `/compact` — both manual (`/compact` command) and auto (threshold) — dispatches through `Agent.runDelegatedCompact`, which sends `/compact <foci-summary-prompt>` to CC and waits for the `compact_boundary` stream event. `/pass` and a small set of other forward-only commands (e.g. unhandled CC slash commands) are sent to the backend via `Backend.Inject(SourcePass)` — a fire-and-forget send that bypasses the turn handler so a forwarded `/context` doesn't get treated as a user turn.
 - **Attachments** — both transports run attachments through the shared `prepareAttachments` step (#2095): convertible documents (docx/xlsx/pptx/html/csv/txt) become prompt text, images are downscaled, and every saved file also gets a `[<label> saved to: <path>]` note. ccstream then sends images and PDFs to the model as image/document content blocks, and an image in a mid-turn steer folds into the running turn. opencode sends them as file parts; codex sends only the text, so its model must open the file from the path note ([I5](#2-input-and-steering), `fold_attachments` in [Declared capabilities](#declared-capabilities)).
-- **Steering** — mid-turn user messages are dispatched directly via `Backend.Inject(SourceSteer)`. On ccstream this sends the text via `writer.SendUser` at queue priority `"next"`. CC's mid-turn drain folds the message into the current `ask()` as an attachment to the next tool-result batch — the model addresses it in the same turn, the in-flight tool finishes naturally, and the response reaches the original handler. Priority `"now"` would make CC abort the in-flight ask and is deliberately not used; for "stop right now" semantics use `/reset hard`. The agent's per-session `Inbox.Enqueue` handles the routing decision — it calls `Inject(SourceSteer)` directly for delegated backends; the steer buffer is only used by API-mode agents. codex folds via `turn/steer`; opencode has no mid-turn fold and aborts and re-sends instead ([I1](#2-input-and-steering)).
+- **Steering** — mid-turn user messages are dispatched directly via `Backend.Inject(SourceSteer)`. On ccstream this sends the text via `writer.SendUser` at queue priority `"next"`. CC's mid-turn drain folds the message into the current `ask()` as an attachment to the next tool-result batch — the model addresses it in the same turn, the in-flight tool finishes naturally, and the response reaches the original handler. Priority `"now"` would make CC abort the in-flight ask and is deliberately not used; for "stop right now" semantics use `/reset hard`. The agent's per-session `Inbox.Enqueue` handles the routing decision — it calls `Inject(SourceSteer)` directly for delegated backends; the steer buffer is only used by API-mode agents. codex folds via `turn/steer`. opencode does not steer (#3115): its Spec declares `mid_turn_steer` No, so `trySteer` (and `SteerTurn` for `spawn_send`) leave a mid-turn message in the queue and it runs as the next turn. Nothing aborts the running turn to deliver a message ([I1](#2-input-and-steering)).
 - **Memory formation** — injected into the live CC session as a prompt (not branched).
 - **Memory consolidation / nudge extraction / foci_summary** — batch runs via `DelegatedManager.RunBatch`: an ordinary stream-json turn on an ephemeral child session (caller's system prompt, model default `sonnet`, no permission prompts), closed as soon as the turn ends. Recorded in api.db and traced like any turn, labelled with `purpose` (#1962). On opencode and codex a batch run uses the agent's own model and can still raise a permission prompt ([P5](#3-permissions-and-safety)).
 - **Auto-approval** — foci-level `[permissions]` rules are checked before any CC permission request reaches the user. Plus a static `--allowedTools` list at CC launch (merged from `[cc_backend] default_allowed_tools` and per-agent `backend_config.allowed_tools`) for rules CC can evaluate without a round-trip.
@@ -205,7 +205,7 @@ Why not:
 - `plan_permission`: codex (n/a): no plan mode; opencode: plan approval is not a permission request on opencode.
 - `question_prompt`: codex: the app-server has no question prompts.
 - `mid_turn_steer`: opencode: no native mid-turn steer: a message waits for the turn to end.
-- `fold_attachments`: codex: a message folded into a running turn carries text only; opencode: a message folded into a running turn carries text only.
+- `fold_attachments`: codex: a message folded into a running turn carries text only; opencode: no mid-turn steer to carry attachments.
 - `delivery_tracking`: codex: inputs are fire-and-forget: no proof of consumption; opencode: inputs are fire-and-forget: no proof of consumption.
 - `thread_naming`: claude-code: CC does not name its sessions; agents get the set_session_alias tool instead; opencode: foci does not take opencode's session titles.
 - `live_model`: opencode: its model is reported only at session idle.
@@ -258,7 +258,7 @@ grepped for each ✗. Row IDs are not renumbered, so the gaps are the removed ro
 
 | ID | Feature | What | ccstream | opencode | codex |
 |---|---|---|---|---|---|
-| I1 | Steer mid-turn | `SourceSteer` folds into the running turn | ✓ | [7] | ✓ |
+| I1 | Steer mid-turn | `SourceSteer` folds into the running turn (`mid_turn_steer`) | ✓ | ✗ [7] | ✓ |
 | I2 | User follow-up mid-turn | `SourceUser` while in flight | ✓ | [8] | ✓ |
 | I3 | System never steers | `SourceSystem` in flight returns `ErrTurnInFlight`; idle check + begin are atomic | ✓ | ✓ | ✓ |
 | I4 | Steer-at-idle guard | Steer at idle with no `Turn` returns `ErrTurnNotInFlight` | ✓ | ✓ | [9] |
@@ -464,13 +464,13 @@ Notes:
    Post-tool nudges need a per-tool hook; ccstream gets it from `foci-cc-hook`.
 6. opencode's SSE stream carries server heartbeats inbound (`oc/subscriber.go:Subscriber.onHeartbeat`);
    foci sends nothing outbound. ccstream sends `keep_alive` every 30s (`cc/lifecycle.go:runKeepAlive`).
-7. opencode has no mid-turn fold: a steer buffers in `steerBuf`, POSTs `/abort` and is
-   re-sent as a fresh turn once the abort burst drains (`oc/inject.go:injectSteer`,
-   `flushSteerBuf`). The in-flight work is lost, not folded. While task-tool subagents run, the
-   abort waits until the last one ends, because it would cancel them (#2753,
-   `startDeferredSteerAbort`).
+7. opencode does not steer (#3115). It declares `mid_turn_steer` No, so the agent layer never
+   sends it a mid-turn `SourceSteer`: the message waits in the session queue and runs as the next
+   turn, in arrival order. A `SourceSteer` that reaches it mid-turn anyway is refused with
+   `ErrTurnInFlight` (`oc/inject.go:injectSteer`) and the running turn is left alone. The
+   abort-and-resend emulation it replaced was removed.
 8. opencode queues a mid-turn user message and sends it as a new turn at `session.idle`
-   (`oc/inject.go:injectUser`). It is answered after the current turn, not inside it.
+   (`oc/inject.go:injectUser`, `flushFollowUps`). It is answered after the current turn, not inside it.
 9. codex returns `ErrTurnNotInFlight` only when `turn/steer` races completion
    (`cx/inject.go:steerTurn`). A `SourceSteer` arriving at idle goes to `beginTurn(text, inj.Turn)`
    even when `inj.Turn` is nil, opening an untracked turn (no `OnTurnComplete`, no usage),
@@ -651,8 +651,8 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - T15: `cc/lifecycle.go:runKeepAlive` | `oc/subscriber.go:onHeartbeat` | ✗ grep `keep.?alive|heartbeat`
 
 **Input and steering**
-- I1: `cc/inject.go:sendFold` (priority `next`) | `oc/inject.go:injectSteer`, `flushSteerBuf` | `cx/inject.go:steerTurn` (`turn/steer`)
-- I2: `cc/inject.go:ImmediateInject` | `oc/inject.go:injectUser` (steerBuf) | `cx/inject.go:ImmediateInject` → `steerTurn`
+- I1: `cc/inject.go:sendFold` (priority `next`) | ✗ `oc/inject.go:injectSteer` refuses mid-turn (#3115) | `cx/inject.go:steerTurn` (`turn/steer`)
+- I2: `cc/inject.go:ImmediateInject` | `oc/inject.go:injectUser` (followUps) | `cx/inject.go:ImmediateInject` → `steerTurn`
 - I3: `cc/inject.go:tryBeginTurn` | `oc/inject.go:injectSystem` → `tryBeginTurn` | `cx/inject.go:beginTurn` (`turnActive` under `turnMu`)
 - I4: `cc/inject.go:ImmediateInject` | `oc/inject.go:injectSteer` | `cx/inject.go:steerTurn` only
 - I5: `cc/inject.go:sendToPaneWithAttachments`, `contentBlocks`, `attachmentBlockType` | `oc/inject.go:buildPromptBody` (file parts) | ✗ grep `Attachments|attachment|mime` (only `imageGeneration` tool items)

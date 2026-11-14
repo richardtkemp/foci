@@ -353,7 +353,6 @@ func (b *Backend) handleToolPart(part Part) {
 			if se := b.sessionEvents.Load(); se != nil && se.OnSubagentEnd != nil {
 				se.OnSubagentEnd(part.CallID, 1)
 			}
-			b.startDeferredSteerAbort() // #2753: a steer waiting on subagents
 		}
 
 	case ToolStateError:
@@ -365,7 +364,6 @@ func (b *Backend) handleToolPart(part Part) {
 			if se := b.sessionEvents.Load(); se != nil && se.OnSubagentEnd != nil {
 				se.OnSubagentEnd(part.CallID, 1)
 			}
-			b.startDeferredSteerAbort() // #2753: a steer waiting on subagents
 		}
 	}
 }
@@ -495,7 +493,7 @@ func (b *Backend) handleMessageError(err *MessageError) {
 }
 
 // ---------------------------------------------------------------------------
-// session.idle — turn completion + steerBuf flush
+// session.idle — turn completion + follow-up flush
 // ---------------------------------------------------------------------------
 
 func (b *Backend) onSessionIdle(sessionID string) {
@@ -504,11 +502,6 @@ func (b *Backend) onSessionIdle(sessionID string) {
 	// bug.
 	if sessionID != b.sessionID {
 		log.NewComponentLogger(b.logComponent()).Debugf("onSessionIdle: ignored (session=%s, ours=%s)", sessionID, b.sessionID)
-		return
-	}
-
-	if b.lateAbortEvent() {
-		log.NewComponentLogger(b.logComponent()).Debugf("onSessionIdle: ignored (late abort burst, follow-up not busy yet)")
 		return
 	}
 
@@ -543,12 +536,7 @@ func (b *Backend) onSessionIdle(sessionID string) {
 		}
 	}
 
-	// An idle from a steer's abort burst is not a final answer, so the
-	// pre-answer gate does not run on it.
-	b.turnMu.Lock()
-	wasAborting := b.aborting
-	b.turnMu.Unlock()
-	if !wasAborting && b.tryPreAnswerRedispatch(turn, result) {
+	if b.tryPreAnswerRedispatch(turn, result) {
 		return // don't complete — wait for the revision's session.idle
 	}
 
@@ -562,13 +550,12 @@ func (b *Backend) onSessionIdle(sessionID string) {
 		turn.OnTurnComplete(result)
 	}
 
-	// Watchdog: a turn completing with neither text nor tools likely means a
-	// stray abort idle was mis-attributed to it — the residual race the abort
-	// drain guards against. turn==nil means the turn was already completed
-	// (e.g. the aborted turn 1 via failInFlightTurn), so this only fires for a
-	// real active turn that produced nothing. Skip during an abort drain.
-	if !wasAborting && turn != nil && result.Text == "" && !sawTool {
-		log.NewComponentLogger(b.logComponent()).Warnf("onSessionIdle: turn completed with no text/tools — possible stray abort idle mis-attributed to steered turn")
+	// Watchdog: a turn completing with neither text nor tools is notable — a
+	// stray idle may have been mis-attributed to it. turn==nil means the turn
+	// was already completed (e.g. via failInFlightTurn), so this only fires
+	// for a real active turn that produced nothing.
+	if turn != nil && result.Text == "" && !sawTool {
+		log.NewComponentLogger(b.logComponent()).Warnf("onSessionIdle: turn completed with no text/tools — possible stray idle mis-attributed to the turn")
 	}
 
 	// Signal WaitForTurn.
@@ -584,48 +571,17 @@ func (b *Backend) onSessionIdle(sessionID string) {
 		b.typingFunc(false)
 	}
 
-	// Abort-drain: a mid-turn steer aborted the active turn. Count the abort's
-	// burst idles (empirically 2 on opencode 1.17.11) and flush the buffered
-	// steer once the burst settles. The backstop timer (inject.go) covers a
-	// missing/slow burst. Whichever fires first calls abortDrainComplete; the
-	// other is a no-op via the aborting flag.
-	b.turnMu.Lock()
-	if b.aborting {
-		b.abortIdlesSeen++
-		done := b.abortIdlesSeen >= 2
-		n := b.abortIdlesSeen
-		b.turnMu.Unlock()
-		if done {
-			b.abortDrainComplete()
-		} else {
-			log.NewComponentLogger(b.logComponent()).Debugf("onSessionIdle: abort drain idle %d/2", n)
-		}
-		return
-	}
-	// The turn ended on its own while a steer waited for its subagents
-	// (#2753): no abort is needed any more, the flush below sends it.
-	b.steerAbortDeferred = false
-	b.turnMu.Unlock()
-
-	// Flush steerBuf — any user/steer messages that arrived during the
+	// Flush followUps — any user messages that arrived during the
 	// turn are sent as a follow-up. The follow-up turn uses a nil
 	// TurnEvents for v1 (no OnTurnComplete; text arrives via
 	// SessionEvents.OnText which is enough for the user to see the
 	// response).
-	if err := b.flushSteerBuf(context.Background(), func() *delegator.TurnEvents {
+	if err := b.flushFollowUps(context.Background(), func() *delegator.TurnEvents {
 		return nil
 	}); err != nil {
-		// flushSteerBuf unwound its turn and kept the messages (#3072).
-		log.NewComponentLogger(b.logComponent()).Warnf("onSessionIdle: flushSteerBuf: %v (messages kept for the next idle)", err)
+		// flushFollowUps unwound its turn and kept the messages (#3072).
+		log.NewComponentLogger(b.logComponent()).Warnf("onSessionIdle: flushFollowUps: %v (messages kept for the next idle)", err)
 	}
-}
-
-// lateAbortEvent reports whether an idle or abort error now belongs to the
-// aborted turn rather than to the steer's follow-up (see awaitFreshBusy).
-func (b *Backend) lateAbortEvent() bool {
-	b.turnMu.Lock()
-	defer b.turnMu.Unlock()
-	return b.awaitFreshBusy
 }
 
 // tryPreAnswerRedispatch runs the pre-answer nudge gate against the turn's
@@ -669,9 +625,6 @@ func (b *Backend) onSessionStatus(sessionID string, status SessionStatus) {
 	}
 	switch status.Type {
 	case StatusBusy:
-		b.turnMu.Lock()
-		b.awaitFreshBusy = false
-		b.turnMu.Unlock()
 		if b.typingFunc != nil {
 			b.typingFunc(true)
 		}
@@ -766,14 +719,11 @@ func (b *Backend) onSessionError(sessionID string, err *MessageError) {
 	// End any in-flight turn. A session error (including the synthetic one
 	// finalizeExit raises when the opencode subprocess dies) means no
 	// session.idle is coming, so without this the Backend's turnActive stays
-	// true forever: foci then routes every new message as a steer into the dead
-	// turn (never starting a fresh turn → never respawning the server), while the
+	// true forever: foci then queues every new message behind the dead turn
+	// (never starting a fresh turn → never respawning the server), while the
 	// agent layer shows no in-flight turn (so /stop reports nothing to cancel).
 	// Completing the turn here re-couples the two markers and lets the session
 	// recover (#arnix-perm).
-	if err.Name == ErrMessageAborted && b.lateAbortEvent() {
-		return
-	}
 	b.failInFlightTurn(err.Name)
 }
 
@@ -796,30 +746,26 @@ func (b *Backend) failInFlightTurnAs(reason string, interrupted bool) {
 	ch := b.turnResultCh
 	text := b.turnText.String()
 	sawTool := len(b.seenToolCalls) > 0
-	wasAborting := b.aborting
 	b.turnEvents = nil
 	b.turnActive = false
 	b.turnResultCh = nil
-	b.awaitFreshBusy = false
 	b.turnMu.Unlock()
 
-	// Watchdog (error half): an active turn dying with no text/tools outside
-	// an abort drain is notable — for a steered turn it could indicate a
-	// stray abort event mis-attributed. The turn-1 abort itself (aborting=true)
-	// legitimately completes with partial/no output, so is suppressed here.
-	// MessageAbortedError and the locally-detected rate-limit completion are
-	// deliberate POST /abort paths, never unexpected session deaths, so their
-	// empty results are also suppressed.
+	// Watchdog (error half): an active turn dying with no text/tools is
+	// notable — it could indicate a premature error. MessageAbortedError and
+	// the locally-detected rate-limit completion are deliberate POST /abort
+	// paths (/stop, /reset hard, rate limit), never unexpected session deaths,
+	// so their empty results are suppressed.
 	expectedEmpty := reason == ErrMessageAborted || reason == rateLimitTurnEnd
-	if !wasAborting && !expectedEmpty && turn != nil && text == "" && !sawTool {
-		log.NewComponentLogger(b.logComponent()).Warnf("failInFlightTurn: active turn ended with no text/tools on %s — possible premature error on steered turn", reason)
+	if !expectedEmpty && turn != nil && text == "" && !sawTool {
+		log.NewComponentLogger(b.logComponent()).Warnf("failInFlightTurn: active turn ended with no text/tools on %s — possible premature error", reason)
 	}
 
 	if text == "" && !expectedEmpty {
-		// Deliberate aborts (steer, /reset hard, or rate-limit cancellation) are
-		// not unexpected session ends, so the scary fallback is misleading.
-		// Deliver whatever partial text accumulated (possibly empty) and
-		// complete silently; a steer's follow-up turn follows.
+		// Deliberate aborts (/stop, /reset hard, or rate-limit cancellation)
+		// are not unexpected session ends, so the scary fallback is
+		// misleading: for them, deliver whatever partial text accumulated
+		// (possibly empty) and complete silently.
 		text = "⚠️ opencode session ended unexpectedly (" + reason + ")"
 	}
 	if turn != nil && turn.OnTurnComplete != nil {

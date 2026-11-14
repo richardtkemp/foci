@@ -672,7 +672,7 @@ type AgentLoopConfig struct {
 // BehaviorConfig holds agent behavioral settings.
 // Global: [behavior], per-agent: [[agents]].behavior.*
 type BehaviorConfig struct {
-	SteerMode                   *bool    `toml:"steer_mode"                   default:"true"  hot:"immediate" desc:"Lets a message you send while the agent is mid-turn redirect it at the next tool call, instead of waiting for the turn to finish"`
+	SteerMode                   *bool    `toml:"steer_mode"                   default:"true"  hot:"immediate" desc:"Lets a message you send while the agent is mid-turn redirect it at the next tool call, instead of waiting for the turn to finish. opencode agents cannot be redirected mid-turn: there a message always waits for the turn to finish"`
 	GroupThrottle               *string  `toml:"group_throttle"                                hot:"event" desc:"In group chats, buffers messages that do not mention the agent for this long, then delivers them together. A mention flushes the buffer immediately. Empty disables it" type:"duration"`
 	TurnLockWarnThreshold       *string  `toml:"turn_lock_warn_threshold"     default:"3m"    hot:"turn" desc:"Writes a warning to the server log if a turn waits longer than this for the previous turn on the same session to finish. Diagnostic only, not shown to users" type:"duration"`
 	EnableStopAliases           *bool    `toml:"enable_stop_aliases"          default:"true"  desc:"Lets extra words such as wait also work as aliases for stop, which cancels the agent's current turn"`

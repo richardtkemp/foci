@@ -14,11 +14,12 @@ import (
 //
 // False — and the caller queues the text for the spawn's next turn — when the
 // agent is not delegated (an API spawn's turn drains queued text through its
-// turnevent.Steerer at each tool boundary), when no turn is in flight on sk
+// turnevent.Steerer at each tool boundary), when its backend has no mid-turn
+// steer (delegator.CapMidTurnSteer, opencode: #3115), when no turn is in flight on sk
 // (its backend is still starting, or the turn just ended), or when the inject
 // fails. Never starts a backend: the in-flight check is non-creating.
 func (a *Agent) SteerTurn(ctx context.Context, sk, text string) bool {
-	if a.DelegatedManager == nil || !a.DelegatedManager.BackendTurnInFlight(sk) {
+	if a.DelegatedManager == nil || !a.backendSteersMidTurn() || !a.DelegatedManager.BackendTurnInFlight(sk) {
 		return false
 	}
 	be, err := a.resolveSessionBackend(ctx, sk)

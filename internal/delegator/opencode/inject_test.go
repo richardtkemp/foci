@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"foci/internal/delegator"
 )
@@ -304,20 +303,19 @@ func TestPromptBody_NoModel_OmitsField(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// SourceUser mid-turn — queued in steerBuf
+// SourceUser mid-turn — queued in followUps
 // ---------------------------------------------------------------------------
 
-func TestInject_User_InFlight_QueuedToSteerBuf(t *testing.T) {
+func TestInject_User_InFlight_QueuedToFollowUps(t *testing.T) {
 	// Verifies Inject(SourceUser) during an in-flight turn does NOT
 	// POST immediately — opencode has no mid-turn queue, so the text
-	// is buffered in steerBuf for flushSteerBuf (called from Step 7's
-	// OnSessionIdle). Replaces ccstream's fold-via-sendUser semantics
-	// with the queue assertion the plan called out.
+	// is buffered in followUps for flushFollowUps (called from
+	// OnSessionIdle).
 	rec := &recordingHandler{}
 	b := newReadyBackend(t, rec)
 
 	// Manually flip into a "turn in flight" state without actually
-	// sending a prompt (avoids needing Step 7's session.idle wiring).
+	// sending a prompt.
 	b.beginTurn(&delegator.TurnEvents{})
 
 	if err := b.ImmediateInject(context.Background(), delegator.Inject{
@@ -327,88 +325,47 @@ func TestInject_User_InFlight_QueuedToSteerBuf(t *testing.T) {
 		t.Fatalf("Inject: %v", err)
 	}
 
-	// The follow-up must be in steerBuf, not POSTed.
+	// The follow-up must be in followUps, not POSTed.
 	b.turnMu.Lock()
-	buf := b.steerBuf
+	buf := b.followUps
 	b.turnMu.Unlock()
 	if len(buf) != 1 || buf[0] != "follow-up while busy" {
-		t.Errorf("steerBuf = %v, want [follow-up while busy]", buf)
+		t.Errorf("followUps = %v, want [follow-up while busy]", buf)
 	}
 	if got := rec.countPath("/session/sess-inject/prompt_async"); got != 0 {
 		t.Errorf("Inject mid-turn should NOT POST /prompt_async; got %d POSTs", got)
 	}
 }
 
-// ---------------------------------------------------------------------------
-// SourceSteer mid-turn — abort the active turn, drain the abort's event burst,
-// then flush the buffered steer as a fresh turn. At idle it degrades to
-// User-idle (Turn present) or returns ErrTurnNotInFlight (no Turn).
-// ---------------------------------------------------------------------------
-
-func TestInject_Steer_InFlight_AbortsDrainsThenFlushes(t *testing.T) {
-	// Verifies the steer lifecycle on opencode 1.17.11: a steer arriving
-	// mid-turn buffers, aborts the active turn (POST /abort), and once the
-	// abort's event burst drains (session.error + 2× session.idle) the buffered
-	// steer(s) flush as a single combined follow-up turn. A second steer during
-	// the drain just appends (one abort, not two).
+// Mid-turn user follow-ups run as the next turn when the running turn ends,
+// in arrival order, and the running turn is never aborted (#3115).
+func TestInject_User_InFlight_RunsAsNextTurnInOrder_NoAbort(t *testing.T) {
 	rec := &recordingHandler{}
 	b := newReadyBackend(t, rec)
-	// Make the backstop timer effectively never fire so the test drives the
-	// drain deterministically via simulated events.
-	b.abortDrainTimeout = time.Hour
 
-	// Turn 1 in progress.
-	b.beginTurn(&delegator.TurnEvents{})
-
-	// Two steers arrive mid-turn.
-	if err := b.ImmediateInject(context.Background(), delegator.Inject{
-		Source: delegator.SourceSteer, Text: "first steer",
-	}); err != nil {
-		t.Fatalf("Inject first steer: %v", err)
-	}
-	if err := b.ImmediateInject(context.Background(), delegator.Inject{
-		Source: delegator.SourceSteer, Text: "second steer",
-	}); err != nil {
-		t.Fatalf("Inject second steer: %v", err)
-	}
-
-	// Exactly one /abort (the first steer triggered it; the second appended),
-	// and no follow-up turn yet.
-	if got := rec.countPath("/session/sess-inject/abort"); got != 1 {
-		t.Errorf("/abort POSTs = %d, want 1", got)
+	var completed int
+	b.beginTurn(&delegator.TurnEvents{OnTurnComplete: func(*delegator.TurnResult) { completed++ }})
+	for _, text := range []string{"first", "second"} {
+		if err := b.ImmediateInject(context.Background(), delegator.Inject{Source: delegator.SourceUser, Text: text}); err != nil {
+			t.Fatalf("Inject %q: %v", text, err)
+		}
 	}
 	if got := rec.countPath("/session/sess-inject/prompt_async"); got != 0 {
-		t.Errorf("pre-drain /prompt_async POSTs = %d, want 0", got)
-	}
-	b.turnMu.Lock()
-	bufLen := len(b.steerBuf)
-	aborting := b.aborting
-	b.turnMu.Unlock()
-	if bufLen != 2 {
-		t.Errorf("steerBuf len = %d, want 2", bufLen)
-	}
-	if !aborting {
-		t.Error("aborting = false after mid-turn steer, want true")
+		t.Fatalf("/prompt_async POSTs mid-turn = %d, want 0", got)
 	}
 
-	// Drain: session.error (ErrMessageAborted) completes turn 1, then the two
-	// burst idles. The first idle advances the counter; the second fires the
-	// flush.
-	b.onSessionError(b.sessionID, &MessageError{Name: ErrMessageAborted})
-	b.onSessionIdle(b.sessionID)
-	if got := rec.countPath("/session/sess-inject/prompt_async"); got != 0 {
-		t.Errorf("after 1st idle /prompt_async POSTs = %d, want 0 (drain not complete)", got)
-	}
 	b.onSessionIdle(b.sessionID)
 
-	// Exactly one follow-up turn, combining both steers with \n\n.
+	if completed != 1 {
+		t.Errorf("running turn completed %d times, want 1", completed)
+	}
+	if got := rec.countPath("/session/sess-inject/abort"); got != 0 {
+		t.Errorf("/abort POSTs = %d, want 0: a queued message never aborts a turn", got)
+	}
 	if got := rec.countPath("/session/sess-inject/prompt_async"); got != 1 {
-		t.Errorf("post-drain /prompt_async POSTs = %d, want 1", got)
+		t.Fatalf("/prompt_async POSTs after idle = %d, want 1", got)
 	}
-	req, ok := rec.lastPath("/session/sess-inject/prompt_async")
-	if !ok {
-		t.Fatal("no /prompt_async recorded after drain")
-	}
+	req, _ := rec.lastPath("/session/sess-inject/prompt_async")
 	var body struct {
 		Parts []struct {
 			Text string `json:"text"`
@@ -417,61 +374,50 @@ func TestInject_Steer_InFlight_AbortsDrainsThenFlushes(t *testing.T) {
 	if err := json.Unmarshal(req.Body, &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(body.Parts) != 1 || body.Parts[0].Text != "first steer\n\nsecond steer" {
-		t.Errorf("combined text = %q, want %q", body.Parts[0].Text, "first steer\n\nsecond steer")
+	if len(body.Parts) != 1 || body.Parts[0].Text != "first\n\nsecond" {
+		t.Errorf("follow-up parts = %+v, want one text part %q", body.Parts, "first\n\nsecond")
 	}
-
-	// Drain state cleared; buffer drained.
-	b.turnMu.Lock()
-	aborting = b.aborting
-	bufLen = len(b.steerBuf)
-	b.turnMu.Unlock()
-	if aborting {
-		t.Error("aborting = true after drain, want false")
-	}
-	if bufLen != 0 {
-		t.Errorf("steerBuf len = %d after drain, want 0", bufLen)
+	if !b.IsTurnInFlight() {
+		t.Error("IsTurnInFlight = false after the flush, want the follow-up turn in flight")
 	}
 }
 
-func TestInject_Steer_InFlight_BackstopTimerFlushes(t *testing.T) {
-	// If the abort's idle burst never arrives, the backstop timer flushes the
-	// buffered steer anyway. Uses a short timeout so the test doesn't block.
+// ---------------------------------------------------------------------------
+// SourceSteer — opencode has no mid-turn steer (#3115). Mid-turn it is refused
+// and the running turn is left alone. At idle it degrades to User-idle (Turn
+// present) or returns ErrTurnNotInFlight (no Turn).
+// ---------------------------------------------------------------------------
+
+func TestInject_Steer_InFlight_RefusedNeverAborts(t *testing.T) {
 	rec := &recordingHandler{}
 	b := newReadyBackend(t, rec)
-	b.abortDrainTimeout = 5 * time.Millisecond
 
-	b.beginTurn(&delegator.TurnEvents{})
-	if err := b.ImmediateInject(context.Background(), delegator.Inject{
-		Source: delegator.SourceSteer, Text: "timer steer",
-	}); err != nil {
-		t.Fatalf("Inject steer: %v", err)
-	}
-	if got := rec.countPath("/session/sess-inject/abort"); got != 1 {
-		t.Errorf("/abort POSTs = %d, want 1", got)
-	}
+	var completed int
+	b.beginTurn(&delegator.TurnEvents{OnTurnComplete: func(*delegator.TurnResult) { completed++ }})
 
-	// Don't simulate any idles; wait for the backstop to fire.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if rec.countPath("/session/sess-inject/prompt_async") >= 1 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
+	err := b.ImmediateInject(context.Background(), delegator.Inject{Source: delegator.SourceSteer, Text: "steer"})
+	if !errors.Is(err, delegator.ErrTurnInFlight) {
+		t.Fatalf("Inject(SourceSteer) mid-turn err = %v, want ErrTurnInFlight", err)
 	}
-	if got := rec.countPath("/session/sess-inject/prompt_async"); got != 1 {
-		t.Errorf("backstop /prompt_async POSTs = %d, want 1 (timer should have flushed)", got)
+	if got := rec.countPath("/session/sess-inject/abort"); got != 0 {
+		t.Errorf("/abort POSTs = %d, want 0: a steer must never abort the turn", got)
+	}
+	if got := rec.countPath("/session/sess-inject/prompt_async"); got != 0 {
+		t.Errorf("/prompt_async POSTs = %d, want 0", got)
 	}
 	b.turnMu.Lock()
-	aborting := b.aborting
+	buffered := len(b.followUps)
 	b.turnMu.Unlock()
-	if aborting {
-		t.Error("aborting = true after backstop, want false")
+	if buffered != 0 {
+		t.Errorf("refused steer buffered in followUps (%d entries): the caller queues it, not the backend", buffered)
+	}
+	if !b.IsTurnInFlight() || completed != 0 {
+		t.Errorf("running turn disturbed: in flight=%v completions=%d, want true/0", b.IsTurnInFlight(), completed)
 	}
 }
 
 func TestFailInFlightTurn_AbortNoOutput_NoScaryMessage(t *testing.T) {
-	// A deliberate abort (steer drain / /reset hard) that catches a turn before
+	// A deliberate abort (/stop, /reset hard) that catches a turn before
 	// it streamed any text must NOT surface the "session ended unexpectedly"
 	// message — it's a deliberate interrupt, not an unexpected death. The
 	// turn completes with whatever partial text accumulated (here: none).
@@ -569,7 +515,7 @@ func TestInject_System_Idle_BeginsTurn(t *testing.T) {
 
 func TestInject_System_InFlight_Rejects(t *testing.T) {
 	// Verifies Inject(SourceSystem) during an in-flight turn returns
-	// ErrTurnInFlight without POSTing and without queueing in steerBuf —
+	// ErrTurnInFlight without POSTing and without queueing in followUps —
 	// system input never folds into (steers) a running turn; the caller
 	// waits for completion and retries.
 	rec := &recordingHandler{}
@@ -588,10 +534,10 @@ func TestInject_System_InFlight_Rejects(t *testing.T) {
 		t.Errorf("rejected system inject must not POST; got %d", got)
 	}
 	b.turnMu.Lock()
-	buffered := len(b.steerBuf)
+	buffered := len(b.followUps)
 	b.turnMu.Unlock()
 	if buffered != 0 {
-		t.Errorf("rejected system inject queued in steerBuf (%d entries); must not fold", buffered)
+		t.Errorf("rejected system inject queued in followUps (%d entries); must not fold", buffered)
 	}
 }
 
@@ -768,29 +714,29 @@ func TestInject_HTTPError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// flushSteerBuf edge cases
+// flushFollowUps edge cases
 // ---------------------------------------------------------------------------
 
-func TestFlushSteerBuf_EmptyIsNoOp(t *testing.T) {
-	// Verifies flushSteerBuf on an empty buffer is a no-op — no
+func TestFlushFollowUps_EmptyIsNoOp(t *testing.T) {
+	// Verifies flushFollowUps on an empty buffer is a no-op — no
 	// sendPrompt, no beginTurn. Step 7's OnSessionIdle always calls
-	// flushSteerBuf but most turns have nothing buffered; the no-op
+	// flushFollowUps but most turns have nothing buffered; the no-op
 	// path must be cheap and side-effect-free.
 	rec := &recordingHandler{}
 	b := newReadyBackend(t, rec)
 
 	turnCalled := false
-	if err := b.flushSteerBuf(context.Background(), func() *delegator.TurnEvents {
+	if err := b.flushFollowUps(context.Background(), func() *delegator.TurnEvents {
 		turnCalled = true
 		return &delegator.TurnEvents{}
 	}); err != nil {
-		t.Fatalf("flushSteerBuf: %v", err)
+		t.Fatalf("flushFollowUps: %v", err)
 	}
 	if turnCalled {
-		t.Error("turnFactory was called on empty steerBuf")
+		t.Error("turnFactory was called on empty followUps")
 	}
 	if got := rec.countPath("/session/sess-inject/prompt_async"); got != 0 {
-		t.Errorf("flushSteerBuf on empty buffer POSTed %d times, want 0", got)
+		t.Errorf("flushFollowUps on empty buffer POSTed %d times, want 0", got)
 	}
 }
 

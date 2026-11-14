@@ -1082,6 +1082,11 @@ func (a *Agent) trySteer(inb *sessionInbox, env Envelope, active, compacting boo
 		// boundary, else a follow-up turn of its own (#2992).
 		a.reportDelivery(env.SessionKey, envRefs(env), DeliveryQueued, "")
 		return true
+	case !a.backendSteersMidTurn():
+		// The backend cannot fold a message into a running turn (opencode,
+		// #3115): the message goes to the queue and runs as the next turn,
+		// in arrival order. Never aborts the running turn to deliver it.
+		a.logger().Debugf("inbox: backend has no mid-turn steer sk=%s — queueing for the next turn", env.SessionKey)
 	default:
 		if a.steerToBackend(be, env) {
 			return true

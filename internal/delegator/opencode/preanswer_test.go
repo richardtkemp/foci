@@ -170,28 +170,3 @@ func TestOnSessionIdle_PreAnswerSendFailureCompletesFirstRound(t *testing.T) {
 		t.Error("turn still in flight after the failed re-dispatch")
 	}
 }
-
-// TestOnSessionIdle_PreAnswerSkippedDuringAbortDrain: an idle from a steer's
-// abort burst is not a final answer, so the gate must not run and re-send.
-func TestOnSessionIdle_PreAnswerSkippedDuringAbortDrain(t *testing.T) {
-	b, prompts := preAnswerTestBackend(t, http.StatusNoContent)
-	_, gateCalls := armPreAnswerTurn(b, "please verify")
-	b.turnMu.Lock()
-	b.aborting = true
-	b.turnMu.Unlock()
-	t.Cleanup(func() {
-		b.turnMu.Lock()
-		b.disarmAbortLocked()
-		b.turnMu.Unlock()
-	})
-
-	setTurnText(b, "partial")
-	b.onSessionIdle("sess-test")
-
-	if n := gateCalls(); n != 0 {
-		t.Errorf("gate called %d times during an abort drain, want 0", n)
-	}
-	if got := prompts(); len(got) != 0 {
-		t.Errorf("prompts sent during an abort drain = %q, want none", got)
-	}
-}
