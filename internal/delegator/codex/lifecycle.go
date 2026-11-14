@@ -380,7 +380,17 @@ func (b *Backend) Close() error {
 	return nil
 }
 
-// Interrupt cancels the current turn.
+// interruptTimeout bounds the wait for codex's turn/interrupt answer. Live
+// (codex 0.167.0) the answer comes in ~10ms; codex never answers one that
+// arrives while the thread is idle (it parks it), so the wait must be bounded.
+const interruptTimeout = 10 * time.Second
+
+// Interrupt stops the running turn. turn/interrupt is a JSON-RPC REQUEST
+// whose params require threadId AND turnId (codex 0.167.0
+// generate-json-schema: ClientRequest.json, v2/TurnInterruptParams.json);
+// sent as a notification, or without turnId, codex ignores it (#3117, live
+// probe on the work Mac). With no running turn nothing is sent: codex would
+// not answer an idle-thread interrupt, so it is a clean no-op.
 func (b *Backend) Interrupt(ctx context.Context) error {
 	p := b.process()
 	p.mu.Lock()
@@ -389,14 +399,35 @@ func (b *Backend) Interrupt(ctx context.Context) error {
 	if wr == nil {
 		return errors.New("codex: backend not started")
 	}
-	// turn/interrupt is a notification (no response expected).
 	threadID := b.SessionIDFor(b.startOpts.SessionKey)
-	if b.startOpts.SessionKey == "" || threadID == "" {
-		return errors.New("codex: no active thread")
+	turnID := b.currentTurnID()
+	if b.startOpts.SessionKey == "" || threadID == "" || turnID == "" {
+		b.logDebugf("interrupt: no running turn (thread=%q turn=%q), nothing to stop", threadID, turnID)
+		return nil
 	}
-	return wr.sendNotification("turn/interrupt", struct {
-		ThreadID string `json:"threadId"`
-	}{ThreadID: threadID})
+	_, err := b.sendAndWaitTimeout(ctx, "turn/interrupt", turnInterruptParams{
+		ThreadID: threadID,
+		TurnID:   turnID,
+	}, interruptTimeout)
+	if err == nil {
+		b.logInfof("interrupt: turn %s on thread %s stopped", turnID, threadID)
+		return nil
+	}
+	// The turn ended (or a new one began) while the request was in flight:
+	// codex's rejection or silence is about a turn that is already gone.
+	if b.currentTurnID() != turnID {
+		b.logDebugf("interrupt: turn %s ended before codex answered: %v", turnID, err)
+		return nil
+	}
+	b.logWarnf("interrupt: turn/interrupt for turn %s on thread %s failed: %v", turnID, threadID, err)
+	return fmt.Errorf("codex: turn/interrupt: %w", err)
+}
+
+// currentTurnID is the codex turnId of the turn running on this facade, or "".
+func (b *Backend) currentTurnID() string {
+	b.turnMu.Lock()
+	defer b.turnMu.Unlock()
+	return b.turnID
 }
 
 // --- Protocol handshake ---
@@ -410,8 +441,14 @@ func (b *Backend) nextID() int64 {
 	return p.rpcSeq
 }
 
-// sendAndWait sends a JSON-RPC request and waits for its response.
+// sendAndWait sends a JSON-RPC request and waits up to 30s for its response.
 func (b *Backend) sendAndWait(method string, params interface{}) (json.RawMessage, error) {
+	return b.sendAndWaitTimeout(context.Background(), method, params, 30*time.Second)
+}
+
+// sendAndWaitTimeout sends a JSON-RPC request and waits for its response, up
+// to timeout or until ctx ends.
+func (b *Backend) sendAndWaitTimeout(ctx context.Context, method string, params interface{}, timeout time.Duration) (json.RawMessage, error) {
 	id := b.nextID()
 	ch := make(chan rpcReply, 1)
 
@@ -436,11 +473,16 @@ func (b *Backend) sendAndWait(method string, params interface{}) (json.RawMessag
 			return nil, errors.New("codex: request cancelled (process exited)")
 		}
 		return reply.result, nil
-	case <-time.After(30 * time.Second):
+	case <-time.After(timeout):
 		p.rpcMu.Lock()
 		delete(p.pendingRPC, id)
 		p.rpcMu.Unlock()
 		return nil, fmt.Errorf("codex: %s timed out", method)
+	case <-ctx.Done():
+		p.rpcMu.Lock()
+		delete(p.pendingRPC, id)
+		p.rpcMu.Unlock()
+		return nil, fmt.Errorf("codex: %s: %w", method, ctx.Err())
 	}
 }
 

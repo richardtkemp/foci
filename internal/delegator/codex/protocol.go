@@ -181,6 +181,15 @@ type turnInput struct {
 	Text string `json:"text"`
 }
 
+// turnInterruptParams is the turn/interrupt request payload. Both fields are
+// required (codex 0.167.0 v2/TurnInterruptParams.json); codex answers {} and
+// then sends turn/completed with status "interrupted". A turnId that is not
+// the running turn is rejected: "expected active turn id X but found Y".
+type turnInterruptParams struct {
+	ThreadID string `json:"threadId"`
+	TurnID   string `json:"turnId"`
+}
+
 // turnSteerParams is the turn/steer request payload. expectedTurnId is a
 // REQUIRED precondition (verified live against codex app-server 0.144.5 via
 // --strict-config/generate-json-schema and a live app-server probe): the

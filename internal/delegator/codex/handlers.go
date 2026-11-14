@@ -50,8 +50,15 @@ func (b *Backend) onThreadStatusChanged(params *threadStatusChangedParams) {
 	b.mu.Unlock()
 }
 
-// onTurnStarted signals the typing indicator.
-func (b *Backend) onTurnStarted() {
+// onTurnStarted records the turn's id and signals the typing indicator. The
+// id is also set from turn/start's reply, but a turn codex starts on its own
+// has only this notification, and Interrupt needs the id to stop it (#3117).
+func (b *Backend) onTurnStarted(turnID string) {
+	if turnID != "" {
+		b.turnMu.Lock()
+		b.turnID = turnID
+		b.turnMu.Unlock()
+	}
 	b.itemMu.Lock()
 	if b.itemCache != nil {
 		b.itemCache = make(map[string]itemEnvelope)

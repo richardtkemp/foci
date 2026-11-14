@@ -294,7 +294,11 @@ func (b *Backend) handleNotification(line []byte, method string) {
 		}
 		b.onThreadStatusChanged(&p)
 	case "turn/started":
-		b.onTurnStarted()
+		var p turnStartedParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			b.logWarnf("malformed turn/started: %v", err)
+		}
+		b.onTurnStarted(p.Turn.ID)
 	case "turn/completed":
 		var p turnCompletedParams
 		if err := json.Unmarshal(params, &p); err != nil {
