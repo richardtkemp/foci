@@ -215,7 +215,9 @@ func (c *Config) ResolveAllPaths() {
 
 // DefaultConfigPath is the config every foci binary uses when none is named
 // explicitly: $FOCI_CONFIG, else <install root>/config/foci.toml (the live
-// install's path; the install root is $FOCI_HOME, else $HOME).
+// install's path; the install root is $FOCI_HOME, else $HOME), else the
+// config beside the binary (below). With neither file present it returns the
+// install root's path, so a caller's "no such file" names that path.
 func DefaultConfigPath() (string, error) {
 	if p := os.Getenv("FOCI_CONFIG"); p != "" {
 		return p, nil
@@ -224,7 +226,30 @@ func DefaultConfigPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve home dir: %w", err)
 	}
-	return filepath.Join(home, "config", "foci.toml"), nil
+	p := filepath.Join(home, "config", "foci.toml")
+	if fileExists(p) {
+		return p, nil
+	}
+	// The binary's own install root, <root>/bin/foci → <root>/config (#3113,
+	// as #2577 did for the gateway socket). On macOS the root is ~/foci, set
+	// as FOCI_HOME only in the daemon's LaunchAgent; a plain ssh shell sets
+	// neither FOCI_HOME nor HOME=~/foci, so the lookup above misses. Only on
+	// an existing file: the NUC's CLI is /usr/local/bin/foci, whose parent
+	// holds no config/.
+	if exe, err := executablePath(); err == nil {
+		if real, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = real
+		}
+		if b := filepath.Join(filepath.Dir(filepath.Dir(exe)), "config", "foci.toml"); fileExists(b) {
+			return b, nil
+		}
+	}
+	return p, nil
+}
+
+func fileExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir()
 }
 
 // ParseFlags returns the config file path from foci-gw's command line.
@@ -396,3 +421,6 @@ func ParseFileMode(s string) (os.FileMode, error) {
 	}
 	return os.FileMode(n), nil
 }
+
+// executablePath is os.Executable, swappable in tests.
+var executablePath = os.Executable

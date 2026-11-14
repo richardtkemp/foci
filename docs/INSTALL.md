@@ -244,7 +244,9 @@ so it also has its own login (see Install above).
 
 The `foci` CLI finds the running gateway from your own shell with no setup:
 when `$FOCI_HOME`/`$HOME` has no `data/foci-gw.sock`, it uses the one beside
-its own binary (`~/foci/bin/foci` → `~/foci/data/foci-gw.sock`). Put
+its own binary (`~/foci/bin/foci` → `~/foci/data/foci-gw.sock`). Its default
+config is found the same way (`~/foci/config/foci.toml`), so `foci config get`
+and `foci check config` need no `--config`. Put
 `~/foci/bin` on your `PATH`, or run `~/foci/bin/foci <command>`.
 
 The daemon `PATH` is `~/foci/bin`, `~/.local/bin` (Claude Code), the system

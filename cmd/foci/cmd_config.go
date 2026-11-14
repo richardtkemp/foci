@@ -308,6 +308,6 @@ with a reason. Exit 0 only for applied.
 Flags:
   --wait <duration>          How long the user has to answer (default %s, at most %s)
   --session <key>            The requesting session (default: $FOCI_SESSION_KEY)
-  --config <path>            For get: the config file (default: $FOCI_CONFIG, else ~/config/foci.toml)
+  --config <path>            For get: the config file (default: $FOCI_CONFIG, else <install root>/config/foci.toml, else the one beside the binary)
 `, configapprove.DefaultTimeout, configapprove.MaxTimeout)
 }
