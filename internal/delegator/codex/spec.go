@@ -34,6 +34,9 @@ var spec = delegator.Spec{
 		{Name: "auto", Value: "auto_review", Description: "automatic review; applies next turn"},
 	},
 	Wizard: true,
+	// Reasoning items carry no text, so the gap after a tool result is
+	// otherwise shown as "warming up" (#3118).
+	ThinksAfterToolResult: true,
 
 	Caps: map[delegator.Capability]delegator.Support{
 		delegator.CapPostToolNudge:  delegator.No("no mid-turn injection point is wired for the app-server"),

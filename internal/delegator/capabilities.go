@@ -275,6 +275,12 @@ type Spec struct {
 	// cache entry written after the compaction (CC, #3086). The post-compaction
 	// resume nudge then asks for one trivial tool call (#3093).
 	PostCompactNeedsToolCall bool
+	// ThinksAfterToolResult: between a tool result and the model's next
+	// output the model is reasoning, but the backend streams none of it
+	// (codex: its reasoning items arrive with an empty summary). The app's
+	// activity line then reads "thinking…" rather than "warming up…" (#3118,
+	// Dick's ruling Q47: codex only).
+	ThinksAfterToolResult bool
 	// ConfigFamily names the global config section folded into the agent's
 	// backend_config: ConfigFamilyClaudeCode, ConfigFamilyOpencode or ""
 	// (none).

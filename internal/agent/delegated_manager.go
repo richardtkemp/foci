@@ -366,6 +366,13 @@ func (a *Agent) BackendPermissionModes() []delegator.PermissionMode {
 // IsDelegated reports whether the agent runs on a delegated backend.
 func (a *Agent) IsDelegated() bool { return a.DelegatedManager != nil }
 
+// ThinksAfterToolResult reports whether the agent's backend reasons, unseen,
+// between a tool result and its next output (Spec.ThinksAfterToolResult,
+// #3118). False for an API agent.
+func (a *Agent) ThinksAfterToolResult() bool {
+	return a.delegatedSpec().ThinksAfterToolResult
+}
+
 // delegatedSpec is the agent's backend Spec; the zero Spec (supports nothing)
 // for an API agent.
 func (a *Agent) delegatedSpec() delegator.Spec {

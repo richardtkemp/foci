@@ -18,3 +18,12 @@ func TestSpec_QuestionPromptCapability(t *testing.T) {
 		t.Error("codex CapQuestionPrompt No must carry its reason (rendered in docs/BACKENDS.md)")
 	}
 }
+
+// TestSpec_ThinksAfterToolResult pins #3118 (Dick's ruling Q47): codex
+// streams no reasoning text, so the app shows the gap after a tool result as
+// "thinking" for codex only.
+func TestSpec_ThinksAfterToolResult(t *testing.T) {
+	if !spec.ThinksAfterToolResult {
+		t.Fatal("codex must declare ThinksAfterToolResult: its reasoning items carry no text")
+	}
+}

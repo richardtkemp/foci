@@ -28,10 +28,14 @@ func TestActivityLabel(t *testing.T) {
 			`{"command":"git status","description":"Show working tree status"}`, "Show working tree status"},
 		{"long description truncated", "Bash",
 			`{"command":"x","description":"` + longDesc + `"}`, Truncate(longDesc, activityDetailMax)},
-		{"neither: bare tool name", "Bash", `{"command":"git status"}`, "Bash"},
+		{"neither: the command itself (#3118)", "Bash", `{"command":"git status"}`, "git status"},
 		{"foci_ inside a word is not a command", "Bash",
-			`{"command":"cat /tmp/my_foci_notes FOCI_SOCK=x ls $foci_x"}`, "Bash"},
+			`{"command":"cat /tmp/my_foci_notes FOCI_SOCK=x ls $foci_x"}`, "cat /tmp/my_foci_notes FOCI_SOCK=x ls $foci_x"},
 		{"codex passes the raw command, not JSON", "bash", `foci_todo list --limit 5`, "foci_todo"},
+		{"codex raw command: first non-blank line, cut", "bash",
+			"\n  git fetch -q origin && git switch -c " + longDesc + "\necho done",
+			Truncate("git fetch -q origin && git switch -c "+longDesc, activityDetailMax)},
+		{"blank command: bare tool name", "bash", "  \n ", "bash"},
 		{"api shell tool", "shell", `{"command":"foci_memory_search foo"}`, "foci_memory_search"},
 		{"non-shell tool unchanged", "Read", `{"file_path":"/x","description":"y"}`, "Read"},
 		{"no args", "Bash", ``, "Bash"},
@@ -46,6 +50,29 @@ func TestActivityLabel(t *testing.T) {
 }
 
 const longDesc = "Run the entire integration suite against the staging database with verbose output"
+
+// TestUndescribedShellCommand pins which calls the app asks the fast model to
+// describe (#3118, Q48): a shell call with no description of its own.
+func TestUndescribedShellCommand(t *testing.T) {
+	tests := []struct {
+		name, tool, args, want string
+	}{
+		{"codex raw command", "bash", "  git status\n", "git status"},
+		{"CC Bash without description", "Bash", `{"command":"ls -la"}`, "ls -la"},
+		{"CC Bash with description is unchanged", "Bash", `{"command":"ls","description":"List files"}`, ""},
+		{"blank description counts as none", "Bash", `{"command":"ls","description":"  "}`, "ls"},
+		{"foci command still described", "bash", "foci_todo list", "foci_todo list"},
+		{"non-shell tool", "Read", `{"file_path":"/x"}`, ""},
+		{"blank command", "bash", "  ", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := UndescribedShellCommand(tt.tool, []byte(tt.args)); got != tt.want {
+				t.Errorf("UndescribedShellCommand(%q, %q) = %q, want %q", tt.tool, tt.args, got, tt.want)
+			}
+		})
+	}
+}
 
 // TestFullCommand pins the stop dialog's full-command text (#2138): a shell
 // call's command line, any other tool's JSON input, nothing for an empty one,

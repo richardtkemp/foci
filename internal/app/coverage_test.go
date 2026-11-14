@@ -25,6 +25,8 @@ type fakeAgent struct {
 	env    *agent.Envelope
 	scope  skills.ReadScope
 	refuse bool // Enqueue refuses every envelope
+	// thinksAfterTool is ThinksAfterToolResult's answer (a codex agent, #3118).
+	thinksAfterTool bool
 }
 
 func (f *fakeAgent) Enqueue(e agent.Envelope) bool { f.env = &e; return !f.refuse }
@@ -33,6 +35,7 @@ func (f *fakeAgent) CacheExpiryMs(_ string, at time.Time) int64 {
 	return at.Add(5 * time.Minute).UnixMilli()
 }
 func (f *fakeAgent) CompactionLimitTokens(string) int64 { return 0 }
+func (f *fakeAgent) ThinksAfterToolResult() bool        { return f.thinksAfterTool }
 func (f *fakeAgent) TransformMessage(t string) string   { return t }
 func (f *fakeAgent) SkillScope() skills.ReadScope       { return f.scope }
 

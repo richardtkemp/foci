@@ -16,7 +16,11 @@ const activityDetailMax = 60
 // describes the whole call: a compound command like "make deploy; foci_todo
 // complete 1" is the make, not the foci_todo (Dick, 2026-09-30). The
 // description or foci commands stand alone, with no "Bash: " prefix: Dick
-// asked for the bare description (#2950).
+// asked for the bare description (#2950). A shell call with neither shows the
+// command itself, its first line cut to activityDetailMax (#3118, Dick's
+// ruling Q48: codex's shell calls have no description, and "bash" said
+// nothing); the app sink later swaps in a fast-model description of it
+// (UndescribedShellCommand).
 //
 // args is the call's JSON input, or the raw command line for codex, whose
 // shell calls carry no JSON.
@@ -31,7 +35,36 @@ func ActivityLabel(name string, args []byte) string {
 	if cmds := FociCommands(command); len(cmds) > 0 {
 		return strings.Join(cmds, ", ")
 	}
+	if short := shortCommand(command); short != "" {
+		return short
+	}
 	return name
+}
+
+// shortCommand is a command line as a caption: its first non-blank line,
+// trimmed and cut to activityDetailMax ("" when the command is blank).
+func shortCommand(command string) string {
+	for line := range strings.SplitSeq(command, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			return strings.ToValidUTF8(Truncate(line, activityDetailMax), "")
+		}
+	}
+	return ""
+}
+
+// UndescribedShellCommand returns the command line of a shell call that
+// carries no description of its own, which the app asks the fast summary
+// model to describe (#3118, Q48). "" for a non-shell tool, a call with a
+// description (CC's Bash calls are unchanged) or a blank command.
+func UndescribedShellCommand(name string, args []byte) string {
+	if !IsShellTool(name) {
+		return ""
+	}
+	command, description := shellArgs(args)
+	if strings.TrimSpace(description) != "" {
+		return ""
+	}
+	return strings.TrimSpace(command)
 }
 
 // IsShellTool reports whether name is a shell tool: CC's "Bash", codex's and

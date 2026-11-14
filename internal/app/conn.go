@@ -41,6 +41,9 @@ type agentCore interface {
 	// SkillScope is the agent's live skill scope: what the "Loaded skill" chip
 	// rule and the /app/skill fetch judge a path against (#2392).
 	SkillScope() skills.ReadScope
+	// ThinksAfterToolResult: the backend reasons, unseen, between a tool
+	// result and its next output, so that gap reads "thinking" (#3118).
+	ThinksAfterToolResult() bool
 }
 
 // interactiveHeaderState holds pending headers for interactive prompts,
@@ -909,6 +912,16 @@ func (c *appConn) NewTurnSink(env agent.Envelope) (turnevent.Sink, func()) {
 		sink.cacheExpiryFn = func() int64 { return c.agentRef.CacheExpiryMs(sk, time.Now()) }
 		sink.compactionLimitFn = func() int64 { return c.agentRef.CompactionLimitTokens(sk) }
 		sink.skillScopeFn = c.agentRef.SkillScope
+		sink.thinksAfterTool = c.agentRef.ThinksAfterToolResult()
+	}
+	// A shell call with no description of its own is described by the fast
+	// model while it runs (#3118). The command is redacted first: it leaves
+	// for a third-party model.
+	sink.describeCommand = func(ctx context.Context, command string) (string, error) {
+		if c.redact != nil {
+			command = c.redact(command)
+		}
+		return c.hub.commandSummary(ctx, command, b.key(), b.agent())
 	}
 	// Voice-mode bundling (#1439): reuse the agent's already-resolved TTS
 	// provider (same voice.TTS/resolveTTS machinery the send_to_chat

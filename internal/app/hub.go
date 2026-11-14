@@ -2707,6 +2707,7 @@ type convBinding struct {
 	turnCommand    string                // turn-scoped full tool command (kind=tool), for the stop dialog (#2138)
 	turnShell      bool                  // the turn-scoped tool is a shell command, stoppable on its own (#2140)
 	turnStartedMs  int64                 // when this tool call or turn phase began, unix ms (#2913)
+	turnToolSeq    uint64                // bumped on every turn-scoped change: names the running tool call (#3118)
 	retryDetail    string                // turn-scoped: CC is waiting to retry an API call, the text to show (#2260); empty if not
 	retryStartedMs int64                 // when the retry state began, unix ms; the attempts under it keep this time (#2913)
 	subagentDetail string                // running-subagent descriptions, empty if none
@@ -3084,7 +3085,12 @@ func (b *convBinding) setTurnActivity(kind fap.ActivityKind) {
 // the turn ended), so it also clears a retry state (#2260), in the same frame.
 // Every call of a tool kind is a new tool call, so it restarts the start time,
 // even with the same label; a phase keeps it across its repeated deltas (#2913).
-func (b *convBinding) setTurnTool(kind fap.ActivityKind, detail, command string, shell bool) {
+//
+// It returns the change's sequence number: while no later turn-scoped change
+// has been made, turnToolRunning(seq) is true and setTurnToolDetail(seq, ...)
+// relabels this call (#3118).
+func (b *convBinding) setTurnTool(kind fap.ActivityKind, detail, command string, shell bool) uint64 {
+	var seq uint64
 	b.applyActivity(func() {
 		b.retryDetail = ""
 		if kind == fap.ActivityKindTool || kind != b.turnKind {
@@ -3094,6 +3100,29 @@ func (b *convBinding) setTurnTool(kind fap.ActivityKind, detail, command string,
 		b.turnDetail = detail
 		b.turnCommand = command
 		b.turnShell = shell
+		b.turnToolSeq++
+		seq = b.turnToolSeq
+	})
+	return seq
+}
+
+// turnToolRunning reports whether the tool call setTurnTool numbered seq is
+// still the turn's current activity.
+func (b *convBinding) turnToolRunning(seq uint64) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.turnToolSeq == seq && b.turnKind == fap.ActivityKindTool
+}
+
+// setTurnToolDetail replaces the caption of the tool call setTurnTool numbered
+// seq, if it is still running: a running command's fast-model description
+// (#3118). The start time, full command and the call's number are kept, so it
+// is the same call with a new label. A no-op once anything else happened.
+func (b *convBinding) setTurnToolDetail(seq uint64, detail string) {
+	b.applyActivity(func() {
+		if b.turnToolSeq == seq && b.turnKind == fap.ActivityKindTool {
+			b.turnDetail = detail
+		}
 	})
 }
 

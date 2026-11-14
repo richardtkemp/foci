@@ -97,6 +97,16 @@ type appSink struct {
 	// (Hub.voiceSpeechText). nil = markers only (a sink built without a hub).
 	speechText func(ctx context.Context, text string) string
 
+	// thinksAfterTool: the agent's backend reasons, unseen, after a tool
+	// result (codex), so the activity goes to "thinking" there rather than
+	// "warming" (#3118, Dick's ruling Q47: codex only).
+	thinksAfterTool bool
+
+	// describeCommand asks the fast model for a short description of a
+	// running shell command that has none of its own (#3118, Q48;
+	// Hub.commandSummary). nil = the command stays on the line.
+	describeCommand func(ctx context.Context, command string) (string, error)
+
 	// toolCalls sends this turn's tool calls as tool.call transcript frames
 	// (#999). nil = the session's resolved show_tool_calls is off (the app
 	// default): only the transient activity frame is sent, as before #999.
@@ -169,7 +179,10 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		s.inner.Emit(ctx, ev)
 
 	case turnevent.ToolCall:
-		s.b.setTurnTool(fap.ActivityKindTool, toolformat.ActivityLabel(e.Name, e.Args), toolformat.FullCommand(e.Name, e.Args), toolformat.IsShellTool(e.Name))
+		seq := s.b.setTurnTool(fap.ActivityKindTool, toolformat.ActivityLabel(e.Name, e.Args), toolformat.FullCommand(e.Name, e.Args), toolformat.IsShellTool(e.Name))
+		if cmd := toolformat.UndescribedShellCommand(e.Name, e.Args); cmd != "" && s.describeCommand != nil {
+			go describeRunningCommand(s.b, seq, cmd, commandSummaryDelay, s.describeCommand)
+		}
 		// A read of a skill file leaves the same "Loaded skill" line in the
 		// transcript that Telegram and Discord show (#1299, #2335). The app has no
 		// compact tool lines, so it travels as an ambient notification: stored and
@@ -186,8 +199,14 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 
 	case turnevent.ToolResult:
 		// Tool finished; the model is processing its result with no output token
-		// yet — back to the "warming" (working) state until the next event.
-		s.b.setTurnActivity(fap.ActivityKindWarming)
+		// yet — back to the "warming" (working) state until the next event. A
+		// backend whose reasoning is never streamed (codex) is thinking there,
+		// and says so (#3118, Q47); turn start stays "warming".
+		if s.thinksAfterTool {
+			s.b.setTurnActivity(fap.ActivityKindThinking)
+		} else {
+			s.b.setTurnActivity(fap.ActivityKindWarming)
+		}
 		if s.toolCalls != nil {
 			s.toolCalls.result(e)
 		}
