@@ -231,6 +231,64 @@ func TestDepthTaskRestore(t *testing.T) {
 	h3.noTurns(t)
 }
 
+// #3099 (like #3071): a resumed task leaf that waits for a slot keeps its
+// unconsumed inputs in its persisted record, so a second restart in that wait
+// still delivers them, once.
+func TestDepthTaskResumeKeepsInputsAcrossSecondRestart(t *testing.T) {
+	store := newMemSpawnStore()
+	h1 := newDepthHarness(t, store)
+	h1.runner.mu.Lock()
+	h1.runner.refuse = true
+	h1.runner.mu.Unlock()
+	raw := json.RawMessage(`{"leaves": [{"title": "Cut", "task": "task C"}]}`)
+	if _, err := h1.m.fanoutTool().Execute(depthCtx(depthRoot), raw); err != nil {
+		t.Fatal(err)
+	}
+	h1.runner.wait(t, 1)
+	cut := h1.node(depthRoot).Children[0]
+	h1.m.mu.Lock()
+	h1.m.nodes[cut].TaskStarted = true
+	recs := snap(h1.m.nodes[cut])
+	h1.m.mu.Unlock()
+	h1.m.persist(recs...)
+
+	// First restart: the only slot is held, so the resume waits. The
+	// backend's unconsumed inputs leave the delivery store here.
+	h2 := newDepthHarness(t, store)
+	h2.m.deps.MaxConcurrent = func() int { return 1 }
+	h2.m.tasksRunning = 1
+	h2.m.deps.TakeUndelivered = func(k string) []string {
+		if k == cut {
+			return []string{"input one", "input two"}
+		}
+		return nil
+	}
+	h2.m.Restore()
+	h2.noTurns(t)
+
+	// Second restart in that wait: the delivery store is now empty.
+	h3 := newDepthHarness(t, store)
+	h3.m.deps.TakeUndelivered = func(string) []string { return nil }
+	h3.m.Restore()
+	turns := h3.runner.wait(t, 1)
+	h3.noTurns(t)
+	tr := turns[0]
+	if tr.key != cut || !strings.HasPrefix(tr.text, "[SYSTEM: FOCI RESTARTED]") {
+		t.Fatalf("resume turn = %+v", tr)
+	}
+	for _, in := range []string{"input one", "input two"} {
+		if c := strings.Count(tr.text, in); c != 1 {
+			t.Errorf("%q appears %d times in the resume turn, want 1: %q", in, c, tr.text)
+		}
+	}
+	if i, j := strings.Index(tr.text, "input one"), strings.Index(tr.text, "input two"); i > j {
+		t.Errorf("inputs out of order: %q", tr.text)
+	}
+	if n := h3.node(cut); len(n.ResumeInputs) != 0 || n.TaskResumes != 2 {
+		t.Errorf("node after the resume took its slot = %+v", n)
+	}
+}
+
 // gatedRunner holds each turn until released, to test the concurrency bound.
 type gatedRunner struct {
 	mu      sync.Mutex

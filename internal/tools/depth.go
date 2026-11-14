@@ -290,6 +290,10 @@ type depthNode struct {
 	TaskDone bool `json:"task_done,omitempty"`
 	// TaskResumes counts the restarts that resumed the task turn.
 	TaskResumes int `json:"task_resumes,omitempty"`
+	// ResumeInputs are the inputs the leaf's backend never consumed, taken
+	// at restore for the resumed task turn (#3099). They stay here until that
+	// turn gets its slot, so a second restart during the wait keeps them.
+	ResumeInputs []string `json:"resume_inputs,omitempty"`
 	// AckPending: the user acknowledged; the report has not landed yet.
 	AckPending      bool      `json:"ack_pending,omitempty"`
 	AckAt           time.Time `json:"ack_at,omitempty"`
@@ -473,6 +477,7 @@ func snap(ns ...*depthNode) []depthNode {
 			c := *n
 			c.Children = append([]string(nil), n.Children...)
 			c.Claims = append([]depthClaim(nil), n.Claims...)
+			c.ResumeInputs = append([]string(nil), n.ResumeInputs...)
 			out = append(out, c)
 		}
 	}
@@ -910,8 +915,9 @@ func (m *DepthManager) doFanout(ctx context.Context, caller string, leaves []dep
 }
 
 // startTask runs task leaf key's task turn (#2998), or, with resume set, the
-// turn that carries it on after a restart cut it off (text is then that turn's
-// input). Under MaxConcurrent it waits for a slot, still shown as working.
+// turn that carries it on after a restart cut it off (resume is then the
+// restart notice; runTask adds the node's ResumeInputs once it has a slot).
+// Under MaxConcurrent it waits for a slot, still shown as working.
 // counted says the caller already counted it in m.queued.
 func (m *DepthManager) startTask(key, resume string, counted bool) {
 	m.mu.Lock()
@@ -941,13 +947,22 @@ func (m *DepthManager) runTask(key, resume string) {
 	m.mu.Lock()
 	n := m.nodes[key]
 	var text string
+	var rec []depthNode
 	if n != nil && n.State == depthActive && !n.AckPending {
 		text = n.Prompt
 		if resume != "" {
-			text = resume
+			// The resume turn now has its slot: it takes the inputs restore
+			// kept in the record (#3099), and the record forgets them, so
+			// each is delivered once.
+			text = strings.Join(append([]string{resume}, n.ResumeInputs...), "\n\n")
+			if len(n.ResumeInputs) > 0 {
+				n.ResumeInputs = nil
+				rec = snap(n)
+			}
 		}
 	}
 	m.mu.Unlock()
+	m.persist(rec...)
 	if text == "" || m.deps.RunTurn == nil {
 		m.taskEnded(key)
 		return
@@ -1570,14 +1585,24 @@ func (m *DepthManager) restore() {
 			task = n.Prompt
 		}
 		m.mu.Unlock()
-		texts := []string{depthTaskRestartNotice(task)}
 		if m.deps.TakeUndelivered != nil {
 			// What the backend never consumed rides on the resume turn, as
-			// a spawn's does (RestoreSpawns), instead of a redelivery of its own.
-			texts = append(texts, m.deps.TakeUndelivered(k)...)
+			// a spawn's does (RestoreSpawns), instead of a redelivery of its
+			// own. It is kept in the node's record until the turn gets its
+			// slot (runTask), so a second restart in the wait keeps it (#3099).
+			if taken := m.deps.TakeUndelivered(k); len(taken) > 0 {
+				m.mu.Lock()
+				var rec []depthNode
+				if n := m.nodes[k]; n != nil {
+					n.ResumeInputs = append(n.ResumeInputs, taken...)
+					rec = snap(n)
+				}
+				m.mu.Unlock()
+				m.persist(rec...)
+			}
 		}
 		depthLog.Infof("task leaf %s: resuming its task turn after a restart", k)
-		m.startTask(k, strings.Join(texts, "\n\n"), false)
+		m.startTask(k, depthTaskRestartNotice(task), false)
 	}
 	for _, k := range acks {
 		m.mu.Lock()
