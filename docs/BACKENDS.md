@@ -620,7 +620,7 @@ Notes:
     runs that could bring one. On ccstream, `/limit_reset` lifts both at once, in memory and in
     the stored state, and so does `/usage` when its read shows every reported window under the
     threshold (`Agent.ResetLimits`, `usagehold.Registry.Clear`, #3043). The hold is account-wide,
-    so the lift reaches every Claude Code agent: each opens its own gate, and a turn whose CC is
+    so the lift reaches every agent on the account (a Claude Code login, #3104): each opens its own gate, and a turn whose CC is
     asleep in a rate-limit `api_retry` is interrupted and resumed with the hidden resume line
     (#3044). codex declares No (Dick 2026-11-11: "Both ccstream only").
 

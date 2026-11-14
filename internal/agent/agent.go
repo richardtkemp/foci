@@ -194,6 +194,7 @@ type Agent struct {
 	TurnLimit                     *TurnLimiter                            // per-agent cap on concurrent user turns across all its sessions; nil = unlimited (#2281)
 	GlobalTurnLimit               *TurnLimiter                            // gateway-wide cap shared by every agent (one pointer, built once in main); nil = unlimited
 	UsageHoldRegistry             *usagehold.Registry                     // account-wide usage hold (#2491); nil = usagehold.Default
+	UsageAccountKey               string                                  // the usage account (Spec.UsageAccount, #3104: a Claude Code login); "" = the backend name (UsageAccount)
 	UsageHoldNotifyFunc           func(text string)                       // posts a usage-hold start/end notice in the agent's default chat (#2491); nil = none
 	UsageHoldChangeFunc           []func(usagehold.Change)                // further reactions to a usage-hold phase change (#2491)
 	usageHold                     usageHoldState

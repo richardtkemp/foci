@@ -8,9 +8,11 @@
 // backend reports the limit as reached (a rejected window), the account
 // STOPS: keepalives and reminders wait too.
 //
-// An account is one backend family in the process (Dick 2026-11-02: "the
-// same backend means the same account"): all ccstream agents are one
-// account, all codex agents another.
+// An account is named by the caller (Agent.UsageAccount). A Claude Code
+// account is a login (#3104, Dick 2026-11-14 Q11: the login location, as in
+// internal/ccaccount): the agents on one login are one account, and agents on
+// another login are another. A codex account is the backend family, as
+// before: all codex agents are one account.
 //
 // Each window clears on its own: at its reset time, or when a usage event for
 // THAT window reports less than the threshold and not reached. The account

@@ -30,10 +30,11 @@ import (
 // with none, the check waits at most usageWait and otherwise lets the spawn
 // run unchecked.
 //
-// The account: Claude Code's usage is the operator's account, the same for
-// every Claude Code agent (Spec.UsageOperatorWide), so all of them share ONE
-// cache entry and one scheduled read, not one throwaway CC process each.
-// codex reads per agent (its own app-server's rate-limit state).
+// The account: a Claude Code agent's usage is its login's (Spec.UsageAccount,
+// #3104), so the agents on one login share ONE cache entry and one scheduled
+// read, not one throwaway CC process each, and agents on different logins
+// have different entries, whichever registered first. codex reads per agent
+// (its own app-server's rate-limit state).
 
 // defaultSpawnReservePercent is the reserve when the config gives none.
 const defaultSpawnReservePercent = 10
@@ -124,21 +125,24 @@ var spawnUsage = NewUsageCache()
 // build spawn deps never do, so they start no usage reads.
 func StartSpawnUsageRefresh(ctx context.Context) { spawnUsage.Start(ctx) }
 
-// SpawnUsageReader is the UsageReader of agentID on backend: query through
-// the process-wide cache, keyed by the usage account (the backend alone when
-// operatorWide, else backend and agent). enabled gates the scheduled reads of
+// SpawnUsageReader is the UsageReader of target's agent on backend: query
+// through the process-wide cache, keyed by the usage account (account, the
+// Spec.UsageAccount name, when not ""; else backend and agent: a per-agent
+// read). The query reads with target (the agent's env and binary), and every
+// registrant of one account reads the same login, so the first
+// registration's query serves them all. enabled gates the scheduled reads of
 // that account (the first registration's is kept). Nil query = nil reader
 // (no usage source).
-func SpawnUsageReader(backend, agentID string, query delegator.UsageQuery, operatorWide bool, enabled func() bool) UsageReader {
+func SpawnUsageReader(backend string, target delegator.UsageTarget, query delegator.UsageQuery, account string, enabled func() bool) UsageReader {
 	if query == nil {
 		return nil
 	}
-	key := backend + "/" + agentID
-	if operatorWide {
-		key = backend
+	key := backend + "/" + target.AgentID
+	if account != "" {
+		key = account
 	}
 	return spawnUsage.Register(key, func(ctx context.Context) (*delegator.UsageInfo, error) {
-		return query(ctx, agentID)
+		return query(ctx, target)
 	}, enabled)
 }
 

@@ -120,7 +120,7 @@ func TestFormatUsage_UnknownResetTime(t *testing.T) {
 // visible (not Hidden — only a duplicate LISTING would be wrong, not the
 // command itself).
 func TestManaCommand_UsageIsAlias(t *testing.T) {
-	mana := ManaCommand(nil, "a", false)
+	mana := ManaCommand(nil, delegator.UsageTarget{AgentID: "a"}, false)
 	if mana.Hidden {
 		t.Error("ManaCommand must be visible (Hidden=false)")
 	}
@@ -144,7 +144,7 @@ func TestManaCommand_UsageIsAlias(t *testing.T) {
 // same shape with 2 keys instead of 3: without the fix this asserts 2, not 1.
 func TestRegistry_ManaUsageAlias_DispatchesToSamePointerAndListsOnce(t *testing.T) {
 	r := NewRegistry()
-	r.Register(ManaCommand(nil, "a", false))
+	r.Register(ManaCommand(nil, delegator.UsageTarget{AgentID: "a"}, false))
 
 	mana, ok := r.commands["mana"]
 	if !ok {
@@ -174,10 +174,10 @@ func TestRegistry_ManaUsageAlias_DispatchesToSamePointerAndListsOnce(t *testing.
 // and asks it about this agent (#2658: codex usage is per agent).
 func TestManaCommand_ExecuteUsesInjectedQuery(t *testing.T) {
 	called := ""
-	cmd := ManaCommand(func(_ context.Context, agentID string) (*delegator.UsageInfo, error) {
-		called = agentID
+	cmd := ManaCommand(func(_ context.Context, target delegator.UsageTarget) (*delegator.UsageInfo, error) {
+		called = target.AgentID
 		return &delegator.UsageInfo{Backend: "Claude Code", SubscriptionType: "pro", FiveHour: delegator.UsageWindow{Percent: 12}}, nil
-	}, "agent-7", false)
+	}, delegator.UsageTarget{AgentID: "agent-7"}, false)
 	resp, err := cmd.Execute(context.Background(), Request{}, CommandContext{})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -190,7 +190,7 @@ func TestManaCommand_ExecuteUsesInjectedQuery(t *testing.T) {
 	}
 
 	boom := errors.New("boom")
-	cmd = ManaCommand(func(context.Context, string) (*delegator.UsageInfo, error) { return nil, boom }, "a", false)
+	cmd = ManaCommand(func(context.Context, delegator.UsageTarget) (*delegator.UsageInfo, error) { return nil, boom }, delegator.UsageTarget{AgentID: "a"}, false)
 	if _, err := cmd.Execute(context.Background(), Request{}, CommandContext{}); !errors.Is(err, boom) {
 		t.Errorf("Execute error = %v, want it to wrap the query error", err)
 	}

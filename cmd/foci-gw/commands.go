@@ -281,9 +281,10 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 
 	// /mana (alias /usage) — the backend's plan usage. Registered iff the
 	// backend's Spec carries a UsageQuery (claude-code, codex). Each query
-	// reports only its own backend's account, for this agent: no agent is
-	// shown another backend's numbers, and a backend with no usage source
-	// gets no /mana (#1543).
+	// reports only this agent's own account (#1543; for Claude Code its own
+	// login, read with its env and binary, #3104 Q20): no agent is shown
+	// another backend's or another login's numbers, and a backend with no
+	// usage source gets no /mana.
 	//
 	// A backend declaring CapLimitReset (claude-code, #3043) also gets
 	// /limit_reset, and its /usage lifts the rate-limit gate and usage hold
@@ -293,7 +294,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		limitReset = spec.Supports(delegator.CapLimitReset)
 	}
 	if query, ok := delegator.UsageQueryFor(p.acfg.Backend); ok {
-		cmds.Register(command.ManaCommand(query, p.acfg.ID, limitReset))
+		cmds.Register(command.ManaCommand(query, usageTargetFor(p.cfg, p.acfg), limitReset))
 	}
 	if limitReset {
 		cmds.Register(command.LimitResetCommand())

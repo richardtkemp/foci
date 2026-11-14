@@ -728,15 +728,16 @@ func TestUsageCacheSchedule(t *testing.T) {
 	}
 }
 
-// Every Claude Code agent shares one usage account, so one cache entry (and
-// one scheduled read); a per-agent backend (codex) keeps one per agent.
+// Agents on one usage account (Claude Code: one login, #3104) share one cache
+// entry (and one scheduled read); a per-agent backend (codex) keeps one per
+// agent.
 func TestSpawnUsageReaderAccountKey(t *testing.T) {
 	t.Parallel()
-	q := func(context.Context, string) (*delegator.UsageInfo, error) { return nil, nil }
-	SpawnUsageReader("xacct-cc", "a", q, true, nil)
-	SpawnUsageReader("xacct-cc", "b", q, true, nil)
-	SpawnUsageReader("xacct-codex", "a", q, false, nil)
-	SpawnUsageReader("xacct-codex", "b", q, false, nil)
+	q := func(context.Context, delegator.UsageTarget) (*delegator.UsageInfo, error) { return nil, nil }
+	SpawnUsageReader("xacct-cc", delegator.UsageTarget{AgentID: "a"}, q, "xacct-cc", nil)
+	SpawnUsageReader("xacct-cc", delegator.UsageTarget{AgentID: "b"}, q, "xacct-cc", nil)
+	SpawnUsageReader("xacct-codex", delegator.UsageTarget{AgentID: "a"}, q, "", nil)
+	SpawnUsageReader("xacct-codex", delegator.UsageTarget{AgentID: "b"}, q, "", nil)
 	spawnUsage.mu.Lock()
 	defer spawnUsage.mu.Unlock()
 	var keys []string

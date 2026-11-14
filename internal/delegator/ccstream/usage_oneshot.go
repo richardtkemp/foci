@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"foci/internal/ccaccount"
 	"foci/internal/delegator"
 	"foci/internal/procx"
 	"foci/internal/tempdir"
@@ -36,9 +37,13 @@ const usageOneshotTimeout = 90 * time.Second
 // round trip reports total_cost_usd: 0, model_usage: {}, no assistant turn
 // ever runs).
 //
-// The usage is the operator's Claude Code account's, the same for every
-// Claude Code agent, so agentID is unused.
-func QueryUsage(ctx context.Context, _ string) (*delegator.UsageInfo, error) {
+// The usage is that of t's agent's Claude Code account (#3104): the scratch
+// process gets the agent's environment as its sessions do (buildEnv: the
+// operator population, then the agent's backend_config.env, with OwnLogin),
+// so an agent with its own CLAUDE_CONFIG_DIR reads its own login, and it runs
+// the agent's configured binary (t.Binary, else "claude" on the operator
+// PATH).
+func QueryUsage(ctx context.Context, t delegator.UsageTarget) (*delegator.UsageInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, usageOneshotTimeout)
 	defer cancel()
 
@@ -54,8 +59,13 @@ func QueryUsage(ctx context.Context, _ string) (*delegator.UsageInfo, error) {
 	}
 	defer func() { _ = os.RemoveAll(scratch) }()
 
-	// Operator: a scratch Claude Code process; same binary and credentials.
-	cmd := procx.Spawn(ctx, procx.Operator, "claude",
+	// Operator: a scratch Claude Code process with the agent's binary and
+	// login.
+	bin := t.Binary
+	if bin == "" {
+		bin = "claude"
+	}
+	cmd := procx.Spawn(ctx, procx.Operator, bin,
 		"--print",
 		"--input-format", "stream-json",
 		"--output-format", "stream-json",
@@ -63,6 +73,7 @@ func QueryUsage(ctx context.Context, _ string) (*delegator.UsageInfo, error) {
 		"--verbose",
 	)
 	cmd.Dir = scratch
+	cmd.Env = buildEnv(t.Env, nil)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -244,4 +255,18 @@ func parseUsageBehaviorWindow(w usageBehaviorWindow) delegator.UsageBehaviorWind
 		SessionCount: w.SessionCount,
 		Top:          items,
 	}
+}
+
+// UsageAccount is the Spec's UsageAccount (#3104): the usage account of a
+// Claude Code agent is its login location (ccaccount.Account, Dick
+// 2026-11-14 Q11), so agents on one login share one usage hold and one
+// cached usage read, and agents on different logins never share them. The
+// name is the backend followed by the account's Key, and it is also the
+// stored hold's key (usage_hold:<name>, Q21).
+func UsageAccount(agentEnv map[string]string) (string, error) {
+	loc, err := ccaccount.ForAgent(agentEnv)
+	if err != nil {
+		return "", err
+	}
+	return backendName + ":" + loc.Account.Key(), nil
 }

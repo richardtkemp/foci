@@ -764,9 +764,11 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 		if q, ok := delegator.UsageQueryFor(acfg.Backend); ok {
 			// #2662: cached per usage account and read on a 4-14 min
 			// schedule (one Claude Code read is a throwaway CC process and
-			// ~25-60 s); every Claude Code agent shares one account. The
-			// schedule skips while the reserve is 0 (the check is off).
-			spawnDeps.Usage = tools.SpawnUsageReader(acfg.Backend, acfg.ID, q, spec.UsageOperatorWide,
+			// ~25-60 s); the Claude Code agents on one login share one
+			// account (#3104), and agents on other logins have their own.
+			// The schedule skips while the reserve is 0 (the check is off).
+			spawnDeps.Usage = tools.SpawnUsageReader(acfg.Backend, usageTargetFor(d.p.cfg, acfg), q,
+				usageAccountFor(acfg.ID, acfg.Backend, acfg.BackendConfig.Env),
 				func() bool { return live.Load().Tools.SpawnReservePercent > 0 })
 		}
 		spawnDeps.Delegated = &tools.DelegatedSpawn{

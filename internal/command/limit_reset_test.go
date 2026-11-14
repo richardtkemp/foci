@@ -45,7 +45,7 @@ func TestLimitResetCommand_LiftsHold(t *testing.T) {
 // the lift.
 func TestManaCommand_LiftsOnlyWhenAvailable(t *testing.T) {
 	read := func(five, week int) delegator.UsageQuery {
-		return func(context.Context, string) (*delegator.UsageInfo, error) {
+		return func(context.Context, delegator.UsageTarget) (*delegator.UsageInfo, error) {
 			return &delegator.UsageInfo{
 				Backend:             "Claude Code",
 				RateLimitsAvailable: true,
@@ -56,7 +56,7 @@ func TestManaCommand_LiftsOnlyWhenAvailable(t *testing.T) {
 	}
 
 	a := stoppedCCAgent()
-	resp, err := ManaCommand(read(100, 40), "cam", true).Execute(context.Background(), Request{}, CommandContext{Agent: a})
+	resp, err := ManaCommand(read(100, 40), delegator.UsageTarget{AgentID: "cam"}, true).Execute(context.Background(), Request{}, CommandContext{Agent: a})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,14 +64,14 @@ func TestManaCommand_LiftsOnlyWhenAvailable(t *testing.T) {
 		t.Errorf("a read at 100%%: phase %v, reply %q; want the stop kept and no lift", a.UsageHold().Phase, resp.Text)
 	}
 
-	if _, err := ManaCommand(read(3, 40), "cam", false).Execute(context.Background(), Request{}, CommandContext{Agent: a}); err != nil {
+	if _, err := ManaCommand(read(3, 40), delegator.UsageTarget{AgentID: "cam"}, false).Execute(context.Background(), Request{}, CommandContext{Agent: a}); err != nil {
 		t.Fatal(err)
 	}
 	if a.UsageHold().Phase != usagehold.Stop {
 		t.Errorf("without the lift: phase %v, want the stop kept", a.UsageHold().Phase)
 	}
 
-	resp, err = ManaCommand(read(3, 40), "cam", true).Execute(context.Background(), Request{}, CommandContext{Agent: a})
+	resp, err = ManaCommand(read(3, 40), delegator.UsageTarget{AgentID: "cam"}, true).Execute(context.Background(), Request{}, CommandContext{Agent: a})
 	if err != nil {
 		t.Fatal(err)
 	}

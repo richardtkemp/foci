@@ -10,8 +10,11 @@ import (
 )
 
 // ManaCommand creates a /mana command that reports the usage allowance of the
-// account agentID's backend runs under, via the backend's query
-// (Spec.UsageQuery). Only a backend with a usage source has one, so only its
+// account target's agent runs under, via the backend's query
+// (Spec.UsageQuery): for Claude Code, that agent's own login, read with its
+// environment and binary (#3104, Dick 2026-11-14 Q20: the calling agent's
+// account only). The reply names the account when it has a name
+// (Agent.UsageAccountName, Q15). Only a backend with a usage source has one, so only its
 // agents get the command, and each reports only its own account (#1543):
 //
 //   - Claude Code (ccstream.QueryUsage): session (5h) and weekly (7d)
@@ -29,20 +32,25 @@ import (
 // liftOnAvailable (a backend declaring CapLimitReset: Claude Code, #3043):
 // when the read shows usage available (Agent.UsageAvailable), the command
 // also lifts the agent's rate-limit gate and its account's usage hold
-// (Agent.ResetLimits), as /limit_reset does. A read that does not show usage
-// available changes nothing.
-func ManaCommand(query delegator.UsageQuery, agentID string, liftOnAvailable bool) *Command {
+// (Agent.ResetLimits), as /limit_reset does: that account only. A read that
+// does not show usage available changes nothing.
+func ManaCommand(query delegator.UsageQuery, target delegator.UsageTarget, liftOnAvailable bool) *Command {
 	return &Command{
 		Name:        "mana",
 		Aliases:     []string{"usage"},
 		Description: "Show the backend's plan usage (windows used %, resets, limits)",
 		Category:    "observability",
 		Execute: func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
-			info, err := query(ctx, agentID)
+			info, err := query(ctx, target)
 			if err != nil {
 				return Response{}, fmt.Errorf("query usage: %w", err)
 			}
 			text := formatUsage(info)
+			if cc.Agent != nil {
+				if name := cc.Agent.UsageAccountName(); name != "" {
+					text += "\n\nAccount: " + name
+				}
+			}
 			if liftOnAvailable && cc.Agent != nil && cc.Agent.UsageAvailable(info) {
 				if res := cc.Agent.ResetLimits("/usage found usage available"); res.Cleared() {
 					text += "\n\n▶️ Usage is available. " + res.Summary()

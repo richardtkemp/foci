@@ -116,7 +116,7 @@ var spec = delegator.Spec{
 	ResumeRetention:   CleanupPeriod,
 	PlanDelivery:      planDelivery,
 	UsageQuery:        QueryUsage,
-	UsageOperatorWide: true,
+	UsageAccount:      UsageAccount,
 }
 
 func init() { delegator.Register(spec) }

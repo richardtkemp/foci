@@ -297,10 +297,16 @@ type Spec struct {
 	ResumeRetention func(agentEnv map[string]string) time.Duration
 	PlanDelivery    PlanDelivery // required iff CapPlanMode
 	UsageQuery      UsageQuery   // required iff CapUsageQuery
-	// UsageOperatorWide: UsageQuery reports the operator's one account, the
-	// same for every agent on this backend (it ignores agentID), so one read
-	// serves them all (the spawn allowance check's schedule, #2662).
-	UsageOperatorWide bool
+	// UsageAccount names the usage account of an agent whose
+	// backend_config.env is agentEnv (#3104: for Claude Code, its login). Agents
+	// with equal accounts share usage: one usage hold (usagehold, keyed and
+	// stored under this name), one /limit_reset, and one cached UsageQuery read
+	// on one schedule (the spawn reserve check, #2662). Agents on different
+	// accounts never share any of it.
+	//
+	// nil: the hold's account is the backend name (codex: every codex agent
+	// is one hold account, as before) and UsageQuery reads are per agent.
+	UsageAccount func(agentEnv map[string]string) (string, error)
 
 	// Process-global lifecycle hooks the gateway runs once for every backend.
 	OnGatewayStart    func()

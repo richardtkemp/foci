@@ -301,6 +301,8 @@ type stubScript struct {
 //	  results, secret-template resolved values) without depending on
 //	  foci's tool_result re-injection (which is CC-internal and not
 //	  observable in foci's stdout).
+//	Kind="get_usage" — for each get_usage control_request (foci's /usage
+//	  read, #3104); captures the binary and CLAUDE_CONFIG_DIR.
 //	Kind="argv_error" — the stub rejected its argv (an undeclared flag or an
 //	  unexpected argument, #2925) and exited 1; captures flags + error.
 //
@@ -323,8 +325,9 @@ type recorderEntry struct {
 	// argv_error only — why parseArgs rejected Flags.
 	Error string `json:"error,omitempty"`
 
-	// interactive_login only (#3104): the login pane's CLAUDE_CONFIG_DIR
-	// and CLAUDE_SECURESTORAGE_CONFIG_DIR ("<unset>" when absent).
+	// interactive_login and get_usage (#3104): the process's
+	// CLAUDE_CONFIG_DIR, and the login pane's CLAUDE_SECURESTORAGE_CONFIG_DIR
+	// ("<unset>" when absent).
 	ConfigDir     string `json:"config_dir,omitempty"`
 	SecureStorage string `json:"secure_storage,omitempty"`
 
@@ -1181,6 +1184,23 @@ func main() {
 						},
 					},
 				})
+			case "get_usage":
+				// The config folder's usage (stubUsageFile, #3104): foci's
+				// /usage, /mana and spawn reserve read it through a
+				// throwaway process (ccstream.QueryUsage). Recorded, so a
+				// test can count reads per account and see which binary and
+				// folder a read used.
+				recordGetUsage()
+				payload, ok := loadStubUsage()
+				resp := map[string]any{"subtype": "success", "request_id": reqID}
+				if ok {
+					resp["response"] = payload
+				}
+				emit(out, map[string]any{
+					"type":       "control_response",
+					"request_id": reqID,
+					"response":   resp,
+				})
 			default:
 				// e.g. interrupt — ack with a control_response.
 				if reqID != "" {
@@ -1479,6 +1499,65 @@ const stubNotLoggedIn = "Not logged in · Please run /login"
 // `claude auth status` reports. No file: signed in, as authStatusJSON. The
 // interactive /login emulation sets loggedIn back to true.
 const stubAuthFile = ".ccstub-auth.json"
+
+// stubUsageFile is the file in a config folder that holds what get_usage
+// reports for that folder's account (#3104 phase 3): {"five_hour": 99,
+// "seven_day": 10}, each a used percent (0-100); a window left out is
+// reported as null. It is read at every get_usage, so a test can change it
+// between reads. No file (or a bad one): get_usage is answered with no
+// payload, as before.
+const stubUsageFile = ".ccstub-usage.json"
+
+// loadStubUsage builds the get_usage payload of the config folder's
+// stubUsageFile; ok is false when there is none.
+func loadStubUsage() (map[string]any, bool) {
+	dir, err := stubConfigDir()
+	if err != nil {
+		return nil, false
+	}
+	data, err := os.ReadFile(filepath.Join(dir, stubUsageFile))
+	if err != nil {
+		return nil, false
+	}
+	var u map[string]int
+	if json.Unmarshal(data, &u) != nil {
+		return nil, false
+	}
+	now := time.Now().UTC()
+	window := func(name string, d time.Duration) any {
+		pct, ok := u[name]
+		if !ok {
+			return nil
+		}
+		return map[string]any{"utilization": pct, "resets_at": now.Add(d).Format(time.RFC3339)}
+	}
+	return map[string]any{
+		"subscription_type":     "stub",
+		"rate_limits_available": true,
+		"rate_limits": map[string]any{
+			"five_hour": window("five_hour", 5*time.Hour),
+			"seven_day": window("seven_day", 7*24*time.Hour),
+		},
+	}, true
+}
+
+// recordGetUsage appends a kind="get_usage" line: the binary foci ran and
+// the CLAUDE_CONFIG_DIR it gave ("<unset>" when absent).
+func recordGetUsage() {
+	wd, _ := os.Getwd()
+	dir, ok := os.LookupEnv("CLAUDE_CONFIG_DIR")
+	if !ok {
+		dir = "<unset>"
+	}
+	writeRecorder(recorderEntry{
+		Kind:      "get_usage",
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Workdir:   wd,
+		PID:       os.Getpid(),
+		Binary:    os.Args[0],
+		ConfigDir: dir,
+	})
+}
 
 // stubAuth is one config folder's login state.
 type stubAuth struct {
@@ -2113,6 +2192,8 @@ would otherwise drop every flag after it). "auth status" prints a
 logged-in status and exits 0, unless the config folder's .ccstub-auth.json
 says otherwise ({"loggedIn":false,"email":...,"loginExpiresAt":...}); a
 logged-out folder answers every message with CC's "Not logged in" reply.
+get_usage reports the config folder's .ccstub-usage.json
+({"five_hour":N,"seven_day":N}, used percent), or no payload without one.
 With no arguments on a terminal (foci's relogin pane) it emulates the
 /login screens and signs the folder in when a code is typed.
 

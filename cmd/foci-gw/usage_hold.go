@@ -5,6 +5,7 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/platform"
 	"foci/internal/route"
 	"foci/internal/session"
@@ -37,11 +38,48 @@ func (s usageHoldStore) SaveUsageHold(account, value string) {
 }
 
 // setupUsageHold wires the process-wide usage hold at startup: its threshold
-// from the global [usage_hold] section, and its store.
+// from the global [usage_hold] section, and its store, after renaming any
+// state stored under a backend-wide key (migrateUsageHoldKeys).
 func setupUsageHold(cfg *config.Config, idx *session.SessionIndex) {
 	applyUsageHoldThreshold(cfg)
 	if idx != nil {
+		migrateUsageHoldKeys(idx)
 		usagehold.Default.SetStore(usageHoldStore{idx: idx})
+	}
+}
+
+// migrateUsageHoldKeys renames the stored hold of every backend whose usage
+// is per account (Spec.UsageAccount: Claude Code, #3104) from the old
+// backend-wide key (usage_hold:<backend>, e.g. usage_hold:claude-code) to the
+// key of the account that agents with no override use (Dick 2026-11-14, Q21:
+// "Rename all, migrate once"). A hold or stop in force before the upgrade is
+// then in force for that account's agents, and no old key remains. It runs
+// before the registry loads any state. Once moved, the old key is gone, so a
+// later start finds nothing to move; and a state already stored under the
+// new key is never overwritten (the old one is only deleted). With no old
+// key it writes nothing.
+func migrateUsageHoldKeys(idx *session.SessionIndex) {
+	store := usageHoldStore{idx: idx}
+	for _, spec := range delegator.Specs() {
+		if spec.UsageAccount == nil {
+			continue
+		}
+		old, ok := store.LoadUsageHold(spec.Name)
+		if !ok {
+			continue
+		}
+		acct, err := spec.UsageAccount(nil)
+		if err != nil || acct == "" || acct == spec.Name {
+			mainLog.Warnf("usage hold: cannot rename the stored %q hold to its account (%v); left as it is", spec.Name, err)
+			continue
+		}
+		if _, exists := store.LoadUsageHold(acct); exists {
+			mainLog.Infof("usage hold: %s already has a stored hold; dropping the old %q one", acct, spec.Name)
+		} else {
+			store.SaveUsageHold(acct, old)
+			mainLog.Infof("usage hold: moved the stored %q hold to account %s", spec.Name, acct)
+		}
+		store.SaveUsageHold(spec.Name, "")
 	}
 }
 

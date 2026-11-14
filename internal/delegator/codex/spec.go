@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"context"
 	"time"
 
 	"foci/internal/delegator"
@@ -93,7 +94,11 @@ var spec = delegator.Spec{
 	LedgerKey:        accounting.BackendCodex,
 	CacheTTL:         cacheTTL,
 	ForkNeedsRunning: true,
-	UsageQuery:       QueryUsage,
+	// Each codex agent reads its own process's numbers; the hold's account
+	// stays the backend (no UsageAccount).
+	UsageQuery: func(ctx context.Context, t delegator.UsageTarget) (*delegator.UsageInfo, error) {
+		return QueryUsage(ctx, t.AgentID)
+	},
 	// api_key is read but no config path supplies it
 	// (docs/BACKENDS.md footnote 48). foci_version is added by the gateway.
 	ConfigKeys: []string{"binary", "model", "sandbox", delegator.WritableRootsConfigKey, "approvals_reviewer", "api_key", delegator.FociVersionConfigKey},

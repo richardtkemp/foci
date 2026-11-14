@@ -111,4 +111,6 @@ To run some agents on a different Claude account from the others, on the same ho
 3. Do the one-time sign-in: send `/login` in one of those agents' chats (or let the startup check start it) and paste the code. Sign in with the account you want there.
 4. Claude Code creates its own working files in the new folder, but not your settings. If the agent should share them, copy by hand from the host folder (`~/.claude`): `settings.json` (for example `defaultMode`, deny rules, `additionalDirectories`, `model`, plugins) and `skills/`. foci copies nothing.
 
+Usage limits and holds are per account: one account at its limit holds only its own agents.
+
 On macOS the agent gets its own Keychain item, named after its folder: on a separate-root install foci no longer forces the default item onto an agent that sets `CLAUDE_CONFIG_DIR` (set `CLAUDE_SECURESTORAGE_CONFIG_DIR` in its env too to choose the item yourself). The agent's existing chats do not move with it: their transcripts stay in the old folder, so they start fresh.

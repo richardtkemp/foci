@@ -117,9 +117,22 @@ type AllowanceWindow struct {
 	ResetsAt time.Time
 }
 
-// UsageQuery fetches the plan usage for the account agentID runs under. A
-// backend whose usage is operator-wide (Claude Code) ignores agentID.
-type UsageQuery func(ctx context.Context, agentID string) (*UsageInfo, error)
+// UsageTarget is the agent a usage read is for (#3104): its id and the parts
+// of its backend config that decide which account a read reaches and how.
+type UsageTarget struct {
+	AgentID string
+	// Env is the agent's backend_config.env (nil for none). For Claude Code it
+	// can name the agent's own config folder, and so its own account.
+	Env map[string]string
+	// Binary is the agent's backend_config.binary ("" = the backend's
+	// default).
+	Binary string
+}
+
+// UsageQuery fetches the plan usage of the account t's agent runs under:
+// Claude Code reads the agent's own login (its env and binary), codex reads
+// the agent's own process.
+type UsageQuery func(ctx context.Context, t UsageTarget) (*UsageInfo, error)
 
 // UsageQueryFor returns the usage query of a backend (Spec.UsageQuery), and
 // whether it has one. The command layer registers /mana iff ok is true.

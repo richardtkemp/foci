@@ -16,7 +16,8 @@ import (
 
 // The account-wide usage hold, agent side (#2491, internal/usagehold).
 //
-// A delegated agent on Claude Code or codex belongs to its backend's account.
+// A delegated agent on Claude Code belongs to its login's account (#3104), a
+// codex agent to the codex account (UsageAccount).
 // Its backend reports usage windows (HostHooks.OnUsageWindow → ObserveUsage);
 // the registry decides the account's phase; every agent on the account sees
 // each phase change (StartUsageHold's subscription) and:
@@ -64,16 +65,43 @@ func (a *Agent) usageRegistry() *usagehold.Registry {
 	return usagehold.Default
 }
 
-// UsageAccount is the account this agent's usage counts against: its
-// delegated backend family (Dick 2026-11-02: the same backend is the same
-// account), "" for an API agent. Only a backend that reports usage windows
-// (HostHooks.OnUsageWindow: Claude Code and codex) ever holds its account;
-// opencode reports none, so its account stays open.
+// UsageAccount is the account this agent's usage counts against, "" for an
+// API agent. A Claude Code agent's is its login (UsageAccountKey, set from
+// Spec.UsageAccount at setup, #3104): agents on one login share it, agents on
+// another login have another. Any other delegated agent's is its backend
+// family (Dick 2026-11-02: the same backend is the same account), as is a
+// Claude Code agent's when setup could not resolve its login. Only a backend
+// that reports usage windows (HostHooks.OnUsageWindow: Claude Code and codex)
+// ever holds its account; opencode reports none, so its account stays open.
 func (a *Agent) UsageAccount() string {
 	if a.DelegatedManager == nil {
 		return ""
 	}
+	if a.UsageAccountKey != "" {
+		return a.UsageAccountKey
+	}
 	return a.DelegatedManager.BackendType
+}
+
+// UsageAccountName names this agent's usage account for a person (Dick
+// 2026-11-14, Q15: the email, else the login's path), or "" when it has no
+// per-login account (codex, opencode, API agents) or no name is known. A
+// Claude Code account's name is its login gate's (relogin.Gate.Name), which
+// learns the email from the startup probe.
+func (a *Agent) UsageAccountName() string {
+	if a.UsageAccountKey == "" {
+		return ""
+	}
+	return a.LoginGateOrDefault().Name()
+}
+
+// withUsageAccountName appends " (account: <name>)" to text when the agent's
+// usage account has a name, as the login notices do (#3104 phase 2).
+func (a *Agent) withUsageAccountName(text string) string {
+	if name := a.UsageAccountName(); name != "" {
+		return text + " (account: " + name + ")"
+	}
+	return text
 }
 
 // ObserveUsage is HostHooks.OnUsageWindow: one usage report of this agent's
@@ -152,7 +180,7 @@ func (a *Agent) onUsageHoldChange(c usagehold.Change) {
 
 	a.logger().Infof("usage hold (%s): %s -> %s (lifts %s)", c.Account, c.From, c.To.Phase, formatLift(c.To.LiftAt))
 	if fn := a.UsageHoldNotifyFunc; fn != nil {
-		a.queueUsageHoldNotice(fn, UsageHoldNotice(c))
+		a.queueUsageHoldNotice(fn, a.withUsageAccountName(UsageHoldNotice(c)))
 	}
 	// The work running at a hold start is interrupted or left to finish
 	// (usage_hold_interrupt.go), before the reactions below: the hold's
@@ -290,7 +318,7 @@ func (a *Agent) parkUsageHeld(inb *sessionInbox, env Envelope) {
 	st := a.UsageHold()
 	a.logger().Infof("inbox: usage hold (%s) holds a message sk=%s (%dB, resume=%v, %d held)", st.Phase, env.SessionKey, len(env.Text), env.usageResume, len(inb.usageHeld))
 	if fn := a.TurnQueuedNotifyFunc; fn != nil && !env.Automated && !env.usageResume && !restored {
-		text := "⏸️ Held: usage is at the hold limit, so this message waits until " + formatLift(st.LiftAt) + ", then runs."
+		text := a.withUsageAccountName("⏸️ Held: usage is at the hold limit, so this message waits until " + formatLift(st.LiftAt) + ", then runs.")
 		go fn(env.SessionKey, text)
 	}
 }
