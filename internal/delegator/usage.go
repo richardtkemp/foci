@@ -3,6 +3,8 @@ package delegator
 import (
 	"context"
 	"encoding/json"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -36,7 +38,7 @@ type UsageInfo struct {
 	SessionCostUSD      float64
 	Day                 UsageBehaviorWindow
 	Week                UsageBehaviorWindow
-	Raw                 json.RawMessage // full get_usage response payload, for anything not modeled above
+	Raw                 json.RawMessage // the full response as received (CC get_usage; codex account/rateLimits/read on a fresh /usage), for anything not modeled above and the usage history
 }
 
 // UsageWindow is one rate-limit window's utilization. Percent is 0-100
@@ -139,4 +141,179 @@ type UsageQuery func(ctx context.Context, t UsageTarget) (*UsageInfo, error)
 func UsageQueryFor(name string) (UsageQuery, bool) {
 	s, _ := SpecFor(name)
 	return s.UsageQuery, s.UsageQuery != nil
+}
+
+// --- usage reports: every usage figure foci receives (#3103) ---
+//
+// A backend that reports plan usage (CapUsageQuery) also hands every usage
+// figure it receives outside a UsageQuery (Claude Code's rate_limit_event,
+// codex's account/rateLimits/updated and its start-up read) to the host
+// through UsageReporter (CapUsageReports, which CapUsageQuery requires). The
+// gateway stamps each report with the time, backend, account and agent and
+// stores it (internal/usagelog). The figures a UsageQuery returns reach the
+// store through the query's own result.
+
+// Usage report sources: where a stored figure came from.
+const (
+	UsageSourceScheduled   = "scheduled" // the spawn reserve's scheduled read (#2662)
+	UsageSourceSpawn       = "spawn"     // a read a spawn's allowance check started
+	UsageSourceMana        = "mana"      // a fresh /mana or /usage read
+	UsageSourceCCEvent     = "cc_rate_limit_event"
+	UsageSourceCodexUpdate = "codex_rate_limits_updated"
+	UsageSourceCodexRead   = "codex_startup_read"
+)
+
+// Units of UsageReportWindow.Used.
+const (
+	UsageUnitPercent  = "percent"  // 0-100
+	UsageUnitFraction = "fraction" // 0-1
+)
+
+// UsageReport is one usage report foci received. The backend fills Source,
+// Windows and Payload; the host fills the rest when it stores the report.
+type UsageReport struct {
+	Source  string
+	Windows []UsageReportWindow
+	// Payload is the report as received (the event's JSON line, the read's
+	// response), so no reported field is lost.
+	Payload json.RawMessage
+
+	ReceivedAt time.Time
+	Backend    string // Spec.Name, e.g. "claude-code"
+	Account    string // the usage account the figures describe
+	AgentID    string // the agent through which they came
+}
+
+// UsageReportWindow is one window's figures in a report, as reported.
+type UsageReportWindow struct {
+	// Window names the window. Claude Code: its own type ("five_hour",
+	// "seven_day", ...). Codex: "<bucket>/<length>", e.g. "codex/5h"; a
+	// bucket's limit state with no window of its own is "<bucket>/limit".
+	Window string
+	// Length is the window's length; zero when unknown or not a time window.
+	Length time.Duration
+	// Used is the use as reported, in UsedUnit; nil when the report carries
+	// none (a Claude Code "allowed" event).
+	Used     *float64
+	UsedUnit string
+	ResetsAt time.Time // zero = not reported
+	// Status is the backend's own word for the window's state, when it sends
+	// one (Claude Code: allowed, allowed_warning, rejected; codex: the
+	// bucket's rateLimitReachedType).
+	Status string
+	// LimitReached is true when the report says the window's limit is
+	// reached.
+	LimitReached bool
+}
+
+// Percent is the window's use on the 0-100 scale, and whether it has one.
+func (w UsageReportWindow) Percent() (float64, bool) {
+	if w.Used == nil {
+		return 0, false
+	}
+	if w.UsedUnit == UsageUnitFraction {
+		return *w.Used * 100, true
+	}
+	return *w.Used, true
+}
+
+// UsageSink receives a backend's usage reports. It must not block for long:
+// a backend may call it from the goroutine that reads its process.
+type UsageSink func(UsageReport)
+
+// UsageReporter is implemented by a backend that hands its usage reports to
+// the host (CapUsageReports). The gateway calls SetUsageSink once per
+// instance, before Start.
+type UsageReporter interface {
+	SetUsageSink(sink UsageSink)
+}
+
+// UsageWindowLength is the length of a named window: Claude Code's
+// "five_hour…" and "seven_day…" types, and a codex "<bucket>/<n>{m,h,d}"
+// window. Zero when the name does not fix it.
+func UsageWindowLength(window string) time.Duration {
+	switch {
+	case strings.HasPrefix(window, "five_hour"):
+		return 5 * time.Hour
+	case strings.HasPrefix(window, "seven_day"):
+		return 7 * 24 * time.Hour
+	}
+	if i := strings.LastIndexByte(window, '/'); i >= 0 {
+		return labelLength(window[i+1:])
+	}
+	return 0
+}
+
+// labelLength parses a window label such as "5h", "7d" or "90m".
+func labelLength(label string) time.Duration {
+	if len(label) < 2 {
+		return 0
+	}
+	n, err := strconv.Atoi(label[:len(label)-1])
+	if err != nil || n <= 0 {
+		return 0
+	}
+	switch label[len(label)-1] {
+	case 'm':
+		return time.Duration(n) * time.Minute
+	case 'h':
+		return time.Duration(n) * time.Hour
+	case 'd':
+		return time.Duration(n) * 24 * time.Hour
+	}
+	return 0
+}
+
+// FreshRead reports whether u holds figures read for this call: a Claude
+// Code read always does; a codex allowance only when Fresh (else it repeats
+// what codex pushed earlier, which was stored when it arrived).
+func (u *UsageInfo) FreshRead() bool {
+	if u == nil {
+		return false
+	}
+	return u.Allowance == nil || u.Allowance.Fresh
+}
+
+// ReportWindows lists the window figures of a read, in the shape a stored
+// usage report keeps them.
+func (u *UsageInfo) ReportWindows() []UsageReportWindow {
+	if u == nil {
+		return nil
+	}
+	if a := u.Allowance; a != nil {
+		var out []UsageReportWindow
+		for _, b := range a.Buckets {
+			bucket := b.Name
+			if bucket == "" {
+				bucket = "codex"
+			}
+			for _, w := range b.Windows {
+				pct := float64(w.Percent)
+				out = append(out, UsageReportWindow{
+					Window: bucket + "/" + w.Label, Length: labelLength(w.Label),
+					Used: &pct, UsedUnit: UsageUnitPercent, ResetsAt: w.ResetsAt,
+					Status: b.LimitReached, LimitReached: b.LimitReached != "",
+				})
+			}
+			if len(b.Windows) == 0 && b.LimitReached != "" {
+				out = append(out, UsageReportWindow{Window: bucket + "/limit", Status: b.LimitReached, LimitReached: true})
+			}
+		}
+		return out
+	}
+	var out []UsageReportWindow
+	for _, w := range []struct {
+		name string
+		win  UsageWindow
+	}{{"five_hour", u.FiveHour}, {"seven_day", u.SevenDay}} {
+		if !w.win.Reported {
+			continue
+		}
+		pct := float64(w.win.Percent)
+		out = append(out, UsageReportWindow{
+			Window: w.name, Length: UsageWindowLength(w.name),
+			Used: &pct, UsedUnit: UsageUnitPercent, ResetsAt: w.win.ResetsAt,
+		})
+	}
+	return out
 }

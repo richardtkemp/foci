@@ -266,3 +266,27 @@ func renderCapabilityTable(specs []delegator.Spec) string {
 }
 
 func escapeCell(s string) string { return strings.ReplaceAll(s, "|", `\|`) }
+
+// TestUsageBackends_ProvideUsageReports is #3103 requirement 8 (H9): every
+// registered backend with a usage query (claude-code, codex) declares
+// usage_reports and implements UsageReporter; one without (opencode) is not
+// required to.
+func TestUsageBackends_ProvideUsageReports(t *testing.T) {
+	iface := reflect.TypeFor[delegator.UsageReporter]()
+	var usage []string
+	for _, s := range delegator.Specs() {
+		if !s.Supports(delegator.CapUsageQuery) {
+			continue
+		}
+		usage = append(usage, s.Name)
+		if !s.Supports(delegator.CapUsageReports) {
+			t.Errorf("%s has a usage query but does not declare usage_reports", s.Name)
+		}
+		if !reflect.TypeOf(s.Prototype).Implements(iface) {
+			t.Errorf("%s has a usage query but does not implement UsageReporter", s.Name)
+		}
+	}
+	if got := strings.Join(usage, ","); got != "claude-code,codex" {
+		t.Errorf("backends with a usage query = %s, want claude-code,codex", got)
+	}
+}

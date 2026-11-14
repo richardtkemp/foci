@@ -74,6 +74,9 @@ type Command struct {
 	// worker is blocked while a turn is running and cannot process deferred work.
 	Immediate bool
 	Visible   func(ctx context.Context, req Request, cc CommandContext) bool // when non-nil and returns false, suppressed from listings/keyboards
+	// Help is longer help text that /help <command> shows after the
+	// subcommand table (e.g. an output format's keys); "" = none.
+	Help string
 
 	// Subcommands declares the command's subcommand set. When non-empty and
 	// Execute is nil, Register auto-wires Execute and (if nil) KeyboardOptions

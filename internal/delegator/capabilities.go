@@ -94,6 +94,7 @@ const (
 	CapCommandApprovalAllowlist
 	CapPlanMode
 	CapUsageQuery
+	CapUsageReports
 	CapLimitReset
 
 	numCapabilities // sentinel: MUST stay last
@@ -181,7 +182,8 @@ var capabilityTable = [numCapabilities]CapabilityInfo{
 	CapRelogin:                  {Name: "relogin", Kind: KindBehaviour, Requires: []Capability{CapHostHooks}, Doc: "reports auth failures that foci's Claude Code re-login driver can fix (/login)"},
 	CapCommandApprovalAllowlist: {Name: "command_approval_allowlist", Kind: KindBehaviour, Doc: "auto-approves prompts matching foci's [permissions] allowlist (StartOptions.AutoApproveRules)"},
 	CapPlanMode:                 {Name: "plan_mode", Kind: KindData, Doc: "has a /plan delivery (Spec.PlanDelivery)"},
-	CapUsageQuery:               {Name: "usage_query", Kind: KindData, Doc: "reports plan usage for /mana (Spec.UsageQuery)"},
+	CapUsageQuery:               {Name: "usage_query", Kind: KindData, Requires: []Capability{CapUsageReports}, Doc: "reports plan usage for /mana (Spec.UsageQuery)"},
+	CapUsageReports:             {Name: "usage_reports", Kind: KindInterface, Iface: ifaceOf[UsageReporter](), Doc: "hands every usage figure it receives to the host's usage store (UsageReporter, #3103); usage_query requires it"},
 	CapLimitReset:               {Name: "limit_reset", Kind: KindBehaviour, Requires: []Capability{CapUsageQuery}, Doc: "/limit_reset force-lifts the rate-limit gate and usage hold, and a /usage read that finds usage available lifts them (its UsageQuery reports rate-limit availability)"},
 }
 

@@ -294,7 +294,9 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		limitReset = spec.Supports(delegator.CapLimitReset)
 	}
 	if query, ok := delegator.UsageQueryFor(p.acfg.Backend); ok {
-		cmds.Register(command.ManaCommand(query, usageTargetFor(p.cfg, p.acfg), limitReset))
+		// The usage history (#3103): a fresh read is stored, and /mana
+		// cached answers from the stored figures of this agent's account.
+		cmds.Register(command.ManaCommand(query, usageTargetFor(p.cfg, p.acfg), limitReset, usageBindingFor(p.cfg, p.acfg)))
 	}
 	if limitReset {
 		cmds.Register(command.LimitResetCommand())

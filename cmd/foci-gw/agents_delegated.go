@@ -303,6 +303,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		StopRules:       stopRules,
 		ClaudeAISkills:  claudeAISkills,
 	}
+	// This agent's view of the usage history (#3103): the account its
+	// backend's usage reports are stored under.
+	usageHist := newUsageBinding(backendName, agentID, bc.Env)
 	if spec.Supports(delegator.CapRelogin) {
 		hostHooks.OnAuthFailure = func(detail string) {
 			startRelogin("401 auth failure: "+firstLine(detail), "", acct.gate.StartAuto, true)
@@ -346,6 +349,12 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			}
 			if hh, ok := delegator.As[delegator.HostHooksAcceptor](be); ok {
 				hh.SetHostHooks(hostHooks)
+			}
+			// The usage figures the backend receives go to the usage history
+			// (#3103): a backend with /usage must take the sink
+			// (CapUsageReports, which CapUsageQuery requires).
+			if ur, ok := delegator.As[delegator.UsageReporter](be); ok && usageHist != nil {
+				ur.SetUsageSink(usageHist.Record)
 			}
 			return be, nil
 		},

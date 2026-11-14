@@ -87,6 +87,7 @@ var spec = delegator.Spec{
 		delegator.CapCommandApprovalAllowlist: delegator.Yes(),
 		delegator.CapPlanMode:                 delegator.No("no /plan delivery"),
 		delegator.CapUsageQuery:               delegator.Yes(),
+		delegator.CapUsageReports:             delegator.Yes(),
 		delegator.CapLimitReset:               delegator.No("Dick 2026-11-11: /limit_reset and the /usage unblock are Claude Code only"),
 	},
 

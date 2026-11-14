@@ -361,5 +361,9 @@ func helpDetail(ctx context.Context, cmd *Command, req Request, cc CommandContex
 		b.WriteString("\n\n")
 		b.WriteString(display.MarkdownTable([]display.Column{{Header: "Subcommand"}, {Header: "Description"}}, rows))
 	}
+	if cmd.Help != "" {
+		b.WriteString("\n\n")
+		b.WriteString(cmd.Help)
+	}
 	return b.String()
 }

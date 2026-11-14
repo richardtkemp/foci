@@ -1,6 +1,7 @@
 package ccstream
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"regexp"
@@ -9,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/delegator"
 	"foci/internal/ratelimit"
 	"foci/internal/timeutil"
 	"foci/internal/usagehold"
@@ -43,6 +45,42 @@ func (b *Backend) reportUsageWindow(info RateLimitInfo) {
 		return // nothing to judge the window by
 	}
 	b.onUsageWindow(ev)
+}
+
+// SetUsageSink implements delegator.UsageReporter (#3103): every
+// rate_limit_event, of every type, goes to sink.
+func (b *Backend) SetUsageSink(sink delegator.UsageSink) { b.usageSink = sink }
+
+// reportUsageEvent hands one rate_limit_event to the usage store: its window,
+// utilization (a 0-1 fraction, absent on "allowed"), reset and status, and
+// the event line as received.
+func (b *Backend) reportUsageEvent(ev *RateLimitEvent) {
+	if b.usageSink == nil {
+		return
+	}
+	info := ev.RateLimitInfo
+	w := delegator.UsageReportWindow{
+		Window:       info.RateLimitType,
+		Length:       delegator.UsageWindowLength(info.RateLimitType),
+		Status:       info.Status,
+		LimitReached: info.Status == "rejected",
+	}
+	if info.Utilization != nil {
+		u := *info.Utilization
+		w.Used, w.UsedUnit = &u, delegator.UsageUnitFraction
+	}
+	if info.ResetsAt != nil {
+		w.ResetsAt = time.Unix(int64(*info.ResetsAt), 0)
+	}
+	payload := ev.Raw
+	if len(payload) == 0 {
+		payload, _ = json.Marshal(ev)
+	}
+	b.usageSink(delegator.UsageReport{
+		Source:  delegator.UsageSourceCCEvent,
+		Windows: []delegator.UsageReportWindow{w},
+		Payload: payload,
+	})
 }
 
 // fireSessionLimit invokes the session-limit hook if one is registered.

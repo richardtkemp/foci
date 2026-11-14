@@ -75,6 +75,7 @@ var spec = delegator.Spec{
 		delegator.CapCommandApprovalAllowlist: delegator.Yes(),
 		delegator.CapPlanMode:                 delegator.Yes(),
 		delegator.CapUsageQuery:               delegator.No("no plan usage to report"),
+		delegator.CapUsageReports:             delegator.No("no usage figures to report"),
 		delegator.CapLimitReset:               delegator.No("no usage hold or plan usage to reset"),
 	},
 

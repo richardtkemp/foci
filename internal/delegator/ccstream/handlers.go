@@ -1345,6 +1345,7 @@ func (b *Backend) OnRateLimit(ev *RateLimitEvent) {
 	b.logger().Debugf("rate_limit_event received: %s", describeRateLimitInfo(info))
 	b.noteRateLimitForSuggestions(info)
 	b.reportUsageWindow(info)
+	b.reportUsageEvent(ev)
 	if info.Status == "" || info.Status == "allowed" {
 		return
 	}

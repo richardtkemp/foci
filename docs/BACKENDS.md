@@ -179,6 +179,7 @@ Every delegated backend declares every capability in its `delegator.Spec` (`inte
 | `command_approval_allowlist` | auto-approves prompts matching foci's [permissions] allowlist (StartOptions.AutoApproveRules) | ✓ | ✓ | ✓ |
 | `plan_mode` | has a /plan delivery (Spec.PlanDelivery) | ✓ | ✗ | ✓ |
 | `usage_query` | reports plan usage for /mana (Spec.UsageQuery) | ✓ | ✓ | ✗ |
+| `usage_reports` | hands every usage figure it receives to the host's usage store (UsageReporter, #3103); usage_query requires it | ✓ | ✓ | ✗ |
 | `limit_reset` | /limit_reset force-lifts the rate-limit gate and usage hold, and a /usage read that finds usage available lifts them (its UsageQuery reports rate-limit availability) | ✓ | ✗ | ✗ |
 
 Why not:
@@ -215,6 +216,7 @@ Why not:
 - `relogin`: codex: the re-login driver logs Claude Code in; opencode: the re-login driver logs Claude Code in.
 - `plan_mode`: codex: no /plan delivery.
 - `usage_query`: opencode: no plan usage to report.
+- `usage_reports`: opencode: no usage figures to report.
 - `limit_reset`: codex: Dick 2026-11-11: /limit_reset and the /usage unblock are Claude Code only; opencode: no usage hold or plan usage to reset.
 
 <!-- END GENERATED CAPABILITIES -->
@@ -711,6 +713,7 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - U6: `cc/handlers.go:OnRateLimit`, `cc/ratelimit.go:FormatRateLimitNotice`, `HostHooks.OnRateLimitNotice` | ✗ grep `rate.?limit` | `cx/ratelimits.go:onRateLimitsUpdated` (account/rateLimits/updated) → `HostHooks.OnRateLimitNotice`; usage in `StatusDetail`
 - U7: `cc/handlers.go:OnAssistant` (`syntheticSessionLimitText`) and `cc/handlers.go:OnRateLimit` (`status=rejected`, `rejectedWindowSignal`) → `HostHooks.EngageRateLimit` | `oc/ratelimit.go:handleRateLimitRetry` → `HostHooks.EngageRateLimit` | `cx/ratelimits.go:onRateLimitsUpdated` → `gateSignal` → `HostHooks.EngageRateLimit`
 - `usage_query`: `cc/usage_oneshot.go:QueryUsage`, `cc/spec.go` `UsageQuery` | ✗ `oc/spec.go` declares `usage_query` No | `cx/ratelimits.go:QueryUsage` (fresh `account/rateLimits/read` on the agent's running app-server, else the last pushed numbers), `cx/spec.go` `UsageQuery`
+- `usage_reports` (#3103): `cc/ratelimit.go:SetUsageSink`, `reportUsageEvent` (every `rate_limit_event`) | ✗ `oc/spec.go` declares `usage_reports` No | `cx/ratelimits.go:SetUsageSink`, `reportUsage` (`account/rateLimits/updated`, the start-up `account/rateLimits/read`)
 - U9: `cc/handlers.go:OnResult` | `oc/handlers.go:onMessageUpdated` | `cx/handlers.go:onTokenUsage`
 - U10: `cc/usage_oneshot.go:parseUsagePayload` (`RateLimitsAvailable`, `UsageWindow.Reported`) → `command/mana.go` and `command/limit_reset.go` → `agent/limit_reset.go:ResetLimits` | ✗ (`Spec.Caps[CapLimitReset]` = No) | ✗ (`Spec.Caps[CapLimitReset]` = No)
 

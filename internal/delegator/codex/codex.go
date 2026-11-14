@@ -82,6 +82,7 @@ type Backend struct {
 	// gateSignal).
 	onRateLimited   func(signal ratelimit.Signal)
 	onUsageWindow   func(ev usagehold.Event) // HostHooks.OnUsageWindow (#2491)
+	usageSink       delegator.UsageSink      // SetUsageSink: the usage store (#3103)
 	model           string
 	launchModel     string
 	catalogueModels []string

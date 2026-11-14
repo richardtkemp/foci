@@ -224,6 +224,7 @@ type Backend struct {
 	lastModel     string
 	lastUsage     *TokenUsage              // per-call usage from last assistant message
 	onUsageWindow func(ev usagehold.Event) // HostHooks.OnUsageWindow (#2491)
+	usageSink     delegator.UsageSink      // SetUsageSink: the usage store (#3103)
 	rlThrottle    *RateLimitThrottle       // OnRateLimit throttle; shared per agent (agentThrottle)
 
 	// prevModelUsage is this process's previous result's modelUsage, for the

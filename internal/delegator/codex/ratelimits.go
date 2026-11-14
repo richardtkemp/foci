@@ -478,6 +478,7 @@ func (b *Backend) onRateLimitsUpdated(params json.RawMessage) {
 	st := b.rateLimits()
 	b.deliverRateLimitNotices(st.apply(p.RateLimits, now))
 	b.reportUsageWindows(p.RateLimits)
+	b.reportUsage(delegator.UsageSourceCodexUpdate, snapshotReportWindows(p.RateLimits), params)
 	// The startup read (seedRateLimits) never closes the gate: the gate's
 	// deadline survives a foci restart on its own, and re-closing it would
 	// re-broadcast the "rate limited" notice on every restart. A live update
@@ -532,7 +533,7 @@ func (b *Backend) reportUsageWindows(snap rateLimitSnapshot) {
 // block shows it before the first turn. Seeding never warns (see marks).
 // Best-effort: a failure is logged, not fatal.
 func (b *Backend) seedRateLimits() {
-	if err := b.readRateLimits(); err != nil {
+	if _, err := b.readRateLimits(delegator.UsageSourceCodexRead); err != nil {
 		b.logDebugf("%v", err)
 	}
 }
@@ -542,10 +543,14 @@ func (b *Backend) seedRateLimits() {
 // startup seed it never closes the rate-limit gate (only a live update does,
 // see onRateLimitsUpdated); notices fire only for a real change since the
 // buckets were last seen.
-func (b *Backend) readRateLimits() error {
+//
+// source, when not "", hands the read to the usage store as a report of that
+// source (#3103). /usage passes "": the gateway stores its result itself.
+// It returns the response as received.
+func (b *Backend) readRateLimits(source string) (json.RawMessage, error) {
 	raw, err := b.sendAndWait("account/rateLimits/read", nil)
 	if err != nil {
-		return fmt.Errorf("account/rateLimits/read failed: %w", err)
+		return nil, fmt.Errorf("account/rateLimits/read failed: %w", err)
 	}
 	var r struct {
 		RateLimits          *rateLimitSnapshot           `json:"rateLimits"`
@@ -553,25 +558,93 @@ func (b *Backend) readRateLimits() error {
 	}
 	if err := json.Unmarshal(raw, &r); err != nil {
 		b.logWarnf("malformed account/rateLimits/read response: %v", err)
-		return fmt.Errorf("malformed account/rateLimits/read response: %w", err)
+		return nil, fmt.Errorf("malformed account/rateLimits/read response: %w", err)
 	}
 	st := b.rateLimits()
 	now := timeutil.Now()
 	var notices []string
+	var windows []delegator.UsageReportWindow
 	if len(r.RateLimitsByLimitID) > 0 {
 		for id, sn := range r.RateLimitsByLimitID {
 			if sn.LimitID == "" {
 				sn.LimitID = id
 			}
 			notices = append(notices, st.apply(sn, now)...)
+			windows = append(windows, snapshotReportWindows(sn)...)
 		}
 	} else if r.RateLimits != nil {
 		notices = st.apply(*r.RateLimits, now)
+		windows = snapshotReportWindows(*r.RateLimits)
 	}
 	// Only a second process of an agent that already saw these buckets can
 	// get notices here, and only for a real change since then.
 	b.deliverRateLimitNotices(notices)
-	return nil
+	if source != "" {
+		b.reportUsage(source, windows, raw)
+	}
+	return raw, nil
+}
+
+// SetUsageSink implements delegator.UsageReporter (#3103): every
+// account/rateLimits/updated and the start-up account/rateLimits/read go to
+// sink.
+func (b *Backend) SetUsageSink(sink delegator.UsageSink) {
+	b.mu.Lock()
+	b.usageSink = sink
+	b.mu.Unlock()
+}
+
+// reportUsage hands one report to the usage store, when one is set.
+func (b *Backend) reportUsage(source string, windows []delegator.UsageReportWindow, payload json.RawMessage) {
+	b.mu.Lock()
+	sink := b.usageSink
+	b.mu.Unlock()
+	if sink == nil {
+		return
+	}
+	sink(delegator.UsageReport{
+		Source:  source,
+		Windows: windows,
+		Payload: append(json.RawMessage(nil), payload...),
+	})
+}
+
+// snapshotReportWindows lists one bucket's windows as a usage report keeps
+// them: "<bucket>/<length>" with codex's used percent and reset, and the
+// bucket's limit-reached state on each. A bucket with no window but a
+// reached limit gets one "<bucket>/limit" entry. The names match
+// UsageInfo.ReportWindows for a /usage read.
+func snapshotReportWindows(snap rateLimitSnapshot) []delegator.UsageReportWindow {
+	id := snap.LimitID
+	if id == "" {
+		id = "codex"
+	}
+	reached := ""
+	if snap.RateLimitReachedType != nil {
+		reached = *snap.RateLimitReachedType
+	}
+	var out []delegator.UsageReportWindow
+	for _, w := range []*rateLimitWindow{snap.Primary, snap.Secondary} {
+		if w == nil {
+			continue
+		}
+		used := w.UsedPercent
+		rw := delegator.UsageReportWindow{
+			Window: id + "/" + windowLabel("", *w), Used: &used, UsedUnit: delegator.UsageUnitPercent,
+			Status: reached, LimitReached: reached != "",
+		}
+		if w.WindowDurationMins != nil && *w.WindowDurationMins > 0 {
+			rw.Length = time.Duration(*w.WindowDurationMins) * time.Minute
+		}
+		if w.ResetsAt != nil && *w.ResetsAt != 0 {
+			rw.ResetsAt = time.Unix(*w.ResetsAt, 0)
+		}
+		out = append(out, rw)
+	}
+	if len(out) == 0 && reached != "" {
+		out = append(out, delegator.UsageReportWindow{Window: id + "/limit", Status: reached, LimitReached: true})
+	}
+	return out
 }
 
 func (b *Backend) deliverRateLimitNotices(notices []string) {
@@ -607,18 +680,19 @@ func QueryUsage(_ context.Context, agentID string) (*delegator.UsageInfo, error)
 	st := rateLimitsFor(agentID)
 	fresh := false
 	note := ""
+	var raw json.RawMessage
 	if owner := pooledOwner(agentID); owner == nil {
 		note = "no codex process is running for this agent"
-	} else if err := owner.readRateLimits(); err != nil {
+	} else if r, err := owner.readRateLimits(""); err != nil {
 		owner.logInfof("/usage: %v", err)
 		note = "the read failed: " + err.Error()
 	} else {
-		fresh = true
+		fresh, raw = true, r
 	}
 	a := st.allowance()
 	a.Fresh = fresh
 	if !fresh {
 		a.Note = note
 	}
-	return &delegator.UsageInfo{Backend: usageDisplayName, Allowance: a}, nil
+	return &delegator.UsageInfo{Backend: usageDisplayName, Allowance: a, Raw: raw}, nil
 }

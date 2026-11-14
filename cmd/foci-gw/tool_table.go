@@ -767,9 +767,12 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 			// ~25-60 s); the Claude Code agents on one login share one
 			// account (#3104), and agents on other logins have their own.
 			// The schedule skips while the reserve is 0 (the check is off).
+			// Each successful read is stored in the usage history (#3103).
+			hist := usageBindingFor(d.p.cfg, acfg)
 			spawnDeps.Usage = tools.SpawnUsageReader(acfg.Backend, usageTargetFor(d.p.cfg, acfg), q,
 				usageAccountFor(acfg.ID, acfg.Backend, acfg.BackendConfig.Env),
-				func() bool { return live.Load().Tools.SpawnReservePercent > 0 })
+				func() bool { return live.Load().Tools.SpawnReservePercent > 0 },
+				hist.RecordRead)
 		}
 		spawnDeps.Delegated = &tools.DelegatedSpawn{
 			Spec: spec,

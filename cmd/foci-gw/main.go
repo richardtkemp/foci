@@ -319,6 +319,10 @@ Subcommands:
 	si := initSessions(cfg)
 	app.SetSessionChats(appMediaChats(si.sessionIndex))
 	setupUsageHold(cfg, si.sessionIndex)
+	// The usage history (#3103): every usage figure received, kept forever.
+	if st := openUsageHistory(cfg.DataPath("usage-history.db")); st != nil {
+		defer func() { _ = st.Close() }()
+	}
 	applyUserCommandTimeout(cfg)
 	tools.SetMaxSpawnDepth(cfg.Tools.MaxSpawnDepth) // #3061; live: liveApplySpawnDepthAddrs
 	defer si.cleanup()

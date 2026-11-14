@@ -744,8 +744,10 @@ lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-cap
 	# app's InitReplayStore is the same shape (#1281): it creates the replay
 	# store's real schema for the agent-rename fixture (internal/agentrename
 	# tests), which must use the production DDL rather than a copy of it.
+	# usagelog/reports.go too (#3103): Store.Reports reads back the whole
+	# usage history for the tests that prove what each writer stored.
 	@raw=$$($(LINT_ENV) $(GOBIN)/deadcode ./...) || { echo "deadcode failed or was killed (exit $$?) — reachability gate did NOT run"; exit 1; }; \
-	output=$$(printf '%s' "$$raw" | grep -v -e '/testharness/' -e '/testtemp/' -e '/clock/fake.go:' -e '/testmarker/' -e '/mermaidtest/' -e '/fluxfake/' -e '/execguardtest/' -e 'config/settablearray.go:.*SetTableArray' -e 'config/configedit.go:.*UnsetInFile' -e 'app/framestore.go:.*InitReplayStore' || true); \
+	output=$$(printf '%s' "$$raw" | grep -v -e '/testharness/' -e '/testtemp/' -e '/clock/fake.go:' -e '/testmarker/' -e '/mermaidtest/' -e '/fluxfake/' -e '/execguardtest/' -e 'config/settablearray.go:.*SetTableArray' -e 'config/configedit.go:.*UnsetInFile' -e 'app/framestore.go:.*InitReplayStore' -e 'usagelog/reports.go:' || true); \
 	if [ -n "$$output" ]; then echo "$$output"; exit 1; fi
 	@echo "=== find-disconnected-tests (Test* functions that don't touch prod) ==="
 	@$(LINT_ENV) ./bin/find-disconnected-tests ./...

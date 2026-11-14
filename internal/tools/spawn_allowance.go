@@ -74,6 +74,11 @@ type UsageRead struct {
 // UsageReader returns the current allowance reading of one agent's backend.
 type UsageReader func(ctx context.Context) UsageRead
 
+// UsageRecorder stores one successful usage read in the usage history
+// (#3103): source is delegator.UsageSourceScheduled for a scheduled read,
+// delegator.UsageSourceSpawn for one a spawn's check started.
+type UsageRecorder func(info *delegator.UsageInfo, source string)
+
 // UsageCache caches usage reads per account key and, once started, refreshes
 // each registered key on its own randomised schedule.
 type UsageCache struct {
@@ -91,6 +96,9 @@ type usageEntry struct {
 	query     func(context.Context) (*delegator.UsageInfo, error)
 	enabled   func() bool // the schedule reads only while true; nil = always
 	scheduled bool        // its schedule loop runs
+	// record stores each successful read in the usage history with its
+	// source (#3103); nil = not stored.
+	record UsageRecorder
 
 	info   *delegator.UsageInfo // last good reading
 	infoAt time.Time            // when info was read; zero = never
@@ -132,8 +140,10 @@ func StartSpawnUsageRefresh(ctx context.Context) { spawnUsage.Start(ctx) }
 // registrant of one account reads the same login, so the first
 // registration's query serves them all. enabled gates the scheduled reads of
 // that account (the first registration's is kept). Nil query = nil reader
-// (no usage source).
-func SpawnUsageReader(backend string, target delegator.UsageTarget, query delegator.UsageQuery, account string, enabled func() bool) UsageReader {
+// (no usage source). record, when given, stores each successful read of the
+// account in the usage history (#3103); like the query, the first
+// registration's is kept.
+func SpawnUsageReader(backend string, target delegator.UsageTarget, query delegator.UsageQuery, account string, enabled func() bool, record ...UsageRecorder) UsageReader {
 	if query == nil {
 		return nil
 	}
@@ -143,17 +153,21 @@ func SpawnUsageReader(backend string, target delegator.UsageTarget, query delega
 	}
 	return spawnUsage.Register(key, func(ctx context.Context) (*delegator.UsageInfo, error) {
 		return query(ctx, target)
-	}, enabled)
+	}, enabled, record...)
 }
 
 // Register records key's query (the first registration wins: every
 // registrant of one key reads the same account) and returns its reader. Once
-// the cache is started, key's schedule runs.
-func (c *UsageCache) Register(key string, query func(context.Context) (*delegator.UsageInfo, error), enabled func() bool) UsageReader {
+// the cache is started, key's schedule runs. record (the first given is
+// used) stores each successful read with its source.
+func (c *UsageCache) Register(key string, query func(context.Context) (*delegator.UsageInfo, error), enabled func() bool, record ...UsageRecorder) UsageReader {
 	c.mu.Lock()
 	e := c.entry(key)
 	if e.query == nil {
 		e.query, e.enabled = query, enabled
+		if len(record) > 0 {
+			e.record = record[0]
+		}
 	}
 	if c.runCtx != nil && !e.scheduled {
 		e.scheduled = true
@@ -192,7 +206,7 @@ func (c *UsageCache) schedule(ctx context.Context, key string, e *usageEntry) {
 		}
 		if e.enabled == nil || e.enabled() {
 			c.mu.Lock()
-			running := c.startRefreshLocked(key, e)
+			running := c.startRefreshLocked(key, e, delegator.UsageSourceScheduled)
 			c.mu.Unlock()
 			select {
 			case <-running:
@@ -228,7 +242,7 @@ func (c *UsageCache) read(ctx context.Context, key string) UsageRead {
 	recentErr := e.err != nil && now.Sub(e.errAt) < usageRetry
 	running := e.running
 	if running == nil && !recentErr && e.query != nil {
-		running = c.startRefreshLocked(key, e)
+		running = c.startRefreshLocked(key, e, delegator.UsageSourceSpawn)
 	}
 	switch {
 	case !e.infoAt.IsZero() && age < usageStale:
@@ -263,23 +277,27 @@ func (c *UsageCache) read(ctx context.Context, key string) UsageRead {
 }
 
 // startRefreshLocked starts one read of key unless one runs, and returns the
-// channel closed when the running read ends. c.mu must be held.
-func (c *UsageCache) startRefreshLocked(key string, e *usageEntry) chan struct{} {
+// channel closed when the running read ends. source names who started it,
+// for the usage history. c.mu must be held.
+func (c *UsageCache) startRefreshLocked(key string, e *usageEntry, source string) chan struct{} {
 	if e.running != nil {
 		return e.running
 	}
 	done := make(chan struct{})
 	e.running = done
-	go c.refresh(key, e, done)
+	go c.refresh(key, e, done, source)
 	return done
 }
 
-func (c *UsageCache) refresh(key string, e *usageEntry, done chan struct{}) {
+func (c *UsageCache) refresh(key string, e *usageEntry, done chan struct{}, source string) {
 	ctx, cancel := context.WithTimeout(context.Background(), usageReadTimeout)
 	defer cancel()
 	start := time.Now()
 	info, err := e.query(ctx)
 	spawnLog.Infof("usage read for %s took %s (err=%v)", key, time.Since(start).Round(time.Millisecond), err)
+	if err == nil && e.record != nil {
+		e.record(info, source) // a failed read stores nothing
+	}
 	c.mu.Lock()
 	if err != nil {
 		e.err, e.errAt = err, c.now()

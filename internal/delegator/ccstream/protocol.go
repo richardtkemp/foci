@@ -689,6 +689,8 @@ type PromptSuggestionMessage struct {
 type RateLimitEvent struct {
 	Type          string        `json:"type"` // "rate_limit_event"
 	RateLimitInfo RateLimitInfo `json:"rate_limit_info"`
+	// Raw is the event's line as received, for the usage store (#3103).
+	Raw json.RawMessage `json:"-"`
 }
 
 // RateLimitInfo holds the fields from CC's rate_limit_event.rate_limit_info.

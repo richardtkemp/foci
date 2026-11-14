@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/usagelog"
 )
 
 // ManaCommand creates a /mana command that reports the usage allowance of the
@@ -34,31 +35,60 @@ import (
 // also lifts the agent's rate-limit gate and its account's usage hold
 // (Agent.ResetLimits), as /limit_reset does: that account only. A read that
 // does not show usage available changes nothing.
-func ManaCommand(query delegator.UsageQuery, target delegator.UsageTarget, liftOnAvailable bool) *Command {
-	return &Command{
+//
+// history (optional, #3103) is the agent's view of the usage history store:
+// a fresh read is stored there, and /mana cached (/usage cached) answers
+// from it alone (manaCached). Without it, /mana cached says no figures are
+// stored.
+func ManaCommand(query delegator.UsageQuery, target delegator.UsageTarget, liftOnAvailable bool, history ...*usagelog.Binding) *Command {
+	var hist *usagelog.Binding
+	if len(history) > 0 {
+		hist = history[0]
+	}
+	fresh := func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
+		info, err := query(ctx, target)
+		if err != nil {
+			return Response{}, fmt.Errorf("query usage: %w", err)
+		}
+		hist.RecordRead(info, delegator.UsageSourceMana)
+		return manaFreshReply(info, cc, liftOnAvailable), nil
+	}
+	cmd := &Command{
 		Name:        "mana",
 		Aliases:     []string{"usage"},
 		Description: "Show the backend's plan usage (windows used %, resets, limits)",
 		Category:    "observability",
-		Execute: func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
-			info, err := query(ctx, target)
-			if err != nil {
-				return Response{}, fmt.Errorf("query usage: %w", err)
-			}
-			text := formatUsage(info)
-			if cc.Agent != nil {
-				if name := cc.Agent.UsageAccountName(); name != "" {
-					text += "\n\nAccount: " + name
-				}
-			}
-			if liftOnAvailable && cc.Agent != nil && cc.Agent.UsageAvailable(info) {
-				if res := cc.Agent.ResetLimits("/usage found usage available"); res.Cleared() {
-					text += "\n\n▶️ Usage is available. " + res.Summary()
-				}
-			}
-			return Response{Text: text}, nil
-		},
+		Help:        manaCachedHelp,
+		Subcommands: []Subcommand{{
+			Name:        "cached",
+			Description: "Answer at once from the usage figures foci already holds, with their age (no fresh read). Add json for a script.",
+			Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+				return manaCached(hist, req.Args, cc), nil
+			},
+		}},
+		DefaultExecute: fresh,
+		// Bare /mana runs the fresh read, as before: no subcommand keyboard.
+		KeyboardOptions: func(context.Context, CommandContext) []KeyboardOption { return nil },
 	}
+	cmd.buildSubcommandDispatch()
+	return cmd
+}
+
+// manaFreshReply is the reply to plain /mana and /usage: the fresh read, the
+// account's name, and the #3043 lift when the read shows usage available.
+func manaFreshReply(info *delegator.UsageInfo, cc CommandContext, liftOnAvailable bool) Response {
+	text := formatUsage(info)
+	if cc.Agent != nil {
+		if name := cc.Agent.UsageAccountName(); name != "" {
+			text += "\n\nAccount: " + name
+		}
+	}
+	if liftOnAvailable && cc.Agent != nil && cc.Agent.UsageAvailable(info) {
+		if res := cc.Agent.ResetLimits("/usage found usage available"); res.Cleared() {
+			text += "\n\n▶️ Usage is available. " + res.Summary()
+		}
+	}
+	return Response{Text: text}
 }
 
 // formatUsage renders a UsageInfo as the /mana reply text, headed by the

@@ -232,6 +232,7 @@ func (rd *Reader) dispatch(line []byte) {
 			rd.lg.Warnf("dropping malformed rate_limit_event: %v", err)
 			return
 		}
+		msg.Raw = append(json.RawMessage(nil), line...)
 		rd.handler.OnRateLimit(&msg)
 
 	case "prompt_suggestion":
