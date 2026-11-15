@@ -257,6 +257,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// backend_config.claude_ai_skills (#2953): whether CC lists the claude.ai
 	// account's skills, read at every launch like the rules above.
 	claudeAISkills := liveClaudeAISkills(agentID, p.configPath, config.DerefBool(backendConfig.ClaudeAISkills))
+	// backend_config.add_dirs (#3123): Claude Code's extra working
+	// directories (--add-dir), read at every launch the same way.
+	addDirs := liveAddDirs(agentID, p.configPath, backendConfig.AddDirs)
 
 	// The gateway's callbacks into the backend, built once per agent with no
 	// backend-specific branching (#2154 Phase 3, HostHooks). A backend takes
@@ -311,6 +314,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		PreToolRules:    preToolRules,
 		StopRules:       stopRules,
 		ClaudeAISkills:  claudeAISkills,
+		AddDirs:         addDirs,
 	}
 	// This agent's view of the usage history (#3103): the account its
 	// backend's usage reports are stored under.
@@ -1453,6 +1457,12 @@ func liveRules[R any](agentID, configPath string, protect func(string) error, ki
 // (#2953), read at every CC launch like the pretool rules.
 func liveClaudeAISkills(agentID, configPath string, startup bool) func() bool {
 	return liveValue(agentID, configPath, gwConfigProtect, "claude_ai_skills", startup, (*config.Config).ClaudeAISkills)
+}
+
+// liveAddDirs is the live source of backend_config.add_dirs (#3123), read at
+// every CC launch like the pretool rules.
+func liveAddDirs(agentID, configPath string, startup []string) func() []string {
+	return liveValue(agentID, configPath, gwConfigProtect, "add_dirs", startup, (*config.Config).AddDirs)
 }
 
 // liveValue re-reads the config file on every call and resolves this agent's

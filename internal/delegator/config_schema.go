@@ -52,6 +52,8 @@ var gatewayConfigKeys = map[string]func(Spec) bool{
 	"stop_rules":    func(s Spec) bool { return s.Supports(CapStopRules) },
 	// Claude Code's syncClaudeAiSkills setting (#2953).
 	"claude_ai_skills": func(s Spec) bool { return s.ConfigFamily == ConfigFamilyClaudeCode },
+	// Claude Code's --add-dir launch flags (#3123).
+	"add_dirs": func(s Spec) bool { return s.ConfigFamily == ConfigFamilyClaudeCode },
 }
 
 // HonoursConfigKey reports whether an agent on this backend gets any effect

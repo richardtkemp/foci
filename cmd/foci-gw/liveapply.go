@@ -151,7 +151,8 @@ var (
 	// Read from the config file at every Claude Code launch (#2953,
 	// liveClaudeAISkills), like the pretool rules: there is no handle to push
 	// into, so the applier only confirms the edit; the next CC launch reads it.
-	liveApplyCCLaunchAddrs = []string{"agent.backend_config.claude_ai_skills"}
+	// backend_config.add_dirs (#3123, liveAddDirs) is read the same way.
+	liveApplyCCLaunchAddrs = []string{"agent.backend_config.claude_ai_skills", "agent.backend_config.add_dirs"}
 
 	// modelinfo is an object[] section (not scalar hot-tagged fields), so it
 	// has no per-field registry rows. The bare section address is what

@@ -135,6 +135,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	if v, ok := b.cfg["allowed_tools"].(string); ok && v != "" && !restrictedBatch(opts.BatchAccess) {
 		args = append(args, "--allowedTools", v)
 	}
+	args = append(args, addDirArgs(b.addDirs, opts.BatchAccess)...)
 
 	// Build foci's hook settings JSON and append it as a --settings argv
 	// so CC loads it as a flagSettings source (always enabled, merges
@@ -855,4 +856,24 @@ func requestedPermissionMode(args []string) string {
 		}
 	}
 	return ""
+}
+
+// addDirArgs returns one "--add-dir <dir>" pair per entry of the agent's
+// backend_config.add_dirs (#3123), read from source now so a config edit
+// reaches the next launch. Claude Code then treats each as a working
+// directory for its file and Bash tools. A restricted batch (spawn raw,
+// explore) gets none: it is confined to its own folder on purpose, like the
+// agent's allowed_tools it also does not get. The flag is variadic in Claude
+// Code; repeating it per entry keeps every value bound to its own flag.
+func addDirArgs(source func() []string, access delegator.BatchAccess) []string {
+	if source == nil || restrictedBatch(access) {
+		return nil
+	}
+	var args []string
+	for _, d := range source() {
+		if d != "" {
+			args = append(args, "--add-dir", d)
+		}
+	}
+	return args
 }

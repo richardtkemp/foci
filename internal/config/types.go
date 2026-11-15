@@ -359,6 +359,10 @@ type BackendConfig struct {
 	Port              *int              `toml:"port"               desc:"TCP port for the opencode serve subprocess (0 = auto-pick)"`
 	DefaultPermission *string           `toml:"default_permission" desc:"opencode permission mode applied at Start to the session's own ruleset: ask, allow, or deny"`
 	BatchModel        *string           `toml:"batch_model"        desc:"Model for foci's own small background jobs on this agent (foci_summary, the /prompts diff summary), passed to the backend as written (e.g. haiku for Claude Code). Unset = the agent's own model. Overrides the [cc_backend] / [opencode_backend] batch_model"`
+	// AddDirs (#3123): foci passes one --add-dir per entry to every Claude
+	// Code launch of the agent (chat sessions, branches, forks, spawns; not a
+	// restricted batch). Re-read from the config file at each CC launch.
+	AddDirs []string `toml:"add_dirs" hot:"session" desc:"Claude Code only: extra working directories for the agent's Claude Code sessions, as absolute paths. foci passes each as --add-dir to every Claude Code launch (chat sessions, branches, forks, spawns; a restricted spawn or explore keeps only its own folder), so Bash, Read, Edit and Write treat them as working directories, e.g. a folder a workspace symlink points into. A relative path is ignored with one startup warning. Read at each Claude Code session launch, so a change reaches the next new or resumed session"`
 	// ClaudeAISkills (#2953): foci passes syncClaudeAiSkills=<this> in the
 	// --settings of every Claude Code launch, so the account's claude.ai
 	// ("anthropic-skills:*") skills are hidden on every host unless an agent

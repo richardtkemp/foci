@@ -394,6 +394,11 @@ func decodeConfig(data []byte, path string, knownBackends []string) (*Config, er
 		configLog.Warnf("%s", w)
 	}
 
+	// A relative backend_config.add_dirs entry is ignored, with one warning (#3123).
+	for _, w := range DropRelativeAddDirs(&cfg) {
+		configLog.Warnf("%s", w)
+	}
+
 	// Pre-cold compaction (#1066) enabled where it can never fire.
 	for _, w := range PrecoldNeverFiresWarnings(&cfg) {
 		configLog.Warnf("%s", w)

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"foci/internal/delegator/pretool"
@@ -110,5 +111,33 @@ func TestLiveClaudeAISkills(t *testing.T) {
 	write("this is = = not toml")
 	if !source() {
 		t.Error("broken file dropped the last good value")
+	}
+}
+
+// TestLiveAddDirs proves backend_config.add_dirs reaches the next CC launch
+// the same way (#3123): unset is none, an edit is picked up, a relative entry
+// is dropped, and a broken file keeps the last good value.
+func TestLiveAddDirs(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "foci.toml")
+	write := func(body string) {
+		t.Helper()
+		cfg := "[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n[[agents]]\nid = \"a\"\nbackend = \"claude-code\"\n" + body
+		if err := os.WriteFile(path, []byte(cfg), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("")
+	source := liveAddDirs("a", path, []string{"/startup"})
+	if got := source(); len(got) != 0 {
+		t.Fatalf("unset add_dirs = %q, want none", got)
+	}
+	write("[agents.backend_config]\nadd_dirs = [\"/srv/x\", \"rel/y\"]\n")
+	if got := source(); !slices.Equal(got, []string{"/srv/x"}) {
+		t.Fatalf("add_dirs = %q, want [/srv/x] (edit picked up, relative dropped)", got)
+	}
+	write("this is = = not toml")
+	if got := source(); !slices.Equal(got, []string{"/srv/x"}) {
+		t.Errorf("broken file: add_dirs = %q, want the last good [/srv/x]", got)
 	}
 }

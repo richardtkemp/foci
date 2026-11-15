@@ -151,7 +151,7 @@ func renderConfigSchema(specs []delegator.Spec) string {
 	}
 	b.WriteString("\n(gateway) = read by the gateway for the backend, not by the backend package; " +
 		"`env` reaches a backend that reads `StartOptions.Env`, `pretool_rules` / `stop_rules` one declaring `pretool_rules` / `stop_rules`, " +
-		"`claude_ai_skills` the claude-code config family.\n\n")
+		"`claude_ai_skills` and `add_dirs` the claude-code config family.\n\n")
 	for _, s := range specs {
 		if s.ConfigFamily != "" {
 			b.WriteString("- " + s.Name + " folds the global `" + familySections[s.ConfigFamily] + "` section into its backend_config (Spec.ConfigFamily).\n")

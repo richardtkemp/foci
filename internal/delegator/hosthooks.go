@@ -76,6 +76,12 @@ type HostHooks struct {
 	// synced skills are listed. Honoured by the Claude Code backend
 	// (ConfigFamilyClaudeCode); nil = false (hidden).
 	ClaudeAISkills func() bool
+
+	// AddDirs is the live source of backend_config.add_dirs (#3123), read at
+	// every session start: the extra working directories passed to Claude
+	// Code as --add-dir. Honoured by the Claude Code backend
+	// (ConfigFamilyClaudeCode); nil = none.
+	AddDirs func() []string
 }
 
 // HostHooksAcceptor is implemented by backends that take HostHooks

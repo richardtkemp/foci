@@ -91,6 +91,8 @@ func (b *Backend) RunningSubagents() []delegator.RunningSubagent { return b.agen
 //     the live config makes an edit reach the next session (#2033).
 //   - ClaudeAISkills (#2953) is read at every Start too: it sets the
 //     syncClaudeAiSkills key of the launch's --settings (launchSettings).
+//   - AddDirs (#3123) is read at every Start: one --add-dir per entry
+//     (addDirArgs).
 func (b *Backend) SetHostHooks(h delegator.HostHooks) {
 	b.onAuthFailure = h.OnAuthFailure
 	b.onLoginExpiry = h.OnLoginExpiry
@@ -103,6 +105,7 @@ func (b *Backend) SetHostHooks(h delegator.HostHooks) {
 	b.preToolRules = h.PreToolRules
 	b.stopRules = h.StopRules
 	b.claudeAISkills = h.ClaudeAISkills
+	b.addDirs = h.AddDirs
 }
 
 // SetOnAutonomousOpen registers a hook fired when the backend detects CC has

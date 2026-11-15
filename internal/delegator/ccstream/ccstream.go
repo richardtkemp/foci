@@ -268,6 +268,9 @@ type Backend struct {
 	// claudeAISkills yields backend_config.claude_ai_skills (#2953), read at
 	// every Start; nil = false (the claude.ai skills are hidden).
 	claudeAISkills func() bool
+	// addDirs yields backend_config.add_dirs (#3123), read at every Start;
+	// nil = no extra working directories.
+	addDirs func() []string
 	// stopRules yields the agent's stop rules (#2089) baked into the Stop
 	// hook command at each Start. Set via SetHostHooks.
 	stopRules func() []stoprule.Rule
