@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -322,8 +323,10 @@ func TestRestoreSpawnsReportsUnresumableAsLost(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			agent := newScriptedSpawnAgent(0)
+			obs := &recordingSpawnObserver{}
 			h := newPersistHarness(agent, func(d *SpawnDeps) {
 				d.CanResume = func(string) bool { return tc.canResume }
+				d.Observer = obs
 			})
 			rec := runningRecord("spawn-bb")
 			rec.Resumes = tc.resumes
@@ -345,6 +348,13 @@ func TestRestoreSpawnsReportsUnresumableAsLost(t *testing.T) {
 			}
 			if snap, ok := h.tracker.Lookup("test/imain", rec.ID, 0); !ok || snap.Running || snap.Outcome != "lost" {
 				t.Fatalf("tracker = %+v (ok %v), want it known as lost", snap, ok)
+			}
+			// The app's chit for it ends: no later frame ever would (#3127).
+			obs.mu.Lock()
+			ended, parents := slices.Clone(obs.ended), slices.Clone(obs.parents)
+			obs.mu.Unlock()
+			if !slices.Equal(ended, []string{rec.ID}) || len(parents) != 0 {
+				t.Fatalf("observer ended %v (started for %v), want spawn-bb ended once and nothing started", ended, parents)
 			}
 			d.done(true)
 			if _, ok := h.store.record(t, rec.ID); ok {

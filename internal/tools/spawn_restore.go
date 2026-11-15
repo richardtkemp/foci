@@ -108,6 +108,11 @@ func (s *Spawner) RestoreSpawns() {
 		if reason != "" {
 			tr.adopt(rec, false, "lost", func() {})
 			spawnLog.Warnf("spawn=%s branch=%s cannot be resumed after restart: %s", rec.ID, rec.BranchKey, reason)
+			// Its app chit was left open by the last process, and no
+			// later run will close it (#3127): end it here.
+			if s.deps.Observer != nil {
+				s.deps.Observer.SpawnEnded(rec.Parent, rec.ID)
+			}
 			if rec.Result != "" {
 				s.deliver(rec.Parent, rec.ID, rec.Result)
 			}
