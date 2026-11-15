@@ -24,6 +24,7 @@ Background (dark, or transparent) and style (photographic, line art, flat vector
 - **Keep the subject inside the inscribed circle with margin**, or it is clipped mid-stroke.
 - Wide horizontal elements are truncated at both ends. Check whether that looks intentional or severed.
 - Corner vignettes and background gradients vanish after the crop. Spend contrast on the centre.
+- Don't write "circle" or "inscribed circle" in the prompt: Gemini paints a disc or ring into the background, which shows as a border after the crop. Say "subject centred, wide empty margin, nothing touches the edges".
 
 ## Approach
 1. Read the agent's `character/SOUL.md`.
@@ -35,9 +36,11 @@ Background (dark, or transparent) and style (photographic, line art, flat vector
 ## The gate: `avatar-gate.py`
 
 ```bash
-~/shared/skills/agent-avatar/avatar-gate.py a.png b.png c.png -o /tmp/gate.png
+uv run ~/shared/skills/agent-avatar/avatar-gate.py a.png b.png c.png -o /tmp/gate.png
 # then view /tmp/gate.png and judge from it, not from the originals
 ```
+
+The script needs `uv` on PATH. It declares its own dependencies (numpy, Pillow) in an inline `# /// script` block; uv installs them into its shared cache, not the skill directory. Calling it through `uv run` works even if the file has lost its executable bit.
 
 It masks each candidate to a circle and renders it at true display sizes (32/48/64 px) on a light and a dark ground, plus one smooth enlargement. Flags: `--sizes 32,48,64`, `--inspect 192` (`0` to skip), `-o`.
 

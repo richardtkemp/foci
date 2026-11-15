@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["numpy", "pillow"]
+# ///
 """Avatar legibility gate — render candidates as foci actually displays them.
 
 foci shows an agent avatar as a SMALL CIRCLE. Judging an uncropped 1024px square
