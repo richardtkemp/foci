@@ -267,7 +267,13 @@ func (a *Agent) usageHoldPhase() usagehold.Phase {
 // during a hold everything but keepalives, foci_remind fires and the turns
 // the hold itself starts (holdPermit); during a stop everything.
 func (a *Agent) usageHoldsTrigger(trigger string, holdPermit bool) bool {
-	switch a.usageHoldPhase() {
+	return usageHoldsTriggerIn(a.usageHoldPhase(), trigger, holdPermit)
+}
+
+// usageHoldsTriggerIn is usageHoldsTrigger for a given phase (a snapshot a
+// caller reads once, #3121).
+func usageHoldsTriggerIn(phase usagehold.Phase, trigger string, holdPermit bool) bool {
+	switch phase {
 	case usagehold.Hold:
 		return !(isKeepaliveTrigger(trigger) || trigger == "scheduled_wake" || holdPermit)
 	case usagehold.Stop:

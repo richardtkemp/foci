@@ -478,9 +478,41 @@ func heldSiblingPins(held []Envelope, env Envelope) bool {
 // review F1: refusing the head here too double-fired EnqueueInjectWait's
 // Refused — a close of a closed channel — and re-ran the wake refusal hook).
 func (a *Agent) releaseHeld(ctx context.Context, inb *sessionInbox) bool {
+	return a.releaseHeldBefore(ctx, inb, nil)
+}
+
+// heldBound limits a release walk to arrival order against the first
+// usage-held user message (#3121): seq is that message's enqSeq, phase the
+// usage-hold phase read once for the whole walk.
+type heldBound struct {
+	seq   uint64
+	phase usagehold.Phase
+}
+
+// passes reports whether env, a held entry that arrived after the bound's
+// user message, may still run before it: only when the usage hold holds
+// that message and not env (a keepalive or a foci_remind fire during a
+// hold, #2491 requirement 6). A jumpQueue entry (#3114, Q45: it runs ahead
+// of everything queued) is never limited. The phase is the walk's snapshot,
+// so a lift landing mid-walk cannot let a later entry run first.
+func (b *heldBound) passes(env Envelope) bool {
+	if b == nil || env.jumpQueue || env.enqSeq < b.seq {
+		return true
+	}
+	return usageHoldsTriggerIn(b.phase, "user", false) &&
+		!usageHoldsTriggerIn(b.phase, env.Inject.Trigger, env.Inject.HoldPermit)
+}
+
+// releaseHeldBefore is releaseHeld limited by bound (nil: no limit): an
+// entry the bound stops stays parked in place, untouched, for a later walk.
+func (a *Agent) releaseHeldBefore(ctx context.Context, inb *sessionInbox, bound *heldBound) bool {
 	kept := make([]Envelope, 0, len(inb.held))
 	ok := true
 	for i, env := range inb.held {
+		if !bound.passes(env) {
+			kept = append(kept, env)
+			continue
+		}
 		pinned := heldSiblingPins(kept, env)
 		if env.Inject.SkipHolds && !pinned && a.tryPeerSteerHeld(inb, &env) {
 			continue
@@ -504,6 +536,62 @@ func (a *Agent) releaseHeld(ctx context.Context, inb *sessionInbox) bool {
 	}
 	a.syncUsageHeldMirror(inb)
 	return ok
+}
+
+// heldReleasable reports whether the next release walk would run or steer
+// at least one held entry: one whose own hold has opened and that no
+// same-class sibling pins — releaseHeld's decision, without running
+// anything. driveAndDrainOrphans ends its follow-ups when it is true, so the
+// loop top releases that entry before the queued user messages, which all
+// arrived after it (#3121, Q58). Worker-confined.
+func (a *Agent) heldReleasable(inb *sessionInbox) bool {
+	var kept []Envelope
+	for _, env := range inb.held {
+		pinned := heldSiblingPins(kept, env)
+		if env.Inject.SkipHolds && !pinned && a.peerSteerTarget(env) {
+			return true
+		}
+		if a.injectHeld(env) || (pinned && !a.usageHoldPassesPast(env)) {
+			kept = append(kept, env)
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// releaseHeldInArrivalOrder is the worker's loop-top release of everything
+// parked: the held injections (releaseHeld) and the user messages a usage
+// hold parked (releaseUsageHeld), in the order they arrived (#3121, Dick's
+// Q58 ruling 2026-11-14: "keep arrival order"). The two lists are kept apart,
+// so when the usage-held messages are released now, only the injections that
+// arrived before the first of them run first; the held messages then run as
+// their one turn (#2491), and the injections that arrived after them run
+// next — still ahead of the worker's queue, which arrived later than both.
+// The hidden resume line of an interrupted turn heads the usage-held list
+// unnumbered (enqSeq 0), so no held injection runs before it. Returns false
+// when the worker must stop.
+func (a *Agent) releaseHeldInArrivalOrder(ctx context.Context, inb *sessionInbox) bool {
+	a.takeUsageResume(inb)
+	for {
+		if len(inb.usageHeld) == 0 {
+			return a.releaseHeld(ctx, inb)
+		}
+		bound := &heldBound{seq: inb.usageHeld[0].enqSeq, phase: a.usageHoldPhase()}
+		if !a.releaseHeldBefore(ctx, inb, bound) {
+			return false
+		}
+		if usageHoldsTriggerIn(bound.phase, "user", false) {
+			// Still held: what arrived after the held messages waits
+			// with them, unless the hold lets it pass.
+			return true
+		}
+		// releaseUsageHeld re-reads the phase: if the hold came back, the
+		// messages stay and the next pass sees the new phase.
+		if !a.releaseUsageHeld(ctx, inb) {
+			return false
+		}
+	}
 }
 
 // refuseHeld refuses every inject still on the held list — the worker is

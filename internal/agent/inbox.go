@@ -146,11 +146,13 @@ type Envelope struct {
 	// queue's other jumpQueue entries (FIFO among them) and before the rest.
 	jumpQueue bool
 
-	// enqSeq is the session-local order Enqueue put this user message on the
-	// channel in (1-based; 0 = never queued through Enqueue). A /stop that
-	// drops a queued batch drops every message queued up to it, including
-	// ones the worker had not yet pulled into the batch (#2337) — see
-	// sessionInbox.stopThrough.
+	// enqSeq is the session-local order Enqueue put this envelope on the
+	// channel in (1-based; 0 = never queued through Enqueue). User messages
+	// and injections share the series (#3121), so the loop top can release
+	// held injections and usage-held user messages in arrival order. A /stop
+	// that drops a queued batch drops every user message queued up to it,
+	// including ones the worker had not yet pulled into the batch (#2337) —
+	// see sessionInbox.stopThrough.
 	enqSeq uint64
 
 	// usageHeldID names this input in the session's stored held list while a
@@ -491,8 +493,9 @@ type sessionInbox struct {
 	// within the agent queued right behind it into it, once.
 	foldArmed atomic.Bool
 
-	// enqSeq numbers the user messages Enqueue puts on ch (the last number
-	// handed out). stopThrough is the highest of those a /stop of a queued
+	// enqSeq numbers the envelopes Enqueue puts on ch, user messages and
+	// injections alike (the last number handed out; #3121). stopThrough is
+	// the highest of those a /stop of a queued
 	// batch covered: CancelSession sets it while it fires waitCancel. The
 	// worker drops a user message numbered at or below it when it dequeues
 	// one — a message accepted before the /stop that the waiting worker had
@@ -1141,6 +1144,9 @@ func (a *Agent) enqueueInjection(inb *sessionInbox, env Envelope, reloginHold bo
 			return true
 		}
 	}
+	// Numbered in the same series as user messages, so a release can keep
+	// held injections and held user messages in arrival order (#3121).
+	env.enqSeq = inb.enqSeq.Add(1)
 	select {
 	case inb.ch <- env:
 		return true
@@ -1536,11 +1542,10 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 		a.logger().Debugf("inbox: session worker exiting sk=%s", inb.sk)
 	}()
 	for {
-		if !a.releaseHeld(ctx, inb) {
-			return
-		}
-		a.takeUsageResume(inb)
-		if !a.releaseUsageHeld(ctx, inb) {
+		// Taken before the release reads the phase, so a change that lands
+		// after that read still wakes the select below.
+		usageChanged := a.usageHoldChanged()
+		if !a.releaseHeldInArrivalOrder(ctx, inb) {
 			return
 		}
 		if len(inb.held) > 0 {
@@ -1572,7 +1577,7 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 		}
 		var usageCh <-chan struct{}
 		if len(inb.usageHeld) > 0 {
-			usageCh = a.usageHoldChanged()
+			usageCh = usageChanged
 		}
 		select {
 		case <-ctx.Done():
@@ -2699,8 +2704,11 @@ func (s resolvingLateSink) DeliversToPlatform() bool {
 // late arrivals join the worker's queue behind what is already queued; when
 // the queue's head is an injection, no queued user message joins a follow-up
 // and the loop ends, so the injection runs (from the worker's loop top)
-// before every user message enqueued after it. When a user message heads
-// the queue it takes every queued user message with it, as one follow-up.
+// before every user message enqueued after it. A held injection whose hold
+// has opened ends the loop the same way (heldReleasable, #3121): it parked
+// at the queue's head, so it arrived before every queued user message. When
+// a user message heads the queue it takes every queued user message with it,
+// as one follow-up.
 // Orphan steers still run right after the turn they were sent during.
 // Injections are never folded into a follow-up platform batch: its Run
 // closure would never fire, and an inject carries no Text for the turn to
@@ -2726,8 +2734,11 @@ func (a *Agent) driveAndDrainOrphans(ctx context.Context, inb *sessionInbox, bat
 		}
 		orphans := inb.drainSteer()
 		inb.pushPending(inb.drainAvailable()...)
+		// A held injection whose hold opened during the turn arrived before
+		// every queued user message too (it parked at the queue's head): it
+		// also ends the loop, so the loop top releases it first (#3121).
 		var extras []Envelope
-		if !inb.pendingHeadIsInject() {
+		if !inb.pendingHeadIsInject() && !a.heldReleasable(inb) {
 			extras = a.takeQueuedUsers(inb)
 		}
 		if len(orphans) == 0 && len(extras) == 0 {
