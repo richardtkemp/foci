@@ -331,12 +331,15 @@ type managedBackend struct {
 	place    *livePlace
 	creating atomic.Bool
 
-	// systemTurn is true while the session's current turn is a system turn:
-	// one no human started (keepalive, reflection, wake, cron, notification —
-	// the #2320 definition, typingAllowedFor false). Set by the agent just
-	// before it begins each turn and cleared when a system turn completes
-	// (SetSystemTurn). User input never folds into such a turn (#2591).
-	systemTurn atomic.Bool
+	// protectedTurn is true while the session's current turn is a protected
+	// system turn: one no human started (the #2320 definition,
+	// typingAllowedFor false) that is not a work turn (#3120, isWorkTurn:
+	// a spawn result, inter-session reply, remind wake or compaction wake).
+	// Keepalive, reflection, cron, webhooks and notifications are protected.
+	// Set by the agent just before it begins each turn and cleared when a
+	// protected turn completes (SetProtectedTurn). User input never folds
+	// into such a turn (#2591).
+	protectedTurn atomic.Bool
 }
 
 // getManaged looks up the managed backend for a session key under the lock.
@@ -1098,12 +1101,13 @@ func (m *DelegatedManager) SetTypingAllowed(sessionKey string, allowed bool) (pr
 	return prev
 }
 
-// SetSystemTurn records whether the session's current turn is a system turn
-// (#2591): one no human started. The agent calls it just before every begin and
-// clears it when a system turn completes. Returns the previous setting, so a
+// SetProtectedTurn records whether the session's current turn is a protected
+// system turn (#2591, #3120): one no human started that is not a work turn
+// (isWorkTurn). The agent calls it just before every begin and clears it when
+// a protected turn completes. Returns the previous setting, so a
 // caller whose begin is refused can restore it. No-op (returning false) for an
 // unknown session or a nil manager.
-func (m *DelegatedManager) SetSystemTurn(sessionKey string, system bool) (prev bool) {
+func (m *DelegatedManager) SetProtectedTurn(sessionKey string, system bool) (prev bool) {
 	if m == nil {
 		return false
 	}
@@ -1111,21 +1115,24 @@ func (m *DelegatedManager) SetSystemTurn(sessionKey string, system bool) (prev b
 	if !ok {
 		return false
 	}
-	return mb.systemTurn.Swap(system)
+	return mb.protectedTurn.Swap(system)
 }
 
-// SystemTurnInFlight reports whether the session's already-running backend has
-// a turn in flight that a system input began (#2591). Dick's ruling
+// ProtectedTurnInFlight reports whether the session's already-running backend
+// has a protected system turn in flight (#2591): keepalive, reflection, cron
+// and the other system turns that are not work turns. Dick's ruling
 // (2026-10-31): user input that arrives then must not fold into that turn; it
-// waits for the turn to end and runs as its own turn. A running user turn, or a
-// backend run foci did not begin (an adopted autonomous run), reports false, so
-// input still folds into it. Non-creating, like BackendTurnInFlight.
-func (m *DelegatedManager) SystemTurnInFlight(sessionKey string) bool {
+// waits for the turn to end and runs as its own turn. A running user turn, a
+// work turn (#3120, Dick 2026-11-14 Q57: a spawn result, inter-session reply,
+// remind wake or compaction wake), or a backend run foci did not begin (an
+// adopted autonomous run) reports false, so input still folds into it.
+// Non-creating, like BackendTurnInFlight.
+func (m *DelegatedManager) ProtectedTurnInFlight(sessionKey string) bool {
 	if m == nil {
 		return false
 	}
 	mb, ok := m.getManaged(sessionKey)
-	if !ok || !mb.systemTurn.Load() || !mb.be.IsRunning() {
+	if !ok || !mb.protectedTurn.Load() || !mb.be.IsRunning() {
 		return false
 	}
 	return mb.be.IsTurnInFlight()

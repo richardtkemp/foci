@@ -366,10 +366,12 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// case where messages flow through the channel normally and stack as
 	// follow-ups.
 	//
-	// A running SYSTEM turn is the exception (#2591, Dick's ruling
+	// A running PROTECTED system turn is the exception (#2591, Dick's ruling
 	// 2026-10-31): user input never folds into a keepalive, reflection, cron
 	// or notification turn. It waits here for that turn to end, then runs as
-	// its own turn (or folds into a user turn that began meanwhile).
+	// its own turn (or folds into a user turn that began meanwhile). A work
+	// turn (#3120: a spawn result, inter-session reply, remind wake or
+	// compaction wake) is not protected: input folds into it.
 	if foldable {
 		if err := t.waitOutSystemTurn(ts, be); err != nil {
 			return err
@@ -379,8 +381,8 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		t.logger().Infof("session=%s follow-up message queued behind in-flight turn", ts.SessionKey)
 		t.logger().Debugf("RunInference: Inject(SourceUser, follow-up) start sk=%s", ts.SessionKey)
 		// User input folding into the running turn: its reply shows typing
-		// (#2320) — the turn it joins is a user turn or an adopted run, never
-		// a system turn (waitOutSystemTurn above).
+		// (#2320) — the turn it joins is a user turn, a work turn or an
+		// adopted run, never a protected turn (waitOutSystemTurn above).
 		a.DelegatedManager.SetTypingAllowed(ts.SessionKey, true)
 		err := be.ImmediateInject(ts.Ctx, delegator.Inject{
 			Source:                   delegator.SourceUser,
@@ -426,8 +428,8 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	return t.beginTurn(ts, be, foldable)
 }
 
-// waitOutSystemTurn blocks while a system turn is in flight on ts's session
-// (#2591): user input must not fold into it. It returns once that turn has
+// waitOutSystemTurn blocks while a protected system turn is in flight on ts's
+// session (#2591): user input must not fold into it. It returns once that turn has
 // ended, so RunInference then begins a fresh turn, or folds into a user turn
 // or adopted run that is in flight by then. The timeout bounds a lost
 // completion signal, as in beginTurn's SourceSystem retry loop. Once shutdown
@@ -436,7 +438,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 // error if the turn is cancelled while it waits.
 func (t *DelegatedTransport) waitOutSystemTurn(ts *TurnState, be delegator.Delegator) error {
 	a := t.agent
-	for waited := false; a.DelegatedManager.SystemTurnInFlight(ts.SessionKey); waited = true {
+	for waited := false; a.DelegatedManager.ProtectedTurnInFlight(ts.SessionKey); waited = true {
 		if a.ShuttingDown() {
 			return nil
 		}
@@ -553,15 +555,18 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 	}
 	typingAllowed := typingAllowedFor(ts.Ctx, ts.Trigger)
 	// A system turn is one no human started: the #2320 definition the typing
-	// gate uses. While it runs, user input waits instead of folding (#2591).
-	systemTurn := !typingAllowed
+	// gate uses. A protected one is any system turn but a work turn (#3120,
+	// isWorkTurn): while it runs, user input waits instead of folding
+	// (#2591). A work turn (a spawn result, inter-session reply, remind wake
+	// or compaction wake) takes folds like a user turn.
+	protectedTurn := !typingAllowed && !isWorkTurn(ts)
 	var prevSystem, systemMarked bool
-	if systemTurn {
+	if protectedTurn {
 		// The mark clears when the turn completes, so a later run foci did
 		// not begin (an adopted autonomous run) is not mistaken for it.
 		orig := turnEvents.OnTurnComplete
 		turnEvents.OnTurnComplete = func(result *delegator.TurnResult) {
-			a.DelegatedManager.SetSystemTurn(ts.SessionKey, false)
+			a.DelegatedManager.SetProtectedTurn(ts.SessionKey, false)
 			if orig != nil {
 				orig(result)
 			}
@@ -625,15 +630,15 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 		// not silence that turn's indicator meanwhile (#2320). A refused begin
 		// hands the permission back to the turn still running.
 		prevTyping := a.DelegatedManager.SetTypingAllowed(ts.SessionKey, typingAllowed)
-		// Likewise the system-turn mark (#2591): set just before the begin,
-		// handed back if the begin is refused or fails.
-		prevSystem, systemMarked = a.DelegatedManager.SetSystemTurn(ts.SessionKey, systemTurn), true
+		// Likewise the protected-turn mark (#2591): set just before the
+		// begin, handed back if the begin is refused or fails.
+		prevSystem, systemMarked = a.DelegatedManager.SetProtectedTurn(ts.SessionKey, protectedTurn), true
 		err = be.ImmediateInject(ts.Ctx, inj)
 		if !errors.Is(err, delegator.ErrTurnInFlight) {
 			break
 		}
 		a.DelegatedManager.SetTypingAllowed(ts.SessionKey, prevTyping)
-		a.DelegatedManager.SetSystemTurn(ts.SessionKey, prevSystem)
+		a.DelegatedManager.SetProtectedTurn(ts.SessionKey, prevSystem)
 		systemMarked = false
 		if isKeepaliveTrigger(ts.Trigger) {
 			// Never wait on the worker for a keepalive (ErrKeepaliveSkipped).
@@ -665,7 +670,7 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 	if err != nil && systemMarked {
 		// The begin failed after the mark was set: no completion will clear
 		// it, so hand back the previous setting.
-		a.DelegatedManager.SetSystemTurn(ts.SessionKey, prevSystem)
+		a.DelegatedManager.SetProtectedTurn(ts.SessionKey, prevSystem)
 	}
 	if err != nil {
 		a.clearLiveTurn(ts.SessionKey, ts.RowID())
@@ -682,6 +687,10 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 		// Inject(SourceSteer) instead of racing the primary's write. See
 		// WithOnPrimaryWritten / TODO #777.
 		OnPrimaryWrittenFromContext(ts.Ctx)()
+		// An injection's turn has begun: the messages within the agent
+		// queued right behind it fold into it instead of each running a
+		// turn of its own (#3120 Q60, foldQueuedInjects).
+		a.foldQueuedInjects(ts.SessionKey)
 	} else if voiceMode != nil {
 		// The turn never began, so CC will never fire OnTurnComplete — the
 		// wrapped exit installed above would otherwise never run, leaving

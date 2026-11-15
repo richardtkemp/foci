@@ -263,6 +263,39 @@ func typingAllowedFor(ctx context.Context, trigger string) bool {
 	return HumanSourceFromContext(ctx)
 }
 
+// workTurnTriggers are the triggers of the system turns that carry the user's
+// own work (#3120, Dick 2026-11-14 Q57, "Work turns steer"): "user messages
+// steer into turns started by a spawn result, inter-session reply, remind wake
+// or compaction wake; keepalive, reflection and cron stay protected". The keys
+// are the triggers those turns actually run under:
+//   - async_notify: a [SPAWN RESULT], an async tool result, send_to_spawner,
+//     and a send_to_session reply_to=caller message and its [SESSION RESPONSE]
+//     relay (newAsyncNotifier);
+//   - depth_results: a fanout's [DEPTH RESULTS], the spawn result of a
+//     fanout tree;
+//   - scheduled_wake: a foci_remind wake and the compaction wake
+//     (compactionWakeTrigger);
+//   - compaction-resume: the nudge that resumes the work a compaction cut
+//     when no compaction wake follows (#845).
+//
+// A turn under one of these is a work turn only while its output reaches the
+// session's chat (isWorkTurn): the reply_to=caller target turn, whose output
+// is captured for the caller, stays protected, or a message folded into it
+// would be answered to the caller instead of the user.
+var workTurnTriggers = map[string]bool{
+	"async_notify":      true,
+	"depth_results":     true,
+	"scheduled_wake":    true,
+	"compaction-resume": true,
+}
+
+// isWorkTurn reports whether ts is a work turn (workTurnTriggers): a system
+// turn that user input and messages within the agent may steer into, like a
+// user turn. Its sink must deliver to a platform chat.
+func isWorkTurn(ts *TurnState) bool {
+	return workTurnTriggers[ts.Trigger] && turnevent.SinkFromContext(ts.Ctx).DeliversToPlatform()
+}
+
 // TriggerKeepalive is the trigger label of a keepalive pass. An in-place
 // delegated keepalive injects under the periodic branch type of the same name
 // (injectInPlace → EnqueueInjectWait("keepalive")), so one constant identifies

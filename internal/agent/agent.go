@@ -755,6 +755,11 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, texts []st
 		tc = &DelegatedTransport{sharedTurnOps{agent: a}}
 	} else {
 		tc = &APITransport{sharedTurnOps{agent: a}}
+		// /stop reaches an injection's turn too (#3120 Q59): an API turn
+		// ends on its ctx.
+		var release func()
+		ctx, release = a.bindInjectCancel(ctx, sessionKey)
+		defer release()
 	}
 	ts := NewTurnState(ctx, sessionKey, texts, attachments)
 

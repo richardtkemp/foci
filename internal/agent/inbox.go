@@ -13,7 +13,8 @@
 //     → bot builds Envelope (with platform-supplied Driver)
 //     → bot calls agent.Enqueue(env)                           [hand-off]
 //     → agent routes per-session:                              [agent]
-//         - in-flight (a user turn, never a system one, #2591)
+//         - in-flight (a user or work turn, never a protected system
+//           one, #2591/#3120)
 //           + steer-eligible + CC backend → Inject(SourceSteer)
 //         - in-flight + steer-eligible + API backend → AppendSteer
 //         - a user-input injection (an ask answer) → the same steer
@@ -232,7 +233,8 @@ type InjectMeta struct {
 	// (#3114, Dick 2026-11-14). It skips the holds a system injection waits
 	// for: it steers into a running user turn or adopted autonomous run
 	// (Envelope.Text carries the message), and an open foci_ask does not
-	// defer it. A running system turn is never steered: the message runs
+	// defer it. A running protected system turn is never steered (a work
+	// turn is, #3120): the message runs
 	// right after it (#2591). The usage hold and a CC re-login still hold
 	// it. Background work with no run in flight still parks it, because a
 	// system turn begun in that window swallows the coming autonomous run's
@@ -473,6 +475,21 @@ type sessionInbox struct {
 	cancelMu   sync.Mutex
 	turnCancel context.CancelFunc
 	waitCancel context.CancelFunc
+
+	// injectCtx and injectCancel are set (under cancelMu) while runInject
+	// runs an injection's turn (#3120 Q59: "/stop interrupts whatever turn
+	// runs, system turns included"). CancelSession fires injectCancel; an
+	// API-transport turn listens on injectCtx (bindInjectCancel), and a
+	// delegated one is stopped by its backend's interrupt. Kept apart from
+	// turnCancel, which names a running USER batch to the usage hold's
+	// interrupt (inboxTurnsRunning).
+	injectCtx    context.Context
+	injectCancel context.CancelFunc
+
+	// foldArmed is set while runInject runs an injection (#3120 Q60): when
+	// that injection's turn begins, foldQueuedInjects folds the messages
+	// within the agent queued right behind it into it, once.
+	foldArmed atomic.Bool
 
 	// enqSeq numbers the user messages Enqueue puts on ch (the last number
 	// handed out). stopThrough is the highest of those a /stop of a queued
@@ -805,7 +822,7 @@ func (a *Agent) StopInbox() {
 // Routing:
 //
 //	in-flight user turn + text-only + CC   → Backend.ImmediateInject(SourceSteer)
-//	in-flight system turn (#2591)          → push to channel (runs after it)
+//	in-flight protected turn (#2591)       → push to channel (runs after it)
 //	in-flight + text-only + API backend    → AppendSteer (drained at tool boundary)
 //	user-input injection (an ask answer)   → the same steer paths, else push to channel (#2233)
 //	otherwise (idle, or has attachments)   → push to session's channel
@@ -1055,11 +1072,13 @@ func (a *Agent) trySteer(inb *sessionInbox, env Envelope, active, compacting boo
 	if !(steerMode && active && !compacting && (env.Text != "" || hasAttachments)) {
 		return false
 	}
-	// A running system turn is never steered (#2591, Dick's ruling
+	// A running protected system turn is never steered (#2591, Dick's ruling
 	// 2026-10-31): the message queues and runs as its own turn once the
-	// keepalive / reflection / cron / notification turn ends.
-	if a.DelegatedManager.SystemTurnInFlight(env.SessionKey) {
-		a.logger().Infof("inbox: message waits for the in-flight system turn sk=%s — not steering into it (#2591)", env.SessionKey)
+	// keepalive / reflection / cron / notification turn ends. A work turn
+	// (#3120 Q57: a spawn result, inter-session reply, remind wake or
+	// compaction wake) is not protected, so the message steers into it.
+	if a.DelegatedManager.ProtectedTurnInFlight(env.SessionKey) {
+		a.logger().Infof("inbox: message waits for the in-flight protected system turn sk=%s — not steering into it (#2591)", env.SessionKey)
 		return false
 	}
 	be, err := a.resolveSessionBackend(a.inboxCtx, env.SessionKey)
@@ -1142,7 +1161,8 @@ func (a *Agent) steerToBackend(be delegator.Delegator, env Envelope) bool {
 		return false
 	}
 	// User input folding into the running turn: its reply shows typing
-	// (#2320). The turn is never a system one (trySteer, #2591), but may be an
+	// (#2320). The turn is never a protected one (trySteer, #2591), but may be a
+	// work turn (#3120) or an
 	// adopted run whose typing was off. Restored below if the fold does not
 	// land. A SkipHolds message (#3114) is not user input: it leaves typing as
 	// the running turn set it.
@@ -2129,6 +2149,20 @@ func (a *Agent) runInject(inb *sessionInbox, env Envelope) {
 		// (#1068, #2233 review F4).
 		inb.busy.Add(1)
 		defer inb.busy.Add(-1)
+		// /stop reaches this turn (#3120 Q59, CancelSession), and the
+		// messages queued behind it fold into it once it begins (Q60).
+		injCtx, injCancel := context.WithCancel(context.Background())
+		inb.cancelMu.Lock()
+		inb.injectCtx, inb.injectCancel = injCtx, injCancel
+		inb.cancelMu.Unlock()
+		inb.foldArmed.Store(true)
+		defer func() {
+			inb.foldArmed.Store(false)
+			inb.cancelMu.Lock()
+			inb.injectCtx, inb.injectCancel = nil, nil
+			inb.cancelMu.Unlock()
+			injCancel()
+		}()
 		if a.pendingHoldExpired(env) {
 			a.logger().Infof("inbox: injection sk=%s trigger=%s delivered after %s held by background work (limit %s, #2792)",
 				inb.sk, env.Inject.Trigger, time.Since(env.heldSince).Round(time.Second), a.pendingHoldLimit())
@@ -2455,7 +2489,16 @@ func (a *Agent) CancelSession(sk string) bool {
 		return true
 	}
 	if cancel == nil {
-		return false
+		// An injection's turn (#3120 Q59): a system turn is stopped too.
+		inb.cancelMu.Lock()
+		injCancel := inb.injectCancel
+		inb.cancelMu.Unlock()
+		if injCancel == nil {
+			return false
+		}
+		a.logger().Infof("CancelSession sk=%s firing injected-turn cancel", sk)
+		injCancel()
+		return true
 	}
 	a.logger().Infof("CancelSession sk=%s firing turn cancel", sk)
 	cancel()

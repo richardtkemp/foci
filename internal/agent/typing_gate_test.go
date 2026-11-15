@@ -361,8 +361,8 @@ func TestTypingGate_SteerIntoTypinglessRunShowsTyping(t *testing.T) {
 	a, be, rec := newTypingTestAgent(t)
 	a.inboxCtx = context.Background()
 	runTypingTurn(t, a, context.Background(), TriggerKeepalive)
-	a.DelegatedManager.SetSystemTurn("test/s", false) // the keepalive completed
-	be.setTurnInFlight(true)                          // its background run is in flight
+	a.DelegatedManager.SetProtectedTurn("test/s", false) // the keepalive completed
+	be.setTurnInFlight(true)                             // its background run is in flight
 
 	if !a.steerToBackend(be, Envelope{SessionKey: "test/s", Text: "also this"}) {
 		t.Fatal("steer did not fold into the running turn")

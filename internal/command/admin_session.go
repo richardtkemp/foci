@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"foci/internal/agent"
 	"foci/internal/delegator"
@@ -85,6 +86,16 @@ func StopCommand() *Command {
 	}
 }
 
+// stopConfirmTimeout bounds how long /stop waits for the interrupted turn to
+// end before it replies (#3120 Q59). A backend answers its interrupt within
+// milliseconds (codex ~10 ms) and ends the turn soon after.
+var stopConfirmTimeout = 10 * time.Second
+
+// stillRunningText is /stop's reply when the interrupted turn has not ended
+// within stopConfirmTimeout: the stop was sent, but saying "Stopped." would
+// be false.
+const stillRunningText = "Stop sent, but the turn is still running: the backend has not ended it yet. Send /stop again."
+
 // stopTurn cancels the agent's current turn. With cancelQuestion, a pending
 // AskUserQuestion is cancelled INSTEAD of the turn (plain /stop); /stop all
 // passes false, since it asked to stop everything.
@@ -104,6 +115,12 @@ func stopTurn(ctx context.Context, cc CommandContext, cancelQuestion bool) (Resp
 			}
 		}
 
+		// The turn running now, user or system (#3120 Q59: "/stop
+		// interrupts whatever turn runs, system turns included"), so the
+		// reply can say whether IT ended.
+		running := cc.Agent.DelegatedManager.BackendTurnInFlight(sk)
+		turnID := cc.Agent.LiveTurnID(sk)
+
 		// A turn stop takes the session's background spawns with it, as
 		// Claude Code's interrupt takes its subagents: the app shows spawns
 		// as subagents and labels this "Stop turn and subagents" (#2139).
@@ -113,8 +130,14 @@ func stopTurn(ctx context.Context, cc CommandContext, cancelQuestion bool) (Resp
 		}
 		// Cancel foci's per-session turn ctx (TODO #743 — was a
 		// single bot.cancelTurn field; now precise per session via
-		// Agent.CancelSession).
+		// Agent.CancelSession). It reaches an injection's turn too.
 		cc.Agent.CancelSession(sk)
+		// "Stopped." only when it is true (#3120 Q59): a backend that
+		// ignores its interrupt (codex before #3117) left the turn running
+		// while the reply said it had stopped.
+		if running && !cc.Agent.WaitTurnStopped(ctx, sk, turnID, stopConfirmTimeout) {
+			return Response{Text: stillRunningText}, nil
+		}
 		return Response{Text: "Stopped."}, nil
 	}
 

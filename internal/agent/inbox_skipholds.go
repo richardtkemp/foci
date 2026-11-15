@@ -8,7 +8,8 @@
 // Envelope.Text. Rulings Q40-Q44 on the ticket:
 //
 //   - a running user turn or adopted autonomous run: steer into it;
-//   - a running system turn: run right after it (it is never steered, #2591);
+//   - a running protected system turn: run right after it (it is never
+//     steered, #2591); a running work turn (#3120) is steered into;
 //   - an open foci_ask does not defer it (runInject);
 //   - background work with no run in flight still parks it (#1068: a system
 //     turn begun in that window swallows the coming autonomous run's output).
@@ -93,7 +94,7 @@ func (a *Agent) steerPeerInject(inb *sessionInbox, env Envelope) bool {
 }
 
 // peerSteerTarget reports whether a SkipHolds injection the worker holds has a
-// run to steer into now: a backend turn in flight that is not a system turn
+// run to steer into now: a backend turn in flight that is not a protected turn
 // and not a compaction. On the worker that is an adopted autonomous run (the
 // worker drives every other turn itself). The held watch reads it, so a
 // parked message is released the moment such a run starts. False after a
@@ -104,7 +105,7 @@ func (a *Agent) peerSteerTarget(env Envelope) bool {
 		return false
 	}
 	sk := env.SessionKey
-	return a.DelegatedManager.BackendTurnInFlight(sk) && !a.DelegatedManager.SystemTurnInFlight(sk) && !a.IsCompacting(sk)
+	return a.DelegatedManager.BackendTurnInFlight(sk) && !a.DelegatedManager.ProtectedTurnInFlight(sk) && !a.IsCompacting(sk)
 }
 
 // tryPeerSteerHeld steers a SkipHolds injection the worker is dispatching or

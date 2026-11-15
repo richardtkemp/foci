@@ -42,7 +42,7 @@ func TestNoFold_UserInputWaitsOutSystemTurn(t *testing.T) {
 		{"voice", context.Background(), "voice"},
 		{"ask answer", WithUserInput(context.Background()), "ask_answer"},
 	}
-	for _, sys := range []string{TriggerKeepalive, "reflection", "scheduled_wake", "user", "webhook"} {
+	for _, sys := range []string{TriggerKeepalive, "reflection", "session_notify", "user", "webhook"} {
 		for _, u := range users {
 			t.Run(sys+"/"+u.name, func(t *testing.T) {
 				t.Parallel()
@@ -110,16 +110,16 @@ func TestNoFold_SystemMarkClearsAtCompletion(t *testing.T) {
 	}
 	runTypingTurn(t, a, context.Background(), TriggerKeepalive)
 	be.setTurnInFlight(true)
-	if !a.DelegatedManager.SystemTurnInFlight("test/s") {
-		t.Fatal("SystemTurnInFlight = false while the keepalive runs")
+	if !a.DelegatedManager.ProtectedTurnInFlight("test/s") {
+		t.Fatal("ProtectedTurnInFlight = false while the keepalive runs")
 	}
 	if complete == nil {
 		t.Fatal("keepalive begin installed no OnTurnComplete")
 	}
 	complete(&delegator.TurnResult{Text: "done"})
 	// An autonomous run starts on the same backend.
-	if a.DelegatedManager.SystemTurnInFlight("test/s") {
-		t.Fatal("SystemTurnInFlight = true after the keepalive completed; an adopted run would be mistaken for it")
+	if a.DelegatedManager.ProtectedTurnInFlight("test/s") {
+		t.Fatal("ProtectedTurnInFlight = true after the keepalive completed; an adopted run would be mistaken for it")
 	}
 }
 
@@ -138,7 +138,7 @@ func TestNoFold_RefusedKeepaliveLeavesNoMark(t *testing.T) {
 	ts.StartedAt = time.Now()
 	_ = (&DelegatedTransport{sharedTurnOps{agent: a}}).RunInference(ts) // ErrKeepaliveSkipped
 
-	if a.DelegatedManager.SystemTurnInFlight("test/s") {
+	if a.DelegatedManager.ProtectedTurnInFlight("test/s") {
 		t.Fatal("a refused keepalive marked the running user turn as a system turn")
 	}
 }

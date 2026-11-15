@@ -97,7 +97,7 @@ func TestSkipHolds_NeverSteersSystemTurn(t *testing.T) {
 	be := &mockBackendDT{}
 	be.setTurnInFlight(true)
 	a.DelegatedManager = newMockDelegatedManager(t, be)
-	a.DelegatedManager.SetSystemTurn("test/s", true)
+	a.DelegatedManager.SetProtectedTurn("test/s", true)
 
 	a.Enqueue(skipHoldsInject("test/s", "msg", func() {}, func() { t.Error("steered into a system turn") }))
 
