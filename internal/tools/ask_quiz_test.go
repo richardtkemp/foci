@@ -127,20 +127,16 @@ func TestAsk_QuizValidationRejectedAtCallTime(t *testing.T) {
 }
 
 // TestAsk_QuizVerdictInDeliveredBatch pins requirement 4: the delivered answer
-// batch carries a per-question correct/incorrect verdict for quiz OPTION
-// questions (readable marker + "quiz_results", and "quiz_results_by_id" when
-// ids are set), and no verdict at all for free-recall quiz questions or
-// non-quiz questions. Existing keys ("answers", "answers_by_id") are
-// unchanged. On the pre-change tree no "quiz_results" key exists, so the
-// verdict assertions fail. The JSON payload is parsed rather than substring-
-// matched because json.Marshal HTML-escapes the `<`/`>` in the question text.
+// line of a quiz OPTION question carries its correct/incorrect verdict inline,
+// and free-recall quiz questions and non-quiz questions carry none. Since
+// #3126 the line is the only copy: there is no JSON payload.
 func TestAsk_QuizVerdictInDeliveredBatch(t *testing.T) {
 	t.Parallel()
 
 	// One ask: a quiz option question (id "cap"), a free-recall quiz question
 	// (id "tr") and a plain question. q0Choice drives the quiz answer ("qa:1"
 	// = Oslo = correct, "qa:0" = Bergen = wrong).
-	delivered := func(t *testing.T, q0Choice string) (string, map[string]any) {
+	delivered := func(t *testing.T, q0Choice string) string {
 		t.Helper()
 		tool, _, p, d := newAskFixture()
 		execAsk(t, tool, `{"questions":[
@@ -154,60 +150,32 @@ func TestAsk_QuizVerdictInDeliveredBatch(t *testing.T) {
 		if !ok {
 			t.Fatal("answer batch not delivered")
 		}
-		idx := strings.Index(msg, `{"answers"`)
-		if idx < 0 {
-			t.Fatalf("delivered batch missing JSON payload:\n%s", msg)
-		}
-		var payload map[string]any
-		if err := json.Unmarshal([]byte(msg[idx:]), &payload); err != nil {
-			t.Fatalf("unmarshal payload: %v\n%s", err, msg)
-		}
-		return msg, payload
+		return msg
 	}
 
-	msg, payload := delivered(t, "qa:1")
-	if !strings.Contains(msg, "• Geo → Oslo ✅") {
-		t.Errorf("readable line missing correct verdict:\n%s", msg)
+	msg := delivered(t, "qa:1")
+	for _, want := range []string{"\n• [cap] Geo: Capital of <Norway>? → Oslo ✅", "\n• [tr] Translate dog. → a dog\n", "\n• Plain? → Yes"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("delivered batch missing %q:\n%s", want, msg)
+		}
 	}
-	if answers, _ := payload["answers"].(map[string]any); len(answers) != 3 || answers["Capital of <Norway>?"] != "Oslo" {
-		t.Errorf("answers payload changed shape: %+v", payload["answers"])
-	}
-	if byID, _ := payload["answers_by_id"].(map[string]any); len(byID) != 2 || byID["cap"] != "Oslo" {
-		t.Errorf("answers_by_id payload changed shape: %+v", payload["answers_by_id"])
-	}
-	results, ok := payload["quiz_results"].(map[string]any)
-	if !ok || len(results) != 1 || results["Capital of <Norway>?"] != true {
-		t.Errorf("quiz_results = %+v, want {Capital of <Norway>?: true} only (free recall and plain get none)", payload["quiz_results"])
-	}
-	if byID, ok := payload["quiz_results_by_id"].(map[string]any); !ok || len(byID) != 1 || byID["cap"] != true {
-		t.Errorf("quiz_results_by_id = %+v, want {cap: true}", payload["quiz_results_by_id"])
+	if strings.Contains(msg, "a dog ✅") || strings.Contains(msg, "a dog ❌") || strings.Contains(msg, "Yes ✅") || strings.Contains(msg, "Yes ❌") {
+		t.Errorf("free recall / plain answers must carry no verdict:\n%s", msg)
 	}
 
-	msg, payload = delivered(t, "qa:0")
-	if !strings.Contains(msg, "• Geo → Bergen ❌") {
+	msg = delivered(t, "qa:0")
+	if !strings.Contains(msg, "• [cap] Geo: Capital of <Norway>? → Bergen ❌") {
 		t.Errorf("readable line missing incorrect verdict:\n%s", msg)
 	}
-	if results, _ := payload["quiz_results"].(map[string]any); len(results) != 1 || results["Capital of <Norway>?"] != false {
-		t.Errorf("quiz_results = %+v, want {Capital of <Norway>?: false}", payload["quiz_results"])
-	}
-
-	// A non-quiz ask: no quiz keys at all — requirement 1/4's "unchanged".
-	tool, _, p, d := newAskFixture()
-	execAsk(t, tool, `{"questions":[{"question":"Plain?","options":[{"label":"Yes"}]}]}`)
-	p.answer("qa:0")
-	msg, _ = d.last()
-	if strings.Contains(msg, "quiz_results") {
-		t.Errorf("non-quiz batch must not carry quiz_results:\n%s", msg)
+	if strings.Contains(msg, "secret") || strings.Contains(msg, quizSecretAnswer) {
+		t.Errorf("answer batch leaks quiz answer/explanation:\n%s", msg)
 	}
 }
 
-// TestAsk_QuizVerdictIDKeysOnlyForIDedQuestions pins the by-id contract the
-// schema states ("quiz_results_by_id" when ids are set): an id-less quiz
-// question contributes to "quiz_results" (keyed by text) but never to
-// "quiz_results_by_id" — id-less questions must not collide on an "" key
-// (round-3 review finding 1). Two id-less quiz questions keep separate
-// verdicts. On the pre-fix tree both land on "" and the last one wins.
-func TestAsk_QuizVerdictIDKeysOnlyForIDedQuestions(t *testing.T) {
+// TestAsk_QuizVerdictIDLessQuestions: two id-less quiz questions keep separate
+// verdicts, each on its own line (round-3 review finding 1's collision cannot
+// recur with no keyed payload).
+func TestAsk_QuizVerdictIDLessQuestions(t *testing.T) {
 	t.Parallel()
 	tool, _, p, d := newAskFixture()
 	execAsk(t, tool, `{"questions":[
@@ -219,30 +187,15 @@ func TestAsk_QuizVerdictIDKeysOnlyForIDedQuestions(t *testing.T) {
 	if !ok {
 		t.Fatal("answer batch not delivered")
 	}
-	idx := strings.Index(msg, `{"answers"`)
-	if idx < 0 {
-		t.Fatalf("delivered batch missing JSON payload:\n%s", msg)
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(msg[idx:]), &payload); err != nil {
-		t.Fatalf("unmarshal payload: %v\n%s", err, msg)
-	}
-	results, ok := payload["quiz_results"].(map[string]any)
-	if !ok || len(results) != 2 || results["Capital?"] != true || results["Season?"] != false {
-		t.Errorf("quiz_results = %+v, want separate verdicts for both id-less questions", payload["quiz_results"])
-	}
-	if _, ok := payload["quiz_results_by_id"]; ok {
-		t.Errorf("quiz_results_by_id = %+v, want the key absent when no question has an id", payload["quiz_results_by_id"])
-	}
-	if strings.Contains(msg[idx:], `"":`) {
-		t.Errorf("payload carries an empty key:\n%s", msg)
+	if !strings.Contains(msg, "\n• Capital? → Oslo ✅") || !strings.Contains(msg, "\n• Season? → Summer ❌") {
+		t.Errorf("want separate verdicts for both id-less questions:\n%s", msg)
 	}
 }
 
 // TestAsk_QuizVerdictInLateAnswer pins requirement 4 on the late-answer entry
 // point (round-3 review finding 2): a late answer to a quiz OPTION question
-// carries the same inline verdict and "quiz_results" as a live batch — the two
-// share one body writer — while a late free-recall answer carries no verdict.
+// carries the same inline verdict as a live batch — the two share one line
+// writer — while a late free-recall answer carries no verdict.
 // No reveal fires on this path: the client that rendered the form reveals
 // locally, and the ask is already closed.
 func TestAsk_QuizVerdictInLateAnswer(t *testing.T) {
@@ -265,10 +218,7 @@ func TestAsk_QuizVerdictInLateAnswer(t *testing.T) {
 	if !strings.Contains(msg, "• Capital? → Oslo ✅") {
 		t.Errorf("late answer to a quiz option question missing its verdict marker:\n%s", msg)
 	}
-	if !strings.Contains(msg, `"quiz_results":{"Capital?":true}`) {
-		t.Errorf("late answer payload missing quiz_results:\n%s", msg)
-	}
-	for _, noVerdict := range []string{"a dog ✅", "a dog ❌", "quiz_results_by_id"} {
+	for _, noVerdict := range []string{"a dog ✅", "a dog ❌", "{"} {
 		if strings.Contains(msg, noVerdict) {
 			t.Errorf("late answer must not carry %q (free recall has no verdict, no question has an id):\n%s", noVerdict, msg)
 		}
@@ -395,19 +345,15 @@ func TestAsk_QuizRevealNotOnCancelExpiryOrBatch(t *testing.T) {
 	if !ok {
 		t.Fatal("batched answers not delivered")
 	}
-	if !strings.Contains(msg, `"Q?":"B"`) {
-		t.Errorf("typed number 2 in a batch must resolve to option B:\n%s", msg)
-	}
-	if !strings.Contains(msg, `"quiz_results":{"Q?":true}`) {
-		t.Errorf("batched quiz verdict missing:\n%s", msg)
+	if !strings.Contains(msg, "• Q? → B ✅") {
+		t.Errorf("typed number 2 in a batch must resolve to option B, with its verdict:\n%s", msg)
 	}
 }
 
 // TestAsk_QuizTypedNumberAnswer pins requirement 5 end-to-end through the
 // router: on a quiz question a typed reply that is just a number selects that
 // numbered option (and earns the matching verdict). On the pre-change tree the
-// answer is recorded verbatim ("2"), so both assertions fail. The JSON payload
-// is parsed because json.Marshal HTML-escapes the question's angle brackets.
+// answer is recorded verbatim ("2"), so the assertion fails.
 func TestAsk_QuizTypedNumberAnswer(t *testing.T) {
 	t.Parallel()
 	tool, router, _, d := newAskFixture()
@@ -420,22 +366,8 @@ func TestAsk_QuizTypedNumberAnswer(t *testing.T) {
 	if !ok {
 		t.Fatal("typed number should complete and deliver the batch")
 	}
-	if !strings.Contains(msg, "→ Oslo") {
-		t.Errorf("typed \"2\" must select option 2 (Oslo):\n%s", msg)
-	}
-	idx := strings.Index(msg, `{"answers"`)
-	if idx < 0 {
-		t.Fatalf("delivered batch missing JSON payload:\n%s", msg)
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(msg[idx:]), &payload); err != nil {
-		t.Fatalf("unmarshal payload: %v", err)
-	}
-	if answers, _ := payload["answers"].(map[string]any); answers["Capital of <Norway>?"] != "Oslo" {
-		t.Errorf("answers[question] = %+v, want Oslo (the resolved option)", payload["answers"])
-	}
-	if results, _ := payload["quiz_results"].(map[string]any); results["Capital of <Norway>?"] != true {
-		t.Errorf("quiz_results = %+v, want true for the selected-by-number option", payload["quiz_results"])
+	if !strings.Contains(msg, "• Capital of <Norway>? → Oslo ✅") {
+		t.Errorf("typed \"2\" must select option 2 (Oslo) and earn the correct verdict:\n%s", msg)
 	}
 }
 
@@ -484,20 +416,20 @@ func TestAsk_QuizPromptNoLeak(t *testing.T) {
 }
 
 // TestAsk_DescriptionDocumentsQuizOutput pins that the tool's self-description
-// (what agents actually see) documents the quiz input and the quiz_results
-// output in the DESCRIPTION itself — the first thing an agent reads, which a
+// (what agents actually see) documents the quiz input and the inline ✅/❌
+// verdict output in the DESCRIPTION itself — the first thing an agent reads, which a
 // schema-only mention would leave out — and that the parameter schema restates
 // the quiz contract, including the 0-based correct indexing (review note: the
 // footgun must be stated in the schema itself).
 func TestAsk_DescriptionDocumentsQuizOutput(t *testing.T) {
 	t.Parallel()
 	tool, _, _, _ := newAskFixture()
-	for _, want := range []string{"QUIZ MODE", "quiz_results", "reveal", "do NOT put the answer in the question text", "free-recall"} {
+	for _, want := range []string{"QUIZ MODE", "✅", "❌", "reveal", "do NOT put the answer in the question text", "free-recall"} {
 		if !strings.Contains(tool.Description, want) {
 			t.Errorf("tool description missing %q", want)
 		}
 	}
-	for _, want := range []string{"quiz", "quiz_results", "0-BASED", "reveal", "quiz_results_by_id", "free-recall"} {
+	for _, want := range []string{"quiz", "✅", "0-BASED", "reveal", "free-recall"} {
 		if !strings.Contains(string(tool.Parameters), want) {
 			t.Errorf("tool schema missing %q", want)
 		}

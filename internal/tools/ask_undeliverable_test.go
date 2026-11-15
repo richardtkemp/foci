@@ -66,7 +66,7 @@ func TestAsk_UndeliverableNextQuestionDeliversAnswersSoFar(t *testing.T) {
 		t.Fatalf("system deliveries %q, user deliveries %q; want one user delivery", sys.messages, user.messages)
 	}
 	got := user.messages[0]
-	for _, want := range []string{"1 of 2", "never asked", "the chat went away", "One → B"} {
+	for _, want := range []string{"1 of 2", "never asked", "the chat went away", "One: First? → B"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("delivery lacks %q:\n%s", want, got)
 		}

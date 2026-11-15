@@ -45,9 +45,9 @@ whether they were right.
 
 ## What you get back
 
-The normal answer batch, plus `quiz_results` (`{question text: true|false}`, and
-`quiz_results_by_id` when you set `id`s) for quiz **option** questions — plain multiple choice
-needs no grader. Free-recall answers carry no verdict: judge the text yourself (the model answer
+The normal answer batch: one line per question, `• [id] header: question text → answer`. A quiz
+**option** question's line ends with ✅ (right) or ❌ (wrong), so plain multiple choice needs no
+grader. Set an `id` per question to match lines to cards without matching on question text. Free-recall answers carry no verdict: judge the text yourself (the model answer
 is echoed in the reveal, not in the batch).
 
 ## Rules

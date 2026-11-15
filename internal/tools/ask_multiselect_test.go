@@ -9,43 +9,14 @@ import (
 	"foci/internal/question"
 )
 
-// answerPayload decodes the compact JSON line every delivered answer batch ends
-// with.
-func answerPayload(t *testing.T, msg string) map[string]json.RawMessage {
-	t.Helper()
-	i := strings.LastIndex(msg, "\n{")
-	if i < 0 {
-		t.Fatalf("no JSON payload in %q", msg)
-	}
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(msg[i+1:]), &m); err != nil {
-		t.Fatalf("payload: %v in %q", err, msg)
-	}
-	return m
-}
-
-func payloadSelections(t *testing.T, msg string) map[string]question.MultiAnswer {
-	t.Helper()
-	raw, ok := answerPayload(t, msg)["selections"]
-	if !ok {
-		t.Fatalf("no \"selections\" in %q", msg)
-	}
-	var sel map[string]question.MultiAnswer
-	if err := json.Unmarshal(raw, &sel); err != nil {
-		t.Fatalf("selections: %v", err)
-	}
-	return sel
-}
-
 const multiAsk = `{"questions":[
 	{"question":"Toppings?","id":"top","multiSelect":true,"options":["Cheese","Ham","Olives"]},
 	{"question":"Size?","options":["Small","Large"]}]}`
 
 // TestAsk_MultiSelectBatched is #2308's done-condition: the app answers a
 // multiSelect question with several ticks plus typed text, and the agent's
-// message carries every selected label — on the readable line and in the
-// structured "selections" (by text and by id). The single-select question in
-// the same ask is untouched and gets no selections entry.
+// message carries every selected label on the question's one answer line
+// (#3126: there is no second, structured copy).
 func TestAsk_MultiSelectBatched(t *testing.T) {
 	t.Parallel()
 	tool, _, _, bp, d := newAskBatchFixture(true)
@@ -60,18 +31,40 @@ func TestAsk_MultiSelectBatched(t *testing.T) {
 	if !ok {
 		t.Fatal("no delivery")
 	}
-	if !strings.Contains(msg, "Toppings? → Cheese, Olives (other: extra basil)") || !strings.Contains(msg, "Size? → Large") {
+	if !strings.Contains(msg, "\n• [top] Toppings? → Cheese, Olives (other: extra basil)\n") || !strings.HasSuffix(msg, "\n• Size? → Large") {
 		t.Errorf("readable lines wrong: %q", msg)
 	}
-	want := question.MultiAnswer{Selected: []string{"Cheese", "Olives"}, Other: "extra basil"}
-	sel := payloadSelections(t, msg)
-	if len(sel) != 1 || !reflect.DeepEqual(sel["Toppings?"], want) {
-		t.Errorf("selections = %+v, want only Toppings? → %+v", sel, want)
+	if strings.Contains(msg, "single-pick") {
+		t.Errorf("a real multi pick flagged as single-pick: %q", msg)
 	}
-	var byID map[string]question.MultiAnswer
-	_ = json.Unmarshal(answerPayload(t, msg)["selections_by_id"], &byID)
-	if !reflect.DeepEqual(byID["top"], want) {
-		t.Errorf("selections_by_id = %+v", byID)
+}
+
+// TestAsk_MultiSelectGraderGetsSelections: the grader's stdin contract is
+// unchanged by #3126 — it still receives the structured "selections".
+func TestAsk_MultiSelectGraderGetsSelections(t *testing.T) {
+	t.Parallel()
+	tool, _, _, bp, d := newAskBatchFixture(true)
+	grader := writeGrader(t, "#!/bin/sh\ncat\n")
+	raw := strings.TrimSuffix(strings.TrimSpace(multiAsk), "}") + `,"grader":"` + grader + `"}`
+	execAsk(t, tool, raw)
+	bp.answer([]string{"qa:m:2,0;extra basil", "qa:1"})
+
+	var in graderInput
+	out := waitDeliver(t, d)
+	// The delivery is a "[SYSTEM: graded result …]" header line, then the
+	// grader's stdout — here its own stdin, echoed back.
+	if _, body, ok := strings.Cut(out, "\n"); ok {
+		out = body
+	}
+	if err := json.Unmarshal([]byte(out), &in); err != nil {
+		t.Fatalf("grader stdin is not the graderInput JSON: %v\n%s", err, out)
+	}
+	want := question.MultiAnswer{Selected: []string{"Cheese", "Olives"}, Other: "extra basil"}
+	if len(in.Selections) != 1 || !reflect.DeepEqual(in.Selections["Toppings?"], want) {
+		t.Errorf("grader selections = %+v, want only Toppings? → %+v", in.Selections, want)
+	}
+	if in.AnswersByID["top"] != "Cheese, Olives (other: extra basil)" {
+		t.Errorf("grader answers_by_id = %+v", in.AnswersByID)
 	}
 }
 
@@ -85,25 +78,21 @@ func TestAsk_MultiSelectChatFallback(t *testing.T) {
 	seq.answer("qa:0") // Small
 
 	msg, _ := d.last()
-	got := payloadSelections(t, msg)["Toppings?"]
-	if !reflect.DeepEqual(got, question.MultiAnswer{Selected: []string{"Ham"}, SingleSelectFallback: true}) {
-		t.Errorf("fallback selection = %+v, want Ham flagged single_select_fallback", got)
-	}
-	if !strings.Contains(msg, `"single_select_fallback":true`) {
-		t.Errorf("fallback flag missing from the agent's payload: %q", msg)
+	if !strings.Contains(msg, "\n• [top] Toppings? → Ham (single-pick client: unpicked options are not a considered no)") {
+		t.Errorf("fallback flag missing from the agent's answer line: %q", msg)
 	}
 }
 
-// TestAsk_SingleSelectHasNoSelections: an ask with no multiSelect question
-// delivers exactly the old payload keys.
-func TestAsk_SingleSelectHasNoSelections(t *testing.T) {
+// TestAsk_SingleSelectHasNoFallbackMarker: a plain single-select answer is
+// never marked as a single-pick fallback.
+func TestAsk_SingleSelectHasNoFallbackMarker(t *testing.T) {
 	t.Parallel()
 	tool, _, _, bp, d := newAskBatchFixture(true)
 	execAsk(t, tool, twoQuestions)
 	bp.answer([]string{"qa:0", "qa:1"})
 	msg, _ := d.last()
-	if _, ok := answerPayload(t, msg)["selections"]; ok {
-		t.Errorf("single-select batch gained \"selections\": %q", msg)
+	if strings.Contains(msg, "single-pick") {
+		t.Errorf("single-select batch marked single-pick: %q", msg)
 	}
 }
 
@@ -130,16 +119,18 @@ func TestAsk_MultiSelectQuizVerdict(t *testing.T) {
 		execAsk(t, tool, quiz)
 		bp.answer([]string{token})
 		msg, _ := d.last()
-		var res map[string]bool
-		_ = json.Unmarshal(answerPayload(t, msg)["quiz_results"], &res)
-		if got, ok := res["Primes?"]; !ok || got != want {
-			t.Errorf("%s: quiz_results = %v, want Primes?=%v (msg %q)", token, res, want, msg)
+		mark := " ❌"
+		if want {
+			mark = " ✅"
+		}
+		if !strings.HasSuffix(msg, mark) {
+			t.Errorf("%s: want verdict%s on the line, got %q", token, mark, msg)
 		}
 	}
 }
 
 // TestAsk_MultiSelectSurvivesRestart: a structured multi answer recorded before
-// a restart is still in the delivered payload after it.
+// a restart is still on the delivered answer line after it.
 func TestAsk_MultiSelectSurvivesRestart(t *testing.T) {
 	idx := newStateDB(t)
 	p1 := &fakePresenter{}
@@ -156,8 +147,7 @@ func TestAsk_MultiSelectSurvivesRestart(t *testing.T) {
 	if !ok {
 		t.Fatal("no delivery after restart")
 	}
-	got := payloadSelections(t, msg)["Toppings?"]
-	if !reflect.DeepEqual(got, question.MultiAnswer{Selected: []string{"Olives"}, SingleSelectFallback: true}) {
-		t.Errorf("selection after restart = %+v", got)
+	if !strings.Contains(msg, "\n• [top] Toppings? → Olives (single-pick client: unpicked options are not a considered no)") {
+		t.Errorf("selection after restart lost: %q", msg)
 	}
 }

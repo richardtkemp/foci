@@ -219,9 +219,9 @@ func TestAsk_SingleButtonAnswerDelivers(t *testing.T) {
 	if !strings.Contains(msg, "Blue") {
 		t.Errorf("delivered message missing answer 'Blue':\n%s", msg)
 	}
-	// The compact JSON tail must carry the answer keyed by question text.
-	if !strings.Contains(msg, `"Which color?":"Blue"`) {
-		t.Errorf("delivered message missing JSON answers:\n%s", msg)
+	// One compact line per question: header, question text, chosen label (#3126).
+	if !strings.Contains(msg, "\n• Color: Which color? → Blue") {
+		t.Errorf("delivered message missing the answer line:\n%s", msg)
 	}
 }
 
@@ -250,7 +250,7 @@ func TestAsk_SequentialMultiQuestion(t *testing.T) {
 	if !ok {
 		t.Fatal("answer batch should be delivered after final answer")
 	}
-	if !strings.Contains(msg, `"Q1?":"A1"`) || !strings.Contains(msg, `"Q2?":"B2"`) {
+	if !strings.Contains(msg, "• H1: Q1? → A1") || !strings.Contains(msg, "• H2: Q2? → B2") {
 		t.Errorf("delivered batch missing answers:\n%s", msg)
 	}
 }
@@ -430,7 +430,7 @@ func TestAsk_CompletePartial(t *testing.T) {
 		t.Fatal("a partial batch should be delivered")
 	}
 	// Includes the answered question, excludes the unanswered ones, and signals partiality.
-	if !strings.Contains(msg, `"Q1?":"A1"`) {
+	if !strings.Contains(msg, "• H1: Q1? → A1") {
 		t.Errorf("partial batch missing answered Q1:\n%s", msg)
 	}
 	if strings.Contains(msg, "Q2?") || strings.Contains(msg, "Q3?") {
@@ -788,27 +788,24 @@ func TestAsk_QuestionIDPreservedInOutput(t *testing.T) {
 	if !ok {
 		t.Fatal("no delivery")
 	}
-	// The id must be NOT shown in the question text but preserved in the output.
-	if !strings.Contains(msg, `"answers_by_id"`) {
-		t.Errorf("expected answers_by_id in output, got: %q", msg)
-	}
-	if !strings.Contains(msg, `"q_color":"Blue"`) {
-		t.Errorf("expected id-keyed answer q_color→Blue, got: %q", msg)
+	// The id must be NOT shown in the question text but lead its answer line (#3126).
+	if !strings.Contains(msg, "\n• [q_color] Color: color? → Blue") {
+		t.Errorf("expected the id to lead the answer line, got: %q", msg)
 	}
 	if strings.Contains(p.lastText, "q_color") {
 		t.Errorf("question id must not appear in presented text: %q", p.lastText)
 	}
 }
 
-func TestAsk_NoIDMeansNoAnswersByID(t *testing.T) {
+func TestAsk_NoIDMeansNoIDOnTheLine(t *testing.T) {
 	t.Parallel()
 	tool, _, p, d := newAskFixture()
 	raw := `{"questions":[{"question":"color?","header":"Color","options":[{"label":"Red"}]}]}`
 	execAsk(t, tool, raw)
 	p.answer("qa:0")
 	msg, _ := d.last()
-	if strings.Contains(msg, "answers_by_id") {
-		t.Errorf("no id supplied → no answers_by_id, got: %q", msg)
+	if !strings.Contains(msg, "\n• Color: color? → Red") || strings.Contains(msg, "• [") {
+		t.Errorf("no id supplied → no [id] on the line, got: %q", msg)
 	}
 }
 

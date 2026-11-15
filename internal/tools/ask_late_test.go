@@ -58,7 +58,7 @@ func TestAsk_LateAnswerDeliveredAsMarkedMessage(t *testing.T) {
 		t.Fatal("late answer not delivered")
 	}
 	msg, _ := d.last()
-	for _, want := range []string{"LATE ANSWER", reqID, "2026-09-23 14:02", "Color?", "Size?", "Blue", "Large", `"late":true`} {
+	for _, want := range []string{"LATE ANSWER", reqID, "2026-09-23 14:02", "Color?", "Size?", "Color: Color? → Blue", "Size? → Large"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("late answer message missing %q:\n%s", want, msg)
 		}
