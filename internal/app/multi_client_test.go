@@ -351,7 +351,7 @@ func TestSend_PerClientAck(t *testing.T) {
 	b.acceptInbound(phone, "p9", 9)
 	b.acceptInbound(tablet, "t3", 3)
 
-	b.send(fap.Activity{ConversationID: "conv-1", Kind: "typing"})
+	b.send(fap.MessageConsumed{ConversationID: "conv-1", MessageID: "filler"}) // a sequenced filler: activity is transient since #1064 (ruling 2026-10-13)
 
 	pe := drainEnv(t, phone)
 	te := drainEnv(t, tablet)

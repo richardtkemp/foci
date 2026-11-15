@@ -512,7 +512,7 @@ func TestClientHello_RepliesRosterRegistersTokenAndResumes(t *testing.T) {
 	b := withIdent(&convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}, seen: map[string]struct{}{}}, "ag", "ag/c1")
 	h.convs["c1"] = b
 	for i := 0; i < 3; i++ {
-		b.send(fap.Activity{ConversationID: "c1", Kind: "typing"})
+		b.send(fap.MessageConsumed{ConversationID: "c1", MessageID: "filler"}) // a sequenced filler: activity is transient since #1064 (ruling 2026-10-13)
 	}
 	drainEnv(t, c) // clear the live sends
 
@@ -530,7 +530,7 @@ func TestClientHello_RepliesRosterRegistersTokenAndResumes(t *testing.T) {
 	}
 	var replayed bool
 	for _, f := range frames {
-		if f.t == fap.TypeActivity && f.seq == 3 {
+		if f.t == fap.TypeMessageConsumed && f.seq == 3 { // the filler above; activity is transient since #1064 (ruling 2026-10-13)
 			replayed = true
 		}
 	}

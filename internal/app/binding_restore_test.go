@@ -330,6 +330,10 @@ func TestConvBindingFieldCensus(t *testing.T) {
 		// of the roster list and default delivery from the first roster after a
 		// restart, before the depth manager re-registers its view (#2611).
 		"depthRoot": true,
+		// snapMeta / snapSuggestion: the hello snapshot of the last meta and the
+		// prompt suggestion (#1064), app_conv_snapshot. Those frames are
+		// transient, so without it a restart would lose both.
+		"snapMeta": true, "snapSuggestion": true,
 	}
 	// restartSafe: legitimately empty/zero immediately after a fresh process —
 	// either genuinely-transient runtime state (no live sockets, no turn in
@@ -359,6 +363,10 @@ func TestConvBindingFieldCensus(t *testing.T) {
 		"subagentDetail": true, "subagents": true, "spawns": true, "spawnShells": true, "waitingDetail": true,
 		"activitySent": true, "cacheExpiryMs": true, "lastCmdHash": true,
 		"lastMsgID": true, "readAfterTurn": true,
+		// The activity rate limit's state (#1064): the last frame the sockets
+		// got, when, and whether a send is scheduled. No socket survives a
+		// restart, so zero is the truth.
+		"activityWire": true, "activityWireAt": true, "activityTimer": true,
 		// reminders is setReminders' push-dedup cache (#2600): empty after a
 		// restart, then reseeded by each roster the devices get on hello
 		// (#2602); the roster lists from the reminder store, never from it.

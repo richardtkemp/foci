@@ -442,6 +442,25 @@ type ConversationInfo struct {
 	// leaf), false while it waits for the user. Always sent, never omitted,
 	// so a client can tell a false value from a server that predates it.
 	WaitingOnOther bool `json:"waitingOnOther"`
+	// Meta is the roster snapshot of the Meta frame (#1064): the last meta the
+	// conversation was sent, its keys without conversationId. Omitted when it
+	// never had one. Meta frames are transient (never replayed), so this is how
+	// a device that missed one learns it.
+	Meta *ConversationMeta `json:"meta,omitempty"`
+	// PromptSuggestion is the roster snapshot of the PromptSuggestion frame
+	// (#1064), always present: "" means no suggestion. A missing key tells the
+	// app it talks to an older server, which still replays the frame.
+	PromptSuggestion string `json:"promptSuggestion"`
+}
+
+// ConversationMeta is a Meta frame's payload without its conversationId: the
+// value ConversationInfo.Meta carries (#1064).
+type ConversationMeta struct {
+	Model                 string   `json:"model,omitempty"`
+	PrevCostUsd           *float64 `json:"prevCostUsd,omitempty"`
+	Tokens                *Tokens  `json:"tokens,omitempty"`
+	Gap                   string   `json:"gap,omitempty"`
+	CompactionLimitTokens int64    `json:"compactionLimitTokens,omitempty"`
 }
 
 // Tokens is the token accounting carried by `meta`.

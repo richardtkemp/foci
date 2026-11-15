@@ -381,7 +381,9 @@ func TestToolCalls_ReplayedInOrderAfterReconnect(t *testing.T) {
 	runToolTurn(t, conn, b)
 	live := toolCallFrames(drainRaw(t, c))
 	stored := make(chan struct{})
-	b.sendThen(fap.Activity{ConversationID: b.convID, Kind: string(fap.ActivityKindIdle)}, func() { close(stored) })
+	// A sequenced barrier frame: activity is transient since #1064 (ruling
+	// 2026-10-13), so its onRecorded no longer waits for the store.
+	b.sendThen(fap.MessageConsumed{ConversationID: b.convID, MessageID: "barrier"}, func() { close(stored) })
 	select {
 	case <-stored:
 	case <-time.After(10 * time.Second):

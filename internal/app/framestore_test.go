@@ -316,7 +316,7 @@ func TestFrameStore_TrimAllKeepsSeqHighWaterAcrossRestart(t *testing.T) {
 	b := &convBinding{convID: "quiet", store: s2, seq: s2.MaxSeq("quiet"), seen: map[string]struct{}{}}
 	c := fakeClient()
 	b.attach(c)
-	b.send(fap.Activity{ConversationID: "quiet", Kind: "typing"})
+	b.send(fap.MessageConsumed{ConversationID: "quiet", MessageID: "filler"}) // a sequenced filler: activity is transient since #1064 (ruling 2026-10-13)
 	if ds := drainEnv(t, c); len(ds) != 1 || ds[0].seq != 8 {
 		t.Errorf("first send after restart = %v, want one frame at seq 8", ds)
 	}
@@ -364,7 +364,7 @@ func TestBinding_SeqRehydratesFromStore(t *testing.T) {
 	b := &convBinding{convID: "c1", store: s, seq: s.MaxSeq("c1"), seen: map[string]struct{}{}}
 	c := fakeClient()
 	b.attach(c)
-	b.send(fap.Activity{ConversationID: "c1", Kind: "typing"}) // must be seq 6, not 1
+	b.send(fap.MessageConsumed{ConversationID: "c1", MessageID: "filler"}) // must be seq 6, not 1 (a sequenced filler: activity is transient since #1064, ruling 2026-10-13)
 	ds := drainEnv(t, c)
 	if len(ds) != 1 || ds[0].seq != 6 {
 		t.Fatalf("post-restart send = %v, want one frame at seq 6", ds)

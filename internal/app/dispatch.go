@@ -134,7 +134,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		// The replay below catches this device up, consuming any wake it was
 		// sent: reopen its coalescing windows so the next offline message wakes it.
 		h.pusher.deviceConnected(devID)
-		h.pushRoster(client)
+		roster := h.pushRoster(client)
 		h.pushSettings(client)
 		h.pushReads(client)
 		h.pushDrafts(client)
@@ -149,6 +149,10 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		// attached clients) + replay each conversation the client still has
 		// unrendered frames for.
 		h.resumeConversations(client, f.Resume)
+		// Transient frames (#1064) sent between the roster build and the
+		// attach reached only the sockets attached then: send this one what
+		// moved, plus every conversation's palette.
+		h.catchUpTransient(client, roster)
 		// Persist the capability UNION (not just this client's caps) per ATTACHED
 		// conv, so a restart that rebuilds bindings caps-less still resolves checks
 		// against every device that was attached. Driven off the attach set and not

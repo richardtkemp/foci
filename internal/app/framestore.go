@@ -157,11 +157,21 @@ func newFrameStore(path string, ttl time.Duration) (*frameStore, error) {
 	// "duplicate column" means it is already present (the ALTER-ADD-COLUMN idiom).
 	_, _ = db.Exec(`ALTER TABLE app_frames ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE app_frames ADD COLUMN preview TEXT NOT NULL DEFAULT ''`)
+	if err := initTransientTables(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	s := &frameStore{
 		db:      db,
 		ttl:     ttl,
 		writeCh: make(chan frameWrite, frameWriteQueue),
 		done:    make(chan struct{}),
+	}
+	// Before the writer starts and before any binding reads the store (#1064).
+	if deleted, rewritten, err := s.dropStoredTransientFrames(); err != nil {
+		appLog.Errorf("frame store: dropping stored transient frames (#1064): %v", err)
+	} else if deleted > 0 || rewritten > 0 {
+		appLog.Infof("frame store: dropped %d stored transient frame(s), kept %d conversation top seq(s) as conversation.ack (#1064)", deleted, rewritten)
 	}
 	s.wg.Add(1)
 	go s.writer()

@@ -1363,17 +1363,10 @@ func (h *Hub) pushCommands(b *convBinding) {
 
 // sendCommands is pushCommands with the archived check already made.
 func (h *Hub) sendCommands(b *convBinding) {
-	conn := h.PrimaryBot(b.agent())
-	if conn == nil || conn.commands == nil {
+	cmds, ok := h.paletteFor(b)
+	if !ok {
 		return
 	}
-	ctx := h.deps.Ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	ctx = tools.WithSessionKey(ctx, b.key())
-	req := command.Request{SessionKey: b.key(), Source: "app"}
-	cmds := toFAPCommands(conn.commands.VisibleList(ctx, req, conn.cmdCtx))
 
 	// Send only on an actual change. The palette is derived from the command
 	// registry and the session's capability gating, neither of which moves on a
@@ -1391,6 +1384,22 @@ func (h *Hub) sendCommands(b *convBinding) {
 	}
 
 	b.send(fap.Commands{ConversationID: b.convID, Commands: cmds})
+}
+
+// paletteFor derives the conversation's current command palette; false when
+// its agent has no command registry.
+func (h *Hub) paletteFor(b *convBinding) ([]fap.CommandInfo, bool) {
+	conn := h.PrimaryBot(b.agent())
+	if conn == nil || conn.commands == nil {
+		return nil, false
+	}
+	ctx := h.deps.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = tools.WithSessionKey(ctx, b.key())
+	req := command.Request{SessionKey: b.key(), Source: "app"}
+	return toFAPCommands(conn.commands.VisibleList(ctx, req, conn.cmdCtx)), true
 }
 
 // commandsHash fingerprints a palette for change detection. Name, description
@@ -1467,7 +1476,22 @@ func (h *Hub) pushCommandsTo(client *wsClient) {
 		if archived(b) {
 			continue
 		}
+		if client != nil {
+			// Palettes are transient (#1064): a device gets one by this push,
+			// never by replay, so it is sent to this socket whether or not the
+			// palette changed since the last broadcast.
+			h.sendCommandsTo(b, client)
+			continue
+		}
 		h.sendCommands(b)
+	}
+}
+
+// sendCommandsTo sends this conversation's current palette to one socket,
+// with no change detection.
+func (h *Hub) sendCommandsTo(b *convBinding, client *wsClient) {
+	if cmds, ok := h.paletteFor(b); ok {
+		b.sendTransientTo(client, fap.Commands{ConversationID: b.convID, Commands: cmds})
 	}
 }
 
@@ -1792,6 +1816,9 @@ func (h *Hub) ensureBinding(client *wsClient, agentID, convID string) *convBindi
 		return existing
 	}
 	b = &convBinding{convID: convID, chatID: chatID, replayDepth: h.replayDepth, replayTTL: h.replayTTL, store: h.frames, seq: h.frames.MaxSeq(convID), seen: make(map[string]struct{}), notifyOffline: h.pushNotify, notifySystem: h.notifySystemMessages, onMessageStored: h.chatMessageStored, onActivityChange: h.refreshWaiting}
+	// The hello snapshot of meta and the prompt suggestion survives a restart
+	// (#1064): those frames are transient, so no replay carries them.
+	b.snapMeta, b.snapSuggestion = h.frames.ConvSnapshot(convID)
 	b.setIdent(agentID, sk)
 	if preview, sentMs, ok := h.frames.LastVisible(convID); ok {
 		b.lastPreview = preview
@@ -2057,13 +2084,18 @@ func (h *Hub) createDefaultConversation(agentID string) (string, error) {
 // state. Use pushRosterAll for anything that MUTATES the roster: a change only
 // the originating socket hears is invisible on the user's other devices until
 // they reconnect (#1558).
-func (h *Hub) pushRoster(client *wsClient) {
-	client.sendRaw(fap.HelloServer{Version: fap.ProtocolVersion, Caps: h.caps(), Agents: h.agentRoster()})
+//
+// It returns the roster it sent, which the hello handler diffs against after
+// attaching (catchUpTransient).
+func (h *Hub) pushRoster(client *wsClient) []fap.AgentInfo {
+	agents := h.agentRoster()
+	client.sendRaw(fap.HelloServer{Version: fap.ProtocolVersion, Caps: h.caps(), Agents: agents})
 	// Scoped to THIS client, matching the roster frame above it. The global
 	// pushCommandsAll that used to be here contradicted the doc comment's own
 	// distinction between pushRoster and pushRosterAll, and made every
 	// reconnect a fleet-wide palette broadcast.
 	h.pushCommandsTo(client)
+	return agents
 }
 
 // pushRosterAll re-advertises the roster to every live socket, so connected
@@ -2816,6 +2848,17 @@ type convBinding struct {
 	waitingStartedMs int64        // when the wait on waitingDetail began, unix ms (#2913)
 	activitySent     fap.Activity // last-emitted Activity frame (zero == idle, nothing sent)
 
+	// Transient-frame state (#1064); see transient.go. activityWire is the last
+	// Activity frame fanned out to sockets, activityWireAt when, and
+	// activityTimer the pending rate-limited send (nil = none). snapMeta and
+	// snapSuggestion are the hello snapshot of the last meta and the current
+	// prompt suggestion.
+	activityWire   fap.Activity
+	activityWireAt time.Time
+	activityTimer  bool
+	snapMeta       *fap.ConversationMeta
+	snapSuggestion string
+
 	// lastCmdHash fingerprints the command palette last sent on this
 	// conversation, so pushCommands is a no-op when nothing changed — the same
 	// send-only-on-change discipline activityKind/activityDetail already apply
@@ -3056,7 +3099,8 @@ func (b *convBinding) info() fap.ConversationInfo {
 	return fap.ConversationInfo{ID: b.convID, SessionKey: b.key(), LastSeq: b.seq, Activity: a.Kind, ActivityDetail: a.Detail,
 		ActivityAgentKind: a.AgentKind, ActivityAgentDetail: a.AgentDetail, ActivityAgentCommand: a.AgentCommand, ActivityAgentShell: a.AgentShell, ActivityAgentStartedMs: a.AgentStartedMs, Subagents: a.Subagents,
 		UsageResetMs: a.UsageResetMs, UsageWaitIDs: a.UsageWaitIDs,
-		LastActivityTs: b.lastActMs, LastPreview: b.lastPreview, CacheExpiryMs: b.cacheExpiryMs, DepthRootID: b.depthRoot}
+		LastActivityTs: b.lastActMs, LastPreview: b.lastPreview, CacheExpiryMs: b.cacheExpiryMs, DepthRootID: b.depthRoot,
+		Meta: b.snapMeta, PromptSuggestion: b.snapSuggestion}
 }
 
 // resolveActivity collapses the turn-scoped and session-scoped inputs to a
@@ -3411,7 +3455,10 @@ func (b *convBinding) applyActivity(mutate func()) {
 	hook := b.onActivityChange
 	b.mu.Unlock()
 	if changed {
-		b.send(a)
+		// Server-side readers see every change at once (#1064 req 8); the
+		// sockets get it rate-limited to one frame per activityMinInterval.
+		b.observeLeaf(a)
+		b.queueActivity()
 		if hook != nil {
 			hook(b)
 		}
@@ -3460,6 +3507,15 @@ func (b *convBinding) send(frame fap.ServerFrame) { b.sendThen(frame, nil) }
 // or — with no store — once it is in the in-memory buffer. It also runs if the
 // frame cannot be encoded (there is nothing to wait for). nil = none.
 func (b *convBinding) sendThen(frame fap.ServerFrame, onRecorded func()) {
+	b.noteSnapshot(frame)
+	if isTransientFrame(frame) {
+		// Live only (#1064): no seq, not buffered, not stored, never replayed.
+		b.sendTransient(frame)
+		if onRecorded != nil {
+			onRecorded()
+		}
+		return
+	}
 	// Read before b.mu: the setting's first read loads the settings bag.
 	quiet := isAmbientNotice(frame) && (b.notifySystem == nil || !b.notifySystem())
 	b.mu.Lock()

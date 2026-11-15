@@ -336,9 +336,10 @@ func SetCacheExpiry(sessionKey string, expiryMs int64) {
 }
 
 // DeliverPromptSuggestion sends the backend's predicted next prompt to the
-// conversation bound to sessionKey (#2916). The frame is stored and replayed
-// like any other, so a phone asleep when it was generated still gets it, in
-// order with the frames that make it stale. It reports whether a conversation
+// conversation bound to sessionKey (#2916). The frame is transient (#1064):
+// a phone asleep when it was generated gets it from the hello snapshot
+// (ConversationInfo.PromptSuggestion), which the frames that make it stale
+// clear (noteSnapshot). It reports whether a conversation
 // took it: false when the app provider is not running or the session has no
 // bound conversation.
 func DeliverPromptSuggestion(sessionKey, text string) bool {
@@ -371,7 +372,9 @@ func ClearPromptSuggestion(sessionKey string) {
 	if h == nil {
 		return
 	}
-	if b := h.bindingForSession(sessionKey); b != nil && b.suggestionSent.Swap(false) {
+	// hasSuggestion: after a restart suggestionSent is false, but the hello
+	// snapshot restored from the store may still hold one (#1064).
+	if b := h.bindingForSession(sessionKey); b != nil && (b.suggestionSent.Swap(false) || b.hasSuggestion()) {
 		b.send(fap.PromptSuggestion{ConversationID: b.convID})
 	}
 }

@@ -1773,7 +1773,7 @@ func TestInteractive_NextQuestionSuppressesEdit(t *testing.T) {
 		[]platform.ButtonChoice{{Label: "A", Data: "qa:0"}, {Label: "B", Data: "qa:1"}},
 		func(choice platform.ButtonChoice) string {
 			// Simulate presenting the next question: any frame advances seq.
-			b.send(fap.Activity{ConversationID: "c1", Kind: "typing"})
+			b.send(fap.MessageConsumed{ConversationID: "c1", MessageID: "filler"}) // a sequenced filler: activity is transient since #1064 (ruling 2026-10-13)
 			return "✅ A"
 		}, nil)
 	if err != nil {
@@ -1950,8 +1950,8 @@ func TestReliability_SeqSurvivesReconnect(t *testing.T) {
 	c1 := fakeClient()
 	c1.hub = h
 	b := h.ensureBinding(c1, "ag", "conv-1")
-	b.send(fap.Activity{ConversationID: "conv-1", Kind: "typing"}) // seq 1
-	b.send(fap.Activity{ConversationID: "conv-1", Kind: "idle"})   // seq 2
+	b.send(fap.MessageConsumed{ConversationID: "conv-1", MessageID: "filler"}) // seq 1 (a sequenced filler: activity is transient since #1064, ruling 2026-10-13)
+	b.send(fap.MessageConsumed{ConversationID: "conv-1", MessageID: "filler"}) // seq 2 (a sequenced filler: activity is transient since #1064, ruling 2026-10-13)
 	drainEnv(t, c1)
 
 	h.removeClient(c1) // disconnect; durable state survives
@@ -1961,7 +1961,7 @@ func TestReliability_SeqSurvivesReconnect(t *testing.T) {
 	if b2 != b {
 		t.Fatalf("reconnect must reuse the durable binding")
 	}
-	b2.send(fap.Activity{ConversationID: "conv-1", Kind: "typing"}) // seq must continue at 3
+	b2.send(fap.MessageConsumed{ConversationID: "conv-1", MessageID: "filler"}) // seq must continue at 3 (a sequenced filler: activity is transient since #1064, ruling 2026-10-13)
 	ds := drainEnv(t, c2)
 	if len(ds) != 1 || ds[0].seq != 3 {
 		t.Fatalf("post-reconnect frames = %v, want one frame at seq 3", ds)
@@ -1974,7 +1974,7 @@ func TestReliability_ReplayOnResume(t *testing.T) {
 	c1.hub = h
 	b := h.ensureBinding(c1, "ag", "conv-1")
 	for i := 0; i < 3; i++ {
-		b.send(fap.Activity{ConversationID: "conv-1", Kind: "typing"}) // seq 1,2,3
+		b.send(fap.MessageConsumed{ConversationID: "conv-1", MessageID: "filler"}) // seq 1,2,3 (a sequenced filler: activity is transient since #1064, ruling 2026-10-13)
 	}
 	drainEnv(t, c1)
 	h.removeClient(c1)
@@ -2096,7 +2096,7 @@ func TestReliability_AckTrimsBuffer(t *testing.T) {
 	c := fakeClient()
 	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}, seen: make(map[string]struct{})}
 	for i := 0; i < 5; i++ {
-		b.send(fap.Activity{ConversationID: "c1", Kind: "typing"}) // seq 1..5
+		b.send(fap.MessageConsumed{ConversationID: "c1", MessageID: "filler"}) // seq 1..5 (a sequenced filler: activity is transient since #1064, ruling 2026-10-13)
 	}
 	drainEnv(t, c)
 	b.ackInbound(c, 3)
@@ -2120,7 +2120,7 @@ func TestReliability_BufferTrimsByDepth(t *testing.T) {
 	// depth+1`) lands on exactly depth whenever the overflow is a multiple of
 	// k+1, so an end-only check passes it (#2543).
 	for i := 1; i <= defaultReplayBufferDepth+50; i++ {
-		b.send(fap.Activity{ConversationID: "c1", Kind: "typing"}) // seq i
+		b.send(fap.MessageConsumed{ConversationID: "c1", MessageID: "filler"}) // seq i (a sequenced filler: activity is transient since #1064, ruling 2026-10-13)
 		b.mu.Lock()
 		n, first := len(b.buffer), b.buffer[0].seq
 		b.mu.Unlock()
