@@ -173,6 +173,11 @@ func newFrameStore(path string, ttl time.Duration) (*frameStore, error) {
 	} else if deleted > 0 || rewritten > 0 {
 		appLog.Infof("frame store: dropped %d stored transient frame(s), kept %d conversation top seq(s) as conversation.ack (#1064)", deleted, rewritten)
 	}
+	if n, err := s.pruneSupersededFrames(); err != nil {
+		appLog.Errorf("frame store: pruning superseded whole-state frames (#1646): %v", err)
+	} else if n > 0 {
+		appLog.Infof("frame store: pruned %d superseded whole-state frame(s) (#1646)", n)
+	}
 	s.wg.Add(1)
 	go s.writer()
 	return s, nil
@@ -244,6 +249,9 @@ func (s *frameStore) insert(w frameWrite) {
 		w.convID, w.seq, w.wire, w.sentMs, v, w.agentID, w.preview,
 	); err != nil {
 		appLog.Errorf("frame store insert (conv=%s seq=%d): %v", w.convID, w.seq, err)
+	} else {
+		// A whole-state frame replaces its older stored copies (#1646).
+		s.supersede(w)
 	}
 	if w.onStored != nil {
 		w.onStored()
