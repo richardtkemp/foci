@@ -18,8 +18,12 @@ import (
 //     the current answer, with no idle between (probed on CC 2.1.314:
 //     result, init, assistant, result, then ONE idle);
 //   - a control_response is recorded and marks its request answered;
-//   - anything else (an interrupt, get_context_usage) is held and handled
-//     after the run's idle, as the stub always did.
+//   - an interrupt control_request ends the wait at once (sleep returns),
+//     so the run ends as real CC's does: CC 2.1.285 verified live (#2140)
+//     that `interrupt` stops the turn. It is still held and acked after the
+//     run's idle;
+//   - anything else (get_context_usage) is held and handled after the run's
+//     idle, as the stub always did.
 type stdinPump struct {
 	lines <-chan []byte
 	eof   bool
@@ -30,6 +34,10 @@ type stdinPump struct {
 	folded   [][]byte
 	held     [][]byte
 	answered map[string]bool
+
+	// interrupted is set when an interrupt control_request arrives inside
+	// the open run; sleep then returns early. endRun clears it.
+	interrupted bool
 }
 
 func newStdinPump(in *bufio.Scanner) *stdinPump {
@@ -88,17 +96,23 @@ func (p *stdinPump) absorb(b []byte) {
 				p.answered[id] = true
 			}
 		}
+	case "control_request":
+		if req, ok := env["request"].(map[string]any); ok && req["subtype"] == "interrupt" {
+			p.interrupted = true
+		}
+		p.held = append(p.held, b)
 	default:
 		p.held = append(p.held, b)
 	}
 }
 
-// sleep waits d inside an open run, absorbing what arrives. EOF does not
-// cut the wait short: the old stub slept through it too.
+// sleep waits d inside an open run, absorbing what arrives. An interrupt
+// ends the wait at once (real CC stops the turn on one). EOF does not cut the
+// wait short: the old stub slept through it too.
 func (p *stdinPump) sleep(d time.Duration) {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
-	for {
+	for !p.interrupted {
 		if p.eof {
 			<-timer.C
 			return
@@ -112,6 +126,9 @@ func (p *stdinPump) sleep(d time.Duration) {
 				continue
 			}
 			p.absorb(b)
+			if p.interrupted {
+				return
+			}
 		}
 	}
 }
@@ -160,4 +177,5 @@ func (p *stdinPump) takeFolded() bool {
 func (p *stdinPump) endRun() {
 	p.pending = append(p.pending, p.held...)
 	p.held = nil
+	p.interrupted = false
 }

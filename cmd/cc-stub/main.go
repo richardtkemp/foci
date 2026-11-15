@@ -571,7 +571,9 @@ func main() {
 	//   CCSTUB_HANG_DURING_TURN=duration — sleep this long AFTER the
 	//       assistant envelope and BEFORE the result envelope. Lets
 	//       a test trigger /reset or send a message while a turn is
-	//       intentionally in-flight (IsProcessing == true).
+	//       intentionally in-flight (IsProcessing == true). An interrupt
+	//       control_request ends the sleep early, as real CC ends its
+	//       turn on one (stdinPump.sleep, #3120).
 	//   CCSTUB_DELAY_IDLE=duration — after a run's last result, sleep this
 	//       long BEFORE the "idle" envelope, WITHOUT reading stdin. foci
 	//       still sees its turn in flight, so a user message it receives

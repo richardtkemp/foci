@@ -1115,8 +1115,12 @@ func TestL2_SlashCommands_StopCancelsInflightTurn(t *testing.T) {
 			// CCSTUB_HANG_DURING_TURN blocks the result envelope after the
 			// assistant message — turn stays in-flight long enough for
 			// /stop to fire its Immediate cancel path. Same mechanism as
-			// ResetHardCancelsInflightTurn.
-			ExtraEnv: map[string]string{"CCSTUB_HANG_DURING_TURN": "10s"},
+			// ResetHardCancelsInflightTurn. The hang outlasts the wait
+			// below AND /stop's own confirm window (stopConfirmTimeout,
+			// 10s, #3120), so only the interrupt can end the turn in time:
+			// a stub (or backend) that ignored it would make /stop reply
+			// "still running", not "Stopped.".
+			ExtraEnv: map[string]string{"CCSTUB_HANG_DURING_TURN": "60s"},
 		}},
 		ReadyTimeout: 30 * time.Second,
 	})
