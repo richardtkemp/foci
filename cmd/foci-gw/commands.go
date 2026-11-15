@@ -187,6 +187,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		CheckConfig: func(content string) error {
 			return config.CheckFileContent(content, p.configPath, delegator.RegisteredNames())
 		},
+		RequestApproval: requestActionApproval,
 	}
 
 	// Construct the CommandContext

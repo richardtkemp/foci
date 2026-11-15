@@ -16,9 +16,10 @@ import (
 // set or unset with a full value does not write: it turns into the same
 // approval request as `foci config set` (configapprove), for the same key
 // path, and answers at once with the request id. Wizards that write the file
-// (/config set without a value, /agents new, /android) are refused over
-// HTTP: they must be started from chat. Chat and app dispatches are not
-// changed.
+// (/config set without a value, bare /agents new, /android) are refused over
+// HTTP: they must be started from chat. /agents new with its answers as
+// arguments asks for approval instead (agents_new_args.go, #3122). Chat and
+// app dispatches are not changed.
 
 // ConfigApprovalFn submits one config change for the user's approval on
 // behalf of sessionKey; value is TOML value text (unused for an unset).

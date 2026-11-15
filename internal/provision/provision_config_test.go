@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/BurntSushi/toml"
 )
 
 func TestGenerateAgentBlock(t *testing.T) {
@@ -152,5 +154,32 @@ func TestGenerateCrontabMissing(t *testing.T) {
 	_, err := GenerateCrontab("/nonexistent/crontab.template", AgentSpec{ID: "test"}, 0)
 	if err == nil {
 		t.Fatal("expected error for missing template")
+	}
+}
+
+// #3122: extra backend_config keys are written with the model as one inline
+// table that decodes back to the same values; api agents get none.
+func TestGenerateAgentBlockBackendConfigExtras(t *testing.T) {
+	spec := AgentSpec{
+		ID: "stuart", HomeDir: "/home/foci", Backend: "claude-code", Model: "opus",
+		BackendConfig: map[string]any{"env": map[string]any{"CLAUDE_CONFIG_DIR": "/Users/x/.claude-stuart"}},
+	}
+	var doc struct {
+		Agents []struct {
+			BackendConfig map[string]any `toml:"backend_config"`
+		} `toml:"agents"`
+	}
+	if _, err := toml.Decode(GenerateAgentBlock(spec), &doc); err != nil {
+		t.Fatalf("block does not decode: %v\n%s", err, GenerateAgentBlock(spec))
+	}
+	bc := doc.Agents[0].BackendConfig
+	env, _ := bc["env"].(map[string]any)
+	if bc["model"] != "opus" || env["CLAUDE_CONFIG_DIR"] != "/Users/x/.claude-stuart" {
+		t.Errorf("backend_config = %v, want model opus and the env", bc)
+	}
+
+	spec.Backend = "api"
+	if strings.Contains(GenerateAgentBlock(spec), "backend_config") {
+		t.Errorf("api agent got backend_config:\n%s", GenerateAgentBlock(spec))
 	}
 }

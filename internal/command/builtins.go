@@ -358,7 +358,7 @@ func AgentsCommand() *Command {
 		// can name "agents new"); Execute below parses it itself, so Register
 		// does not auto-wire dispatch from this list (#2279).
 		Subcommands: []Subcommand{
-			{Name: "new", Description: "Start the new-agent wizard"},
+			{Name: "new", Description: "Start the new-agent wizard, or create one in one step: /agents new NAME [--backend B] [--model M] [--chars defaults|openclaw|blank] [--copy ID]"},
 			{Name: "rename", Description: "Rename an agent live: /agents rename OLD NEW [--move-workspace] [--yes]"},
 		},
 		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
@@ -366,13 +366,20 @@ func AgentsCommand() *Command {
 			if f := strings.Fields(req.Args); len(f) > 0 && strings.ToLower(f[0]) == "rename" {
 				return agentsRename(ctx, req, cc, strings.TrimSpace(req.Args[strings.Index(req.Args, f[0])+len(f[0]):])), nil
 			}
+			// /agents new <name> [flags] — create in one step (#3122)
+			if f := strings.Fields(req.Args); len(f) > 1 && strings.ToLower(f[0]) == "new" {
+				if cc.AgentNewDeps == nil {
+					return Response{Text: "Agent creation is not available."}, nil
+				}
+				return agentsNewDirect(req, cc.AgentNewDeps, strings.TrimSpace(req.Args[strings.Index(req.Args, f[0])+len(f[0]):])), nil
+			}
 			// /agents new — start wizard
 			if strings.TrimSpace(strings.ToLower(req.Args)) == "new" {
 				if cc.AgentNewDeps == nil {
 					return Response{Text: "Agent creation wizard is not available."}, nil
 				}
 				if fromHTTP(req) {
-					return Response{Text: httpWizardRefusal("The /agents new wizard")}, nil
+					return Response{Text: httpWizardRefusal("The /agents new wizard") + " To create an agent from the HTTP API, give the answers as arguments and the user approves it: " + agentNewUsage}, nil
 				}
 				w := newAgentWizard(*cc.AgentNewDeps)
 				// Need registry reference — pass via AgentNewDeps.Registry

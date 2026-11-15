@@ -26,7 +26,7 @@ import (
 //	foci config set <path> <value>       ask the user to approve setting <path>
 //	foci config unset <path>             ask the user to approve removing <path>
 //	foci config add <path> <value>       ask the user to approve appending one element to the array at <path>
-//	foci config wait <id>                follow a request made earlier (e.g. by /config set over HTTP)
+//	foci config wait <id>                follow a request made earlier (e.g. by /config set or /agents new over HTTP)
 //
 // A path may end in an element selector (rules[name], rules[3],
 // rules[field=value], #2938): set replaces that one element, unset removes
@@ -247,6 +247,9 @@ func printConfigOutcome(w io.Writer, st configapprove.Status) int {
 	switch st.Outcome {
 	case configapprove.Applied:
 		line = fmt.Sprintf("applied: %s = %s (was %s)", st.Path, st.New, st.Old)
+		if st.Result != "" { // an approved action (e.g. /agents new over HTTP, #3122): its report
+			line = "applied: " + st.Path + "\n" + st.Result
+		}
 	case configapprove.Denied:
 		line = fmt.Sprintf("denied: the user did not approve %s; nothing was changed", st.Path)
 	case configapprove.TimedOut:
@@ -274,7 +277,8 @@ Subcommands:
   set <path> <value>         Ask the user to approve setting <path> to <value>
   unset <path>               Ask the user to approve removing <path> (its default applies)
   add <path> <value>         Ask the user to approve appending one element to the array at <path>
-  wait <request-id>          Follow a request made earlier (e.g. by /config set over HTTP)
+  wait <request-id>          Follow a request made earlier (e.g. by /config set or
+                             /agents new <name> ... over HTTP, via foci command)
 
 Paths are TOML dotted keys; agents[<id>] selects one agent's block:
   agent_loop.max_tool_loops   agents[main].nudge.enable   models."claude.fast".id

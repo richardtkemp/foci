@@ -15,6 +15,12 @@
 // On Approve the file is re-read: if the value at the path is no longer the
 // old value shown, or any check fails, nothing is written.
 //
+// An action request (SubmitAction, #3122) runs a caller's function on
+// Approve instead of one path edit: /agents new over HTTP uses it to create
+// an agent (workspace, [[agents]] block, crontab, live start). It shares the
+// prompt, the timeout, the request ids and the GET /config/request follow
+// with path edits, and its function runs under the same write lock.
+//
 // Requests live in memory only: after a gateway restart a waiting client
 // gets "unknown request" and reports the request failed.
 package configapprove
@@ -83,6 +89,9 @@ type Status struct {
 	// Warning names the keys the change writes that this binary does not
 	// know (#3046); the approval prompt shows the same text. Empty when none.
 	Warning string `json:"warning,omitempty"`
+	// Result is an applied action request's report (SubmitAction). Empty
+	// for a path edit.
+	Result string `json:"result,omitempty"`
 }
 
 // Prompt is what the presenter shows the user.
@@ -131,8 +140,25 @@ type Submission struct {
 	Timeout    time.Duration
 }
 
+// ActionSubmission is a request that runs Run on Approve (#3122).
+type ActionSubmission struct {
+	AgentID    string
+	SessionKey string
+	// Title names the action in the prompt and the status Path, e.g.
+	// "new agent stuart".
+	Title string
+	// Detail is the prompt's markdown body: what Approve will do.
+	Detail  string
+	Timeout time.Duration
+	// Run carries the action out. It is called at most once, on Approve,
+	// with the write lock held; it returns the report shown in the prompt
+	// and the status Result, or why the action failed.
+	Run func() (result string, err error)
+}
+
 type request struct {
 	Submission
+	run      func() (string, error) // set for an action request; path is then unused
 	path     config.KeyPath
 	id       string
 	oldValue any
@@ -357,6 +383,51 @@ func (s *Service) Submit(sub Submission) Status {
 	return s.statusOf(r)
 }
 
+// SubmitAction shows the approval prompt for an action and returns its
+// pending status, or Failed at once when no chat could show the prompt.
+func (s *Service) SubmitAction(a ActionSubmission) Status {
+	s.prune()
+	if a.Run == nil {
+		return Status{Outcome: Failed, Path: a.Title, Reason: "no action to run"}
+	}
+	r := &request{
+		Submission: Submission{AgentID: a.AgentID, SessionKey: a.SessionKey, Timeout: a.Timeout},
+		run:        a.Run,
+		id:         newID(),
+		done:       make(chan struct{}),
+	}
+	r.status = Status{ID: r.id, Outcome: Pending, Path: a.Title}
+	s.mu.Lock()
+	s.reqs[r.id] = r
+	s.mu.Unlock()
+
+	text := fmt.Sprintf("🔧 Approval requested\n\nSession: %s\nAction: %s\n\n%s\n\nNothing changes unless you approve.",
+		a.SessionKey, a.Title, strings.TrimSpace(a.Detail))
+	err := s.d.Present(Prompt{
+		ID:         r.id,
+		AgentID:    a.AgentID,
+		SessionKey: a.SessionKey,
+		Summary:    "approve: " + a.Title,
+		Text:       text,
+		OnAnswer:   func(approve bool) string { return s.answer(r.id, approve) },
+		OnExpire:   func() { s.timeout(r.id) },
+	})
+	if err != nil {
+		s.resolve(r, Failed, "the approval prompt could not be shown in any chat: "+err.Error())
+		return s.statusOf(r)
+	}
+	r.stop = s.d.AfterFunc(ClampTimeout(a.Timeout), func() { s.timeout(r.id) })
+	logger.Infof("action %q requested by %s (%s)", a.Title, a.SessionKey, r.id)
+	return s.statusOf(r)
+}
+
+// Fenced wraps text in a fenced code block whose fence no run of backticks
+// inside the text can close (for a caller building an action's Detail).
+func Fenced(v, lang string) string {
+	f := codeFence(v)
+	return f + lang + "\n" + v + "\n" + f
+}
+
 // promptText is the approval prompt's markdown. Each value goes on its own
 // lines in a fenced code block (#2936): monospace on the app, Telegram and
 // Discord, and a long value (an array of tables) cannot run into its label or
@@ -447,6 +518,9 @@ func (s *Service) answer(id string, approve bool) string {
 	}
 	switch o := s.approve(r); o {
 	case Applied:
+		if r.run != nil {
+			return "✅ Approved: " + r.status.Path + "\n\n" + s.statusOf(r).Result
+		}
 		return "✅ Applied: " + r.status.Path + " = " + r.status.New
 	case Failed:
 		return "⚠️ Approved, but not applied: " + s.statusOf(r).Reason
@@ -463,6 +537,9 @@ func (s *Service) approve(r *request) Outcome {
 	if s.statusOf(r).Outcome != Pending {
 		return s.statusOf(r).Outcome
 	}
+	if r.run != nil {
+		return s.runAction(r)
+	}
 	if err := s.apply(r); err != nil {
 		s.resolve(r, Failed, err.Error())
 		return Failed
@@ -471,6 +548,28 @@ func (s *Service) approve(r *request) Outcome {
 	if s.d.Apply != nil {
 		s.d.Apply(r.path)
 	}
+	return Applied
+}
+
+// runAction runs an approved action request and resolves it. The caller
+// holds writeMu. The file's ownership is judged first, as before a path
+// edit: an action writes foci.toml too.
+func (s *Service) runAction(r *request) Outcome {
+	if s.d.CheckProtected != nil {
+		if err := s.d.CheckProtected(s.d.ConfigPath); err != nil {
+			s.resolve(r, Failed, err.Error())
+			return Failed
+		}
+	}
+	result, err := r.run()
+	if err != nil {
+		s.resolve(r, Failed, err.Error())
+		return Failed
+	}
+	s.mu.Lock()
+	r.status.Result = result
+	s.mu.Unlock()
+	s.resolve(r, Applied, "")
 	return Applied
 }
 

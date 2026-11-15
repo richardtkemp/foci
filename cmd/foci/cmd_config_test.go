@@ -171,3 +171,16 @@ func TestConfigHelp(t *testing.T) {
 		}
 	}
 }
+
+// An approved action request (/agents new over HTTP, #3122) prints its
+// report, not a "path = new (was old)" line with empty values.
+func TestPrintConfigOutcome_ActionResult(t *testing.T) {
+	var out strings.Builder
+	code := printConfigOutcome(&out, configapprove.Status{Outcome: configapprove.Applied, Path: "new agent stuart", Result: "✅ Workspace: /home/foci/stuart"})
+	if code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	if got := out.String(); got != "applied: new agent stuart\n✅ Workspace: /home/foci/stuart\n" {
+		t.Errorf("output = %q", got)
+	}
+}

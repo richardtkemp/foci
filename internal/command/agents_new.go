@@ -2,12 +2,14 @@ package command
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
+	"foci/internal/configapprove"
 	"foci/internal/provision"
 	"foci/internal/question"
 )
@@ -38,6 +40,11 @@ type AgentNewDeps struct {
 	// so it never leaves a foci.toml the next start refuses (#2976). nil = no
 	// check (unit tests, first-run setup).
 	CheckConfig func(content string) error
+	// RequestApproval asks the owner to approve a non-interactive
+	// /agents new that arrived over the HTTP API (#3122): the gateway's
+	// configapprove.SubmitAction, the agent taken from the session key.
+	// nil = no approval route (the HTTP form is refused).
+	RequestApproval func(configapprove.ActionSubmission) configapprove.Status
 }
 
 // Wizard step indices. The flow is name → backend → model → character mode.
@@ -75,6 +82,9 @@ type agentWizard struct {
 	modelRaw           string // raw model input (alias) for backend_config.model
 	backend            string // "api" or a registered backend name
 	charMode, copyFrom string
+	// backendConfig is extra backend_config keys, set only by the one-step
+	// /agents new --backend-config (#3122); the interactive wizard never sets it.
+	backendConfig map[string]any
 
 	// preflight carries the platform pre-flight warnings raised at the name
 	// step; the backend prompt surfaces them (both the chat text and the
@@ -109,52 +119,73 @@ func (w *agentWizard) Handle(text string) (response string, done bool) {
 	}
 }
 
-func (w *agentWizard) handleName(text string) (string, bool) {
-	if text == "" {
-		return "Name cannot be empty. Try again:", false
-	}
+// nameError is a rejected agent name: msg states the problem and reprompt
+// is the wizard's tail asking for another name.
+type nameError struct{ msg, reprompt string }
 
+func (e *nameError) Error() string { return e.msg }
+
+// checkName turns a display name into the agent id, or says why it cannot
+// be used: empty, no valid slug, or an agent with that id already exists.
+func (w *agentWizard) checkName(text string) (string, error) {
+	if text == "" {
+		return "", &nameError{"Name cannot be empty.", " Try again:"}
+	}
 	id := provision.ToSlug(text)
 	if !provision.IsValidAgentID(id) {
-		return fmt.Sprintf("Could not form a valid ID from %q (got %q) — try a simpler name:", text, id), false
+		return "", &nameError{fmt.Sprintf("Could not form a valid ID from %q (got %q)", text, id), " — try a simpler name:"}
 	}
-
-	// Check uniqueness
 	for _, a := range w.deps.ListFn() {
 		if a.ID == id {
-			return fmt.Sprintf("Agent `%s` already exists. Choose a different name:", id), false
+			return "", &nameError{fmt.Sprintf("Agent `%s` already exists.", id), " Choose a different name:"}
 		}
 	}
+	return id, nil
+}
 
-	w.display = text
+// setName records a checked name and runs the platform pre-flight checks
+// (keyed on the agent id).
+func (w *agentWizard) setName(display, id string) {
+	w.display = display
 	w.id = id
-
-	// Run platform pre-flight checks (keyed on the agent id) — surfaced on the
-	// backend prompt, the next step.
 	w.preflight = ""
 	if w.deps.PreFlightFn != nil {
 		if warnings := w.deps.PreFlightFn(w.id); len(warnings) > 0 {
 			w.preflight = "\n⚠️  " + strings.Join(warnings, "\n⚠️  ")
 		}
 	}
+}
 
+func (w *agentWizard) handleName(text string) (string, bool) {
+	id, err := w.checkName(text)
+	if err != nil {
+		ne := err.(*nameError)
+		return ne.msg + ne.reprompt, false
+	}
+	w.setName(text, id)
+	// The pre-flight warnings are surfaced on the backend prompt, the next step.
 	w.step = stepBackend
 	return w.backendPrompt() + w.preflight, false
 }
 
-func (w *agentWizard) handleModel(text string) (string, bool) {
+// setModel records the model input. The raw alias (e.g. "opus") is kept for
+// backend_config.model — delegated backends pass it straight to CC's
+// --model; empty means "sonnet". The resolved developer/model_id form is kept
+// for display and the (future) API path.
+func (w *agentWizard) setModel(text string) {
 	resolve := w.deps.ResolveModel
 	if resolve == nil {
 		resolve = provision.ResolveModelAlias
 	}
-	// Keep the raw alias (e.g. "opus") for backend_config.model — delegated
-	// backends pass it straight to CC's --model. The resolved developer/model_id
-	// form is kept for display and the (future) API path.
 	w.modelRaw = text
 	if strings.TrimSpace(text) == "" {
 		w.modelRaw = "sonnet"
 	}
 	w.model = resolve(text)
+}
+
+func (w *agentWizard) handleModel(text string) (string, bool) {
+	w.setModel(text)
 
 	if err := w.configProblem(); err != nil {
 		return fmt.Sprintf("This agent cannot be added: with it, foci.toml would fail to load at the next start (%s). Fix foci.toml first, or type another model:", err), false
@@ -189,30 +220,34 @@ func (w *agentWizard) backendPrompt() string {
 	return "Backend — " + strings.Join(opts, ", ") + ":"
 }
 
-// handleBackend records the execution mode: a registered delegated backend, or
-// "api" for the traditional in-process loop. Empty input picks the default
-// backend (claude-code) — the common case, and the fix for agents previously
-// created with no backend at all (silent API fallback).
-func (w *agentWizard) handleBackend(text string) (string, bool) {
+// pickBackend resolves a backend choice: a registered delegated backend, or
+// "api". Empty picks the default backend (claude-code) when it is offered,
+// else the first available.
+func (w *agentWizard) pickBackend(text string) (string, error) {
 	choice := strings.ToLower(strings.TrimSpace(text))
 	backends := w.availableBackends()
-
 	if choice == "" {
-		// Prefer the default backend if offered, else the first available.
 		choice = defaultBackend
 		if !slices.Contains(backends, defaultBackend) {
 			choice = backends[0]
 		}
 	}
-
-	switch {
-	case choice == apiBackend:
-		w.backend = apiBackend
-	case slices.Contains(backends, choice):
-		w.backend = choice
-	default:
-		return fmt.Sprintf("Must be one of: %s, or `api`. Try again:", strings.Join(backends, ", ")), false
+	if choice == apiBackend || slices.Contains(backends, choice) {
+		return choice, nil
 	}
+	return "", fmt.Errorf("Must be one of: %s, or `api`.", strings.Join(backends, ", "))
+}
+
+// handleBackend records the execution mode: a registered delegated backend, or
+// "api" for the traditional in-process loop. Empty input picks the default
+// backend (claude-code) — the common case, and the fix for agents previously
+// created with no backend at all (silent API fallback).
+func (w *agentWizard) handleBackend(text string) (string, bool) {
+	backend, err := w.pickBackend(text)
+	if err != nil {
+		return err.Error() + " Try again:", false
+	}
+	w.backend = backend
 
 	// API agents resolve their model globally via [groups]/[models]; there is no
 	// per-agent model field, and provision discards backend_config.model for api
@@ -315,39 +350,37 @@ func (w *agentWizard) PendingStep() *question.Question {
 	}
 }
 
-func (w *agentWizard) handleCharMode(text string) (string, bool) {
+// pickCharMode parses a character-files choice: defaults (also on empty),
+// openclaw, blank, or "copy <agent-id>" naming an existing agent.
+func (w *agentWizard) pickCharMode(text string) (mode, copyFrom string, err error) {
 	if text == "" {
 		text = "defaults"
 	}
 	lower := strings.ToLower(text)
-
-	if lower == "defaults" {
-		w.charMode = "defaults"
-	} else if lower == "openclaw" {
-		w.charMode = "openclaw"
-	} else if lower == "blank" {
-		w.charMode = "blank"
-	} else if strings.HasPrefix(lower, "copy ") {
-		source := strings.TrimSpace(lower[5:])
+	switch {
+	case lower == "defaults", lower == "openclaw", lower == "blank":
+		return lower, "", nil
+	case strings.HasPrefix(lower, "copy ") || lower == "copy":
+		source := strings.TrimSpace(strings.TrimPrefix(lower, "copy"))
 		if source == "" {
-			return "Usage: `copy <agent-id>`. Try again:", false
+			return "", "", errors.New("Usage: `copy <agent-id>`.")
 		}
-		// Verify source agent exists
-		found := false
 		for _, a := range w.deps.ListFn() {
 			if a.ID == source {
-				found = true
-				break
+				return "copy", source, nil
 			}
 		}
-		if !found {
-			return fmt.Sprintf("Agent `%s` not found. Try again:", source), false
-		}
-		w.charMode = "copy"
-		w.copyFrom = source
-	} else {
-		return "Must be `defaults`, `openclaw`, `copy <agent-id>`, or `blank`. Try again:", false
+		return "", "", fmt.Errorf("Agent `%s` not found.", source)
 	}
+	return "", "", errors.New("Must be `defaults`, `openclaw`, `copy <agent-id>`, or `blank`.")
+}
+
+func (w *agentWizard) handleCharMode(text string) (string, bool) {
+	mode, copyFrom, err := w.pickCharMode(text)
+	if err != nil {
+		return err.Error() + " Try again:", false
+	}
+	w.charMode, w.copyFrom = mode, copyFrom
 
 	// Execute creation
 	result, err := w.createFn(w)
@@ -369,6 +402,8 @@ func (w *agentWizard) spec() provision.AgentSpec {
 		FileMode:    w.deps.FileMode,
 		Backend:     w.backend,
 		Model:       w.modelRaw,
+
+		BackendConfig: w.backendConfig,
 	}
 }
 

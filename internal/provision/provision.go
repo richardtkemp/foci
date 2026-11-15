@@ -50,6 +50,11 @@ type AgentSpec struct {
 	// backend_config.model (e.g. "opus"). Ignored for api backends, whose model
 	// resolves globally via [groups]/[models].
 	Model string
+	// BackendConfig holds extra backend_config keys for a delegated backend
+	// (e.g. env = {CLAUDE_CONFIG_DIR = "..."}, #3122). When set, the whole
+	// backend_config (these keys plus Model as "model") is written as one
+	// inline table. Ignored for api backends, like Model.
+	BackendConfig map[string]any
 }
 
 // Result holds the outputs of a successful Provision call.

@@ -84,6 +84,17 @@ func requestConfigApproval(sessionKey string, op configapprove.Op, path, value s
 	return gwConfigApprove.Submit(configapprove.Submission{AgentID: agentID, SessionKey: sessionKey, Op: op, Path: path, Value: value})
 }
 
+// requestActionApproval is AgentNewDeps.RequestApproval (#3122): an action
+// request (non-interactive /agents new over HTTP), the agent taken from the
+// session key's first segment as for a config change.
+func requestActionApproval(a configapprove.ActionSubmission) configapprove.Status {
+	if gwConfigApprove == nil {
+		return configapprove.Status{Outcome: configapprove.Failed, Path: a.Title, Reason: "config approval is not available"}
+	}
+	a.AgentID, _, _ = strings.Cut(a.SessionKey, "/")
+	return gwConfigApprove.SubmitAction(a)
+}
+
 // configRequestBody is POST /config/request's body.
 type configRequestBody struct {
 	Session     string `json:"session"` // the requesting session key; its first segment is the agent

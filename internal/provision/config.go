@@ -3,6 +3,8 @@ package provision
 import (
 	"fmt"
 	"strings"
+
+	"foci/internal/config"
 )
 
 // GenerateAgentBlock produces a [[agents]] TOML fragment for an agent.
@@ -25,7 +27,19 @@ func GenerateAgentBlock(spec AgentSpec) string {
 		backend = "api"
 	}
 	fmt.Fprintf(&sb, "backend = %q\n", backend)
-	if backend != "api" && spec.Model != "" {
+	switch {
+	case backend != "api" && len(spec.BackendConfig) > 0:
+		// Extra backend_config keys: the whole table, model included, as one
+		// inline table (RenderTOMLValue quotes keys and sorts them).
+		bc := make(map[string]any, len(spec.BackendConfig)+1)
+		for k, v := range spec.BackendConfig {
+			bc[k] = v
+		}
+		if spec.Model != "" {
+			bc["model"] = spec.Model
+		}
+		fmt.Fprintf(&sb, "backend_config = %s\n", config.RenderTOMLValue(bc))
+	case backend != "api" && spec.Model != "":
 		// Delegated backends take their model from backend_config.model
 		// (e.g. CC's --model). API agents resolve via [groups]/[models].
 		fmt.Fprintf(&sb, "backend_config.model = %q\n", spec.Model)

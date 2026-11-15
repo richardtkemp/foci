@@ -392,7 +392,7 @@ func TestOperatorPolicy_HandParsedSubcommandsDeclared(t *testing.T) {
 		cmd  *Command
 		args string
 	}{
-		{agents, "new"}, {agents, "NEW"},
+		{agents, "new"}, {agents, "NEW"}, {agents, "new Stuart --backend api"},
 		{todo, "new buy milk"}, {todo, "add buy milk"}, {todo, "rm 3"}, {todo, "done 3"},
 		{display, "reset"}, {display, "show_thinking off"},
 		// displayKeyAliases: /display parses stream and width itself (re-review N1).
