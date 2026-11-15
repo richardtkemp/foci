@@ -107,6 +107,37 @@ func TestResolveDropsDisabledAndInvalid(t *testing.T) {
 	}
 }
 
+// TestResolveMergesLayersByName proves a later layer overrides only the
+// fields it sets, keeps first-seen order, and that a merged rule without
+// text is skipped rather than returned (#3124).
+func TestResolveMergesLayersByName(t *testing.T) {
+	off, on := false, true
+	global := []Rule{
+		{Name: "a", Text: []string{"x"}, Reason: "ga"},
+		{Name: "b", Text: []string{"y"}, Enabled: &off},
+		{Name: "c", Text: []string{"z"}},
+		{Name: "notext"},
+	}
+	agent := []Rule{
+		{Name: "own", Text: []string{"o"}},
+		{Name: "a", Reason: "aa"},
+		{Name: "b", Enabled: &on},
+		{Name: "c", Enabled: &off},
+	}
+	rules, skipped := Resolve(global, agent)
+	want := []Rule{
+		{Name: "a", Text: []string{"x"}, Reason: "aa"},
+		{Name: "b", Text: []string{"y"}, Enabled: &on},
+		{Name: "own", Text: []string{"o"}},
+	}
+	if !reflect.DeepEqual(rules, want) {
+		t.Errorf("rules = %+v, want %+v", rules, want)
+	}
+	if len(skipped) != 1 || !strings.Contains(skipped[0], `"notext": text is required`) {
+		t.Errorf("skipped = %v, want notext's missing text", skipped)
+	}
+}
+
 func TestEncodeDecodeRoundTrip(t *testing.T) {
 	in := []Rule{{Name: "n", Text: []string{"a", "b"}, Reason: "r"}}
 	enc, err := Encode(in)

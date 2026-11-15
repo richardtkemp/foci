@@ -252,7 +252,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			resolvePreToolRules(agentID, p.cfg.CCBackend.PreToolRules, backendConfig.PreToolRules))
 	}
 	if spec.Supports(delegator.CapStopRules) {
-		stopRules = liveStopRules(agentID, p.configPath, resolveStopRules(agentID, backendConfig.StopRules))
+		stopRules = liveStopRules(agentID, p.configPath, resolveStopRules(agentID, p.cfg.CCBackend.StopRules, backendConfig.StopRules))
 	}
 	// backend_config.claude_ai_skills (#2953): whether CC lists the claude.ai
 	// account's skills, read at every launch like the rules above.
@@ -1410,9 +1410,10 @@ func resolvePreToolRules(agentID string, global, perAgent []pretool.Rule) []pret
 	return rules
 }
 
-// resolveStopRules is resolvePreToolRules for the agent's stop rules (#2089).
-func resolveStopRules(agentID string, perAgent []stoprule.Rule) []stoprule.Rule {
-	rules, skipped := stoprule.Resolve(perAgent)
+// resolveStopRules is resolvePreToolRules for the agent's stop rules (#2089):
+// the global [cc_backend] layer, then the agent's, merged by name (#3124).
+func resolveStopRules(agentID string, global, perAgent []stoprule.Rule) []stoprule.Rule {
+	rules, skipped := stoprule.Resolve(global, perAgent)
 	warnSkippedRules(agentID, "stop", skipped)
 	return rules
 }

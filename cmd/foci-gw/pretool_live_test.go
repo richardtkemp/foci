@@ -72,7 +72,7 @@ func TestLiveStopRules(t *testing.T) {
 		}
 	}
 	write("")
-	source := liveStopRules("a", path, resolveStopRules("a", nil))
+	source := liveStopRules("a", path, resolveStopRules("a", nil, nil))
 	if got := source(); len(got) != 0 {
 		t.Fatalf("initial stop rules = %+v, want none", got)
 	}
@@ -80,8 +80,12 @@ func TestLiveStopRules(t *testing.T) {
 	if got := source(); len(got) != 1 || got[0].Name != "announce" {
 		t.Fatalf("edit not picked up: %+v", got)
 	}
+	write("[cc_backend]\nstop_rules = [{ name = \"global\", text = 'now' }]\n[[agents.backend_config.stop_rules]]\nname = \"announce\"\ntext = 'starting'\n")
+	if got := source(); len(got) != 2 || got[0].Name != "global" || got[1].Name != "announce" {
+		t.Fatalf("global layer edit not picked up: %+v", got)
+	}
 	write("this is = = not toml")
-	if got := source(); len(got) != 1 {
+	if got := source(); len(got) != 2 {
 		t.Errorf("broken file dropped the last good rules: %+v", got)
 	}
 }

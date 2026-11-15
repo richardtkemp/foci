@@ -1827,7 +1827,7 @@ The factory default grants CC agents free read/write access to `/tmp` so they ca
 
 `background_task_max_age` only needs raising if you routinely background jobs (subagents or `run_in_background` Bash) that run longer than 2 hours; the default is well beyond any typical run.
 
-`[cc_backend]` also takes `[[cc_backend.pretool_rules]]` (below). Stop rules have no `[cc_backend]` layer: they are per-agent only (`[[agents.backend_config.stop_rules]]`, see below).
+`[cc_backend]` also takes `[[cc_backend.pretool_rules]]` and `[[cc_backend.stop_rules]]` (below): rules for every `claude-code` agent, merged by name with each agent's own.
 
 #### PreToolUse rules — `[[cc_backend.pretool_rules]]`
 
@@ -1993,16 +1993,16 @@ Run them with `foci pretool test --all --agent <id>` (see CLI.md). `foci check c
 
 Check rules offline with `foci pretool list --agent <id>` and `foci pretool test --agent <id> --bash '<command>' [--cwd <dir>] [-v]` (see CLI.md). Rules are read from the config file each time foci launches a CC process (a new session, or a session resumed after an idle shutdown or a foci restart), so an edit applies from the next launch without a restart. A CC process already running keeps the rules it was launched with. If the file does not load at that moment, the session keeps the last rules that did. Each deny is logged as `pretool_rule_deny`.
 
-#### Stop rules — `[[agents.backend_config.stop_rules]]`
+#### Stop rules — `[[cc_backend.stop_rules]]` and `[[agents.backend_config.stop_rules]]`
 
 `claude-code` agents can check the end of each turn. If the turn's final reply matches a rule's `text`, and the turn launched no background job (a `run_in_background` Bash call or a background subagent), foci blocks the stop. The agent gets the rule's `reason` and carries on with the same turn. This catches a reply like "starting the build now" that ends the turn with nothing started (#2089).
 
 A turn is blocked at most once. After a block, the next stop in that turn is always allowed.
 
-No rules ship preinstalled, and there is no `[cc_backend]` layer: an agent has stop rules only if its own config lists them. Without rules, no Stop hook is installed.
+No rules ship preinstalled. Rules come from two layers, merged by name the same way as `pretool_rules`: `[[cc_backend.stop_rules]]` applies to every `claude-code` agent, then each agent's `[[agents.backend_config.stop_rules]]`. An agent entry with the same `name` as a global rule gives only the fields it changes; an agent entry with a new name adds a rule for that agent. An agent with no rules after the merge gets no Stop hook.
 
 ```toml
-[[agents.backend_config.stop_rules]]
+[[cc_backend.stop_rules]]   # or [[agents.backend_config.stop_rules]] for one agent
 name = "announce_start"
 # Regexes matched against the final reply; any one may match. Use (?i) for case-insensitive.
 # ''' strings keep backslashes literal and may contain a single quote.
@@ -2017,7 +2017,15 @@ reason = 'Your reply says "{match}", but nothing is running. Start it now, or sa
 # enabled = false switches the rule off without deleting it.
 ```
 
-Each rule needs a unique `name` and at least one `text` pattern. Every pattern must compile and must not be empty. An unknown key is a config load error, as it is for `pretool_rules`.
+To change a global rule for one agent, repeat its `name` in that agent's layer with only the changed fields:
+
+```toml
+[[agents.backend_config.stop_rules]]
+name = "announce_start"
+enabled = false            # this agent opts out; or set a new reason/text instead
+```
+
+Names must be unique within a layer. Every pattern must compile and must not be empty. A layer may leave out `text` when it overrides a rule another layer defines, but every enabled rule must have `text` after the merge, or the config does not load. An unknown key is a config load error, as it is for `pretool_rules`.
 
 The patterns are a heuristic, so expect false positives. Every evaluation is logged as `stop_rule_eval`, with the outcome, the rule, the number of launches and a short excerpt. The outcomes are `fire` (blocked), `pass` (no rule matched), `pass_launched` (matched, but the turn launched background work), `pass_active` (already blocked once this turn) and `pass_error` (matched, but the transcript could not be read; this one logs at WARN). Grep for them to measure a rule before tightening it. Rules are re-read from the config file at each CC launch, the same way as `pretool_rules`.
 

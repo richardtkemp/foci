@@ -315,6 +315,14 @@ type CCBackendConfig struct {
 	// objectFieldSpecs registry, whose sub-fields can't express the input map.
 	PreToolRules []pretool.Rule `toml:"pretool_rules"`
 
+	// StopRules are global Stop-hook rules for every CC-backed agent (#3124),
+	// merged by name under each agent's backend_config.stop_rules. See
+	// internal/delegator/stoprule. TOML-only ([[cc_backend.stop_rules]]),
+	// like PreToolRules. Live without a hot tag: the gateway re-reads the
+	// config file at every CC launch (cmd/foci-gw liveStopRules), the same
+	// way as the pretool rules.
+	StopRules []stoprule.Rule `toml:"stop_rules"`
+
 	// BatchModel is the model foci's own small background jobs (foci_summary,
 	// the /prompts diff summary) run on for every CC-backed agent, passed to
 	// Claude Code as written. Per-agent backend_config.batch_model wins. When
@@ -348,7 +356,7 @@ type BackendConfig struct {
 	Model             *string           `toml:"model"              desc:"Model ID for the delegated backend (e.g. opus, sonnet)"`
 	AllowedTools      []string          `toml:"allowed_tools"      desc:"Claude Code permission rules (e.g. Edit(/tmp/**)). Merged with global [cc_backend] defaults"`
 	PreToolRules      []pretool.Rule    `toml:"pretool_rules"` // per-agent PreToolUse deny rules, merged by name over [cc_backend] pretool_rules (#2028)
-	StopRules         []stoprule.Rule   `toml:"stop_rules"`    // per-agent Stop-hook rules: block a final reply that announces work nothing was launched for (#2089)
+	StopRules         []stoprule.Rule   `toml:"stop_rules"`    // per-agent Stop-hook rules: block a final reply that announces work nothing was launched for (#2089); merged by name over [cc_backend] stop_rules (#3124)
 	Binary            *string           `toml:"binary"             desc:"Path to the backend executable (default: resolved via $PATH)"`
 	IdleTimeout       *string           `toml:"idle_timeout"       desc:"How long a delegated session can sit idle before shutdown. Empty = 3h" type:"duration"`
 	SkipPermissions   *bool             `toml:"skip_permissions"   desc:"Skip all permission prompts (CC --dangerously-skip-permissions). For unattended agents only"`

@@ -1144,32 +1144,40 @@ func (cfg *Config) undefinedKeysUnder(prefixes ...string) []string {
 	return out
 }
 
-// validateStopRules checks each agent's backend_config.stop_rules (#2089)
-// with the same unknown-key rule as pretool_rules: a misspelt key is an
-// error, never a warning. Stop rules are per-agent only; a [cc_backend]
-// stop_rules is rejected rather than silently ignored.
+// validateStopRules checks the [cc_backend] and per-agent backend_config
+// stop_rules layers (#2089, #3124) with the same unknown-key rule as
+// pretool_rules: a misspelt key is an error, never a warning. Each layer is
+// validated on its own (an override may leave text out), then every agent's
+// merged set: a rule that ends up with no text is a load error, so a rule
+// written without text fails loudly instead of silently never firing.
 func (cfg *Config) validateStopRules() error {
-	if unknown := cfg.undefinedKeysUnder("cc_backend.stop_rules"); len(unknown) > 0 {
-		return fmt.Errorf("stop_rules: per-agent only (agents.backend_config.stop_rules), not [cc_backend]: %s", strings.Join(unknown, ", "))
-	}
-	if unknown := cfg.undefinedKeysUnder("agents.backend_config.stop_rules."); len(unknown) > 0 {
+	if unknown := cfg.undefinedKeysUnder("cc_backend.stop_rules.", "agents.backend_config.stop_rules."); len(unknown) > 0 {
 		return fmt.Errorf("stop_rules: unknown key(s) %s", strings.Join(unknown, ", "))
+	}
+	if err := stoprule.ValidateLayer(cfg.CCBackend.StopRules); err != nil {
+		return fmt.Errorf("[cc_backend] %w", err)
 	}
 	for _, a := range cfg.Agents {
 		if err := stoprule.ValidateLayer(a.BackendConfig.StopRules); err != nil {
 			return fmt.Errorf("agent %q backend_config.%w", a.ID, err)
 		}
 	}
+	for _, a := range cfg.Agents {
+		if _, skipped := stoprule.Resolve(cfg.CCBackend.StopRules, a.BackendConfig.StopRules); len(skipped) > 0 {
+			return fmt.Errorf("agent %q: %s", a.ID, strings.Join(skipped, "; "))
+		}
+	}
 	return nil
 }
 
-// StopRules resolves the stop rules an agent's CC sessions enforce (#2089).
-// There are no preinstalled rules and no global layer. ok is false when no
-// agent has that id.
+// StopRules resolves the stop rules an agent's CC sessions enforce (#2089):
+// [cc_backend] stop_rules, then the agent's backend_config, merged by name
+// (#3124). There are no preinstalled rules. skipped lists rules the merge
+// left unusable. ok is false when no agent has that id.
 func (cfg *Config) StopRules(agentID string) (rules []stoprule.Rule, skipped []string, ok bool) {
 	for _, a := range cfg.Agents {
 		if a.ID == agentID {
-			rules, skipped = stoprule.Resolve(a.BackendConfig.StopRules)
+			rules, skipped = stoprule.Resolve(cfg.CCBackend.StopRules, a.BackendConfig.StopRules)
 			return rules, skipped, true
 		}
 	}
