@@ -391,7 +391,7 @@ func stopHeldWatch(inb *sessionInbox) {
 // them would deadlock at small limits.
 func (a *Agent) dispatchInject(ctx context.Context, inb *sessionInbox, env Envelope) bool {
 	if env.Inject.UserInput || isRedeliveryInject(env.Inject) {
-		if !a.waitUserTurnGates(ctx, env.SessionKey) {
+		if !a.waitUserTurnGates(ctx, env.SessionKey, false) {
 			a.refuseDroppedInject(env)
 			return false
 		}

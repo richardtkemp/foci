@@ -190,6 +190,16 @@ func (a *Agent) interruptTurns(only func(key string) bool, forReset bool) int {
 	}
 
 	done := map[string]bool{}
+	// A limit-break batch (#3128) runs to completion through a hold start;
+	// a limit reset still wakes it like any other turn.
+	if !forReset {
+		for _, key := range a.inboxTurnsRunning() {
+			if want(key) && !registered[key] && a.inboxForcing(key) {
+				a.logger().Infof("%s: leaving the limit-break turn on %s to finish", what, key)
+				done[key] = true
+			}
+		}
+	}
 	chat := func(key, trigger string) {
 		done[key] = true
 		a.logger().Infof("%s: interrupting the %s turn on %s; it resumes at lift", what, trigger, key)
@@ -200,13 +210,13 @@ func (a *Agent) interruptTurns(only func(key string) bool, forReset bool) int {
 	// A user batch the inbox is running is a chat turn, whether or not it has
 	// reached the turn registry yet.
 	for _, key := range a.inboxTurnsRunning() {
-		if want(key) && !registered[key] && !a.IsCompacting(key) {
+		if want(key) && !registered[key] && !done[key] && !a.IsCompacting(key) {
 			chat(key, "user")
 		}
 	}
 	for _, d := range a.ProcessingDetails() {
 		key := d.SessionKey
-		if key == "" || !want(key) || registered[key] || done[key] || a.IsCompacting(key) {
+		if key == "" || !want(key) || registered[key] || done[key] || a.IsCompacting(key) || (!forReset && a.inboxForcing(key)) {
 			continue
 		}
 		stopOnly := usageHoldStopOnly[d.Trigger] || (forReset && d.Trigger == TriggerKeepalive)

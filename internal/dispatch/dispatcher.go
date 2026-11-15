@@ -90,6 +90,13 @@ func (d *Dispatcher) DispatchText(ctx context.Context, text string, chatID int64
 		return Result{}
 	}
 
+	// "/lb <text>" (#3128) falls through as normal text: the agent runs it
+	// past the usage hold. A caller the operator gate forbids the command
+	// gets the command's refusal instead, so the gate cannot be bypassed.
+	if IsLimitBreakMessage(trimmed, d.registry) && !d.cc.Operators.Forbids(d.caller(userID), d.registry.Get(name), args) {
+		return Result{}
+	}
+
 	return d.dispatchRequest(ctx, name, args, sessionKey, userID, chatID, "")
 }
 

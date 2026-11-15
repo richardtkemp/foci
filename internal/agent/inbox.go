@@ -170,6 +170,12 @@ type Envelope struct {
 	// cut (restart_resume.go): no client shows it.
 	queuedID      string
 	restartResume bool
+
+	// usageForce marks a limit-break message ("/lb <text>", #3128): Enqueue
+	// stripped the word, and the usage hold does not park this message (it
+	// runs now) nor interrupt its turn. The hold stays on for everything
+	// else. See usage_hold_force.go.
+	usageForce bool
 }
 
 // EnvelopeFromQueuedMessage builds the Envelope for a turn driven by a queued
@@ -449,6 +455,10 @@ type sessionInbox struct {
 	// that a compaction guard or a steer could see.
 	usageResume atomic.Bool
 	usageKick   chan struct{}
+	// usageForcing is set while the worker runs a batch headed by a
+	// limit-break message (#3128): a hold start does not interrupt it
+	// (interruptTurns reads it from the registry's goroutine).
+	usageForcing atomic.Bool
 
 	// busy is >0 while the worker is inside a turn (driveOnce for a user
 	// batch, Inject.Run for an injection) — NOT during the waits around it.
@@ -846,6 +856,9 @@ func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 		a.logger().Warnf("inbox: enqueue with empty session key, dropping (text=%dB)", len(env.Text))
 		return false
 	}
+	// A limit-break message (#3128) loses its word here, before anything
+	// reads or stores its text: the agent sees only the user's own words.
+	markUsageForce(&env)
 	if a.enqueueObserver != nil {
 		a.enqueueObserver(env)
 	}
@@ -1645,8 +1658,9 @@ func (a *Agent) handleDequeued(ctx context.Context, inb *sessionInbox, env Envel
 	}
 	// The account-wide usage hold (#2491): a user message waits — the sender
 	// is told — and runs at lift, folded with the session's other held
-	// messages into one turn (releaseUsageHeld).
-	if a.usageHoldsTrigger("user", false) {
+	// messages into one turn (releaseUsageHeld). A limit-break message
+	// (#3128) runs now.
+	if !env.usageForce && a.usageHoldsTrigger("user", false) {
 		a.parkUsageHeld(inb, env)
 		return true
 	}
@@ -1708,9 +1722,12 @@ func (a *Agent) takeQueuedUsers(inb *sessionInbox) []Envelope {
 // while the batch queues, and driving past it would reintroduce exactly the
 // bug each gate prevents (#856's mid-compaction write, #767's discarded
 // response, #1932's dispatch into a dead credential).
-func (a *Agent) userTurnGatesClosed(sk string) bool {
+//
+// force is set for a batch headed by a limit-break message (#3128): the usage
+// hold does not hold it.
+func (a *Agent) userTurnGatesClosed(sk string, force bool) bool {
 	return a.reloginHoldClosed() ||
-		a.usageHoldsTrigger("user", false) ||
+		(!force && a.usageHoldsTrigger("user", false)) ||
 		(a.IsTurnInFlight(sk) && !a.IsInFlightDelivering(sk)) ||
 		a.IsCompacting(sk)
 }
@@ -1720,7 +1737,9 @@ func (a *Agent) userTurnGatesClosed(sk string) bool {
 // channel and batch afterwards (via waitTurnSlot's joiner path or
 // drainAvailable). Returns false when ctx ends while waiting; the worker
 // returns, like every other gate.
-func (a *Agent) waitUserTurnGates(ctx context.Context, sk string) bool {
+//
+// force skips the usage-hold wait (a limit-break batch, #3128).
+func (a *Agent) waitUserTurnGates(ctx context.Context, sk string, force bool) bool {
 	// Re-login hold (#1932): no turn may reach a backend that cannot
 	// authenticate. waitReloginGate is the same gate the dequeue path
 	// applies; re-waiting it here covers a re-login that started while a
@@ -1730,7 +1749,7 @@ func (a *Agent) waitUserTurnGates(ctx context.Context, sk string) bool {
 	}
 	// Usage hold (#2491): a user turn (an ask answer, a redelivery, a batch
 	// whose hold closed while it queued) waits for the lift.
-	for a.usageHoldsTrigger("user", false) {
+	for !force && a.usageHoldsTrigger("user", false) {
 		select {
 		case <-ctx.Done():
 			return false
@@ -1816,10 +1835,18 @@ func (a *Agent) runUserBatch(ctx context.Context, inb *sessionInbox, env Envelop
 	batch := append([]Envelope{env}, inb.takeUsageRelease()...)
 	// Held input that runs now leaves the restart store (#2491).
 	a.forgetUsageHeld(batch...)
+	// A limit-break message (#3128) heads a batch the usage hold neither
+	// holds nor interrupts; only other limit-break messages join it while
+	// the hold is on (keepForcedOnly).
+	force := env.usageForce
+	if force {
+		inb.usageForcing.Store(true)
+		defer inb.usageForcing.Store(false)
+	}
 	var notified bool
 	var release turnSlotRelease
 	for {
-		if !a.waitUserTurnGates(ctx, env.SessionKey) {
+		if !a.waitUserTurnGates(ctx, env.SessionKey, force) {
 			return false
 		}
 		var outcome turnSlotOutcome
@@ -1830,7 +1857,7 @@ func (a *Agent) runUserBatch(ctx context.Context, inb *sessionInbox, env Envelop
 		case slotDropped:
 			return true
 		}
-		if !a.userTurnGatesClosed(env.SessionKey) {
+		if !a.userTurnGatesClosed(env.SessionKey, force) {
 			break
 		}
 		if release != nil {
@@ -1840,6 +1867,9 @@ func (a *Agent) runUserBatch(ctx context.Context, inb *sessionInbox, env Envelop
 	}
 	if release != nil {
 		defer release()
+	}
+	if force {
+		batch = a.keepForcedOnly(inb, batch)
 	}
 	// turnActive flips true only after the transport has written
 	// the primary message to the backend, not the moment we
@@ -1863,7 +1893,11 @@ func (a *Agent) runUserBatch(ctx context.Context, inb *sessionInbox, env Envelop
 	// enqueued after a still-queued injection). Injections are never folded
 	// in — an inject has no Driver and no Text, so its Run would never fire —
 	// they stay on the worker's queue, in their place, and run after it.
-	if extra := a.takeQueuedUsers(inb); len(extra) > 0 {
+	extra := a.takeQueuedUsers(inb)
+	if force {
+		extra = a.keepForcedOnly(inb, extra)
+	}
+	if len(extra) > 0 {
 		a.forgetUsageHeld(extra...)
 		batch = append(batch, extra...)
 	}

@@ -253,6 +253,15 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		safeGo("wizard-response", func() { h.handleWizardResponse(f) })
 
 	case fap.Command:
+		// The app sends any typed "/..." as a Command frame. "/lb <text>"
+		// (#3128) is a message, not a command: it takes the message path,
+		// which hands it to the agent when the agent has /limit_break and
+		// back to routeCommand when it does not.
+		if text := limitBreakText(f); text != "" {
+			h.frames.PutUserMessageReceipt(f.ConversationID, in.ID, envelopeMillis(in.TS), time.Now().UnixMilli())
+			h.routeUserTurn(client, f.ConversationID, f.AgentID, text, nil, nil, in.ID, in.Seq, platform.SteerDefault, false, false)
+			return
+		}
 		h.routeCommand(client, f, "")
 
 	case fap.Ping:
@@ -928,6 +937,20 @@ func (h *Hub) handlePin(client *wsClient, f fap.PinPut) {
 	}
 	h.pinsMu.Unlock()
 	h.broadcastExcept(client, fap.PinSync{ConversationID: f.ConversationID, MessageIDs: ids, Labels: pinLabels(ids, meta)})
+}
+
+// limitBreakText is the message text of a Command frame that is a
+// limit-break message with text ("/lb hey", #3128), or "" for any other
+// command.
+func limitBreakText(f fap.Command) string {
+	text := "/" + strings.TrimPrefix(f.Name, "/")
+	if args := strings.TrimSpace(f.Args); args != "" {
+		text += " " + args
+	}
+	if rest, ok := platform.ParseLimitBreak(text); !ok || rest == "" {
+		return ""
+	}
+	return text
 }
 
 // routeCommand dispatches a slash command through the agent's command registry,

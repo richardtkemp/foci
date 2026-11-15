@@ -302,6 +302,12 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	if limitReset {
 		cmds.Register(command.LimitResetCommand())
 	}
+	// /limit_break (alias /lb, #3128) forces one message past the usage
+	// hold: registered for a backend that reports usage (Claude Code and
+	// codex), the backends whose account a usage hold can hold.
+	if spec, ok := delegator.SpecFor(p.acfg.Backend); ok && spec.Supports(delegator.CapUsageReports) {
+		cmds.Register(command.LimitBreakCommand())
+	}
 
 	// Tmux command (only if tool is available)
 	if p.tmuxTool != nil {

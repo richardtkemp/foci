@@ -26,6 +26,10 @@ func IsRoutableCommand(text string, r *command.Registry) bool {
 	if len(text) == 0 {
 		return false
 	}
+	// "/lb <text>" is a message for the agent, not a command (#3128).
+	if IsLimitBreakMessage(text, r) {
+		return false
+	}
 	if text[0] == '/' {
 		// A leading-slash filesystem path is not a command — don't divert it to
 		// the command worker; let it fall through to the agent as normal text.
@@ -39,6 +43,20 @@ func IsRoutableCommand(text string, r *command.Registry) bool {
 		return r.IsKnownCommand(text)
 	}
 	return false
+}
+
+// IsLimitBreakMessage reports whether text is a limit-break message with text
+// ("/lb hey", #3128) on an agent that registers /limit_break: the routing gate
+// (IsRoutableCommand), the dispatcher (DispatchText) and the app pass it to
+// the agent as a message, and the agent runs it past the usage hold. A bare
+// "/lb" is not one: it dispatches as the command, which answers its usage.
+// On an agent without the command, "/lb hey" stays an unknown command.
+func IsLimitBreakMessage(text string, r *command.Registry) bool {
+	if r == nil || r.Get(command.LimitBreakName) == nil {
+		return false
+	}
+	rest, ok := platform.ParseLimitBreak(text)
+	return ok && rest != ""
 }
 
 // isSlashPath reports whether text is a leading-slash filesystem path rather
@@ -155,7 +173,8 @@ func (i *Interceptor) TryIntercept(ctx context.Context, msg *InterceptMessage) I
 	// Drop stale slash commands (e.g. replayed from the event queue after a
 	// restart). Agent messages are still delivered since the agent can reason
 	// about timeliness, but slash commands execute unconditionally.
-	if msg.Text != "" && strings.HasPrefix(msg.Text, "/") && !msg.Timestamp.IsZero() {
+	// A limit-break message (#3128) is a message, delivered like one.
+	if msg.Text != "" && strings.HasPrefix(msg.Text, "/") && !msg.Timestamp.IsZero() && !IsLimitBreakMessage(msg.Text, i.Commands) {
 		if age := time.Since(msg.Timestamp); age > StaleCommandAge {
 			i.LogWarnf("dropping stale command %q (age=%s)", strings.ToLower(msg.Text), age.Truncate(time.Second))
 			return InterceptResult{Consumed: true, Text: msg.Text}
