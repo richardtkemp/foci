@@ -231,6 +231,12 @@ type Agent struct {
 	// goroutine. Nil = no notice.
 	PromptAnswerRefusedNotifyFunc func(sessionKey, text string)
 
+	// ContextNearFullNoticeFunc posts a system message in sessionKey's chat
+	// when a turn leaves its context at 95% or more of the full window
+	// (#1306, context_near_full.go). Fired in its own goroutine. Nil = no
+	// notice.
+	ContextNearFullNoticeFunc func(sessionKey, text string)
+
 	// OnInputDelivery reports how platform messages (refs) reached the agent
 	// (#2992): one of the Delivery* outcomes, the ledger id of the turn they
 	// started, joined or were steered into ("" while queued), and when. Called

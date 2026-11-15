@@ -364,6 +364,7 @@ func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator, tr
 		<-ts.CompletionChan
 		a.clearLiveTurn(sessionKey, ts.RowID())
 		t.UpdateSessionMeta(ts)
+		a.warnIfContextNearFull(ts)
 		t.RunCompaction(ts)
 		sink.Emit(ctx, turnevent.TurnComplete{
 			FinalText: ts.FinalText,

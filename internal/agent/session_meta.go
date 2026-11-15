@@ -54,6 +54,7 @@ type sessionMeta struct {
 	noCompact       bool                   // per-session no_compact flag (sticky across async operations)
 	compactRequest  bool                   // the agent asked to compact this session after its current turn (compact_session tool, #3040); in memory only
 	compactWake     string                 // the request's wake message, injected as a wake turn once the compaction finishes (#3041); "" = none
+	nearFullWarned  bool                   // the context near-full notice was sent for the current crossing of 95% of the window (#1306); cleared by a turn that ends below it; in memory only
 	systemBlocks    []provider.SystemBlock // per-session system prompt snapshot (nil = rebuild from bootstrap)
 	apiSeqNum       int                    // per-session incrementing counter for payload log entries
 

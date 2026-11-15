@@ -151,3 +151,46 @@ func TestConfigureUniversalTurnLimitersNilWhenUnlimited(t *testing.T) {
 		t.Errorf("GlobalTurnLimit = %v, want nil when no gateway-wide cap is configured", ag.GlobalTurnLimit)
 	}
 }
+
+// injectedConn records system messages (SendInjectedMessage) alongside the
+// session/broadcast notifications sessionNotifyConn records.
+type injectedConn struct {
+	*sessionNotifyConn
+	injected []string // "sessionKey|text" per SendInjectedMessage call
+}
+
+func (c *injectedConn) SendInjectedMessage(sessionKey, text string) error {
+	c.injected = append(c.injected, sessionKey+"|"+text)
+	return nil
+}
+
+// TestWireAgentPlatformCallbacks_ContextNearFullIsSystemMessage proves the
+// #1306 near-full warning leaves the gateway as a system message
+// (SendInjectedMessage, role "system" in the app) in the session's own chat,
+// not as a notification or broadcast (Dick 2026-11-15: "in chat as a system
+// message").
+func TestWireAgentPlatformCallbacks_ContextNearFullIsSystemMessage(t *testing.T) {
+	t.Parallel()
+	conn := &injectedConn{sessionNotifyConn: &sessionNotifyConn{stubConn: &stubConn{sessionKey: "x/c1"}}}
+	connMgr := &sessionRoutingConnMgr{conn: conn}
+	acfg := config.AgentConfig{ID: "x"}
+	live := config.NewLiveValue(config.Resolve(&config.Config{}, acfg))
+
+	ag := &agent.Agent{}
+	wireAgentPlatformCallbacks(ag, acfg, live, connMgr, nil)
+
+	if ag.ContextNearFullNoticeFunc == nil {
+		t.Fatal("ContextNearFullNoticeFunc is nil after wiring — the near-full warning is never sent (#1306)")
+	}
+	ag.ContextNearFullNoticeFunc("x/c1", "near full")
+
+	if len(conn.injected) != 1 || conn.injected[0] != "x/c1|near full" {
+		t.Errorf("SendInjectedMessage calls = %v, want exactly [x/c1|near full]", conn.injected)
+	}
+	if len(conn.toSession) != 0 || len(conn.broadcasts) != 0 {
+		t.Errorf("notifications = %v / broadcasts = %v, want none — the warning is a system message", conn.toSession, conn.broadcasts)
+	}
+	if len(connMgr.agentIDs) != 1 || connMgr.agentIDs[0] != "x" {
+		t.Errorf("ForSessionOrPrimary agent IDs = %v, want [x]", connMgr.agentIDs)
+	}
+}

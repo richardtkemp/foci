@@ -109,6 +109,12 @@ func wireAgentPlatformCallbacks(
 		route.NotifySessionChat(connMgr, acfg.ID, sessionKey, text)
 	}
 
+	// Context near full (#1306) — a system message in the session's own chat
+	// when a turn leaves the context at 95% of the full window.
+	ag.ContextNearFullNoticeFunc = func(sessionKey, text string) {
+		sendSystemNotice(connMgr, acfg.ID, sessionKey, text)
+	}
+
 	// Message info (#2992): how each app message reached the agent, as the
 	// inbox and turn transport decided it.
 	ag.OnInputDelivery = func(_ string, refs []delegator.InputRef, outcome, turnID string, at time.Time) {

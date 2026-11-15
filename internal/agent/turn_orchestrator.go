@@ -337,6 +337,7 @@ done:
 	if a.ShuttingDown() {
 		a.logger().Infof("session=%s post-turn compaction skipped: shutting down", ts.SessionKey)
 	} else {
+		a.warnIfContextNearFull(ts)
 		a.logger().Debugf("runPostTurn: entering RunCompaction sk=%s", ts.SessionKey)
 		tc.RunCompaction(ts)
 		a.logger().Debugf("runPostTurn: RunCompaction returned sk=%s", ts.SessionKey)
