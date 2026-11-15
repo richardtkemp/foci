@@ -48,6 +48,45 @@ func TestSeedDefaultSkills_TwoTier(t *testing.T) {
 	}
 }
 
+// TestSeedDefaultSkills_ScriptExecutable proves a "#!" file is seeded executable
+// and a plain file is not, both on first seed and when overwriting an existing
+// copy that has lost its executable bit. Uses the embedded agent-avatar skill.
+func TestSeedDefaultSkills_ScriptExecutable(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	mode := os.FileMode(0o640)
+	script := filepath.Join(dir, "agent-avatar", "avatar-gate.py")
+	plain := filepath.Join(dir, "foci-usage", "config.md")
+
+	check := func(when string) {
+		t.Helper()
+		st, err := os.Stat(script)
+		if err != nil {
+			t.Fatalf("%s: script not seeded: %v", when, err)
+		}
+		if got := st.Mode().Perm(); got != 0o750 {
+			t.Errorf("%s: script mode = %o, want 750", when, got)
+		}
+		st, err = os.Stat(plain)
+		if err != nil {
+			t.Fatalf("%s: plain file not seeded: %v", when, err)
+		}
+		if got := st.Mode().Perm(); got != 0o640 {
+			t.Errorf("%s: plain file mode = %o, want 640", when, got)
+		}
+	}
+
+	seedDefaultSkills(dir, mode)
+	check("first seed")
+
+	// An existing install holds a non-executable copy from an older seeder.
+	if err := os.Chmod(script, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	seedDefaultSkills(dir, mode)
+	check("re-seed")
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

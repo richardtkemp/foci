@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -20,6 +21,10 @@ import (
 //     on restart rather than being stranded behind a stale seeded copy.
 //   - Files a user adds that aren't in the embed are never touched — the walk
 //     only covers golden files, and nothing here deletes.
+//
+// embed.FS reports every file as 0444, so a script's executable bit is lost in
+// the embed. A file whose content starts with "#!" is written executable
+// (execute added wherever fileMode grants read), so skill scripts run directly.
 func seedDefaultSkills(dir string, fileMode os.FileMode) {
 	_ = fs.WalkDir(skills.FS, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || path == "." {
@@ -52,9 +57,18 @@ func seedDefaultSkills(dir string, fileMode os.FileMode) {
 			mainLog.Warnf("seed skills: mkdir %s: %v", filepath.Dir(dest), err)
 			return nil
 		}
-		if err := os.WriteFile(dest, data, fileMode); err != nil {
+		mode := fileMode
+		if bytes.HasPrefix(data, []byte("#!")) {
+			mode |= (fileMode & 0o444) >> 2
+		}
+		if err := os.WriteFile(dest, data, mode); err != nil {
 			mainLog.Warnf("seed skills: write %s: %v", dest, err)
 			return nil
+		}
+		// WriteFile sets the mode only on create; an existing seeded copy keeps
+		// its old mode unless we set it.
+		if err := os.Chmod(dest, mode); err != nil {
+			mainLog.Warnf("seed skills: chmod %s: %v", dest, err)
 		}
 		mainLog.Infof("seeded skill file: %s", dest)
 		return nil
