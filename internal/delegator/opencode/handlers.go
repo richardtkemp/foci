@@ -340,7 +340,10 @@ func (b *Backend) handleToolPart(part Part) {
 			desc := delegator.ExtractToolDescription(json.RawMessage(inputJSON))
 			b.agents.Add(part.CallID, desc)
 			if se := b.sessionEvents.Load(); se != nil && se.OnSubagentStart != nil {
-				se.OnSubagentStart(part.CallID, desc, "", 1)
+				// opencode's task input carries the instruction in "prompt", the
+				// same field as CC's Agent tool (#1495).
+				prompt := delegator.ExtractAgentPrompt(json.RawMessage(inputJSON))
+				se.OnSubagentStart(part.CallID, desc, prompt, 1)
 			}
 		}
 

@@ -8,7 +8,7 @@ import (
 )
 
 func TestHandleToolPart_TaskTool_FiresSubagentLifecycle(t *testing.T) {
-	var starts, ends []string
+	var starts, ends, prompts []string
 	var agentPending int
 
 	b := &Backend{
@@ -24,8 +24,11 @@ func TestHandleToolPart_TaskTool_FiresSubagentLifecycle(t *testing.T) {
 		}
 	}
 	b.AttachSessionEvents(&delegator.SessionEvents{
-		OnSubagentStart: func(groupKey, label, prompt string, runIndex int) { starts = append(starts, groupKey+":"+label) },
-		OnSubagentEnd:   func(groupKey string, runIndex int) { ends = append(ends, groupKey) },
+		OnSubagentStart: func(groupKey, label, prompt string, runIndex int) {
+			starts = append(starts, groupKey+":"+label)
+			prompts = append(prompts, prompt)
+		},
+		OnSubagentEnd: func(groupKey string, runIndex int) { ends = append(ends, groupKey) },
 	})
 
 	// Simulate task tool start
@@ -47,6 +50,11 @@ func TestHandleToolPart_TaskTool_FiresSubagentLifecycle(t *testing.T) {
 	}
 	if starts[0] != "task-1:fix the bug" {
 		t.Errorf("OnSubagentStart = %q, want %q", starts[0], "task-1:fix the bug")
+	}
+	// The task input's prompt is the main agent's instruction; the app shows it
+	// at the top of the subagent card (#1495, as ccstream does since #1355).
+	if prompts[0] != "find and fix the null pointer" {
+		t.Errorf("OnSubagentStart prompt = %q, want %q", prompts[0], "find and fix the null pointer")
 	}
 	if agentPending != 1 {
 		t.Errorf("expected agentPending=1 after start, got %d", agentPending)
