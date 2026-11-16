@@ -37,9 +37,20 @@ import (
 // It feeds the status block (statusLine), the chat warnings, the rate-limit
 // gate (gateSignal) and /mana and /usage (QueryUsage).
 
-// rlWarnLevels are the used-% thresholds that produce one chat warning each
-// per window. 100 is "window exhausted".
-var rlWarnLevels = []int{80, 95, 100}
+// rlExhausted is the used-% at which a window is used up. Its notice is sent
+// whatever the configured levels (#3145: a reached limit is not a level).
+const rlExhausted = 100
+
+// rlLevels are the used-% thresholds that produce one chat warning each per
+// window: the configured usage warning levels ([notify]
+// usage_warning_levels, #3145; nil = delegator.DefaultUsageWarningLevels)
+// plus rlExhausted.
+func rlLevels(levels []int) []int {
+	if levels == nil {
+		levels = delegator.DefaultUsageWarningLevels
+	}
+	return append(append([]int(nil), levels...), rlExhausted)
+}
 
 type rateLimitState struct {
 	mu    sync.Mutex
@@ -69,7 +80,7 @@ func absDiff(a, b int64) int64 {
 
 type rlMark struct {
 	resetsAt int64  // window identity: a new value is a new window
-	level    int    // highest rlWarnLevels entry reached (0 = none)
+	level    int    // highest rlLevels entry reached (0 = none)
 	reached  string // rateLimitReachedType last seen ("" = none)
 }
 
@@ -91,8 +102,9 @@ func rateLimitsFor(agentID string) *rateLimitState {
 }
 
 // apply merges one bucket's snapshot and returns the chat notices it
-// triggers. A null window or credits field leaves the stored one unchanged.
-func (s *rateLimitState) apply(snap rateLimitSnapshot, now time.Time) []string {
+// triggers at levels (the usage warning levels, see rlLevels). A null window
+// or credits field leaves the stored one unchanged.
+func (s *rateLimitState) apply(snap rateLimitSnapshot, levels []int, now time.Time) []string {
 	id := snap.LimitID
 	if id == "" {
 		id = "codex"
@@ -128,7 +140,7 @@ func (s *rateLimitState) apply(snap rateLimitSnapshot, now time.Time) []string {
 		if w.win == nil {
 			continue
 		}
-		if n := s.windowNoticeLocked(id+"|"+w.slot, id, *w.win, now); n != "" {
+		if n := s.windowNoticeLocked(id+"|"+w.slot, id, *w.win, levels, now); n != "" {
 			notices = append(notices, n)
 		}
 	}
@@ -138,13 +150,8 @@ func (s *rateLimitState) apply(snap rateLimitSnapshot, now time.Time) []string {
 	return notices
 }
 
-func (s *rateLimitState) windowNoticeLocked(key, limitID string, w rateLimitWindow, now time.Time) string {
-	level := 0
-	for _, l := range rlWarnLevels {
-		if w.usedPercent() >= l {
-			level = l
-		}
-	}
+func (s *rateLimitState) windowNoticeLocked(key, limitID string, w rateLimitWindow, levels []int, now time.Time) string {
+	level := delegator.UsageLevelReached(rlLevels(levels), w.usedPercent())
 	resetsAt := int64(0)
 	if w.ResetsAt != nil {
 		resetsAt = *w.ResetsAt
@@ -167,7 +174,7 @@ func (s *rateLimitState) windowNoticeLocked(key, limitID string, w rateLimitWind
 	}
 	icon := "⚠️"
 	what := fmt.Sprintf("at %d%%", w.usedPercent())
-	if level >= 100 {
+	if level >= rlExhausted {
 		icon = "🛑"
 		what = "used up (100%)"
 	}
@@ -456,6 +463,18 @@ func untilPhrase(now, reset time.Time) string {
 
 // --- backend wiring ---
 
+// usageWarningLevels is the live [notify] usage_warning_levels (#3145), nil
+// when the gateway wired none (rlLevels then uses the default).
+func (b *Backend) usageWarningLevels() []int {
+	b.mu.Lock()
+	fn := b.usageLevels
+	b.mu.Unlock()
+	if fn == nil {
+		return nil
+	}
+	return fn()
+}
+
 // rateLimits is this backend's agent-wide rate-limit state.
 func (b *Backend) rateLimits() *rateLimitState {
 	return rateLimitsFor(b.startOpts.AgentID)
@@ -476,7 +495,7 @@ func (b *Backend) onRateLimitsUpdated(params json.RawMessage) {
 	b.logDebugf("account/rateLimits/updated: %s", string(params))
 	now := timeutil.Now()
 	st := b.rateLimits()
-	b.deliverRateLimitNotices(st.apply(p.RateLimits, now))
+	b.deliverRateLimitNotices(st.apply(p.RateLimits, b.usageWarningLevels(), now))
 	b.reportUsageWindows(p.RateLimits)
 	b.reportUsage(delegator.UsageSourceCodexUpdate, snapshotReportWindows(p.RateLimits), params)
 	// The startup read (seedRateLimits) never closes the gate: the gate's
@@ -562,6 +581,7 @@ func (b *Backend) readRateLimits(source string) (json.RawMessage, error) {
 	}
 	st := b.rateLimits()
 	now := timeutil.Now()
+	levels := b.usageWarningLevels()
 	var notices []string
 	var windows []delegator.UsageReportWindow
 	if len(r.RateLimitsByLimitID) > 0 {
@@ -569,11 +589,11 @@ func (b *Backend) readRateLimits(source string) (json.RawMessage, error) {
 			if sn.LimitID == "" {
 				sn.LimitID = id
 			}
-			notices = append(notices, st.apply(sn, now)...)
+			notices = append(notices, st.apply(sn, levels, now)...)
 			windows = append(windows, snapshotReportWindows(sn)...)
 		}
 	} else if r.RateLimits != nil {
-		notices = st.apply(*r.RateLimits, now)
+		notices = st.apply(*r.RateLimits, levels, now)
 		windows = snapshotReportWindows(*r.RateLimits)
 	}
 	// Only a second process of an agent that already saw these buckets can

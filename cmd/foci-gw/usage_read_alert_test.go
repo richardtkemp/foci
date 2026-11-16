@@ -35,15 +35,15 @@ func TestDeliverUsageReadNotices(t *testing.T) {
 		}
 	}
 
-	deliverUsageReadNotices(m, agentID, ccstream.AnnounceUsageRead, read(40), delegator.UsageSourceScheduled, config.RateLimitNotifyAll, open)
+	deliverUsageReadNotices(m, agentID, ccstream.AnnounceUsageRead, read(40), delegator.UsageSourceScheduled, config.RateLimitNotifyAll, delegator.DefaultUsageWarningLevels, open)
 	for k, c := range m.others {
 		if len(c.notices) != 0 {
 			t.Fatalf("40%%: chat %s got %q, want nothing", k, c.notices)
 		}
 	}
 
-	deliverUsageReadNotices(m, agentID, ccstream.AnnounceUsageRead, read(72), delegator.UsageSourceScheduled, config.RateLimitNotifyAll, open)
-	deliverUsageReadNotices(m, agentID, ccstream.AnnounceUsageRead, read(75), delegator.UsageSourceScheduled, config.RateLimitNotifyAll, open)
+	deliverUsageReadNotices(m, agentID, ccstream.AnnounceUsageRead, read(72), delegator.UsageSourceScheduled, config.RateLimitNotifyAll, delegator.DefaultUsageWarningLevels, open)
+	deliverUsageReadNotices(m, agentID, ccstream.AnnounceUsageRead, read(75), delegator.UsageSourceScheduled, config.RateLimitNotifyAll, delegator.DefaultUsageWarningLevels, open)
 	for k, c := range m.others {
 		if len(c.notices) != 1 || !strings.Contains(c.notices[0], "7-day") || !strings.Contains(c.notices[0], "Usage: 72%") {
 			t.Errorf("chat %s got %q, want one 7-day notice at 72%%", k, c.notices)

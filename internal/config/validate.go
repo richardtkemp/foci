@@ -397,6 +397,15 @@ func (cfg *Config) Validate(knownBackends []string) error {
 			return err
 		}
 	}
+	// [notify] usage_warning_levels (#3145): a bad list fails at load.
+	if err := validateUsageWarningLevels("[notify]", cfg.Notify.UsageWarningLevels); err != nil {
+		return err
+	}
+	for _, a := range cfg.Agents {
+		if err := validateUsageWarningLevels(fmt.Sprintf("agent %q [notify]", a.ID), a.Notify.UsageWarningLevels); err != nil {
+			return err
+		}
+	}
 
 	// Validate the turn-limit keys (#2281): negative values fail at either
 	// level; a non-negative agent-level max_concurrent_turns_all_agents is
@@ -1049,6 +1058,18 @@ func (cfg *Config) validateTracing() error {
 	}
 	if t.MaxFieldBytes <= 0 {
 		return fmt.Errorf("[tracing] max_field_bytes = %d: must be > 0", t.MaxFieldBytes)
+	}
+	return nil
+}
+
+// validateUsageWarningLevels checks a [notify] usage_warning_levels value
+// (#3145). nil or empty inherits and is valid.
+func validateUsageWarningLevels(where string, v *string) error {
+	if v == nil || strings.TrimSpace(*v) == "" {
+		return nil
+	}
+	if _, err := ParseUsageWarningLevels(*v); err != nil {
+		return fmt.Errorf("%s usage_warning_levels = %q: %v", where, *v, err)
 	}
 	return nil
 }

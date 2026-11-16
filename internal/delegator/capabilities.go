@@ -318,12 +318,12 @@ type Spec struct {
 	// is one hold account, as before) and UsageQuery reads are per agent.
 	UsageAccount func(agentEnv map[string]string) (string, error)
 	// UsageReadNotices returns the chat notices one successful UsageQuery
-	// read of agentID's account raises (#3144: Claude Code warns at 50, 60,
-	// 70, 80 and 90% of a window, sharing the per-agent throttle of its own
-	// stream warnings). The gateway delivers them like
-	// HostHooks.OnRateLimitNotice. nil: reads raise no notice (codex warns
-	// from its own pushed updates).
-	UsageReadNotices func(agentID string, info *UsageInfo, now time.Time) []string
+	// read of agentID's account raises (#3144: Claude Code warns at each of
+	// levels, the live [notify] usage_warning_levels (#3145), sharing the
+	// per-agent throttle of its own stream warnings). The gateway delivers
+	// them like HostHooks.OnRateLimitNotice. nil: reads raise no notice
+	// (codex warns from its own pushed updates).
+	UsageReadNotices func(agentID string, info *UsageInfo, levels []int, now time.Time) []string
 
 	// Process-global lifecycle hooks the gateway runs once for every backend.
 	OnGatewayStart    func()

@@ -420,8 +420,10 @@ func TestPromptSuggestion_SwitchAndDropsAreLogged(t *testing.T) {
 	b.OnControlResponse(json.RawMessage(`{"type":"control_response","response":{"subtype":"success","request_id":"` + reqID + `"}}`))
 	b.OnResult(&ResultMessage{Subtype: "success"})
 	b.OnPromptSuggestion(&PromptSuggestionMessage{Suggestion: "run the tests"})
-	// Through OnRateLimit, so its wiring to the gate is covered. Off a
-	// warning boundary, so no notice fires.
+	// Through OnRateLimit, so its wiring to the gate is covered. A rejection
+	// always reaches the warning throttle (#3145), so the backend needs the
+	// one Start would bind; no notice hook is set.
+	b.rlThrottle = NewRateLimitThrottle()
 	util := 0.77
 	b.OnRateLimit(&RateLimitEvent{RateLimitInfo: RateLimitInfo{Status: "rejected", RateLimitType: "seven_day", Utilization: &util}})
 	if got := lines.next(t); got != "env="+promptSuggestionOff {

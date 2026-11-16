@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -773,6 +774,7 @@ type NotifyConfig struct {
 	WarningMaxPerWindow *int            `toml:"warning_max_per_window"   default:"3"    hot:"event" scope:"global,agent" desc:"Maximum identical warning notifications sent within a time window before further repeats are suppressed, to avoid spamming chat (default 3)"`                                                                                                                                                                                                                                                   // max identical warnings per window before suppression (default 3)
 	RateLimitNotifyTo   *string         `toml:"rate_limit_notify_to" default:"all" hot:"event" scope:"global,agent" choices:"all,session,default,both" desc:"Where a usage-limit warning goes: all sends it once to every open chat of the agent and to the chat that hit the limit; session only to the chat that hit it (else the default chat); default only to the default chat; both to the session chat and the default chat. all and both never copy it into or out of a chat whose platform confines replies (Slack)"` // #1857, #3137
 	CacheBustNotify     *bool           `toml:"cache_bust_notify"    default:"true" hot:"event" scope:"global,agent" desc:"Send a chat notification when a model call reads less of the prompt cache than it should have (a cache bust), naming the session, the tokens lost, the likely cause and the cost. Sent to the session's chat, else the nearest visible chat above it, else the agent's default chat. A cache that expired after its time-to-live is not reported"`                                                  // #2933
+	UsageWarningLevels  *string         `toml:"usage_warning_levels" default:"50,60,70,80,90,95,96,97,98,99" hot:"event" scope:"global,agent" desc:"The usage levels, in percent of a usage window (Claude Code's 5-hour and weekly windows, Codex's windows), at which a usage warning is sent: comma-separated whole numbers from 1 to 99, each sent once per window. none sends no level warnings. A reached limit is always announced, whatever the levels"`                                                               // #3145
 }
 
 // Rate-limit notice delivery targets for [notify] rate_limit_notify_to.
@@ -825,6 +827,59 @@ func (n NotifyConfig) CompactionNotifyEnabled() bool {
 		return *n.CompactionNotify
 	}
 	return true
+}
+
+// DefaultUsageWarningLevels is the default [notify] usage_warning_levels
+// (#3145, Dick 2026-11-16: "Levels I specified [50, 60, 70, 80, 90], plus
+// Claude code's default of 95 95 97 98 99 to be the default").
+const DefaultUsageWarningLevels = "50,60,70,80,90,95,96,97,98,99"
+
+// UsageWarningLevelsNone is the usage_warning_levels value that turns level
+// warnings off.
+const UsageWarningLevelsNone = "none"
+
+// ParseUsageWarningLevels parses a usage_warning_levels value: whole numbers
+// from 1 to 99, comma-separated, any order, spaces allowed. "none" is no
+// levels. It returns the levels sorted and without repeats.
+func ParseUsageWarningLevels(s string) ([]int, error) {
+	s = strings.TrimSpace(s)
+	if strings.EqualFold(s, UsageWarningLevelsNone) {
+		return []int{}, nil
+	}
+	if s == "" {
+		return nil, fmt.Errorf("empty (use %q for no level warnings)", UsageWarningLevelsNone)
+	}
+	seen := map[int]bool{}
+	out := []int{}
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		v, err := strconv.Atoi(part)
+		if err != nil {
+			return nil, fmt.Errorf("%q is not a whole number", part)
+		}
+		if v < 1 || v > 99 {
+			return nil, fmt.Errorf("%d is not between 1 and 99", v)
+		}
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	sort.Ints(out)
+	return out, nil
+}
+
+// UsageWarningLevelList returns the resolved usage warning levels, sorted
+// (default DefaultUsageWarningLevels, #3145). An unparsable value (validation
+// rejects one at load) falls back to the default.
+func (n NotifyConfig) UsageWarningLevelList() []int {
+	if n.UsageWarningLevels != nil && strings.TrimSpace(*n.UsageWarningLevels) != "" {
+		if l, err := ParseUsageWarningLevels(*n.UsageWarningLevels); err == nil {
+			return l
+		}
+	}
+	l, _ := ParseUsageWarningLevels(DefaultUsageWarningLevels)
+	return l
 }
 
 // CacheBustNotifyEnabled returns the resolved value (default: true, #2933).

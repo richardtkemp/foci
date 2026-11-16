@@ -1368,8 +1368,11 @@ func (b *Backend) OnPromptSuggestion(msg *PromptSuggestionMessage) {
 // CC repeats the event, so a warning per event would flood (#1211/#1238).
 // We throttle via a shared RateLimitThrottle (one per agent, so main + facet
 // sessions don't each fire independently) keyed by status|type, re-armed when
-// resetsAt changes. Only warn when utilization climbs to a new bucket: one
-// warning per 5% below 95%, then every 1% at/above 95% — see rateLimitBucket.
+// resetsAt changes. A warning fires only when utilization climbs to a new
+// level of [notify] usage_warning_levels (#3145: default 50..90 in 10s, then
+// 95..99), and only when no usage read already announced that level in the
+// window; the levels replace Claude Code's own 5%/1% steps, so CC's warning
+// at 96% and foci's 96% level are one message. A rejection always fires.
 func (b *Backend) OnRateLimit(ev *RateLimitEvent) {
 	b.touchActivity()
 	if ev == nil {
@@ -1400,20 +1403,22 @@ func (b *Backend) OnRateLimit(ev *RateLimitEvent) {
 		resetsAt = int64(*info.ResetsAt)
 	}
 	key := fmt.Sprintf("%s|%s", info.Status, info.RateLimitType)
-	bucket := rateLimitBucket(info.Utilization)
+	// bucket is the warning level reached (#3145); a rejection keeps its
+	// whole percent (it always fires) and an unknown utilization is -1.
+	bucket := rateLimitPercent(info.Utilization)
 
 	utilStr := "nil"
 	if info.Utilization != nil {
 		utilStr = fmt.Sprintf("%.4f", *info.Utilization)
 	}
 
-	// Only fire on boundary crossings (every 5% below 95%, every 1% at/above).
-	// Intermediate values like 87% are logged but never delivered to the user.
-	// Nil utilization (e.g. a rejected event without usage data) bypasses this.
-	if info.Utilization != nil && !rateLimitOnBoundary(info.Utilization) {
-		b.logger().Debugf("rate_limit_event off-boundary (skip): key=%s util=%s bucket=%d resetsAt=%d",
-			key, utilStr, bucket, resetsAt)
-		return
+	if info.Status != "rejected" && bucket >= 0 {
+		bucket = delegator.UsageLevelReached(delegator.UsageWarningLevelsOrDefault(b.usageWarningLevels), bucket)
+		if bucket == 0 {
+			b.logger().Debugf("rate_limit_event under every usage warning level (skip): key=%s util=%s resetsAt=%d",
+				key, utilStr, resetsAt)
+			return
+		}
 	}
 
 	res := b.rlThrottle.evaluateStream(key, info.RateLimitType, info.Status, resetsAt, bucket)

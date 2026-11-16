@@ -63,6 +63,14 @@ type HostHooks struct {
 	// its rate_limit_event windows, codex its primary and secondary windows.
 	OnUsageWindow func(ev usagehold.Event)
 
+	// UsageWarningLevels is the live source of [notify] usage_warning_levels
+	// (#3145): the percents of a usage window at which OnRateLimitNotice
+	// announces a warning, sorted, read at each usage event. Honoured by
+	// Claude Code (rate_limit_event) and codex (account/rateLimits/updated).
+	// nil = DefaultUsageWarningLevels. A reached limit is announced whatever
+	// the levels.
+	UsageWarningLevels func() []int
+
 	// PreToolRules is the live source of the PreToolUse deny rules, read at
 	// every session start. Honoured by a backend declaring CapPreToolRules.
 	PreToolRules func() []pretool.Rule

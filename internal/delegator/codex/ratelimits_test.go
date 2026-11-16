@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -56,21 +57,22 @@ func isolateRateLimits(t *testing.T, agents ...string) {
 // must not re-announce what the user was already told.
 func TestRateLimitsFirstObservationNeverWarns(t *testing.T) {
 	s := newRLState()
-	if n := s.apply(codexWindow(100, reset5h), rlNow); len(n) != 0 {
+	if n := s.apply(codexWindow(100, reset5h), nil, rlNow); len(n) != 0 {
 		t.Fatalf("first codex snapshot warned: %q", n)
 	}
 	reached := "workspace_member_credits_depleted"
-	if n := s.apply(rateLimitSnapshot{LimitID: "premium", RateLimitReachedType: &reached}, rlNow); len(n) != 0 {
+	if n := s.apply(rateLimitSnapshot{LimitID: "premium", RateLimitReachedType: &reached}, nil, rlNow); len(n) != 0 {
 		t.Fatalf("first premium snapshot warned: %q", n)
 	}
 }
 
-// TestRateLimitsWarnOncePerThreshold proves a window warns once as it crosses
-// 80%, once at 95% and once at 100% — not on every report in between, and
-// not again when the reported reset time wobbles by a second (seen live).
+// TestRateLimitsWarnOncePerThreshold proves a window warns once at each
+// default usage warning level it crosses (#3145: 50-90 in tens, then 95-99)
+// and once at 100% — not on every report in between, and not again when the
+// reported reset time wobbles by a second (seen live).
 func TestRateLimitsWarnOncePerThreshold(t *testing.T) {
 	s := newRLState()
-	s.apply(codexWindow(70, reset5h), rlNow)
+	s.apply(codexWindow(70, reset5h), nil, rlNow)
 	steps := []struct {
 		pct    float64
 		reset  int64
@@ -80,13 +82,17 @@ func TestRateLimitsWarnOncePerThreshold(t *testing.T) {
 		{82, reset5h, "⚠️ Codex 5h usage at 82%. Resets at " + hhmm(reset5h) + " (in 1h 39m)."},
 		{85, reset5h, ""},
 		{85, reset5h + 1, ""},
+		{89, reset5h, ""},
+		{91, reset5h, "⚠️ Codex 5h usage at 91%."},
 		{96, reset5h, "⚠️ Codex 5h usage at 96%."},
-		{99, reset5h, ""},
+		{96.5, reset5h, ""},
+		{97, reset5h, "⚠️ Codex 5h usage at 97%."},
+		{99, reset5h, "⚠️ Codex 5h usage at 99%."},
 		{100, reset5h, "🛑 Codex 5h usage used up (100%)."},
 		{100, reset5h, ""},
 	}
 	for i, st := range steps {
-		got := s.apply(codexWindow(st.pct, st.reset), rlNow)
+		got := s.apply(codexWindow(st.pct, st.reset), nil, rlNow)
 		if st.wantIn == "" {
 			if len(got) != 0 {
 				t.Fatalf("step %d (%v%%): unexpected notice %q", i, st.pct, got)
@@ -99,18 +105,60 @@ func TestRateLimitsWarnOncePerThreshold(t *testing.T) {
 	}
 }
 
+// TestRateLimitsConfiguredLevels (#3145): codex warns at the configured
+// usage warning levels, not the defaults, and a window used up is announced
+// even with level warnings off ("none" = no levels).
+func TestRateLimitsConfiguredLevels(t *testing.T) {
+	s := newRLState()
+	levels := []int{75, 90}
+	s.apply(codexWindow(10, reset5h), levels, rlNow)
+	for i, st := range []struct {
+		pct    float64
+		wantIn string
+	}{
+		{60, ""}, // a default level, not a configured one
+		{74, ""},
+		{76, "⚠️ Codex 5h usage at 76%."},
+		{89, ""},
+		{95, "⚠️ Codex 5h usage at 95%."},
+		{99, ""}, // 99 is a default level only
+		{100, "🛑 Codex 5h usage used up (100%)."},
+	} {
+		got := s.apply(codexWindow(st.pct, reset5h), levels, rlNow)
+		if st.wantIn == "" {
+			if len(got) != 0 {
+				t.Fatalf("step %d (%v%%): unexpected notice %q", i, st.pct, got)
+			}
+			continue
+		}
+		if len(got) != 1 || !strings.Contains(got[0], st.wantIn) {
+			t.Fatalf("step %d (%v%%): notices %q, want one containing %q", i, st.pct, got, st.wantIn)
+		}
+	}
+
+	off := newRLState()
+	none := []int{}
+	off.apply(codexWindow(10, reset5h), none, rlNow)
+	if n := off.apply(codexWindow(99, reset5h), none, rlNow); len(n) != 0 {
+		t.Fatalf("levels off, 99%%: notices %q, want none", n)
+	}
+	if n := off.apply(codexWindow(100, reset5h), none, rlNow); len(n) != 1 || !strings.Contains(n[0], "used up (100%)") {
+		t.Fatalf("levels off, 100%%: notices %q, want the used-up notice", n)
+	}
+}
+
 // TestRateLimitsNewWindowRearms proves a new window (resetsAt moves on by
 // hours) starts from no level: a low reading is silent, and crossing 80% in
 // the new window warns again.
 func TestRateLimitsNewWindowRearms(t *testing.T) {
 	s := newRLState()
-	s.apply(codexWindow(70, reset5h), rlNow)
-	s.apply(codexWindow(100, reset5h), rlNow)
+	s.apply(codexWindow(70, reset5h), nil, rlNow)
+	s.apply(codexWindow(100, reset5h), nil, rlNow)
 	next := reset5h + 5*3600
-	if n := s.apply(codexWindow(3, next), rlNow); len(n) != 0 {
+	if n := s.apply(codexWindow(3, next), nil, rlNow); len(n) != 0 {
 		t.Fatalf("new window at 3%% warned: %q", n)
 	}
-	if n := s.apply(codexWindow(81, next), rlNow); len(n) != 1 {
+	if n := s.apply(codexWindow(81, next), nil, rlNow); len(n) != 1 {
 		t.Fatalf("crossing 80%% in the new window: notices %q, want one", n)
 	}
 }
@@ -120,19 +168,19 @@ func TestRateLimitsNewWindowRearms(t *testing.T) {
 // it cleared and came back. It names when included usage resets.
 func TestRateLimitsReachedWarnsOnTransition(t *testing.T) {
 	s := newRLState()
-	s.apply(codexWindow(100, reset5h), rlNow)
-	s.apply(rateLimitSnapshot{LimitID: "premium"}, rlNow) // seed: not reached
+	s.apply(codexWindow(100, reset5h), nil, rlNow)
+	s.apply(rateLimitSnapshot{LimitID: "premium"}, nil, rlNow) // seed: not reached
 	depleted := "workspace_member_credits_depleted"
-	got := s.apply(rateLimitSnapshot{LimitID: "premium", RateLimitReachedType: &depleted}, rlNow)
+	got := s.apply(rateLimitSnapshot{LimitID: "premium", RateLimitReachedType: &depleted}, nil, rlNow)
 	want := "🛑 Codex limit reached: workspace out of credits. Turns will fail until it is lifted. Included usage resets at " + hhmm(reset5h) + " (in 1h 39m)."
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("notices %q, want [%q]", got, want)
 	}
-	if n := s.apply(rateLimitSnapshot{LimitID: "premium", RateLimitReachedType: &depleted}, rlNow); len(n) != 0 {
+	if n := s.apply(rateLimitSnapshot{LimitID: "premium", RateLimitReachedType: &depleted}, nil, rlNow); len(n) != 0 {
 		t.Fatalf("repeat warned: %q", n)
 	}
-	s.apply(rateLimitSnapshot{LimitID: "premium"}, rlNow)
-	if n := s.apply(rateLimitSnapshot{LimitID: "premium", RateLimitReachedType: &depleted}, rlNow); len(n) != 1 {
+	s.apply(rateLimitSnapshot{LimitID: "premium"}, nil, rlNow)
+	if n := s.apply(rateLimitSnapshot{LimitID: "premium", RateLimitReachedType: &depleted}, nil, rlNow); len(n) != 1 {
 		t.Fatalf("after clearing, return of the limit: notices %q, want one", n)
 	}
 }
@@ -181,7 +229,7 @@ func TestRateLimitsUpdatedNotificationReachesHook(t *testing.T) {
 	type call struct{ key, notice string }
 	var calls []call
 	b.SetHostHooks(delegator.HostHooks{OnRateLimitNotice: func(k, n string) { calls = append(calls, call{k, n}) }})
-	b.rateLimits().apply(rateLimitSnapshot{LimitID: "premium"}, rlNow) // seen before: not reached
+	b.rateLimits().apply(rateLimitSnapshot{LimitID: "premium"}, nil, rlNow) // seen before: not reached
 
 	b.dispatch([]byte(livePremiumDepleted))
 
@@ -190,6 +238,34 @@ func TestRateLimitsUpdatedNotificationReachesHook(t *testing.T) {
 	}
 	if sd := b.StatusDetail(); !strings.Contains(sd, "limit reached: workspace out of credits") {
 		t.Fatalf("StatusDetail() = %q, want the limit", sd)
+	}
+}
+
+// TestRateLimitsUpdatedUsesLiveLevels (#3145): a live
+// account/rateLimits/updated warns at the levels HostHooks.UsageWarningLevels
+// returns at that moment, so a config edit applies without a restart.
+func TestRateLimitsUpdatedUsesLiveLevels(t *testing.T) {
+	b := newTestBackend(t)
+	b.startOpts.AgentID = t.Name()
+	isolateRateLimits(t, t.Name())
+	var notices []string
+	levels := []int{30}
+	b.SetHostHooks(delegator.HostHooks{
+		OnRateLimitNotice:  func(_, n string) { notices = append(notices, n) },
+		UsageWarningLevels: func() []int { return levels },
+	})
+	update := func(pct int) {
+		b.dispatch([]byte(fmt.Sprintf(`{"jsonrpc":"2.0","method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":%d,"windowDurationMins":300,"resetsAt":%d}}}}`, pct, reset5h)))
+	}
+	update(10) // seeds the mark
+	update(35)
+	if len(notices) != 1 || !strings.Contains(notices[0], "at 35%") {
+		t.Fatalf("notices %q, want one at 35%% (configured level 30)", notices)
+	}
+	levels = []int{30, 40} // a live edit
+	update(41)
+	if len(notices) != 2 || !strings.Contains(notices[1], "at 41%") {
+		t.Fatalf("notices %q, want a second at 41%% after the edit added 40", notices)
 	}
 }
 
@@ -205,7 +281,7 @@ func TestRateLimitsGateEngagesOnReachedLimit(t *testing.T) {
 	b.SetHostHooks(delegator.HostHooks{EngageRateLimit: func(s ratelimit.Signal) { sigs = append(sigs, s) }})
 	// The handler reads the real clock, so the window resets relative to it.
 	reset := time.Now().Add(2 * time.Hour).Unix()
-	b.rateLimits().apply(codexWindow(100, reset), time.Now())
+	b.rateLimits().apply(codexWindow(100, reset), nil, time.Now())
 
 	b.dispatch([]byte(livePremiumDepleted))
 	b.dispatch([]byte(livePremiumDepleted))
@@ -223,7 +299,7 @@ func TestRateLimitsGateEngagesOnReachedLimit(t *testing.T) {
 // usage, and only rateLimitReachedType means turns fail.
 func TestRateLimitsGateIgnoresFullWindowWithoutLimit(t *testing.T) {
 	s := newRLState()
-	s.apply(codexWindow(100, reset5h), rlNow)
+	s.apply(codexWindow(100, reset5h), nil, rlNow)
 	if sig := s.gateSignal(rlNow); sig != nil {
 		t.Fatalf("gateSignal = %+v, want nil without a reached limit", sig)
 	}
@@ -237,8 +313,8 @@ func TestRateLimitsGateIgnoresFullWindowWithoutLimit(t *testing.T) {
 func TestRateLimitsGateNoResetUsesFallbackAndReprobes(t *testing.T) {
 	s := newRLState()
 	depleted := "workspace_member_credits_depleted"
-	s.apply(codexWindow(40, reset5h), rlNow)
-	s.apply(rateLimitSnapshot{LimitID: "premium", RateLimitReachedType: &depleted}, rlNow)
+	s.apply(codexWindow(40, reset5h), nil, rlNow)
+	s.apply(rateLimitSnapshot{LimitID: "premium", RateLimitReachedType: &depleted}, nil, rlNow)
 
 	sig := s.gateSignal(rlNow)
 	if sig == nil || !sig.ResetAt.IsZero() {
@@ -254,7 +330,7 @@ func TestRateLimitsGateNoResetUsesFallbackAndReprobes(t *testing.T) {
 		t.Fatal("not re-engaged after the gate reopened with the limit still reported")
 	}
 	// Credits added: codex clears rateLimitReachedType; nothing re-closes.
-	s.apply(rateLimitSnapshot{LimitID: "premium"}, rlNow)
+	s.apply(rateLimitSnapshot{LimitID: "premium"}, nil, rlNow)
 	if again := s.gateSignal(rlNow.Add(3 * time.Hour)); again != nil {
 		t.Fatalf("engaged after the limit cleared: %+v", again)
 	}
@@ -352,8 +428,8 @@ func TestQueryUsage_NoServerReportsLastPushed(t *testing.T) {
 	agent, other := t.Name(), t.Name()+"-other"
 	isolateRateLimits(t, agent, other, t.Name()+"-never")
 	before := time.Now()
-	rateLimitsFor(agent).apply(codexWindow(42, reset5h), timeutil.Now())
-	rateLimitsFor(other).apply(codexWindow(99, reset5h), timeutil.Now())
+	rateLimitsFor(agent).apply(codexWindow(42, reset5h), nil, timeutil.Now())
+	rateLimitsFor(other).apply(codexWindow(99, reset5h), nil, timeutil.Now())
 
 	info, err := QueryUsage(context.Background(), agent)
 	if err != nil {
@@ -387,7 +463,7 @@ func TestQueryUsage_ReadFailureFallsBack(t *testing.T) {
 	})
 	poolAs(t, t.Name(), b)
 	isolateRateLimits(t, t.Name())
-	rateLimitsFor(t.Name()).apply(codexWindow(10, reset5h), timeutil.Now())
+	rateLimitsFor(t.Name()).apply(codexWindow(10, reset5h), nil, timeutil.Now())
 
 	info, err := QueryUsage(context.Background(), t.Name())
 	if err != nil {

@@ -29,34 +29,26 @@ func TestOnRateLimit(t *testing.T) {
 		t.Fatalf("allowed/nil fired %d warnings, want 0", len(fires))
 	}
 
-	// Off-boundary values (not a multiple of 5%) are silently skipped.
+	// #3145: a warning fires at each default usage warning level reached
+	// (50..90 in tens, then 95..99), once; values between levels say nothing
+	// new. The first event announces the highest level it has reached.
 	b.OnRateLimit(warn(0.81))
+	if len(fires) != 1 || !strings.Contains(fires[0], "Usage: 81%") {
+		t.Fatalf("first warning at 81%%: fires %q, want one at 81%%", fires)
+	}
 	b.OnRateLimit(warn(0.82))
-	b.OnRateLimit(warn(0.84))
-	if len(fires) != 0 {
-		t.Fatalf("off-boundary fired %d, want 0", len(fires))
-	}
-
-	// Exactly on a 5% boundary (80%) fires.
 	b.OnRateLimit(warn(0.80))
+	b.OnRateLimit(warn(0.89))
 	if len(fires) != 1 {
-		t.Fatalf("boundary 80 fired %d, want 1", len(fires))
+		t.Fatalf("80-89 after level 80 fired %d, want 1", len(fires))
 	}
-
-	// Repeat at the same boundary is suppressed.
-	b.OnRateLimit(warn(0.80))
-	if len(fires) != 1 {
-		t.Fatalf("repeat 80 fired %d, want 1", len(fires))
-	}
-
-	// Next boundary (85%) fires again; intermediate values are skipped.
-	b.OnRateLimit(warn(0.85))
-	b.OnRateLimit(warn(0.87)) // off-boundary, skip
+	b.OnRateLimit(warn(0.90))
+	b.OnRateLimit(warn(0.94))
 	if len(fires) != 2 {
-		t.Fatalf("boundary 85 fired %d, want 2", len(fires))
+		t.Fatalf("level 90 fired %d, want 2", len(fires))
 	}
 
-	// At/above 95% every 1% step is a boundary and fires.
+	// At/above 95% every 1% level fires once.
 	b.OnRateLimit(warn(0.95))
 	b.OnRateLimit(warn(0.96))
 	b.OnRateLimit(warn(0.96)) // same → throttled
@@ -82,6 +74,51 @@ func TestOnRateLimit(t *testing.T) {
 }
 
 func ptrTo(f float64) *float64 { return &f }
+
+// TestOnRateLimit_ConfiguredLevels (#3145): the stream warns at the levels
+// HostHooks.UsageWarningLevels returns, read at each event, not CC's own
+// steps; with none configured only a rejection fires.
+func TestOnRateLimit_ConfiguredLevels(t *testing.T) {
+	var fires []string
+	levels := []int{70, 85}
+	b := &Backend{rlThrottle: NewRateLimitThrottle()}
+	b.SetHostHooks(delegator.HostHooks{
+		OnRateLimitNotice:  func(_, d string) { fires = append(fires, d) },
+		UsageWarningLevels: func() []int { return levels },
+	})
+	resets := 1752349800.0
+	warn := func(util float64) {
+		u := util
+		b.OnRateLimit(&RateLimitEvent{RateLimitInfo: RateLimitInfo{
+			Status: "allowed_warning", RateLimitType: "seven_day", ResetsAt: &resets, Utilization: &u,
+		}})
+	}
+	warn(0.65)
+	if len(fires) != 0 {
+		t.Fatalf("65%% under every level fired %d, want 0", len(fires))
+	}
+	warn(0.75)
+	warn(0.80) // a default level, not a configured one
+	if len(fires) != 1 {
+		t.Fatalf("75%% then 80%% fired %d, want 1 (level 70)", len(fires))
+	}
+	warn(0.96)
+	warn(0.99) // CC's own 1% steps are not levels here
+	if len(fires) != 2 {
+		t.Fatalf("96%% then 99%% fired %d, want 2 (level 85 once)", len(fires))
+	}
+
+	levels = []int{} // "none", applied live
+	resets += 7 * 86400
+	warn(0.90)
+	if len(fires) != 2 {
+		t.Fatalf("levels off: 90%% fired %d, want still 2", len(fires))
+	}
+	b.OnRateLimit(&RateLimitEvent{RateLimitInfo: RateLimitInfo{Status: "rejected", RateLimitType: "seven_day", ResetsAt: &resets}})
+	if len(fires) != 3 {
+		t.Fatalf("levels off: a rejection fired %d total, want 3", len(fires))
+	}
+}
 
 // TestOnRateLimit_LogsEveryEventInFull pins #2120: every rate_limit_event —
 // including "allowed" ones and ones the throttle skips — leaves one DEBUG line

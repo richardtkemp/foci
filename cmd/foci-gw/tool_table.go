@@ -782,12 +782,14 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 				account,
 				func() bool { return live.Load().Tools.SpawnReservePercent > 0 },
 				hist.RecordRead)
-			// #3144: a Claude Code agent is told of each 50/60/70/80/90%
-			// level its account's reads reach, as the stream's notices are.
+			// #3144: a Claude Code agent is told of each usage warning level
+			// ([notify] usage_warning_levels, #3145) its account's reads
+			// reach, as the stream's notices are.
 			if spec.UsageReadNotices != nil {
 				tools.OnSpawnUsageRead(acfg.Backend, acfg.ID, account,
 					usageReadAlerter(d.connMgr, acfg.ID, spec.UsageReadNotices,
 						func() string { return live.Load().Notify.RateLimitNotifyTo },
+						func() []int { return live.Load().Notify.UsageWarningLevels },
 						app.OpenSessionsForAgent))
 			}
 		}

@@ -106,6 +106,7 @@ func (b *Backend) SetHostHooks(h delegator.HostHooks) {
 	b.stopRules = h.StopRules
 	b.claudeAISkills = h.ClaudeAISkills
 	b.addDirs = h.AddDirs
+	b.usageWarningLevels = h.UsageWarningLevels
 }
 
 // SetOnAutonomousOpen registers a hook fired when the backend detects CC has

@@ -271,6 +271,9 @@ type Backend struct {
 	// addDirs yields backend_config.add_dirs (#3123), read at every Start;
 	// nil = no extra working directories.
 	addDirs func() []string
+	// usageWarningLevels yields [notify] usage_warning_levels (#3145), read
+	// at each rate_limit_event; nil = delegator.DefaultUsageWarningLevels.
+	usageWarningLevels func() []int
 	// stopRules yields the agent's stop rules (#2089) baked into the Stop
 	// hook command at each Start. Set via SetHostHooks.
 	stopRules func() []stoprule.Rule

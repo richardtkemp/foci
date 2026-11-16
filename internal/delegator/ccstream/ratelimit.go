@@ -261,17 +261,14 @@ func (t *RateLimitThrottle) raiseWindowLocked(window string, resetsAt int64, lev
 	t.windows[window] = rateLimitWarnState{resetsAt: resetsAt, bucket: level}
 }
 
-// usageReadLevels are the levels a usage read announces (#3144, Dick
-// 2026-11-16: "50, 60, 70, 80, 90%"), in rising order.
-var usageReadLevels = []int{50, 60, 70, 80, 90}
-
 // usageReadNotices returns the notices one usage read raises: for each of the
-// five-hour and weekly windows it reports, the highest of usageReadLevels its
-// use has reached, when that level is above every level already announced in
-// that window by a read or by the stream. A window whose reset is at or
-// before now is over (the reading predates it) and says nothing. A read that
-// is not Claude Code's (a codex Allowance) raises none.
-func (t *RateLimitThrottle) usageReadNotices(info *delegator.UsageInfo, now time.Time) []string {
+// five-hour and weekly windows it reports, the highest of levels (the live
+// [notify] usage_warning_levels, #3145) its use has reached, when that level
+// is above every level already announced in that window by a read or by the
+// stream. A window whose reset is at or before now is over (the reading
+// predates it) and says nothing. A read that is not Claude Code's (a codex
+// Allowance) raises none.
+func (t *RateLimitThrottle) usageReadNotices(info *delegator.UsageInfo, levels []int, now time.Time) []string {
 	if info == nil || info.Allowance != nil {
 		return nil
 	}
@@ -285,12 +282,7 @@ func (t *RateLimitThrottle) usageReadNotices(info *delegator.UsageInfo, now time
 		if !w.u.Reported || w.u.ResetsAt.IsZero() || !w.u.ResetsAt.After(now) {
 			continue
 		}
-		level := 0
-		for _, l := range usageReadLevels {
-			if w.u.Percent >= l {
-				level = l
-			}
-		}
+		level := delegator.UsageLevelReached(levels, w.u.Percent)
 		if level == 0 || !t.claimWindowLocked(w.window, w.u.ResetsAt.Unix(), level) {
 			continue
 		}
@@ -304,12 +296,12 @@ func (t *RateLimitThrottle) usageReadNotices(info *delegator.UsageInfo, now time
 }
 
 // AnnounceUsageRead returns the chat notices a usage read of agentID's
-// account raises (#3144): the same notices, and the same per-agent throttle,
-// as the stream's rate_limit_event warnings, so a level either source has
-// announced is not announced again. The caller delivers them the way it
-// delivers HostHooks.OnRateLimitNotice.
-func AnnounceUsageRead(agentID string, info *delegator.UsageInfo, now time.Time) []string {
-	return agentThrottle(agentID).usageReadNotices(info, now)
+// account raises at levels (#3144, #3145): the same notices, and the same
+// per-agent throttle, as the stream's rate_limit_event warnings, so a level
+// either source has announced is not announced again. The caller delivers
+// them the way it delivers HostHooks.OnRateLimitNotice.
+func AnnounceUsageRead(agentID string, info *delegator.UsageInfo, levels []int, now time.Time) []string {
+	return agentThrottle(agentID).usageReadNotices(info, levels, now)
 }
 
 var (
@@ -371,42 +363,18 @@ func (t *RateLimitThrottle) evaluateStream(key, window, status string, resetsAt 
 	return res
 }
 
-// rateLimitBucket groups a utilization fraction (0..1) into a notification
-// bucket. Below 95% it coarsens to 5% steps (…, 80, 85, 90) so we warn once
-// per 5% increment; at/above 95% it uses 1% steps (95, 96, 97, …) so every
-// step near the limit is surfaced ("permit all >95%"). Returns -1 when
-// utilization is unknown (nil) so such events warn once per window.
-func rateLimitBucket(u *float64) int {
+// rateLimitPercent is a utilization fraction (0..1) as a whole percent,
+// rounded down (0.87 is 87, never 86 from float error), or -1 when it is
+// unknown (nil): such an event fires once per window.
+func rateLimitPercent(u *float64) int {
 	if u == nil {
 		return -1
 	}
-	pct := *u * 100
+	pct := int(math.Floor(*u*100 + 1e-6))
 	if pct < 0 {
 		pct = 0
 	}
-	if pct >= 95 {
-		return int(pct) // 1% granularity near the limit
-	}
-	return int(pct/5) * 5 // 5% granularity below 95%
-}
-
-// rateLimitOnBoundary reports whether the utilization fraction sits exactly on
-// a notification boundary: a multiple of 5% below 95%, or any integer % at/above
-// 95%. The throttle only fires on boundary crossings, so intermediate values
-// like 87% are silently ignored. Uses math.Round to tolerate float imprecision
-// (0.85*100 can be 84.99999…).
-func rateLimitOnBoundary(u *float64) bool {
-	if u == nil {
-		return false
-	}
-	pct := math.Round(*u * 100)
-	if pct < 0 {
-		pct = 0
-	}
-	if pct >= 95 {
-		return true // every 1% step is a boundary near the limit
-	}
-	return int(pct)%5 == 0
+	return pct
 }
 
 // rateLimitWindowLabel maps CC's rateLimitType to a human-friendly window name.

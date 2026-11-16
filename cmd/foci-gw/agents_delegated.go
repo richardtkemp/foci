@@ -312,10 +312,13 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		// resets; the gate's own hooks notify the user.
 		EngageRateLimit: ag.EngageRateLimit,
 		OnUsageWindow:   ag.ObserveUsage,
-		PreToolRules:    preToolRules,
-		StopRules:       stopRules,
-		ClaudeAISkills:  claudeAISkills,
-		AddDirs:         addDirs,
+		// [notify] usage_warning_levels, read LIVE per usage event
+		// (hot:"event", #3145).
+		UsageWarningLevels: func() []int { return p.resolvedLive.Load().Notify.UsageWarningLevels },
+		PreToolRules:       preToolRules,
+		StopRules:          stopRules,
+		ClaudeAISkills:     claudeAISkills,
+		AddDirs:            addDirs,
 	}
 	// This agent's view of the usage history (#3103): the account its
 	// backend's usage reports are stored under.
@@ -1203,21 +1206,22 @@ func deliverRateLimitNotice(connMgr platform.ConnectionManager, agentID, session
 // read has no triggering session, so the session key is "": "all" reaches
 // every open chat (else the primary), "session" and "default" the primary.
 // Delivery runs off the reading goroutine.
-func usageReadAlerter(connMgr platform.ConnectionManager, agentID string, raise usageNoticesFunc, target func() string, openSessions func(agentID string) []string) tools.UsageRecorder {
+// levels() is [notify] usage_warning_levels (#3145), also read live.
+func usageReadAlerter(connMgr platform.ConnectionManager, agentID string, raise usageNoticesFunc, target func() string, levels func() []int, openSessions func(agentID string) []string) tools.UsageRecorder {
 	return func(info *delegator.UsageInfo, source string) {
-		to := target()
-		go deliverUsageReadNotices(connMgr, agentID, raise, info, source, to, openSessions)
+		to, lv := target(), levels()
+		go deliverUsageReadNotices(connMgr, agentID, raise, info, source, to, lv, openSessions)
 	}
 }
 
 // usageNoticesFunc is delegator.Spec.UsageReadNotices.
-type usageNoticesFunc = func(agentID string, info *delegator.UsageInfo, now time.Time) []string
+type usageNoticesFunc = func(agentID string, info *delegator.UsageInfo, levels []int, now time.Time) []string
 
-// deliverUsageReadNotices raises (the backend's Spec.UsageReadNotices) and
-// delivers the notices of one usage read of agentID's account
+// deliverUsageReadNotices raises (the backend's Spec.UsageReadNotices, at
+// levels) and delivers the notices of one usage read of agentID's account
 // (usageReadAlerter) to target.
-func deliverUsageReadNotices(connMgr platform.ConnectionManager, agentID string, raise usageNoticesFunc, info *delegator.UsageInfo, source, target string, openSessions func(agentID string) []string) {
-	notices := raise(agentID, info, timeutil.Now())
+func deliverUsageReadNotices(connMgr platform.ConnectionManager, agentID string, raise usageNoticesFunc, info *delegator.UsageInfo, source, target string, levels []int, openSessions func(agentID string) []string) {
+	notices := raise(agentID, info, levels, timeutil.Now())
 	if len(notices) == 0 {
 		return
 	}

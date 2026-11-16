@@ -78,6 +78,17 @@ func TestConfigureDelegated_HostHooksFollowSpec(t *testing.T) {
 			if got.OnAuthFailure == nil || got.OnRateLimitNotice == nil || got.EngageRateLimit == nil {
 				t.Errorf("auth/rate-limit hooks not all wired: %+v", *got)
 			}
+			// #3145: the usage warning levels are read live from the
+			// resolved config at each call.
+			if got.UsageWarningLevels == nil {
+				t.Fatal("UsageWarningLevels not wired")
+			}
+			snap := *p.resolvedLive.Load()
+			snap.Notify.UsageWarningLevels = []int{42}
+			p.resolvedLive.Store(&snap)
+			if lv := got.UsageWarningLevels(); len(lv) != 1 || lv[0] != 42 {
+				t.Errorf("UsageWarningLevels() = %v after a live edit, want [42]", lv)
+			}
 			if (got.PreToolRules != nil) != tc.rules || (got.StopRules != nil) != tc.rules {
 				t.Errorf("rules wired = (%v, %v), want %v", got.PreToolRules != nil, got.StopRules != nil, tc.rules)
 			}

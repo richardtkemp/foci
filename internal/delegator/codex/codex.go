@@ -82,6 +82,7 @@ type Backend struct {
 	// gateSignal).
 	onRateLimited   func(signal ratelimit.Signal)
 	onUsageWindow   func(ev usagehold.Event) // HostHooks.OnUsageWindow (#2491)
+	usageLevels     func() []int             // HostHooks.UsageWarningLevels (#3145)
 	usageSink       delegator.UsageSink      // SetUsageSink: the usage store (#3103)
 	model           string
 	launchModel     string
@@ -496,14 +497,15 @@ func (b *Backend) StatusDetail() string {
 }
 
 // SetHostHooks implements delegator.HostHooksAcceptor. codex honours
-// OnRateLimitNotice (usage warnings) and EngageRateLimit (pause background
-// work at a reached limit), both in ratelimits.go; it has no re-login,
-// pretool or stop hooks.
+// OnRateLimitNotice (usage warnings, at UsageWarningLevels) and
+// EngageRateLimit (pause background work at a reached limit), both in
+// ratelimits.go; it has no re-login, pretool or stop hooks.
 func (b *Backend) SetHostHooks(h delegator.HostHooks) {
 	b.mu.Lock()
 	b.onRateLimitNotice = h.OnRateLimitNotice
 	b.onRateLimited = h.EngageRateLimit
 	b.onUsageWindow = h.OnUsageWindow
+	b.usageLevels = h.UsageWarningLevels
 	b.mu.Unlock()
 }
 

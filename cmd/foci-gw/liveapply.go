@@ -275,6 +275,9 @@ var (
 		"notify.compaction_debug", "agent.notify.compaction_debug", "platforms.notify.compaction_debug",
 		// #1857: read live by the ccstream rate-limit hook off LiveConfig().
 		"notify.rate_limit_notify_to", "agent.notify.rate_limit_notify_to",
+		// #3145: read live per usage event by HostHooks.UsageWarningLevels
+		// and the usage-read alerter off LiveConfig().
+		"notify.usage_warning_levels", "agent.notify.usage_warning_levels",
 		// #2933: read live by the cache-bust alert off LiveConfig().
 		"notify.cache_bust_notify", "agent.notify.cache_bust_notify",
 		"display.stream_output", "agent.display.stream_output", "platforms.display.stream_output",

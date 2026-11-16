@@ -595,6 +595,7 @@ type ResolvedNotify struct {
 	WarningMaxPerWindow int            // default 3
 	RateLimitNotifyTo   string         // default "all" (#3137; #1857)
 	CacheBustNotify     bool           // default true (#2933)
+	UsageWarningLevels  []int          // sorted; default 50..90,95..99 (#3145)
 }
 
 func resolveNotify(m NotifyConfig) ResolvedNotify {
@@ -608,6 +609,7 @@ func resolveNotify(m NotifyConfig) ResolvedNotify {
 		WarningMaxPerWindow: DerefInt(m.WarningMaxPerWindow),
 		RateLimitNotifyTo:   m.RateLimitNotifyTarget(),
 		CacheBustNotify:     m.CacheBustNotifyEnabled(),
+		UsageWarningLevels:  m.UsageWarningLevelList(),
 	}
 }
 
