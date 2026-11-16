@@ -212,11 +212,104 @@ type rateLimitWarnState struct {
 type RateLimitThrottle struct {
 	mu    sync.Mutex
 	state map[string]rateLimitWarnState
+	// windows is the highest usage level announced per window ("five_hour",
+	// "seven_day") by EITHER source: the stream's allowed_warning notices and
+	// the scheduled usage reads (#3144). Each source announces a level only
+	// above it, so a level is told once whichever source saw it first.
+	windows map[string]rateLimitWarnState
 }
 
 // NewRateLimitThrottle creates a rate-limit warning throttle.
 func NewRateLimitThrottle() *RateLimitThrottle {
-	return &RateLimitThrottle{state: make(map[string]rateLimitWarnState)}
+	return &RateLimitThrottle{state: make(map[string]rateLimitWarnState), windows: make(map[string]rateLimitWarnState)}
+}
+
+// sameWindowSlack is how far apart two reset instants of one window may be.
+// The stream and get_usage report the same reset up to a second apart
+// (usage-history.db, 2026-11-16: 1794880800 vs 1794880799); two different
+// windows of one type are at least five hours apart.
+const sameWindowSlack = 30 * 60 // seconds
+
+// sameWindow reports whether two reset instants (Unix seconds, 0 = unknown)
+// name the same window.
+func sameWindow(a, b int64) bool {
+	if a == 0 || b == 0 {
+		return a == b
+	}
+	d := a - b
+	return d >= -sameWindowSlack && d <= sameWindowSlack
+}
+
+// claimWindowLocked reports whether level is above the highest level
+// announced in window (resetsAt), and records it when so. A new window
+// starts with nothing announced. t.mu must be held.
+func (t *RateLimitThrottle) claimWindowLocked(window string, resetsAt int64, level int) bool {
+	prev, seen := t.windows[window]
+	if seen && sameWindow(prev.resetsAt, resetsAt) && level <= prev.bucket {
+		return false
+	}
+	t.windows[window] = rateLimitWarnState{resetsAt: resetsAt, bucket: level}
+	return true
+}
+
+// raiseWindowLocked records level as announced in window without a check (a
+// rejection, which always fires). t.mu must be held.
+func (t *RateLimitThrottle) raiseWindowLocked(window string, resetsAt int64, level int) {
+	if prev, seen := t.windows[window]; seen && sameWindow(prev.resetsAt, resetsAt) && level <= prev.bucket {
+		return
+	}
+	t.windows[window] = rateLimitWarnState{resetsAt: resetsAt, bucket: level}
+}
+
+// usageReadLevels are the levels a usage read announces (#3144, Dick
+// 2026-11-16: "50, 60, 70, 80, 90%"), in rising order.
+var usageReadLevels = []int{50, 60, 70, 80, 90}
+
+// usageReadNotices returns the notices one usage read raises: for each of the
+// five-hour and weekly windows it reports, the highest of usageReadLevels its
+// use has reached, when that level is above every level already announced in
+// that window by a read or by the stream. A window whose reset is at or
+// before now is over (the reading predates it) and says nothing. A read that
+// is not Claude Code's (a codex Allowance) raises none.
+func (t *RateLimitThrottle) usageReadNotices(info *delegator.UsageInfo, now time.Time) []string {
+	if info == nil || info.Allowance != nil {
+		return nil
+	}
+	var out []string
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, w := range []struct {
+		window string
+		u      delegator.UsageWindow
+	}{{"five_hour", info.FiveHour}, {"seven_day", info.SevenDay}} {
+		if !w.u.Reported || w.u.ResetsAt.IsZero() || !w.u.ResetsAt.After(now) {
+			continue
+		}
+		level := 0
+		for _, l := range usageReadLevels {
+			if w.u.Percent >= l {
+				level = l
+			}
+		}
+		if level == 0 || !t.claimWindowLocked(w.window, w.u.ResetsAt.Unix(), level) {
+			continue
+		}
+		util := float64(w.u.Percent) / 100
+		resets := float64(w.u.ResetsAt.Unix())
+		out = append(out, FormatRateLimitNotice(RateLimitInfo{
+			Status: "allowed_warning", RateLimitType: w.window, Utilization: &util, ResetsAt: &resets,
+		}))
+	}
+	return out
+}
+
+// AnnounceUsageRead returns the chat notices a usage read of agentID's
+// account raises (#3144): the same notices, and the same per-agent throttle,
+// as the stream's rate_limit_event warnings, so a level either source has
+// announced is not announced again. The caller delivers them the way it
+// delivers HostHooks.OnRateLimitNotice.
+func AnnounceUsageRead(agentID string, info *delegator.UsageInfo, now time.Time) []string {
+	return agentThrottle(agentID).usageReadNotices(info, now)
 }
 
 var (
@@ -243,21 +336,39 @@ type rateLimitCheckResult struct {
 	prev rateLimitWarnState
 	seen bool
 	fire bool
+	// byRead: the stream event's level was already announced in its window
+	// (by a usage read, #3144), so it does not fire.
+	byRead bool
 }
 
-// evaluate atomically checks and updates the throttle for the given key. It
-// fires when: the key is unseen, the limit window changed (resetsAt), or
-// utilization climbed to a higher bucket. Returns the decision + prior state
-// for diagnostic logging.
-func (t *RateLimitThrottle) evaluate(key string, resetsAt int64, bucket int) rateLimitCheckResult {
+// evaluateStream atomically checks and updates the throttle for one stream
+// rate_limit_event. It fires when: the key (status|type) is unseen, the limit
+// window changed (resetsAt), or utilization climbed to a higher bucket. The
+// event is also checked against the levels announced in its window by either
+// source (#3144): an allowed_warning at a level a usage read already
+// announced does not fire. A rejection always fires (the limit itself is
+// news). Either way a firing event raises its window's announced level. An
+// event with no window, no reset or no utilization skips the window check.
+func (t *RateLimitThrottle) evaluateStream(key, window, status string, resetsAt int64, bucket int) rateLimitCheckResult {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	prev, seen := t.state[key]
 	fire := !seen || prev.resetsAt != resetsAt || bucket > prev.bucket
-	if fire {
-		t.state[key] = rateLimitWarnState{resetsAt: resetsAt, bucket: bucket}
+	res := rateLimitCheckResult{prev: prev, seen: seen, fire: fire}
+	if !fire {
+		return res
 	}
-	return rateLimitCheckResult{prev: prev, seen: seen, fire: fire}
+	if window != "" && resetsAt != 0 && bucket >= 0 {
+		if status == "rejected" {
+			t.raiseWindowLocked(window, resetsAt, bucket)
+		} else if !t.claimWindowLocked(window, resetsAt, bucket) {
+			res.fire, res.byRead = false, true
+		}
+	}
+	// The key's own mark advances even when a read had announced the level:
+	// the level has been told either way.
+	t.state[key] = rateLimitWarnState{resetsAt: resetsAt, bucket: bucket}
+	return res
 }
 
 // rateLimitBucket groups a utilization fraction (0..1) into a notification

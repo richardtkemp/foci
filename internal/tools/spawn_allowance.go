@@ -99,6 +99,9 @@ type usageEntry struct {
 	// record stores each successful read in the usage history with its
 	// source (#3103); nil = not stored.
 	record UsageRecorder
+	// listeners hear each successful read too, one per agent of the account
+	// (OnRead, #3144); a later subscription of one id replaces its first.
+	listeners map[string]UsageRecorder
 
 	info   *delegator.UsageInfo // last good reading
 	infoAt time.Time            // when info was read; zero = never
@@ -147,13 +150,44 @@ func SpawnUsageReader(backend string, target delegator.UsageTarget, query delega
 	if query == nil {
 		return nil
 	}
-	key := backend + "/" + target.AgentID
-	if account != "" {
-		key = account
-	}
-	return spawnUsage.Register(key, func(ctx context.Context) (*delegator.UsageInfo, error) {
+	return spawnUsage.Register(spawnUsageKey(backend, target.AgentID, account), func(ctx context.Context) (*delegator.UsageInfo, error) {
 		return query(ctx, target)
 	}, enabled, record...)
+}
+
+// spawnUsageKey is the cache key of agentID's usage on backend: account
+// (Spec.UsageAccount) when not "", else backend and agent.
+func spawnUsageKey(backend, agentID, account string) string {
+	if account != "" {
+		return account
+	}
+	return backend + "/" + agentID
+}
+
+// OnSpawnUsageRead subscribes agentID to every successful read of its usage
+// account (keyed as SpawnUsageReader keys it), scheduled or started by a
+// spawn's check (#3144: the usage alerts). Every agent of one account
+// subscribes for itself, so each hears the account's one read. fn runs on
+// the reading goroutine before the read counts as ended: it must not block.
+func OnSpawnUsageRead(backend, agentID, account string, fn UsageRecorder) {
+	spawnUsage.OnRead(spawnUsageKey(backend, agentID, account), agentID, fn)
+}
+
+// OnRead subscribes fn, as id, to every successful read of key (before or
+// after key's query is registered). A second subscription of id replaces the
+// first; nil fn removes it.
+func (c *UsageCache) OnRead(key, id string, fn UsageRecorder) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e := c.entry(key)
+	if fn == nil {
+		delete(e.listeners, id)
+		return
+	}
+	if e.listeners == nil {
+		e.listeners = map[string]UsageRecorder{}
+	}
+	e.listeners[id] = fn
 }
 
 // Register records key's query (the first registration wins: every
@@ -299,13 +333,20 @@ func (c *UsageCache) refresh(key string, e *usageEntry, done chan struct{}, sour
 		e.record(info, source) // a failed read stores nothing
 	}
 	c.mu.Lock()
+	var listeners []UsageRecorder
 	if err != nil {
 		e.err, e.errAt = err, c.now()
 	} else {
 		e.info, e.infoAt, e.err = info, c.now(), nil
+		for _, fn := range e.listeners {
+			listeners = append(listeners, fn)
+		}
 	}
 	e.running = nil
 	c.mu.Unlock()
+	for _, fn := range listeners {
+		fn(info, source)
+	}
 	close(done)
 }
 

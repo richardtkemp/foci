@@ -119,6 +119,7 @@ var spec = delegator.Spec{
 	PlanDelivery:      planDelivery,
 	UsageQuery:        QueryUsage,
 	UsageAccount:      UsageAccount,
+	UsageReadNotices:  AnnounceUsageRead,
 }
 
 func init() { delegator.Register(spec) }

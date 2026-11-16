@@ -1416,8 +1416,11 @@ func (b *Backend) OnRateLimit(ev *RateLimitEvent) {
 		return
 	}
 
-	res := b.rlThrottle.evaluate(key, resetsAt, bucket)
+	res := b.rlThrottle.evaluateStream(key, info.RateLimitType, info.Status, resetsAt, bucket)
 	switch {
+	case res.byRead:
+		b.logger().Debugf("rate_limit_event suppressed (level already announced in this window): key=%s util=%s bucket=%d resetsAt=%d",
+			key, utilStr, bucket, resetsAt)
 	case !res.fire:
 		b.logger().Debugf("rate_limit_event suppressed: key=%s util=%s bucket=%d resetsAt=%d prev{bucket=%d,resetsAt=%d}",
 			key, utilStr, bucket, resetsAt, res.prev.bucket, res.prev.resetsAt)

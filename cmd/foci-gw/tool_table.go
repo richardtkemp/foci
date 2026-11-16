@@ -777,10 +777,19 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 			// The schedule skips while the reserve is 0 (the check is off).
 			// Each successful read is stored in the usage history (#3103).
 			hist := usageBindingFor(d.p.cfg, acfg)
+			account := usageAccountFor(acfg.ID, acfg.Backend, acfg.BackendConfig.Env)
 			spawnDeps.Usage = tools.SpawnUsageReader(acfg.Backend, usageTargetFor(d.p.cfg, acfg), q,
-				usageAccountFor(acfg.ID, acfg.Backend, acfg.BackendConfig.Env),
+				account,
 				func() bool { return live.Load().Tools.SpawnReservePercent > 0 },
 				hist.RecordRead)
+			// #3144: a Claude Code agent is told of each 50/60/70/80/90%
+			// level its account's reads reach, as the stream's notices are.
+			if spec.UsageReadNotices != nil {
+				tools.OnSpawnUsageRead(acfg.Backend, acfg.ID, account,
+					usageReadAlerter(d.connMgr, acfg.ID, spec.UsageReadNotices,
+						func() string { return live.Load().Notify.RateLimitNotifyTo },
+						app.OpenSessionsForAgent))
+			}
 		}
 		spawnDeps.Delegated = &tools.DelegatedSpawn{
 			Spec: spec,

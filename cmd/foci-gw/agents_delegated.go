@@ -23,6 +23,7 @@ import (
 	"foci/internal/secrets"
 	"foci/internal/session"
 	"foci/internal/skills"
+	"foci/internal/timeutil"
 	"foci/internal/tools"
 	"foci/internal/turn"
 	"foci/internal/turnevent"
@@ -1187,6 +1188,42 @@ func deliverRateLimitNotice(connMgr platform.ConnectionManager, agentID, session
 		if !send(conn, outcome) {
 			logger.Debugf("rate limit notice undelivered (target=%s, outcome=%s): %s", target, outcome, notice)
 		}
+	}
+}
+
+// usageReadAlerter is the listener a Claude Code agent puts on the scheduled
+// reads of its usage account (#3144, Dick 2026-11-16: "We should send alerts
+// at 50, 60, 70, 80, 90% - the same way we send them when we get the info in
+// the stream from cc, i.e. all open sessions for the agent, sent as a system
+// message"). Each read that reaches a new level in a window raises the same
+// notice as the stream's rate_limit_event, through the same per-agent
+// throttle (so neither source repeats a level; raise is the backend's
+// Spec.UsageReadNotices), delivered by
+// deliverRateLimitNotice to target() (rate_limit_notify_to, read live). A
+// read has no triggering session, so the session key is "": "all" reaches
+// every open chat (else the primary), "session" and "default" the primary.
+// Delivery runs off the reading goroutine.
+func usageReadAlerter(connMgr platform.ConnectionManager, agentID string, raise usageNoticesFunc, target func() string, openSessions func(agentID string) []string) tools.UsageRecorder {
+	return func(info *delegator.UsageInfo, source string) {
+		to := target()
+		go deliverUsageReadNotices(connMgr, agentID, raise, info, source, to, openSessions)
+	}
+}
+
+// usageNoticesFunc is delegator.Spec.UsageReadNotices.
+type usageNoticesFunc = func(agentID string, info *delegator.UsageInfo, now time.Time) []string
+
+// deliverUsageReadNotices raises (the backend's Spec.UsageReadNotices) and
+// delivers the notices of one usage read of agentID's account
+// (usageReadAlerter) to target.
+func deliverUsageReadNotices(connMgr platform.ConnectionManager, agentID string, raise usageNoticesFunc, info *delegator.UsageInfo, source, target string, openSessions func(agentID string) []string) {
+	notices := raise(agentID, info, timeutil.Now())
+	if len(notices) == 0 {
+		return
+	}
+	log.NewComponentLogger("agent:"+agentID).Infof("usage read (%s) raised %d usage notice(s) (target=%s)", source, len(notices), target)
+	for _, n := range notices {
+		deliverRateLimitNotice(connMgr, agentID, "", n, target, openSessions)
 	}
 }
 
