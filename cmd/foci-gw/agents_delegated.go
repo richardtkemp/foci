@@ -289,7 +289,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		// (#1857).
 		OnRateLimitNotice: func(sessionKey, notice string) {
 			deliverRateLimitNotice(connMgr, agentID, sessionKey, notice,
-				p.resolvedLive.Load().Notify.RateLimitNotifyTo)
+				p.resolvedLive.Load().Notify.RateLimitNotifyTo, app.OpenSessionsForAgent)
 		},
 		// A model refusal fallback (CC's primary model refused and another
 		// answered) is shown in the chat of the session it happened in, so the
@@ -1114,13 +1114,17 @@ func firstLine(s string) string {
 	return s
 }
 
-// deliverRateLimitNotice sends a CC usage-limit notice to the chat(s) chosen by
-// [notify] rate_limit_notify_to (#1857). sessionKey identifies the foci session
-// whose backend saw the rate_limit_event — before #1857 the hook carried no
+// deliverRateLimitNotice sends a backend usage-limit notice (CC's
+// rate_limit_event, codex's account/rateLimits/updated) to the chat(s) chosen
+// by [notify] rate_limit_notify_to (#1857, #3137). sessionKey identifies the
+// foci session whose backend saw the event — before #1857 the hook carried no
 // session identity, so every notice could only land in the agent's default chat
-// even when a facet or app session triggered it.
+// even when a facet or app session triggered it. openSessions lists the agent's
+// open chats (app.OpenSessionsForAgent); nil means none.
 //
-//   - "session" (default): the session's own chat, falling back to the agent's
+//   - "all" (default, #3137): every open chat of the agent plus the
+//     triggering session's chat, each once (deliverRateLimitNoticeAll).
+//   - "session": the session's own chat, falling back to the agent's
 //     primary connection when that session has none live.
 //   - "default": always the agent's primary connection (pre-#1857 behaviour).
 //   - "both": the session's chat AND the primary, when they are different
@@ -1131,10 +1135,11 @@ func firstLine(s string) string {
 //     stays in the session's own conversation only, and with no live
 //     session connection it is dropped, never copied out.
 //
-// The throttle is per-agent (rate limits are account-wide), so under "session"
-// the notice reaches only the session that FIRST crossed the utilization bucket
-// — "both" is the setting for also copying it to the default chat.
-func deliverRateLimitNotice(connMgr platform.ConnectionManager, agentID, sessionKey, notice, target string) {
+// The throttle is per-agent (rate limits are account-wide), so a crossing fires
+// ONE notice per agent however many of its sessions see it; under "session"
+// that notice reaches only the session that FIRST crossed the utilization
+// bucket — "all" is the setting that tells every open chat.
+func deliverRateLimitNotice(connMgr platform.ConnectionManager, agentID, sessionKey, notice, target string, openSessions func(agentID string) []string) {
 	logger := log.NewComponentLogger("agent:" + agentID)
 
 	send := func(conn platform.Connection, outcome route.DeliveryOutcome) bool {
@@ -1155,6 +1160,8 @@ func deliverRateLimitNotice(connMgr platform.ConnectionManager, agentID, session
 	}
 
 	switch target {
+	case config.RateLimitNotifyAll:
+		deliverRateLimitNoticeAll(connMgr, agentID, sessionKey, openSessions, send, logger, notice)
 	case config.RateLimitNotifyDefault:
 		if !send(connMgr.Primary(agentID), route.DeliveredViaPrimary) {
 			logger.Debugf("rate limit notice undelivered (target=%s, no primary connection): %s", target, notice)
@@ -1179,6 +1186,66 @@ func deliverRateLimitNotice(connMgr platform.ConnectionManager, agentID, session
 		conn, outcome := route.ConnFor(connMgr, agentID, sessionKey, route.PolicyFallback)
 		if !send(conn, outcome) {
 			logger.Debugf("rate limit notice undelivered (target=%s, outcome=%s): %s", target, outcome, notice)
+		}
+	}
+}
+
+// deliverRateLimitNoticeAll is the "all" target (#3137, Dick 2026-11-16:
+// "This agent's open chats"). Each chat gets the notice at most once:
+//
+//  1. A triggering session that confines replies (Slack, #2459 req 5) keeps
+//     the notice in its own conversation only, exactly as under "both": its
+//     traffic is never copied to another audience. Nothing else is sent.
+//  2. Every open chat of the agent (openSessions, deduped by session key) gets
+//     it through its own session connection — except a chat that confines
+//     replies, which is a different audience from the session that raised it.
+//  3. The triggering session's own chat gets it if step 2 did not already
+//     reach it (a session that is not an open app chat: a Telegram chat, a
+//     closed conversation).
+//  4. Only when nothing at all was delivered does it fall back to the agent's
+//     primary connection (the default chat), so a headless session's notice
+//     is not lost. It is never an extra target: the app's primary resolves to
+//     the default conversation, usually already one of the open chats.
+func deliverRateLimitNoticeAll(connMgr platform.ConnectionManager, agentID, sessionKey string,
+	openSessions func(agentID string) []string,
+	send func(platform.Connection, route.DeliveryOutcome) bool, logger *log.ComponentLogger, notice string) {
+	const target = config.RateLimitNotifyAll
+	if platform.SessionConfinesReplies(connMgr, sessionKey) {
+		if !send(connMgr.ForSession(sessionKey), route.DeliveredToSession) {
+			logger.Debugf("rate limit notice undelivered (target=%s, confined session %s has no live connection): %s", target, sessionKey, notice)
+		}
+		return
+	}
+
+	seen := make(map[string]bool)
+	delivered := 0
+	toSession := func(key string) {
+		if key == "" || seen[key] {
+			return
+		}
+		seen[key] = true
+		if send(connMgr.ForSession(key), route.DeliveredToSession) {
+			delivered++
+		}
+	}
+	if openSessions != nil {
+		for _, key := range openSessions(agentID) {
+			if key == sessionKey {
+				continue // the triggering session is step 3
+			}
+			if platform.SessionConfinesReplies(connMgr, key) {
+				seen[key] = true
+				logger.Debugf("rate limit notice not copied into confined session %s (raised by %s)", key, sessionKey)
+				continue
+			}
+			toSession(key)
+		}
+	}
+	toSession(sessionKey)
+
+	if delivered == 0 {
+		if !send(connMgr.Primary(agentID), route.DeliveredViaPrimary) {
+			logger.Debugf("rate limit notice undelivered (target=%s, no live connection): %s", target, notice)
 		}
 	}
 }

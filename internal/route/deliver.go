@@ -65,9 +65,9 @@ func ConnFor(cm platform.ConnectionManager, agentID, sessionKey string, policy P
 // rely on appearing in — or being identity-equal to anything in — this set.
 //
 // It is NOT the path for CC's usage-limit warning (ccstream's rate_limit_event,
-// #1211/#1238). That one is delivered to a single chosen chat per
-// [notify] rate_limit_notify_to — ConnFor for the session, Primary for the
-// default, or both — and never broadcast (#1857).
+// #1211/#1238). That one is delivered per [notify] rate_limit_notify_to — the
+// agent's open chats plus the triggering session ("all", #3137), ConnFor for
+// the session, Primary for the default, or both — and never broadcast (#1857).
 func Broadcast(cm platform.ConnectionManager, agentID string) []platform.Connection {
 	if cm == nil {
 		return nil

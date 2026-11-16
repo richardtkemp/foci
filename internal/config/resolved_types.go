@@ -593,7 +593,7 @@ type ResolvedNotify struct {
 	TaskListNotify      bool           // default true
 	CompactionDebug     bool           // default false
 	WarningMaxPerWindow int            // default 3
-	RateLimitNotifyTo   string         // default "session" (#1857)
+	RateLimitNotifyTo   string         // default "all" (#3137; #1857)
 	CacheBustNotify     bool           // default true (#2933)
 }
 

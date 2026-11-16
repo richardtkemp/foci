@@ -42,13 +42,18 @@ type rlConnMgr struct {
 	sessionKey  string
 	session     *rlConn
 	confinedKey string
+	// others are further session connections (open app chats), keyed by
+	// session key, for the "all" target (#3137).
+	others map[string]*rlConn
+	// confinedOthers marks session keys in others whose platform confines.
+	confinedOthers map[string]bool
 }
 
 // SessionPlatformConfinesReplies is the owning-platform confinement answer
 // (see the confinedKey field); empty answers false, so the ordinary-shape
 // tests below are unaffected.
 func (m *rlConnMgr) SessionPlatformConfinesReplies(sessionKey string) bool {
-	return m.confinedKey != "" && sessionKey == m.confinedKey
+	return (m.confinedKey != "" && sessionKey == m.confinedKey) || m.confinedOthers[sessionKey]
 }
 
 func (m *rlConnMgr) Primary(string) platform.Connection {
@@ -59,6 +64,9 @@ func (m *rlConnMgr) Primary(string) platform.Connection {
 }
 func (m *rlConnMgr) AllForAgent(string) []platform.Connection { return nil }
 func (m *rlConnMgr) ForSession(key string) platform.Connection {
+	if c, ok := m.others[key]; ok {
+		return c
+	}
 	if m.session == nil || key == "" || key != m.sessionKey {
 		return nil
 	}
@@ -103,7 +111,7 @@ func TestDeliverRateLimitNoticeTargets(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newRLMgr()
-			deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, tc.target)
+			deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, tc.target, nil)
 
 			if got := len(m.session.notices); got != tc.wantSession {
 				t.Errorf("session conn got %d notices %v, want %d", got, m.session.notices, tc.wantSession)
@@ -125,7 +133,7 @@ func TestDeliverRateLimitNoticeFallsBackToPrimary(t *testing.T) {
 	t.Parallel()
 	m := newRLMgr()
 	m.session = nil
-	deliverRateLimitNotice(m, "clutch", "clutch/headless", rlNotice, config.RateLimitNotifySession)
+	deliverRateLimitNotice(m, "clutch", "clutch/headless", rlNotice, config.RateLimitNotifySession, nil)
 	if got := len(m.primary.notices); got != 1 {
 		t.Errorf("primary got %d notices, want 1 — a session with no live conn must fall back", got)
 	}
@@ -137,7 +145,7 @@ func TestDeliverRateLimitNoticeBothCollapsesWhenSame(t *testing.T) {
 	t.Parallel()
 	m := newRLMgr()
 	m.session = m.primary
-	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyBoth)
+	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyBoth, nil)
 	if got := len(m.primary.notices); got != 1 {
 		t.Errorf("primary got %d notices, want 1 (session conn == primary must not double-send)", got)
 	}
@@ -148,7 +156,7 @@ func TestDeliverRateLimitNoticeNoConnection(t *testing.T) {
 	t.Parallel()
 	m := &rlConnMgr{}
 	for _, target := range config.ValidRateLimitNotifyTargets {
-		deliverRateLimitNotice(m, "clutch", "clutch/main", rlNotice, target)
+		deliverRateLimitNotice(m, "clutch", "clutch/main", rlNotice, target, nil)
 	}
 }
 
@@ -161,7 +169,7 @@ func TestDeliverRateLimitNoticeBothConfinedSessionStaysInSession(t *testing.T) {
 	t.Parallel()
 	m := newRLMgr()
 	m.session.confines = true
-	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyBoth)
+	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyBoth, nil)
 	if got := len(m.session.notices); got != 1 {
 		t.Errorf("session conn got %d notices %v, want 1", got, m.session.notices)
 	}
@@ -180,7 +188,7 @@ func TestDeliverRateLimitNoticeBothConfinedWithoutConnectionStaysOut(t *testing.
 	m := newRLMgr()
 	m.session = nil
 	m.confinedKey = m.sessionKey
-	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyBoth)
+	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyBoth, nil)
 	if got := len(m.primary.notices); got != 0 {
 		t.Errorf("primary conn got %d notices %v, want 0 — a confined session with no live connection drops the notice, never copies it to another platform's chat", got, m.primary.notices)
 	}
@@ -199,12 +207,129 @@ func TestDeliverRateLimitNoticeDropLoggedAsDrop(t *testing.T) {
 	dropper.drops = true
 	m := &rlConnMgr{primary: dropper, sessionKey: session}
 
-	deliverRateLimitNotice(m, "clutch", session, rlNotice, config.RateLimitNotifySession)
+	deliverRateLimitNotice(m, "clutch", session, rlNotice, config.RateLimitNotifySession, nil)
 
 	if got := logs.Lines("DEBUG", "notice dropped by "+dropper.name); len(got) != 1 {
 		t.Errorf("drop DEBUG lines = %d, want exactly 1:\n%s", len(got), logs.String())
 	}
 	if got := logs.Lines("DEBUG", "notice delivered", session); len(got) != 0 {
 		t.Errorf("a dropped notice was logged as delivered: %v", got)
+	}
+}
+
+// newRLAllMgr builds the "all" shape (#3137): the triggering session plus two
+// further open chats of the agent, each its own connection object, and a
+// primary that is none of them.
+func newRLAllMgr() (*rlConnMgr, func(string) []string) {
+	m := newRLMgr()
+	m.others = map[string]*rlConn{
+		"clutch/app-a": newRLConn("app", "clutch/app-a"),
+		"clutch/app-b": newRLConn("app", "clutch/app-b"),
+	}
+	open := func(agentID string) []string {
+		if agentID != "clutch" {
+			return nil
+		}
+		return []string{"clutch/app-a", "clutch/app-b"}
+	}
+	return m, open
+}
+
+// TestDeliverRateLimitNoticeAllReachesEveryOpenChat: under "all" the
+// triggering session's chat AND every other open chat of the agent each get
+// the notice exactly once; the primary (default chat) is not an extra target
+// once an open chat has it.
+func TestDeliverRateLimitNoticeAllReachesEveryOpenChat(t *testing.T) {
+	t.Parallel()
+	m, open := newRLAllMgr()
+	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyAll, open)
+
+	if got := len(m.session.notices); got != 1 {
+		t.Errorf("triggering session got %d notices, want 1", got)
+	}
+	for k, c := range m.others {
+		if got := len(c.notices); got != 1 {
+			t.Errorf("open chat %s got %d notices, want 1", k, got)
+		}
+	}
+	if got := len(m.primary.notices); got != 0 {
+		t.Errorf("primary got %d notices, want 0 (open chats already have it)", got)
+	}
+}
+
+// TestDeliverRateLimitNoticeAllOncePerChat: the triggering session is itself
+// one of the open chats (the usual case: Dick's open app chat ran the turn).
+// It must get the notice once, not once as "trigger" and again as "open chat".
+func TestDeliverRateLimitNoticeAllOncePerChat(t *testing.T) {
+	t.Parallel()
+	m, _ := newRLAllMgr()
+	open := func(string) []string { return []string{m.sessionKey, "clutch/app-a", "clutch/app-a"} }
+	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyAll, open)
+
+	if got := len(m.session.notices); got != 1 {
+		t.Errorf("triggering open chat got %d notices, want exactly 1", got)
+	}
+	if got := len(m.others["clutch/app-a"].notices); got != 1 {
+		t.Errorf("open chat listed twice got %d notices, want exactly 1", got)
+	}
+}
+
+// TestDeliverRateLimitNoticeAllNoOpenChatsFallsBack: with no open chat and a
+// triggering session that has no connection of its own, the notice still
+// reaches the agent's default chat (as "session" does today).
+func TestDeliverRateLimitNoticeAllNoOpenChatsFallsBack(t *testing.T) {
+	t.Parallel()
+	m := newRLMgr()
+	m.session = nil
+	deliverRateLimitNotice(m, "clutch", "clutch/headless", rlNotice, config.RateLimitNotifyAll, func(string) []string { return nil })
+	if got := len(m.primary.notices); got != 1 {
+		t.Errorf("primary got %d notices, want 1", got)
+	}
+}
+
+// TestDeliverRateLimitNoticeAllSkipsConfinedOpenChat (#2459 req 5): an open
+// chat whose platform confines replies (a Slack conversation) belongs to its
+// own audience; a notice raised by another session is never copied into it.
+func TestDeliverRateLimitNoticeAllSkipsConfinedOpenChat(t *testing.T) {
+	t.Parallel()
+	m, open := newRLAllMgr()
+	m.others["clutch/app-b"].confines = true
+	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyAll, open)
+	if got := len(m.others["clutch/app-b"].notices); got != 0 {
+		t.Errorf("confined open chat got %d notices, want 0", got)
+	}
+	if got := len(m.others["clutch/app-a"].notices); got != 1 {
+		t.Errorf("ordinary open chat got %d notices, want 1", got)
+	}
+
+	// Confinement declared by the owning platform alone (no confining live
+	// connection) skips the chat too.
+	m2, open2 := newRLAllMgr()
+	m2.confinedOthers = map[string]bool{"clutch/app-a": true}
+	deliverRateLimitNotice(m2, "clutch", m2.sessionKey, rlNotice, config.RateLimitNotifyAll, open2)
+	if got := len(m2.others["clutch/app-a"].notices); got != 0 {
+		t.Errorf("platform-confined open chat got %d notices, want 0", got)
+	}
+}
+
+// TestDeliverRateLimitNoticeAllConfinedTriggerStaysInSession (#2459 req 5):
+// a notice raised by a confining session stays in that session's own
+// conversation, exactly as under "both"; it is not copied to the open chats
+// or the default chat.
+func TestDeliverRateLimitNoticeAllConfinedTriggerStaysInSession(t *testing.T) {
+	t.Parallel()
+	m, open := newRLAllMgr()
+	m.session.confines = true
+	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyAll, open)
+	if got := len(m.session.notices); got != 1 {
+		t.Errorf("confined triggering session got %d notices, want 1", got)
+	}
+	for k, c := range m.others {
+		if got := len(c.notices); got != 0 {
+			t.Errorf("open chat %s got %d notices, want 0 (copied out of a confined session)", k, got)
+		}
+	}
+	if got := len(m.primary.notices); got != 0 {
+		t.Errorf("primary got %d notices, want 0", got)
 	}
 }

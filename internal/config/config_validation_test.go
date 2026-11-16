@@ -824,6 +824,7 @@ func TestValidateRateLimitNotifyTo(t *testing.T) {
 		toml    string
 		wantErr string
 	}{
+		{"all", base + "\n[notify]\nrate_limit_notify_to = \"all\"", ""},
 		{"session", base + "\n[notify]\nrate_limit_notify_to = \"session\"", ""},
 		{"default", base + "\n[notify]\nrate_limit_notify_to = \"default\"", ""},
 		{"both", base + "\n[notify]\nrate_limit_notify_to = \"both\"", ""},
@@ -855,14 +856,18 @@ func TestValidateRateLimitNotifyTo(t *testing.T) {
 }
 
 // TestRateLimitNotifyTargetDefault pins the default: unset means the notice goes
-// to the session that hit the limit, not the agent's default chat (#1857).
+// to every open chat of the agent (Dick 2026-11-16, #3137; was "session", #1857).
 func TestRateLimitNotifyTargetDefault(t *testing.T) {
-	if got := (NotifyConfig{}).RateLimitNotifyTarget(); got != RateLimitNotifySession {
-		t.Errorf("unset RateLimitNotifyTarget() = %q, want %q", got, RateLimitNotifySession)
+	if got := (NotifyConfig{}).RateLimitNotifyTarget(); got != RateLimitNotifyAll {
+		t.Errorf("unset RateLimitNotifyTarget() = %q, want %q", got, RateLimitNotifyAll)
 	}
 	empty := ""
-	if got := (NotifyConfig{RateLimitNotifyTo: &empty}).RateLimitNotifyTarget(); got != RateLimitNotifySession {
-		t.Errorf("empty RateLimitNotifyTarget() = %q, want %q", got, RateLimitNotifySession)
+	if got := (NotifyConfig{RateLimitNotifyTo: &empty}).RateLimitNotifyTarget(); got != RateLimitNotifyAll {
+		t.Errorf("empty RateLimitNotifyTarget() = %q, want %q", got, RateLimitNotifyAll)
+	}
+	session := RateLimitNotifySession
+	if got := (NotifyConfig{RateLimitNotifyTo: &session}).RateLimitNotifyTarget(); got != RateLimitNotifySession {
+		t.Errorf("RateLimitNotifyTarget() = %q, want %q", got, RateLimitNotifySession)
 	}
 	both := RateLimitNotifyBoth
 	if got := (NotifyConfig{RateLimitNotifyTo: &both}).RateLimitNotifyTarget(); got != RateLimitNotifyBoth {
