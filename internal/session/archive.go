@@ -403,8 +403,10 @@ func syncDir(dir string) {
 // .jsonl.gz, removes the originals, and updates the index status to archived.
 // Each agent's current chat session (per chat_metadata) is never archived.
 // Any numbered archive files (.N.jsonl) in the same directory are also gzipped.
-// Returns the number of archived sessions.
-func ArchiveSweep(store *Store, index *SessionIndex, maxAge time.Duration) (int, error) {
+// hold, when non-nil, is asked about each idle candidate; true keeps that
+// session's file uncompressed this sweep (#3134: a leaf of a running depth
+// tree). Returns the number of archived sessions.
+func ArchiveSweep(store *Store, index *SessionIndex, maxAge time.Duration, hold func(SessionIndexEntry) bool) (int, error) {
 	if index == nil {
 		return 0, nil
 	}
@@ -455,6 +457,9 @@ func ArchiveSweep(store *Store, index *SessionIndex, maxAge time.Duration) (int,
 			lastActivity = entry.CreatedAt
 		}
 		if lastActivity.After(cutoff) {
+			continue
+		}
+		if hold != nil && hold(entry) {
 			continue
 		}
 

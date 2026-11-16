@@ -71,7 +71,7 @@ func TestArchiveSweep_SeveralCandidatesSharingParents(t *testing.T) {
 	sweepRow(t, idx, dir, "bot/c400", "", at(10), old)
 	sweepRow(t, idx, dir, "bot/c400/b4000000001", "bot/c400", at(11), old)
 
-	if _, err := ArchiveSweep(store, idx, 24*time.Hour); err != nil {
+	if _, err := ArchiveSweep(store, idx, 24*time.Hour, nil); err != nil {
 		t.Fatalf("ArchiveSweep: %v", err)
 	}
 
@@ -132,7 +132,7 @@ func BenchmarkArchiveSweep(b *testing.B) {
 			b.Fatal(err)
 		}
 		b.StartTimer()
-		got, err := ArchiveSweep(store, idx, 24*time.Hour)
+		got, err := ArchiveSweep(store, idx, 24*time.Hour, nil)
 		if err != nil {
 			b.Fatal(err)
 		}

@@ -91,6 +91,10 @@ func (b *Backend) ForkSession(ctx context.Context, req delegator.ForkRequest) (d
 	}
 	dir := filepath.Join(loc.ProjectsDir(), projectSlug(req.WorkDir))
 	parentPath := filepath.Join(dir, req.ParentSessionID+".jsonl")
+	// A parent idle past sessions.archive_after is gzipped (#3134).
+	if err := restoreGzippedTranscript(parentPath, b.logger()); err != nil {
+		return delegator.ForkResult{}, fmt.Errorf("ccstream fork: %w", err)
+	}
 
 	newID := uuid.NewString()
 	newPath := filepath.Join(dir, newID+".jsonl")
@@ -104,8 +108,10 @@ func (b *Backend) ForkSession(ctx context.Context, req delegator.ForkRequest) (d
 
 // CleanupSession implements delegator.BackendBrancher: it deletes the CC
 // transcript for req.SessionID (<agent's CC config dir>/projects/<slug>/<uuid>.jsonl),
-// reclaiming an ephemeral fork. A missing file is not an error. Pure
-// filesystem operation — no running backend required.
+// reclaiming an ephemeral fork, and its gzipped copy (<uuid>.jsonl.gz), which
+// foci's archive sweep leaves in its place after sessions.archive_after idle
+// (#3134). It succeeds only when neither remains; a missing file is not an
+// error. Pure filesystem operation — no running backend required.
 func (b *Backend) CleanupSession(_ context.Context, req delegator.CleanupRequest) error {
 	if req.SessionID == "" || req.WorkDir == "" {
 		return fmt.Errorf("ccstream cleanup: empty session id or workdir")
@@ -115,8 +121,10 @@ func (b *Backend) CleanupSession(_ context.Context, req delegator.CleanupRequest
 		return fmt.Errorf("ccstream cleanup: CC config dir: %w", err)
 	}
 	path := loc.TranscriptPath(req.WorkDir, req.SessionID)
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("ccstream cleanup: remove %s: %w", path, err)
+	for _, p := range []string{path, path + gzSuffix} {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("ccstream cleanup: remove %s: %w", p, err)
+		}
 	}
 	return nil
 }

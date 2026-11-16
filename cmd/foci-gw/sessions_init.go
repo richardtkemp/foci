@@ -12,6 +12,7 @@ import (
 	"foci/internal/session"
 	"foci/internal/startup"
 	"foci/internal/timeutil"
+	"foci/internal/tools"
 )
 
 type sessionInfra struct {
@@ -152,7 +153,7 @@ func initSessions(cfg *config.Config) sessionInfra {
 			archiveTicker := time.NewTicker(6 * time.Hour)
 			go func() {
 				// Run immediately on startup
-				if n, err := session.ArchiveSweep(sessions, sessionIndex, archiveAfter); err != nil {
+				if n, err := session.ArchiveSweep(sessions, sessionIndex, archiveAfter, depthArchiveHold(sessionIndex)); err != nil {
 					mainLog.Warnf("archive sweep: %v", err)
 				} else if n > 0 {
 					mainLog.Infof("archive sweep: archived %d idle session(s)", n)
@@ -160,7 +161,7 @@ func initSessions(cfg *config.Config) sessionInfra {
 				for {
 					select {
 					case <-archiveTicker.C:
-						if n, err := session.ArchiveSweep(sessions, sessionIndex, archiveAfter); err != nil {
+						if n, err := session.ArchiveSweep(sessions, sessionIndex, archiveAfter, depthArchiveHold(sessionIndex)); err != nil {
 							mainLog.Warnf("archive sweep: %v", err)
 						} else if n > 0 {
 							mainLog.Infof("archive sweep: archived %d idle session(s)", n)
@@ -350,5 +351,20 @@ func cleanupStaleSessionMetadata(idx *session.SessionIndex, sessions *session.St
 	}
 	if deleted > 0 {
 		mainLog.Infof("cleaned up %d stale no_compact entries", deleted)
+	}
+}
+
+// depthArchiveHold is the archive sweep's hold (#3134): a leaf of a running
+// depth tree keeps its transcript uncompressed for up to
+// tools.DepthTranscriptHoldMax idle. Built per sweep, so each sweep reads the
+// depth records afresh.
+func depthArchiveHold(idx *session.SessionIndex) func(session.SessionIndexEntry) bool {
+	holds := tools.NewDepthHolds(idx)
+	return func(e session.SessionIndexEntry) bool {
+		last := e.LastActivityAt
+		if last.IsZero() {
+			last = e.CreatedAt
+		}
+		return holds.HoldsGzip(e.SessionKey, last)
 	}
 }

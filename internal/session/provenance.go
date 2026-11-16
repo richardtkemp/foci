@@ -205,6 +205,29 @@ func (idx *SessionIndex) UnsweptResumes(sessionKey string) []string {
 	return ids
 }
 
+// ResumeHeldElsewhere reports whether a session other than sessionKey has an
+// unswept backend_resume_history row for resumeID: the transcript is still
+// that session's, so sessionKey's sweep must not delete it. A branch can
+// record its parent's id (seen live 2026-11-16: reflection branches of
+// helen and polaris record their parent chat's current transcript, #3134).
+// A query error answers true: keeping a file is the safe mistake.
+func (idx *SessionIndex) ResumeHeldElsewhere(sessionKey, resumeID string) bool {
+	if idx == nil {
+		return false
+	}
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	var held int
+	if err := idx.db.QueryRow(
+		`SELECT EXISTS(SELECT 1 FROM backend_resume_history
+		 WHERE resume_id = ? AND session_key <> ? AND swept_at IS NULL)`,
+		resumeID, sessionKey).Scan(&held); err != nil {
+		sessLog.Warnf("resume %s held elsewhere than %s: %v", resumeID, sessionKey, err)
+		return true
+	}
+	return held == 1
+}
+
 // MarkResumeSwept records that this session's transcript for resumeID has been
 // swept, so later sweeps skip it. Called ONLY after the backend delete returned
 // nil: marking a failed delete would exempt a real, still-present transcript

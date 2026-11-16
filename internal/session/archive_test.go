@@ -42,7 +42,7 @@ func TestArchiveSweep_GzipsIdleSessions(t *testing.T) {
 	}
 
 	// Run sweep with 24h threshold
-	archived, err := ArchiveSweep(store, idx, 24*time.Hour)
+	archived, err := ArchiveSweep(store, idx, 24*time.Hour, nil)
 	if err != nil {
 		t.Fatalf("ArchiveSweep: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestArchiveSweep_SkipsRecentSessions(t *testing.T) {
 	idx.Rebuild(store)
 
 	// Last activity is now (recent), so it should not be archived
-	archived, err := ArchiveSweep(store, idx, 24*time.Hour)
+	archived, err := ArchiveSweep(store, idx, 24*time.Hour, nil)
 	if err != nil {
 		t.Fatalf("ArchiveSweep: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestArchiveSweep_SkipsSessionsWithActiveBranches(t *testing.T) {
 	past := time.Now().UTC().Add(-48 * time.Hour)
 	backdateSession(t, store, idx, "bot/c100", past)
 
-	archived, err := ArchiveSweep(store, idx, 24*time.Hour)
+	archived, err := ArchiveSweep(store, idx, 24*time.Hour, nil)
 	if err != nil {
 		t.Fatalf("ArchiveSweep: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestArchiveSweep_SkipsCurrentChatSession(t *testing.T) {
 	backdateSession(t, store, idx, "bot/c100", past)
 	backdateSession(t, store, idx, "bot/c200", past)
 
-	archived, err := ArchiveSweep(store, idx, 24*time.Hour)
+	archived, err := ArchiveSweep(store, idx, 24*time.Hour, nil)
 	if err != nil {
 		t.Fatalf("ArchiveSweep: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestArchiveSweep_GzipsArchiveFiles(t *testing.T) {
 		t.Fatal("expected archive file to exist before sweep")
 	}
 
-	archived, err := ArchiveSweep(store, idx, 24*time.Hour)
+	archived, err := ArchiveSweep(store, idx, 24*time.Hour, nil)
 	if err != nil {
 		t.Fatalf("ArchiveSweep: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestArchiveSweep_GzipPreservesFileMode(t *testing.T) {
 		t.Fatalf("source .jsonl perms = %o, want 0640", perm)
 	}
 
-	archived, err := ArchiveSweep(store, idx, 24*time.Hour)
+	archived, err := ArchiveSweep(store, idx, 24*time.Hour, nil)
 	if err != nil {
 		t.Fatalf("ArchiveSweep: %v", err)
 	}
@@ -471,7 +471,7 @@ func TestArchiveSweep_SkipsIndexEntryPointingAtADirectory(t *testing.T) {
 	})
 	t.Cleanup(func() { log.SetWarnHook(nil) })
 
-	archived, err := ArchiveSweep(store, idx, 24*time.Hour)
+	archived, err := ArchiveSweep(store, idx, 24*time.Hour, nil)
 	if err != nil {
 		t.Fatalf("ArchiveSweep: %v", err)
 	}
@@ -495,5 +495,52 @@ func TestArchiveSweep_SkipsIndexEntryPointingAtADirectory(t *testing.T) {
 				"an index entry that is not a regular file can never be archived; it must be skipped, "+
 				"not retried-and-warned on every sweep", w)
 		}
+	}
+}
+
+// TestArchiveSweep_HoldKeepsSessionUncompressed: a session the hold claims
+// (#3134: a leaf of a running depth tree) stays as plain .jsonl and active,
+// while an unheld idle session in the same sweep is archived. The control
+// proves the sweep ran and the held one was eligible.
+func TestArchiveSweep_HoldKeepsSessionUncompressed(t *testing.T) {
+	store := NewStore(t.TempDir())
+	idx := tempIndex(t)
+	store.TestAppend("bot/c100", msg("user", "held"))
+	store.TestAppend("bot/c200", msg("user", "control"))
+	if _, err := idx.Rebuild(store); err != nil {
+		t.Fatalf("Rebuild: %v", err)
+	}
+	past := time.Now().UTC().Add(-48 * time.Hour)
+	for _, key := range []string{"bot/c100", "bot/c200"} {
+		backdateSession(t, store, idx, key, past)
+	}
+	var asked []string
+	hold := func(e SessionIndexEntry) bool {
+		asked = append(asked, e.SessionKey)
+		return e.SessionKey == "bot/c100"
+	}
+	archived, err := ArchiveSweep(store, idx, 24*time.Hour, hold)
+	if err != nil {
+		t.Fatalf("ArchiveSweep: %v", err)
+	}
+	if archived != 1 {
+		t.Fatalf("archived = %d, want 1 (the control only)", archived)
+	}
+	if len(asked) != 2 {
+		t.Fatalf("hold asked about %v, want both idle sessions", asked)
+	}
+	held := mustSessionPath(t, store, "bot/c100")
+	if _, err := os.Stat(held); err != nil {
+		t.Errorf("held session file gone: %v", err)
+	}
+	if _, err := os.Stat(held + ".gz"); !os.IsNotExist(err) {
+		t.Errorf("held session was gzipped (stat err %v)", err)
+	}
+	if e, _ := idx.Get("bot/c100"); e.Status != SessionStatusActive {
+		t.Errorf("held session status = %q, want active", e.Status)
+	}
+	ctl := mustSessionPath(t, store, "bot/c200")
+	if _, err := os.Stat(ctl + ".gz"); err != nil {
+		t.Errorf("control session not gzipped: %v", err)
 	}
 }

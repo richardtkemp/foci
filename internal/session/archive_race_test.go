@@ -47,7 +47,7 @@ func TestArchiveSweep_SkipsSessionWrittenSinceSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	n, err := ArchiveSweep(store, idx, 24*time.Hour)
+	n, err := ArchiveSweep(store, idx, 24*time.Hour, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestArchiveSweep_WaitsForStoreLock(t *testing.T) {
 	store.mu.Lock()
 	done := make(chan error, 1)
 	go func() {
-		_, err := ArchiveSweep(store, idx, 24*time.Hour)
+		_, err := ArchiveSweep(store, idx, 24*time.Hour, nil)
 		done <- err
 	}()
 

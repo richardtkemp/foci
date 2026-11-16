@@ -206,3 +206,95 @@ func TestCleanupEphemeral_FailedDeleteStaysEligible(t *testing.T) {
 		t.Errorf("attempts = %d, want 2 — a failed delete must remain eligible", fb.attempts)
 	}
 }
+
+// TestCleanupEphemeral_KeepsRunningDepthLeaves is #3134's ruling (Dick,
+// 2026-11-16): "Don't gzip or delete leaves while their depth mode is still
+// running". A leaf of a running tree keeps its transcript however old; a leaf
+// of a finished tree, in the same sweep, is reclaimed as before.
+func TestCleanupEphemeral_KeepsRunningDepthLeaves(t *testing.T) {
+	t.Parallel()
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().AddDate(0, 0, -60)
+	for k, id := range map[string]string{"alpha/c1/b1": "uuid-b1", "alpha/c1/b2": "uuid-b2"} {
+		idx.Upsert(session.SessionIndexEntry{
+			SessionKey: k, CreatedAt: old, LastActivityAt: old,
+			SessionType: session.SessionTypeDepth,
+		})
+		idx.RecordBackendResume(k, id)
+	}
+	// b1 is a leaf of running tree T1; b2 of finished tree T0.
+	for k, v := range map[string]string{
+		"depth:alpha/c1":    `{"key":"alpha/c1","tree":"alpha/c1","tree_id":"T1","state":"active"}`,
+		"depth:alpha/c1/b1": `{"key":"alpha/c1/b1","leaf_id":"L1","tree":"alpha/c1","tree_id":"T1","state":"active"}`,
+		"depth:alpha/c1/b2": `{"key":"alpha/c1/b2","leaf_id":"L2","tree":"alpha/c1","tree_id":"T0","state":"reported"}`,
+	} {
+		if err := idx.SetAgentMetadata("alpha", k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rec := &recordingBrancher{}
+	mgr := &DelegatedManager{
+		NewBackend:   func() (delegator.Delegator, error) { return rec, nil },
+		SessionIndex: idx,
+	}
+	a := &Agent{AgentID: "alpha", SessionIndex: idx, DelegatedManager: mgr}
+
+	if n := a.CleanupEphemeralSessions(context.Background(), 3); n != 1 {
+		t.Errorf("deleted = %d, want 1 (the finished tree's leaf)", n)
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.cleaned) != 1 || rec.cleaned[0] != "uuid-b2" {
+		t.Errorf("cleaned = %v, want [uuid-b2]", rec.cleaned)
+	}
+	if got := idx.UnsweptResumes("alpha/c1/b1"); len(got) != 1 {
+		t.Errorf("held leaf's resume swept: unswept = %v", got)
+	}
+}
+
+// TestCleanupEphemeral_KeepsTranscriptAnotherSessionUses: a branch that
+// recorded its parent chat's resume id (live 2026-11-16, helen and polaris
+// reflection branches) must not delete the chat's transcript. The branch's
+// claim is released (swept) so it is not re-selected nightly; the chat's row
+// stays unswept. A control branch with its own id is deleted as before.
+func TestCleanupEphemeral_KeepsTranscriptAnotherSessionUses(t *testing.T) {
+	t.Parallel()
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().AddDate(0, 0, -60)
+	idx.Upsert(session.SessionIndexEntry{SessionKey: "alpha/c1", CreatedAt: old, LastActivityAt: old, SessionType: session.SessionTypeChat})
+	idx.RecordBackendResume("alpha/c1", "uuid-chat")
+	for k, id := range map[string]string{"alpha/c1/b1": "uuid-chat", "alpha/c1/b2": "uuid-own"} {
+		idx.Upsert(session.SessionIndexEntry{SessionKey: k, CreatedAt: old, LastActivityAt: old, SessionType: session.SessionTypeReflection})
+		idx.RecordBackendResume(k, id)
+	}
+
+	rec := &recordingBrancher{}
+	mgr := &DelegatedManager{
+		NewBackend:   func() (delegator.Delegator, error) { return rec, nil },
+		SessionIndex: idx,
+	}
+	a := &Agent{AgentID: "alpha", SessionIndex: idx, DelegatedManager: mgr}
+
+	if n := a.CleanupEphemeralSessions(context.Background(), 3); n != 1 {
+		t.Errorf("deleted = %d, want 1 (the branch's own transcript)", n)
+	}
+	rec.mu.Lock()
+	cleaned := append([]string(nil), rec.cleaned...)
+	rec.mu.Unlock()
+	if len(cleaned) != 1 || cleaned[0] != "uuid-own" {
+		t.Errorf("cleaned = %v, want [uuid-own]", cleaned)
+	}
+	if got := idx.UnsweptResumes("alpha/c1/b1"); len(got) != 0 {
+		t.Errorf("sharing branch not released: unswept = %v", got)
+	}
+	if got := idx.UnsweptResumes("alpha/c1"); len(got) != 1 {
+		t.Errorf("chat's row swept: unswept = %v", got)
+	}
+}

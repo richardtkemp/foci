@@ -90,6 +90,14 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	b.mu.Unlock()
 	if opts.ResumeSessionID != "" {
 		args = append(args, "--resume", opts.ResumeSessionID)
+		// CC reads only <id>.jsonl: a transcript foci's archive sweep
+		// gzipped would resume as "No conversation found", and the manager
+		// would fall back to a fresh session with no history (#3134).
+		if path, err := b.transcriptPath(opts.WorkDir, opts.ResumeSessionID); err == nil {
+			if err := restoreGzippedTranscript(path, b.logger()); err != nil {
+				b.logger().Warnf("resume %s: %v", opts.ResumeSessionID, err)
+			}
+		}
 	}
 	// The totals CC's counters will start from. Read before the process
 	// starts, because it appends its own record when it exits (#2012).
