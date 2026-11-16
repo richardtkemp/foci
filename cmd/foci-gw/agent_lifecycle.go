@@ -269,6 +269,18 @@ var agentRestorePhases = []func(*agentInstance){
 			dm.RestoreUndelivered()
 		}
 	},
+	// Re-arm the foci_remind wakes the last process left pending; an overdue
+	// one fires at once (#3131). After StartAll: the wake's turn picks its
+	// sink (turnSinkForConn) from the chat bindings, and before them it got a
+	// sink that shows the app no activity and no streamed text. After
+	// DepthRestore (a wake from a closed leaf goes to its owner, #2647),
+	// RestoreCutTurns (the resume line comes first) and RestoreUndelivered
+	// (input the backend already had runs first).
+	func(inst *agentInstance) {
+		if r := inst.ag.WakeRestore; r != nil {
+			r()
+		}
+	},
 	// Put back the input a usage hold had parked (#2491): it waits for the
 	// lift again, or runs now if the hold lifted while foci was down. After
 	// RestoreUndelivered, so input the backend already had runs first.

@@ -12,6 +12,10 @@ import "foci/internal/platform"
 // at the real limit, the user sees that error as usual). The hold itself
 // stays on:
 //   - Enqueue strips the word (markUsageForce); the agent sees only the text;
+//   - Enqueue does not send it to the worker for the hold: it takes the
+//     normal routing, so it steers into a running work turn (a remind wake
+//     the hold lets through, #3120 Q57) instead of waiting it out (#3131),
+//     and waits out a protected turn as any user message does;
 //   - the worker does not park the message (handleDequeued) and its batch
 //     does not wait for the lift (runUserBatch → waitUserTurnGates);
 //   - while the hold is on, only other limit-break messages join its batch;

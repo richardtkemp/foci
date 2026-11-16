@@ -105,6 +105,7 @@ type Agent struct {
 	AskRouter       *tools.AskRouter        // nil disables typed-answer routing for the foci-native `ask` tool
 	SpawnRestore    func()                  // resumes the spawns a restart interrupted (#2589, Spawner.RestoreSpawns); nil = the agent has no spawn tool
 	DepthRestore    func()                  // rebuilds the depth-mode trees after a restart (#2588, DepthManager.Restore); nil = depth mode off
+	WakeRestore     func()                  // re-arms the foci_remind wakes stored before a restart; an overdue one fires at once, so it runs once the chats are up (#3131); nil = no reminder store
 	DepthOnReset    func(sessionKey string) // a reset of a depth-mode tree root drops its whole tree (#2588); nil = depth mode off
 	Reminders       *memory.ReminderStore   // nil disables reminder injection
 	TaskListStore   *memory.TaskListStore   // nil disables task list in state dashboard

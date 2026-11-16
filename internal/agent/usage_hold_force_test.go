@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/delegator"
 	"foci/internal/platform"
 	"foci/internal/turnevent"
 	"foci/internal/usagehold"
@@ -20,7 +21,15 @@ func forceAgent(t *testing.T) (*Agent, *atomic.Int32) {
 	a, cancel := startedAgent(t)
 	t.Cleanup(cancel)
 	a.UsageHoldRegistry = usagehold.New()
-	a.DelegatedManager = &DelegatedManager{BackendType: "claude-code"}
+	// A backend to resolve, as production always has: since #3131 a /lb
+	// message arriving mid-turn takes the normal routing (plan-cancel, ask
+	// capture, steer), which looks the session's backend up.
+	be := &mockBackendDT{sessionFile: "/tmp/s.jsonl"}
+	a.DelegatedManager = &DelegatedManager{
+		BackendType: "claude-code",
+		NewBackend:  func() (delegator.Delegator, error) { return be, nil },
+		Spec:        mockSpecFor(be),
+	}
 	a.StartUsageHold()
 	t.Cleanup(a.StopUsageHold)
 	told := &atomic.Int32{}

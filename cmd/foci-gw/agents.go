@@ -182,9 +182,12 @@ func setupAgent(p setupParams) *agentInstance {
 	if !ok {
 		return nil
 	}
-	// After the tools: the depth manager a fired wake's owner is resolved
-	// through (#2647) is built by tool registration.
-	restorePendingWakes(p.reminderStore, acfg.ID, shared.wakeScheduleFn)
+	// Armed here, run later (agentRestorePhases): an overdue wake fires at
+	// once, and its turn must find the chat it delivers to (#3131). The depth
+	// manager a fired wake's owner is resolved through (#2647) is built by the
+	// tool registration above.
+	reminderStore, wakeSchedule := p.reminderStore, shared.wakeScheduleFn
+	ag.WakeRestore = func() { restorePendingWakes(reminderStore, acfg.ID, wakeSchedule) }
 
 	fp.compactionThreshold = compactionThreshold
 	return shared.finalize(ag, fp)

@@ -937,7 +937,13 @@ func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 	// its own turn, which takes it off the restart store. So does a message
 	// restored from the queued-input store and a restart's resume line
 	// (#2999): each is a turn of its own, never a fold.
-	if a.usageHoldsTrigger("user", false) || env.usageHeldID != "" || env.queuedID != "" || env.restartResume {
+	//
+	// A limit-break message (#3128) is not held: it takes the normal routing
+	// below, so it steers into a running work turn (#3120 Q57, e.g. the remind
+	// wake a hold lets through) instead of waiting it out, and still waits
+	// out a protected turn as any user message does (trySteer). #3131: it
+	// used to queue here and wait ten minutes behind a wake turn.
+	if (a.usageHoldsTrigger("user", false) && !env.usageForce) || env.usageHeldID != "" || env.queuedID != "" || env.restartResume {
 		a.storeQueuedInput(&env)
 		env.enqSeq = inb.enqSeq.Add(1)
 		select {
