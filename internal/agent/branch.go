@@ -309,6 +309,28 @@ func (a *Agent) PrepareCharacterSpawnBranch(branchKey, model string) {
 	}
 }
 
+// CloseSpawnBranchNow closes the backend of a background spawn's branch whose
+// run has ended even when it is not idle (DelegatedManager.CloseSessionNow):
+// a spawn the usage hold paused that went cold ends, and its process with it
+// (#3143). A no-op for an API agent.
+func (a *Agent) CloseSpawnBranchNow(branchKey string) {
+	if a.DelegatedManager != nil {
+		a.DelegatedManager.CloseSessionNow(branchKey, "its spawn ended, paused by the usage hold and gone cold")
+	}
+}
+
+// SessionLiveWork reports whether sessionKey has work in flight: a turn
+// running (foci's or one its backend runs) or input waiting for it, held
+// by the usage hold included. Background work alone (a subagent, a
+// background shell) is not: it runs no turn (#3143, Dick 2026-11-16, Q1:
+// "only in-flight work counts"). tools.SpawnLiveWorkReporter.
+func (a *Agent) SessionLiveWork(sessionKey string) bool {
+	if a.IsTurnInFlight(sessionKey) || a.InboxHasPendingInput(sessionKey) || a.UsageHeldInput(sessionKey) {
+		return true
+	}
+	return a.DelegatedManager != nil && a.DelegatedManager.BackendTurnInFlight(sessionKey)
+}
+
 // CloseFinishedSpawnBranch closes the backend of a background spawn's branch
 // whose run has ended (DelegatedManager.CloseFinishedSession). A no-op for an
 // API agent.

@@ -14,10 +14,10 @@ func TestSpawnTracker_AgentStop(t *testing.T) {
 	}
 	tr.mu.Unlock()
 	tr.BeginAgentStop("bob")
-	if _, done, _, interrupted, _ := tr.finishOrNext("bob/c1", "s1", true); !done || !interrupted {
-		t.Errorf("bob's cut-short run: done=%v interrupted=%v, want both", done, interrupted)
+	if end := tr.finishOrNext("bob/c1", "s1", true); !end.done || !end.interrupted {
+		t.Errorf("bob's cut-short run: done=%v interrupted=%v, want both", end.done, end.interrupted)
 	}
-	if _, _, _, interrupted, _ := tr.finishOrNext("carol/c1", "s2", true); interrupted {
+	if end := tr.finishOrNext("carol/c1", "s2", true); end.interrupted {
 		t.Error("carol's run was treated as cut by bob's stop")
 	}
 	tr.ForgetAgent("bob")

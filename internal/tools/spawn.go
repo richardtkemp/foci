@@ -303,6 +303,10 @@ type SpawnDeps struct {
 	// to resume, and leaves a backend with work still in progress alone. Nil
 	// on an API agent.
 	CloseBranch func(branchKey string)
+	// CloseBranchNow closes it even when it is not idle (background work in
+	// it is ended with it): a spawn paused by the usage hold that went cold
+	// (#3143). nil falls back to CloseBranch.
+	CloseBranchNow func(branchKey string)
 
 	// LiveTurn returns the ledger id of the turn running on a session
 	// (Agent.LiveTurnID), read when a spawn starts: the spawn is recorded
@@ -1580,6 +1584,9 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 	var runErr error
 	var stopped, interrupted, holdCold bool
 	var dropped int
+	var handedOff *spawnAutonomousSink // a run on the branch took the spawn over (#3143)
+	var handedOffAtLift bool           // ... at a usage hold's lift, the step cut by the hold
+	var adriftAnswer string            // a paused spawn gone cold: what ran meanwhile
 	signal := make(chan struct{})
 	go func() {
 		defer cancel()
@@ -1593,16 +1600,29 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 				texts = step.texts
 				continue
 			}
-			runErr, result, holdCold = step.err, step.result, step.cold
-			next, done, wasStopped, cut, n := tr.finishOrNext(parent, id, runErr != nil || spawnCtx.Err() != nil || holdCold)
-			if done {
-				stopped, interrupted, dropped = wasStopped, cut, n
+			if step.handedOff != nil {
+				// At a usage hold's lift: the step was cut by the hold
+				// and has no result of its own.
+				handedOff, handedOffAtLift = step.handedOff, true
 				break
 			}
-			for _, t := range next {
+			runErr, result, holdCold, adriftAnswer = step.err, step.result, step.cold, step.adriftAnswer
+			end := tr.finishOrNext(parent, id, runErr != nil || spawnCtx.Err() != nil || holdCold)
+			if end.done {
+				stopped, interrupted, dropped, handedOff = end.stopped, end.interrupted, end.dropped, end.handedOff
+				break
+			}
+			for _, t := range end.next {
 				tr.appendLog(parent, id, "message", "(follow-up turn) "+t)
 			}
-			texts = next
+			texts = end.next
+		}
+		if handedOff != nil {
+			// The spawn stays running: the run that took it over reports the
+			// next result, and the prompts on the branch are that run's.
+			handedOff.tookOver()
+			close(signal)
+			return
 		}
 		// A prompt the run left unanswered (a stop cut the turn
 		// while it waited) can no longer be answered: take it down from the
@@ -1633,8 +1653,14 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 		}
 		close(signal)
 		// After the result is on its way: the branch's backend is no longer
-		// needed until a spawn_send resumes it.
-		s.closeBranch(running)
+		// needed until a spawn_send resumes it. A paused spawn gone cold has
+		// nothing in flight: its process is closed even with background work
+		// in it (#3143 Q1, Dick 2026-11-16: "only in-flight work counts").
+		if holdCold {
+			s.closeBranchNow(running)
+		} else {
+			s.closeBranch(running)
+		}
 	}()
 
 	return RunInBackground(ctx, BackgroundParams{
@@ -1643,11 +1669,11 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 		ThresholdSecs: 0, // always async
 		Done:          signal,
 		NotifyMessage: func() string {
-			if interrupted {
+			if interrupted || handedOffAtLift {
 				return ""
 			}
 			if holdCold {
-				return spawnResultHead(running.Label(), branchKey, id) + " " + spawnHoldColdText
+				return spawnHoldColdResult(spawnResultHead(running.Label(), branchKey, id), adriftAnswer)
 			}
 			return s.resultMessage(parent, id, branchKey, stopped, runErr, result, dropped)
 		},
@@ -1664,6 +1690,17 @@ func (s *Spawner) closeBranch(running RunningSpawn) {
 	if h := s.hostOf(running); h != nil && h.deps.CloseBranch != nil {
 		h.deps.CloseBranch(running.BranchKey)
 	}
+}
+
+// closeBranchNow closes the backend of a background spawn's branch whose run
+// has ended even when it is not idle (SpawnDeps.CloseBranchNow), or as
+// closeBranch when that is not wired.
+func (s *Spawner) closeBranchNow(running RunningSpawn) {
+	if h := s.hostOf(running); h != nil && h.deps.CloseBranchNow != nil {
+		h.deps.CloseBranchNow(running.BranchKey)
+		return
+	}
+	s.closeBranch(running)
 }
 
 // spawnBackgroundID is the Background ID a background spawn prints: its name,

@@ -748,6 +748,10 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, texts []st
 	if err := a.validateSessionOwnership(sessionKey); err != nil {
 		return err
 	}
+	// A turn on a background spawn's branch that would deliver to a chat
+	// reports to the spawn's spawner instead (#3143).
+	ctx, releaseSpawnTurn := a.spawnBranchTurnCtx(ctx, sessionKey)
+	defer releaseSpawnTurn()
 
 	// Tracing rides the same event stream every transport already emits:
 	// wrapping the sink here (and in OpenAutonomousTurn, the one other turn

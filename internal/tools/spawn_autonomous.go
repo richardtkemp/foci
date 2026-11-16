@@ -3,7 +3,10 @@ package tools
 import (
 	"context"
 	"errors"
+	"slices"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"foci/internal/session"
 	"foci/internal/turnevent"
@@ -64,15 +67,24 @@ func (s *Spawner) autonomousSink(parent string, running RunningSpawn, stop func(
 }
 
 // spawnAutonomousSink is the sink of a run a spawn's backend started by
-// itself. It never delivers to a platform.
+// itself, or of any other delivering turn on the spawn's branch that the
+// spawn did not start (an injection, #3143). It never delivers to a platform.
 type spawnAutonomousSink struct {
 	*spawnTextSink
 	s       *Spawner
 	running RunningSpawn
 	stop    func()
-	// owned: TurnStart found the spawn finished and marked it running for
-	// this run, so this run reports its result.
+	// owned: this run reports the spawn's result. TurnStart found the spawn
+	// finished and marked it running for this run, or the spawn's own run
+	// ended while this one went and handed the spawn over (#3143). Written
+	// under the tracker's lock.
 	owned atomic.Bool
+
+	// pendMu orders markPending and markDone, so the spawner's pending mark
+	// this run holds is taken at most once and always given back.
+	pendMu   sync.Mutex
+	pending  bool
+	finished bool
 }
 
 func (a *spawnAutonomousSink) Emit(ctx context.Context, ev turnevent.Event) {
@@ -85,22 +97,50 @@ func (a *spawnAutonomousSink) Emit(ctx context.Context, ev turnevent.Event) {
 	}
 }
 
+// stopFunc is the run's stop, never nil.
+func (a *spawnAutonomousSink) stopFunc() func() {
+	if a.stop == nil {
+		return func() {}
+	}
+	return a.stop
+}
+
+// markPending marks the spawner as waiting on this run's result, unless the
+// run has already finished.
+func (a *spawnAutonomousSink) markPending() {
+	a.pendMu.Lock()
+	defer a.pendMu.Unlock()
+	if a.pending || a.finished {
+		return
+	}
+	a.pending = true
+	a.s.deps.Notifier.MarkPending(a.parent)
+}
+
+// markDone gives back the mark markPending took, once the run has finished.
+func (a *spawnAutonomousSink) markDone() {
+	a.pendMu.Lock()
+	defer a.pendMu.Unlock()
+	a.finished = true
+	if a.pending {
+		a.pending = false
+		a.s.deps.Notifier.MarkDone(a.parent)
+	}
+}
+
 // claim marks the spawn running for this run, when it is not running already.
+// When it is, the run goes adrift: it may take the spawn over when the
+// spawn's own run ends first (#3143).
 func (a *spawnAutonomousSink) claim() {
 	s, tr, parent, id := a.s, a.s.deps.Tracker, a.parent, a.running.ID
-	stop := a.stop
-	if stop == nil {
-		stop = func() {}
-	}
-	if !tr.restart(parent, id, stop) {
-		spawnLog.Infof("spawn=%s branch=%s: its backend started a run while the spawn runs; the run's text goes to its activity log", id, a.running.BranchKey)
+	if !tr.claimRun(parent, id, a) {
+		spawnLog.Infof("spawn=%s branch=%s: a run it did not start began on its branch while the spawn runs; the run's text goes to its activity log", id, a.running.BranchKey)
 		tr.appendLog(parent, id, "message", spawnWokeNote)
 		return
 	}
-	a.owned.Store(true)
-	spawnLog.Infof("spawn=%s branch=%s parent=%s: its backend started a run by itself; it reports to the spawner", id, a.running.BranchKey, parent)
+	spawnLog.Infof("spawn=%s branch=%s parent=%s: a run it did not start began on its branch; it reports to the spawner", id, a.running.BranchKey, parent)
 	tr.appendLog(parent, id, "message", spawnWokeNote)
-	s.deps.Notifier.MarkPending(parent)
+	a.markPending()
 	if s.deps.Observer != nil {
 		shown := a.running
 		if info, ok := tr.spawnInfo(parent, id); ok {
@@ -110,28 +150,42 @@ func (a *spawnAutonomousSink) claim() {
 	}
 }
 
+// tookOver is called for a run the spawn was handed over to (#3143): the
+// spawner waits on its result now.
+func (a *spawnAutonomousSink) tookOver() {
+	spawnLog.Infof("spawn=%s branch=%s: its run ended while a run it did not start goes on its branch; that run takes the spawn over and reports its result", a.running.ID, a.running.BranchKey)
+	a.tracker.appendLog(a.parent, a.running.ID, "message", "(a run that began on its branch took the spawn over)")
+	a.markPending()
+}
+
 // finish ends the run this sink claimed and delivers its [SPAWN RESULT]. When
 // spawn_send messages are waiting that the run did not take, they run as a
 // follow-up turn on the branch, which reports one more result.
 func (a *spawnAutonomousSink) finish(tc turnevent.TurnComplete) {
-	if !a.owned.Load() {
+	s, tr, parent, id, branchKey := a.s, a.s.deps.Tracker, a.parent, a.running.ID, a.running.BranchKey
+	if !tr.releaseRun(parent, id, a, a.FinalText()) {
 		return
 	}
-	s, tr, parent, id, branchKey := a.s, a.s.deps.Tracker, a.parent, a.running.ID, a.running.BranchKey
-	defer s.deps.Notifier.MarkDone(parent)
-	next, done, stopped, interrupted, dropped := tr.finishOrNext(parent, id, tc.Err != nil)
-	if interrupted {
+	defer a.markDone()
+	end := tr.finishOrNext(parent, id, tc.Err != nil)
+	if end.interrupted {
 		// foci is shutting down: the persisted record stays running and the
 		// next process resumes the spawn (#2589).
 		return
 	}
-	if !done {
+	if end.handedOff != nil {
+		// Another run on the branch goes on and reports the next result.
+		s.deliver(parent, id, s.resultMessage(parent, id, branchKey, false, tc.Err, a.FinalText(), 0))
+		end.handedOff.tookOver()
+		return
+	}
+	if !end.done {
 		s.deliver(parent, id, s.resultMessage(parent, id, branchKey, false, nil, a.FinalText(), 0))
-		go s.followUp(parent, a.running, next)
+		go s.followUp(parent, a.running, end.next)
 		return
 	}
 	switch {
-	case stopped:
+	case end.stopped:
 		tr.setOutcome(parent, id, "stopped")
 	case tc.Err != nil:
 		tr.setOutcome(parent, id, "failed")
@@ -142,7 +196,104 @@ func (a *spawnAutonomousSink) finish(tc turnevent.TurnComplete) {
 	if s.deps.Observer != nil {
 		s.deps.Observer.SpawnEnded(parent, id)
 	}
-	s.deliver(parent, id, s.resultMessage(parent, id, branchKey, stopped, tc.Err, a.FinalText(), dropped))
+	s.deliver(parent, id, s.resultMessage(parent, id, branchKey, end.stopped, tc.Err, a.FinalText(), end.dropped))
+}
+
+// claimRun marks parent's spawn id running for r's run when it is finished
+// (r owns it then: true), or adds r to its adrift runs when it runs already
+// (false).
+func (t *SpawnTracker) claimRun(parent, id string, r *spawnAutonomousSink) bool {
+	if t == nil {
+		return false
+	}
+	t.mu.Lock()
+	s := t.spawns[parent][id]
+	if s == nil {
+		t.mu.Unlock()
+		return false
+	}
+	if s.running {
+		s.adrift = append(s.adrift, r)
+		t.mu.Unlock()
+		return false
+	}
+	s.running, s.stopped, s.cancel = true, false, r.stopFunc()
+	s.ended, s.outcome = time.Time{}, ""
+	r.owned.Store(true)
+	t.mu.Unlock()
+	t.persist(parent, id)
+	return true
+}
+
+// releaseRun is called when r's run ends. It reports whether r owns the
+// spawn; one that does not leaves its adrift runs, and its answer is kept
+// (adriftAnswer).
+func (t *SpawnTracker) releaseRun(parent, id string, r *spawnAutonomousSink, answer string) bool {
+	if t == nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if r.owned.Load() {
+		return true
+	}
+	s := t.spawns[parent][id]
+	if s == nil {
+		return false
+	}
+	s.adrift = slices.DeleteFunc(s.adrift, func(x *spawnAutonomousSink) bool { return x == r })
+	if answer != "" {
+		s.adriftAnswer = answer
+	}
+	return false
+}
+
+// handOff hands parent's running spawn id over to its oldest adrift run, if
+// it has one and was not stopped, and returns that run (nil: none).
+func (t *SpawnTracker) handOff(parent, id string) *spawnAutonomousSink {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	s := t.spawns[parent][id]
+	var r *spawnAutonomousSink
+	if s != nil && s.running {
+		r = s.handOffLocked()
+	}
+	t.mu.Unlock()
+	return r
+}
+
+// handOffLocked makes the oldest adrift run the spawn's owner, when the
+// spawn was not stopped: the spawn's stop then stops that run. Caller holds
+// the tracker's lock.
+func (s *trackedSpawn) handOffLocked() *spawnAutonomousSink {
+	if s.stopped || len(s.adrift) == 0 {
+		return nil
+	}
+	r := s.adrift[0]
+	s.adrift = s.adrift[1:]
+	r.owned.Store(true)
+	s.cancel = r.stopFunc()
+	s.adriftAnswer = ""
+	return r
+}
+
+// takeAdriftAnswer returns and clears the answer of the latest adrift run of
+// parent's spawn id that ended unowned.
+func (t *SpawnTracker) takeAdriftAnswer(parent, id string) string {
+	if t == nil {
+		return ""
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.spawns[parent][id]
+	if s == nil {
+		return ""
+	}
+	out := s.adriftAnswer
+	s.adriftAnswer = ""
+	return out
 }
 
 // errSpawnFollowUp fails a follow-up turn that cannot start.
@@ -162,7 +313,13 @@ func (s *Spawner) followUp(parent string, running RunningSpawn, texts []string) 
 	}
 	if err != nil {
 		cancel()
-		_, _, stopped, _, _ := tr.finishOrNext(parent, id, true)
+		end := tr.finishOrNext(parent, id, true)
+		if end.handedOff != nil {
+			s.deliver(parent, id, s.resultMessage(parent, id, running.BranchKey, false, err, "", len(texts)))
+			end.handedOff.tookOver()
+			return
+		}
+		stopped := end.stopped
 		if stopped {
 			tr.setOutcome(parent, id, "stopped")
 		} else {

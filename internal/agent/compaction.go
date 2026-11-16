@@ -11,6 +11,7 @@ import (
 	"foci/internal/delegator"
 	"foci/internal/delegator/accounting"
 	"foci/internal/provider"
+	"foci/internal/tools"
 	"foci/shared/prompts"
 )
 
@@ -319,7 +320,10 @@ func (a *Agent) compactionResumeText() string {
 //     CC and drive continuation with the user's actual intent, so our generic
 //     nudge would be redundant (and could race a second turn), or
 //   - the compaction is a compact_session request with a wake message
-//     (#3041): that wake is the next turn and says what to do.
+//     (#3041): that wake is the next turn and says what to do, or
+//   - the session is a background spawn's branch (#3143): its spawner owns
+//     how the spawn goes on (a usage hold's lift resumes it or ends it), and
+//     a nudge would start a run on the branch that nobody asked for.
 //
 // Runs from the post-turn worker goroutine (auto-compaction) or the command
 // handler (manual /compact); both serialise with the inbox check below.
@@ -335,6 +339,10 @@ func (a *Agent) maybeInjectCompactionResume(ctx context.Context, sessionKey stri
 	}
 	if a.InboxHasPendingInput(sessionKey) {
 		a.logger().Debugf("session=%s skip compaction-resume nudge: user input already queued", sessionKey)
+		return
+	}
+	if sp, ok := tools.SpawnOfSession(sessionKey); ok && !sp.Direct {
+		a.logger().Infof("session=%s skip compaction-resume nudge: a background spawn's branch (spawn %s); its spawner resumes it", sessionKey, sp.ID)
 		return
 	}
 	a.AsyncNotifier.InjectToAgent(sessionKey, a.compactionResumeText(), "", "compaction-resume")

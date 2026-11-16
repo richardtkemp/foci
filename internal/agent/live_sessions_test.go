@@ -654,3 +654,39 @@ func TestCloseFinishedSession_ClosesIdleKeepsResume(t *testing.T) {
 		t.Fatalf("resumed ResumeSessionID = %q, want thread-done", got)
 	}
 }
+
+// TestCloseSessionNow_ClosesWithBackgroundWorkKeepsResume is #3143 Q1 (Dick
+// 2026-11-16: "End it; only in-flight work counts"): a spawn the usage hold
+// paused that went cold ends, and its process is closed although background
+// work (a background shell, a subagent) still runs in it. The resume ID is
+// kept. Fail-arm: CloseFinishedSession leaves it for the idle reaper.
+func TestCloseSessionNow_ClosesWithBackgroundWorkKeepsResume(t *testing.T) {
+	idx := newTestSessionIndex(t)
+	r := newCapRig(t, idx, 0, nil)
+	const k = "test-agent/cold"
+	mustGet(t, r.m.Get, k)
+	mb := r.mock(t, k)
+	mb.subagents.Store(true)
+	mb.mu.Lock()
+	mb.sessionID = "thread-cold"
+	mb.mu.Unlock()
+
+	if r.m.CloseFinishedSession(k, "test") {
+		t.Fatal("precondition: CloseFinishedSession closed a backend with background work")
+	}
+	if !r.m.CloseSessionNow(k, "test") {
+		t.Fatal("CloseSessionNow = false for a backend with background work")
+	}
+	if !mb.wasClosed() {
+		t.Fatal("the backend was not closed")
+	}
+	if _, ok := r.m.getManaged(k); ok {
+		t.Fatal("the closed backend is still mapped")
+	}
+	if v, _ := idx.GetSessionMetadata(k, session.MetaKeyCCResumeID); v != "thread-cold" {
+		t.Fatalf("resume ID after close = %q, want thread-cold (kept)", v)
+	}
+	if r.m.CloseSessionNow(k, "test") {
+		t.Fatal("second CloseSessionNow reported a close")
+	}
+}

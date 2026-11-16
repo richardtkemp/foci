@@ -157,6 +157,16 @@ type trackedSpawn struct {
 	// oneShot is set on an API agent's direct one-shot (#2979): a direct
 	// spawn that is persisted, so a restart resumes it.
 	oneShot *oneShotRecord
+	// adrift are the runs on the spawn's branch that began while the spawn
+	// was already running (spawnAutonomousSink, not owned): its backend woke
+	// by itself, or an injection ran there. When the spawn's run ends while
+	// one is still going, the oldest takes the spawn over and reports its
+	// result (#3143). In memory only.
+	adrift []*spawnAutonomousSink
+	// adriftAnswer is the answer of the latest adrift run that ended while
+	// the spawn ran, for a result that would otherwise not carry it (a paused
+	// spawn gone cold, #3143). Cleared when the spawn's run ends.
+	adriftAnswer string
 }
 
 // SpawnLogEntry is one step of a spawn's activity, kept for spawn_status
@@ -454,6 +464,21 @@ func (t *SpawnTracker) drainPending(parent, id string) []string {
 	return out
 }
 
+// runEnd is how finishOrNext ended a spawn's run.
+type runEnd struct {
+	// next is the input of the spawn's next turn when done is false.
+	next []string
+	// done: the run is over; stopped says /stop or spawn_stop ended it.
+	done, stopped bool
+	// interrupted: the shutdown cut it; the record stays for resume.
+	interrupted bool
+	// dropped is how many queued messages were never delivered.
+	dropped int
+	// handedOff: a run adrift on the spawn's branch took the spawn over
+	// (#3143). The spawn stays running, and that run reports the result.
+	handedOff *spawnAutonomousSink
+}
+
 // finishOrNext ends a spawn's run. When parent messages arrived that its turn
 // did not take, and the run may go on (not stopped, not failed: force false),
 // it returns them as the next turn's input instead, done false. Otherwise it
@@ -464,38 +489,48 @@ func (t *SpawnTracker) drainPending(parent, id string) []string {
 // A run cut short (force) after BeginShutdown was cut by the shutdown: it
 // returns done and interrupted true and leaves the spawn, and its persisted
 // record, as they are, so the next process resumes it (#2589).
-func (t *SpawnTracker) finishOrNext(parent, id string, force bool) (next []string, done, stopped, interrupted bool, dropped int) {
+//
+// A run that ends while a run adrift on the branch still goes (and the spawn
+// was not stopped) hands the spawn over to that run (#3143): done and
+// handedOff, the spawn still running, its queued messages kept for the
+// follow-up of the run that took it over.
+func (t *SpawnTracker) finishOrNext(parent, id string, force bool) runEnd {
 	if t == nil {
-		return nil, true, false, false, 0
+		return runEnd{done: true}
 	}
 	t.mu.Lock()
 	s := t.spawns[parent][id]
 	if s == nil {
 		t.mu.Unlock()
-		return nil, true, false, false, 0
+		return runEnd{done: true}
 	}
 	if force && (t.shuttingDown || t.stopping[session.AgentIDFromAnyKey(parent)]) && !s.stopped {
 		t.mu.Unlock()
-		return nil, true, false, true, 0
+		return runEnd{done: true, interrupted: true}
 	}
 	if !force && !s.stopped && len(s.pending) > 0 {
-		next = s.pending
+		next := s.pending
 		s.pending = nil
 		t.mu.Unlock()
 		t.persist(parent, id)
-		return next, false, false, false, 0
+		return runEnd{next: next}
+	}
+	if r := s.handOffLocked(); r != nil {
+		t.mu.Unlock()
+		t.persist(parent, id)
+		return runEnd{done: true, handedOff: r}
 	}
 	defer t.mu.Unlock()
-	dropped = len(s.pending)
+	end := runEnd{done: true, stopped: s.stopped, dropped: len(s.pending)}
 	s.pending = nil
 	s.running = false
 	s.ended = time.Now()
-	stopped = s.stopped
+	s.adriftAnswer = ""
 	t.pruneFinished(parent)
 	// Not persisted here: the record stays "running" until the result is
 	// recorded (pushResult), so a crash in between resumes the spawn rather
 	// than losing its result.
-	return nil, true, stopped, false, dropped
+	return end
 }
 
 // setModel records the model a spawn runs on, reporting whether that changed it.

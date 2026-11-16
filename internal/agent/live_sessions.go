@@ -549,6 +549,26 @@ func (m *DelegatedManager) CloseFinishedSession(sessionKey, reason string) bool 
 	})
 }
 
+// CloseSessionNow closes sessionKey's backend now that the work it ran for
+// is over, like CloseFinishedSession, but whether or not it is idle: work
+// still in it (a background shell, a subagent) ends with it (#3143). It
+// keeps the resume ID. Reports whether it closed one.
+func (m *DelegatedManager) CloseSessionNow(sessionKey, reason string) bool {
+	m.mu.Lock()
+	mb, ok := m.backends[sessionKey]
+	if !ok || mb.creating.Load() {
+		m.mu.Unlock()
+		return false
+	}
+	delete(m.backends, sessionKey)
+	m.saveResumeID(sessionKey, mb.be.SessionID())
+	m.mu.Unlock()
+
+	m.logger().Infof("closing finished session %s now (%s; session %s; background work in it ends)", sessionKey, reason, mb.be.SessionID())
+	m.closeRemoved(sessionKey, mb)
+	return true
+}
+
 // closeRemoved tears down a backend that has already been removed from the
 // map: clears its permission state, closes the process and bridge, takes down
 // its prompts and frees its live-session place. Never called with m.mu held.
