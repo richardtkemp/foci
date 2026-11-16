@@ -12,7 +12,6 @@ import (
 	"foci/internal/session"
 	"foci/internal/startup"
 	"foci/internal/timeutil"
-	"foci/internal/tools"
 )
 
 type sessionInfra struct {
@@ -153,7 +152,7 @@ func initSessions(cfg *config.Config) sessionInfra {
 			archiveTicker := time.NewTicker(6 * time.Hour)
 			go func() {
 				// Run immediately on startup
-				if n, err := session.ArchiveSweep(sessions, sessionIndex, archiveAfter, depthArchiveHold(sessionIndex)); err != nil {
+				if n, err := session.ArchiveSweep(sessions, sessionIndex, archiveAfter, openChatArchiveHold(sessionIndex)); err != nil {
 					mainLog.Warnf("archive sweep: %v", err)
 				} else if n > 0 {
 					mainLog.Infof("archive sweep: archived %d idle session(s)", n)
@@ -161,7 +160,7 @@ func initSessions(cfg *config.Config) sessionInfra {
 				for {
 					select {
 					case <-archiveTicker.C:
-						if n, err := session.ArchiveSweep(sessions, sessionIndex, archiveAfter, depthArchiveHold(sessionIndex)); err != nil {
+						if n, err := session.ArchiveSweep(sessions, sessionIndex, archiveAfter, openChatArchiveHold(sessionIndex)); err != nil {
 							mainLog.Warnf("archive sweep: %v", err)
 						} else if n > 0 {
 							mainLog.Infof("archive sweep: archived %d idle session(s)", n)
@@ -354,17 +353,18 @@ func cleanupStaleSessionMetadata(idx *session.SessionIndex, sessions *session.St
 	}
 }
 
-// depthArchiveHold is the archive sweep's hold (#3134): a leaf of a running
-// depth tree keeps its transcript uncompressed for up to
-// tools.DepthTranscriptHoldMax idle. Built per sweep, so each sweep reads the
-// depth records afresh.
-func depthArchiveHold(idx *session.SessionIndex) func(session.SessionIndexEntry) bool {
-	holds := tools.NewDepthHolds(idx)
-	return func(e session.SessionIndexEntry) bool {
-		last := e.LastActivityAt
-		if last.IsZero() {
-			last = e.CreatedAt
-		}
-		return holds.HoldsGzip(e.SessionKey, last)
+// openChatArchiveHold is the archive sweep's hold (#3134, Dick 2026-11-16:
+// "preserve transcripts for any open chat"): a session bound to a chat in the
+// app's shared open set stays uncompressed, with no time cap. A chat the
+// auto-close sweep closes follows the normal rules again. Built per sweep, so
+// each sweep reads the open set afresh, from the store: the startup sweep runs
+// before the app hub rebuilds its bindings. An unreadable open set holds
+// every session this sweep.
+func openChatArchiveHold(idx *session.SessionIndex) func(session.SessionIndexEntry) bool {
+	open, err := idx.OpenChatSessionKeys()
+	if err != nil {
+		mainLog.Warnf("archive sweep: open chats: %v; archiving nothing this sweep", err)
+		return func(session.SessionIndexEntry) bool { return true }
 	}
+	return func(e session.SessionIndexEntry) bool { return open[e.SessionKey] }
 }

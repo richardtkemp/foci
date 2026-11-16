@@ -1,6 +1,7 @@
 package app
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -150,5 +151,45 @@ func TestStoreOpenChats_WarnsOnFailedPersist(t *testing.T) {
 	got := warns()
 	if len(got) != 1 || !strings.Contains(got[0], "open-set persist") {
 		t.Errorf("warns = %v, want exactly one open-set persist warning", got)
+	}
+}
+
+// TestOpenChatSessionKeys_MatchesHubBindings pins the store-only resolution
+// the transcript sweeps use (session.OpenChatSessionKeys, #3134) to the hub's
+// own: for a plain chat, an adopted session and a depth leaf, the keys it reads
+// from the persisted rows are exactly the keys OpenSessionsForAgent reads from
+// the live bindings. The sweeps cannot use the hub: the startup archive sweep
+// runs before StartAll rebuilds the bindings.
+func TestOpenChatSessionKeys_MatchesHubBindings(t *testing.T) {
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+	registerBareAgent(h, "ag")
+
+	root := h.ensureBinding(nil, "ag", "cRoot")
+	adopted := h.ensureBinding(nil, "ag", "cAdopt")
+	h.adoptSession(adopted, "ag/inamed")
+	leafKey := root.key() + "/b42"
+	leafConv, err := h.registerDepthLeaf(root.key(), leafKey, "L1", "leaf", "")
+	if err != nil {
+		t.Fatalf("registerDepthLeaf: %v", err)
+	}
+	h.ensureBinding(nil, "ag", "cClosed")
+
+	h.storeOpenChats([]string{"cRoot", "cAdopt", leafConv, "cGhost"})
+
+	want := map[string]bool{}
+	for _, k := range h.OpenSessionsForAgent("ag") {
+		want[k] = true
+	}
+	if len(want) != 3 || !want[leafKey] || !want["ag/inamed"] || !want[root.key()] {
+		t.Fatalf("hub open keys = %v; want root, adopted and leaf", want)
+	}
+	got, err := idx.OpenChatSessionKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("store open keys = %v, hub = %v", got, want)
 	}
 }

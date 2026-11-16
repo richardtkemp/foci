@@ -234,8 +234,9 @@ const systemStateAppSettings = "app_settings"
 // systemStateOpenChats is the system_state key under which the user's shared
 // open-set (the conversations open across their devices) is stored as a JSON
 // array of conversation ids, so a device offline during a change catches up on
-// reconnect.
-const systemStateOpenChats = "open_chats"
+// reconnect. The session package owns the name: the transcript sweeps read the
+// set from the store directly (session.OpenChatSessionKeys, #3134).
+const systemStateOpenChats = session.SystemStateOpenChats
 
 // batchPrompt holds the in-flight callback for one batched (multi-question) ask.
 // The app returns all answers in a single InteractiveResponse.Answers; onResp

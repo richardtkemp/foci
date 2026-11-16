@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"foci/internal/timeutil"
-	"foci/internal/tools"
 )
 
 // CleanupEphemeralSessions deletes the backend transcript files of ephemeral
@@ -32,22 +31,27 @@ func (a *Agent) CleanupEphemeralSessions(ctx context.Context, retentionDays int)
 		return 0
 	}
 
-	// #3134: a leaf of a depth tree that is still running keeps its
-	// transcript, however long idle (the archive sweep gzips it after
-	// tools.DepthTranscriptHoldMax). Checked before the scope opens, so a
-	// sweep whose every candidate is held starts no backend server.
-	holds := tools.NewDepthHolds(a.SessionIndex)
+	// #3134: a session bound to an open app chat keeps its transcript,
+	// however long idle (Dick, 2026-11-16: "preserve transcripts for any open
+	// chat"). Checked before the scope opens, so a sweep whose every
+	// candidate is held starts no backend server. An unreadable open set
+	// skips the sweep: a delete cannot be undone, so it never runs on a guess.
+	open, err := a.SessionIndex.OpenChatSessionKeys()
+	if err != nil {
+		a.taggedLog("ephemeral-cleanup").Warnf("open chats: %v; skipping this sweep", err)
+		return 0
+	}
 	kept := keys[:0:0]
 	held := 0
 	for _, key := range keys {
-		if holds.HoldsDelete(key) {
+		if open[key] {
 			held++
 			continue
 		}
 		kept = append(kept, key)
 	}
 	if held > 0 {
-		a.taggedLog("ephemeral-cleanup").Infof("kept %d depth leaf transcript(s) of running trees", held)
+		a.taggedLog("ephemeral-cleanup").Infof("kept %d transcript(s) of open chats", held)
 	}
 	keys = kept
 	if len(keys) == 0 {

@@ -207,11 +207,11 @@ func TestCleanupEphemeral_FailedDeleteStaysEligible(t *testing.T) {
 	}
 }
 
-// TestCleanupEphemeral_KeepsRunningDepthLeaves is #3134's ruling (Dick,
-// 2026-11-16): "Don't gzip or delete leaves while their depth mode is still
-// running". A leaf of a running tree keeps its transcript however old; a leaf
-// of a finished tree, in the same sweep, is reclaimed as before.
-func TestCleanupEphemeral_KeepsRunningDepthLeaves(t *testing.T) {
+// TestCleanupEphemeral_KeepsOpenChatTranscripts is #3134's ruling (Dick,
+// 2026-11-16): "preserve transcripts for any open chat". A leaf bound to an
+// open app chat keeps its transcript however old; a leaf whose chat is closed,
+// in the same sweep, is reclaimed as before.
+func TestCleanupEphemeral_KeepsOpenChatTranscripts(t *testing.T) {
 	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -225,15 +225,17 @@ func TestCleanupEphemeral_KeepsRunningDepthLeaves(t *testing.T) {
 		})
 		idx.RecordBackendResume(k, id)
 	}
-	// b1 is a leaf of running tree T1; b2 of finished tree T0.
-	for k, v := range map[string]string{
-		"depth:alpha/c1":    `{"key":"alpha/c1","tree":"alpha/c1","tree_id":"T1","state":"active"}`,
-		"depth:alpha/c1/b1": `{"key":"alpha/c1/b1","leaf_id":"L1","tree":"alpha/c1","tree_id":"T1","state":"active"}`,
-		"depth:alpha/c1/b2": `{"key":"alpha/c1/b2","leaf_id":"L2","tree":"alpha/c1","tree_id":"T0","state":"reported"}`,
-	} {
-		if err := idx.SetAgentMetadata("alpha", k, v); err != nil {
+	// Two leaf conversations, as the app hub persists them; only b1's is open.
+	for chatID, v := range map[int64][2]string{11: {"conv-b1", "alpha/c1/b1"}, 12: {"conv-b2", "alpha/c1/b2"}} {
+		if err := idx.SetChatMetadata("alpha", "app", chatID, "conv_id", v[0]); err != nil {
 			t.Fatal(err)
 		}
+		if err := idx.SetChatMetadata("alpha", "app", chatID, "session_key", v[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := idx.SetSystemState(session.SystemStateOpenChats, `["conv-b1"]`); err != nil {
+		t.Fatal(err)
 	}
 
 	rec := &recordingBrancher{}
@@ -244,7 +246,7 @@ func TestCleanupEphemeral_KeepsRunningDepthLeaves(t *testing.T) {
 	a := &Agent{AgentID: "alpha", SessionIndex: idx, DelegatedManager: mgr}
 
 	if n := a.CleanupEphemeralSessions(context.Background(), 3); n != 1 {
-		t.Errorf("deleted = %d, want 1 (the finished tree's leaf)", n)
+		t.Errorf("deleted = %d, want 1 (the closed chat's leaf)", n)
 	}
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
@@ -252,7 +254,36 @@ func TestCleanupEphemeral_KeepsRunningDepthLeaves(t *testing.T) {
 		t.Errorf("cleaned = %v, want [uuid-b2]", rec.cleaned)
 	}
 	if got := idx.UnsweptResumes("alpha/c1/b1"); len(got) != 1 {
-		t.Errorf("held leaf's resume swept: unswept = %v", got)
+		t.Errorf("open chat's resume swept: unswept = %v", got)
+	}
+}
+
+// TestCleanupEphemeral_UnreadableOpenSetDeletesNothing: a delete cannot be
+// undone, so an open set that cannot be parsed skips the sweep rather than
+// reading as "nothing open".
+func TestCleanupEphemeral_UnreadableOpenSetDeletesNothing(t *testing.T) {
+	t.Parallel()
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().AddDate(0, 0, -60)
+	idx.Upsert(session.SessionIndexEntry{SessionKey: "alpha/c1/b1", CreatedAt: old, LastActivityAt: old, SessionType: session.SessionTypeDepth})
+	idx.RecordBackendResume("alpha/c1/b1", "uuid-b1")
+	if err := idx.SetSystemState(session.SystemStateOpenChats, `not json`); err != nil {
+		t.Fatal(err)
+	}
+	rec := &recordingBrancher{}
+	mgr := &DelegatedManager{
+		NewBackend:   func() (delegator.Delegator, error) { return rec, nil },
+		SessionIndex: idx,
+	}
+	a := &Agent{AgentID: "alpha", SessionIndex: idx, DelegatedManager: mgr}
+	if n := a.CleanupEphemeralSessions(context.Background(), 3); n != 0 {
+		t.Errorf("deleted = %d, want 0", n)
+	}
+	if got := idx.UnsweptResumes("alpha/c1/b1"); len(got) != 1 {
+		t.Errorf("resume swept on an unreadable open set: unswept = %v", got)
 	}
 }
 
