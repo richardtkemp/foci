@@ -126,6 +126,11 @@ func (b *backgroundAgent) ContextUsage(sessionKey string) (fill, limit int) {
 	return fill, limit
 }
 
+// LearnContextLimit is periodic's contextLimitLearner (#3143 S1).
+func (b *backgroundAgent) LearnContextLimit(ctx context.Context, sessionKey string) {
+	b.inst.ag.LearnContextLimit(ctx, sessionKey)
+}
+
 func (b *backgroundAgent) QuietCompactBlocked(sessionKey string) string {
 	return b.inst.ag.QuietCompactBlocked(sessionKey)
 }

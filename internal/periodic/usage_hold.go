@@ -56,18 +56,42 @@ func (r *Runner) UsageHoldStarted(liftAt time.Time) {
 	go r.holdCompaction(context.Background(), liftAt)
 }
 
-// holdCompaction is UsageHoldStarted's body. The targets are fixed at the
-// hold start (the interrupt has already recorded the paused sessions); each
-// is reflected and compacted once its interrupted turn has really ended.
+// holdCompaction is UsageHoldStarted's body. The candidates are fixed at the
+// hold start (the interrupt has already recorded the paused sessions). Each is
+// judged only once its interrupted turn has really ended and its context
+// window is known (#3143 S1): a turn's end is when foci learns the window
+// Claude Code reports, and judged before it the fill was measured against the
+// model's catalogue window (1M where the account's is 600k), so a session over
+// half its real trigger was skipped. A target is then reflected and compacted.
 func (r *Runner) holdCompaction(ctx context.Context, liftAt time.Time) {
 	pctx := usagehold.WithPermit(ctx)
-	for _, sk := range r.holdCompactionTargets(liftAt, time.Now()) {
+	keys, paused := r.holdCompactionCandidateKeys(liftAt)
+	for _, sk := range keys {
 		r.waitHoldTargetIdle(ctx, sk)
+		r.learnContextLimit(ctx, sk)
+		if skip := r.holdCompactionSkip(sk, paused[sk], liftAt, time.Now()); skip != "" {
+			r.log.Debugf("usage hold compaction: skip %s: %s", sk, skip)
+			continue
+		}
 		r.log.Infof("usage hold: reflecting and compacting %s before the hold (lifts %s)", sk, liftAt.Format(time.RFC3339))
 		r.reflectSession(pctx, sk)
 		if err := r.agent.QuietCompact(pctx, sk); err != nil {
 			r.log.Warnf("usage hold: compaction of %s: %v", sk, err)
 		}
+	}
+}
+
+// contextLimitLearner is the optional BackgroundAgent side that learns a
+// session's real context window from its live backend when foci does not
+// know it yet (#3143 S1).
+type contextLimitLearner interface {
+	LearnContextLimit(ctx context.Context, sessionKey string)
+}
+
+// learnContextLimit asks the agent to learn sk's context window, when it can.
+func (r *Runner) learnContextLimit(ctx context.Context, sk string) {
+	if l, ok := r.agent.(contextLimitLearner); ok {
+		l.LearnContextLimit(ctx, sk)
 	}
 }
 
@@ -103,33 +127,26 @@ func (r *Runner) holdCompactionCandidates() (chats []string, paused map[string]b
 	return chats, paused
 }
 
-// holdCompactionTargets are the sessions a hold that lifts at liftAt compacts
-// (worked example A). Each skip logs one DEBUG line.
-func (r *Runner) holdCompactionTargets(liftAt, now time.Time) []string {
+// holdCompactionCandidateKeys are the sessions a hold that lifts at liftAt
+// considers compacting (worked example A; holdCompactionSkip judges each),
+// and which of them it paused. None when the lift time is unknown.
+func (r *Runner) holdCompactionCandidateKeys(liftAt time.Time) (keys []string, paused map[string]bool) {
 	if liftAt.IsZero() {
 		r.log.Infof("usage hold: no lift time known — no compaction at the hold")
-		return nil
+		return nil, nil
 	}
 	chats, paused := r.holdCompactionCandidates()
-	all := append([]string(nil), chats...)
+	keys = append([]string(nil), chats...)
 	seen := map[string]bool{}
 	for _, sk := range chats {
 		seen[sk] = true
 	}
 	for sk := range paused {
 		if !seen[sk] {
-			all = append(all, sk)
+			keys = append(keys, sk)
 		}
 	}
-	var out []string
-	for _, sk := range all {
-		if skip := r.holdCompactionSkip(sk, paused[sk], liftAt, now); skip != "" {
-			r.log.Debugf("usage hold compaction: skip %s: %s", sk, skip)
-			continue
-		}
-		out = append(out, sk)
-	}
-	return out
+	return keys, paused
 }
 
 // holdCompactionSkip is why the hold does not compact sk, or "" when it does.

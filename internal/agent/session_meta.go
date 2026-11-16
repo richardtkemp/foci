@@ -522,6 +522,16 @@ func (a *Agent) SessionContextLimitKnown(sessionKey string) bool {
 	return sm.contextLimit > 0
 }
 
+// LearnContextLimit learns sessionKey's context window from its live backend
+// when foci does not know it yet (SessionContextLimitKnown), as a turn's end
+// does. The usage hold's compaction asks before it judges a session (#3143
+// S1). A no-op without a live backend.
+func (a *Agent) LearnContextLimit(ctx context.Context, sessionKey string) {
+	if !a.SessionContextLimitKnown(sessionKey) {
+		a.refreshContextFromBackend(ctx, sessionKey)
+	}
+}
+
 // SessionContextLimit returns the context window size for the session's model.
 // Checks backend-reported context limit first (from get_context_usage),
 // then ModelMetaFn (config-defined), falls back to modelinfo registry.

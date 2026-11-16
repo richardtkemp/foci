@@ -99,15 +99,15 @@ func TestUsageHold_CompactionRule(t *testing.T) {
 	paused := []holdSession{{key: "test/c1/b7", cacheAge: 20 * time.Minute, fill: 120000, noCompact: true}}
 	r, _ := newHoldRunner(t, now, chats, paused)
 
-	got := r.holdCompactionTargets(now.Add(12*time.Hour), now)
+	got := holdTargets(r, now.Add(12*time.Hour), now)
 	sort.Strings(got)
 	if want := []string{"test/c1", "test/c1/b7"}; !equalStrings(got, want) {
 		t.Errorf("reset 12 h away: compacted %v, want %v", got, want)
 	}
-	if got := r.holdCompactionTargets(now.Add(45*time.Minute), now); len(got) != 0 {
+	if got := holdTargets(r, now.Add(45*time.Minute), now); len(got) != 0 {
 		t.Errorf("reset 45 min away: compacted %v, want none", got)
 	}
-	if got := r.holdCompactionTargets(time.Time{}, now); len(got) != 0 {
+	if got := holdTargets(r, time.Time{}, now); len(got) != 0 {
 		t.Errorf("unknown reset: compacted %v, want none", got)
 	}
 }
@@ -137,6 +137,19 @@ func TestUsageHold_ReflectThenCompactWithPermit(t *testing.T) {
 	if !equalStrings(steps, want) {
 		t.Errorf("steps = %v, want %v", steps, want)
 	}
+}
+
+// holdTargets is the sessions holdCompaction would compact at now, judged
+// as it judges each candidate (holdCompactionSkip).
+func holdTargets(r *Runner, liftAt, now time.Time) []string {
+	keys, paused := r.holdCompactionCandidateKeys(liftAt)
+	var out []string
+	for _, sk := range keys {
+		if r.holdCompactionSkip(sk, paused[sk], liftAt, now) == "" {
+			out = append(out, sk)
+		}
+	}
+	return out
 }
 
 func permit(ctx context.Context) string {
@@ -263,5 +276,91 @@ func TestUsageHold_CompactionIdleWaitIsBounded(t *testing.T) {
 	r.holdCompaction(context.Background(), now.Add(12*time.Hour))
 	if len(got) != 1 {
 		t.Errorf("compactions after the bounded wait = %v, want one attempt", got)
+	}
+}
+
+// windowFake is a holdFakeAgent whose context window is the model
+// catalogue's (1M: a 60% fill reads 30%) until it learns the account's real
+// one: when its interrupted turn ends (WaitTurnIdle) or when asked to
+// (LearnContextLimit), as Claude Code reports it at a turn's end.
+type windowFake struct {
+	*holdFakeAgent
+	mu      sync.Mutex
+	learned bool
+	ended   chan struct{} // nil: no turn in flight
+}
+
+func (f *windowFake) WaitTurnIdle(ctx context.Context, _ string) bool {
+	if f.ended == nil {
+		return true
+	}
+	select {
+	case <-f.ended:
+		f.mu.Lock()
+		f.learned = true
+		f.mu.Unlock()
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (f *windowFake) ContextUsage(string) (int, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.learned {
+		return 120000, 200000
+	}
+	return 120000, 400000
+}
+
+// learnerFake is a windowFake that learns its window when asked.
+type learnerFake struct{ *windowFake }
+
+func (f *learnerFake) LearnContextLimit(context.Context, string) {
+	f.mu.Lock()
+	f.learned = true
+	f.mu.Unlock()
+}
+
+// TestUsageHold_CompactionJudgedOnceWindowKnown is #3143 S1 (deploy-fallback,
+// 2026-11-16): a session whose interrupted turn ends only after the hold
+// starts learns its real context window at that end. Judged before it,
+// against the catalogue window, its fill read under half the trigger and it
+// was skipped; judged after, it is over half and compacted.
+// Fail-arm: targets fixed with their fill at the hold start skip it.
+func TestUsageHold_CompactionJudgedOnceWindowKnown(t *testing.T) {
+	now := time.Now()
+	r, hold := newHoldRunner(t, now, []holdSession{{key: "test/c1", cacheAge: 10 * time.Minute}}, nil)
+	ended := make(chan struct{})
+	r.agent = &windowFake{holdFakeAgent: hold, ended: ended}
+	compacted := make(chan string, 1)
+	hold.quietCompactFn = func(_ context.Context, sk string) error { compacted <- sk; return nil }
+	done := make(chan struct{})
+	go func() { r.holdCompaction(context.Background(), now.Add(12*time.Hour)); close(done) }()
+	close(ended) // the interrupted turn ends; the window is learned
+	<-done
+	select {
+	case sk := <-compacted:
+		if sk != "test/c1" {
+			t.Errorf("compacted %s, want test/c1", sk)
+		}
+	default:
+		t.Fatal("the session over half its real trigger was not compacted")
+	}
+}
+
+// TestUsageHold_CompactionLearnsUnknownWindow: a session with no turn in
+// flight whose window foci never learned is asked to learn it before it is
+// judged. Fail-arm: judged against the catalogue window, it is skipped.
+func TestUsageHold_CompactionLearnsUnknownWindow(t *testing.T) {
+	now := time.Now()
+	r, hold := newHoldRunner(t, now, []holdSession{{key: "test/c1", cacheAge: 10 * time.Minute}}, nil)
+	r.agent = &learnerFake{&windowFake{holdFakeAgent: hold}}
+	var got []string
+	hold.quietCompactFn = func(_ context.Context, sk string) error { got = append(got, sk); return nil }
+	r.holdCompaction(context.Background(), now.Add(12*time.Hour))
+	if len(got) != 1 {
+		t.Errorf("compactions = %v, want test/c1 once its window was learned", got)
 	}
 }
