@@ -354,7 +354,7 @@ func TestConvBindingFieldCensus(t *testing.T) {
 		// takes down a chip from before the restart (#2924).
 		"suggestionSent": true,
 		"mu":             true, "clients": true, "clientStates": true, "buffer": true,
-		"seenOrder": true, "turnKind": true, "turnDetail": true, "turnCommand": true, "turnShell": true, "turnStartedMs": true, "turnToolSeq": true, "retryStartedMs": true, "waitingStartedMs": true, "retryDetail": true,
+		"seenOrder": true, "turnKind": true, "turnDetail": true, "turnCommand": true, "turnShell": true, "turnStartedMs": true, "turnToolSeq": true, "retryStartedMs": true, "waitingStartedMs": true, "retryDetail": true, "usageWaitMs": true,
 		"subagentDetail": true, "subagents": true, "spawns": true, "spawnShells": true, "waitingDetail": true,
 		"activitySent": true, "cacheExpiryMs": true, "lastCmdHash": true,
 		"lastMsgID": true, "readAfterTurn": true,

@@ -298,6 +298,15 @@ func (SpawnObserver) SpawnModel(parentSession, id, model string) {
 	}
 }
 
+// SpawnRetry marks the spawn's running entry as waiting on a retry of a failed
+// API call until untilMs, or clears it (untilMs 0) (#3146). The app shows the
+// wait in place of "thinking".
+func (SpawnObserver) SpawnRetry(parentSession, id string, untilMs int64, status int) {
+	if b := spawnBinding(parentSession); b != nil {
+		b.setSpawnRetry(id, untilMs, status)
+	}
+}
+
 // SpawnEnded completes the spawn's chit and drops it from the running list.
 func (SpawnObserver) SpawnEnded(parentSession, id string) {
 	NoteSubagentActivity(parentSession, id, "end", "")

@@ -28,6 +28,20 @@ type recordingSpawnObserver struct {
 	models []string
 	// tools are the SpawnTool lines, as "<id>=<line>".
 	tools []string
+	// retries are the SpawnRetry calls, in order.
+	retries []spawnRetryCall
+}
+
+type spawnRetryCall struct {
+	id      string
+	untilMs int64
+	status  int
+}
+
+func (o *recordingSpawnObserver) SpawnRetry(_, id string, untilMs int64, status int) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.retries = append(o.retries, spawnRetryCall{id: id, untilMs: untilMs, status: status})
 }
 
 func (o *recordingSpawnObserver) SpawnTool(_, id, line string) {

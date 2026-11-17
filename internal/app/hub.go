@@ -2711,6 +2711,7 @@ type convBinding struct {
 	turnToolSeq    uint64                // bumped on every turn-scoped change: names the running tool call (#3118)
 	retryDetail    string                // turn-scoped: CC is waiting to retry an API call, the text to show (#2260); empty if not
 	retryStartedMs int64                 // when the retry state began, unix ms; the attempts under it keep this time (#2913)
+	usageWaitMs    int64                 // turn-scoped: CC waits for the usage reset (a 429 retry) until this unix ms; not activity (#3146); 0 if not
 	subagentDetail string                // running-subagent descriptions, empty if none
 	subagents      []fap.RunningSubagent // the structured running list behind subagentDetail (#2138)
 	spawns         []fap.RunningSubagent // the session's background spawns, listed after its subagents (#2139)
@@ -2955,6 +2956,7 @@ func (b *convBinding) info() fap.ConversationInfo {
 	a := b.activityFrameLocked()
 	return fap.ConversationInfo{ID: b.convID, SessionKey: b.key(), LastSeq: b.seq, Activity: a.Kind, ActivityDetail: a.Detail,
 		ActivityAgentKind: a.AgentKind, ActivityAgentDetail: a.AgentDetail, ActivityAgentCommand: a.AgentCommand, ActivityAgentShell: a.AgentShell, ActivityAgentStartedMs: a.AgentStartedMs, Subagents: a.Subagents,
+		UsageResetMs: a.UsageResetMs, UsageWaitIDs: a.UsageWaitIDs,
 		LastActivityTs: b.lastActMs, LastPreview: b.lastPreview, CacheExpiryMs: b.cacheExpiryMs, DepthRootID: b.depthRoot}
 }
 
@@ -2968,7 +2970,8 @@ func (b *convBinding) info() fap.ConversationInfo {
 // resolver only layers the retry state and the two session-scoped states above
 // them. Caller holds mu.
 func (b *convBinding) resolveActivity() (fap.ActivityKind, string) {
-	if b.subagentDetail != "" || len(b.spawns) > 0 {
+	spawns := b.activeSpawnsLocked()
+	if b.subagentDetail != "" || len(spawns) > 0 {
 		detail := b.subagentDetail
 		if visible, hid := b.visibleSubagentsLocked(); hid {
 			descs := make([]string, len(visible))
@@ -2977,7 +2980,7 @@ func (b *convBinding) resolveActivity() (fap.ActivityKind, string) {
 			}
 			detail = delegator.FormatSubagentDetail(descs)
 		}
-		for _, s := range b.spawns {
+		for _, s := range spawns {
 			if detail != "" {
 				detail += ", "
 			}
@@ -2989,6 +2992,41 @@ func (b *convBinding) resolveActivity() (fap.ActivityKind, string) {
 	return kind, detail
 }
 
+// spawnWaitsForUsageReset reports whether a spawn entry waits for the usage
+// reset: its backend retries a 429 (#3146).
+func spawnWaitsForUsageReset(s fap.RunningSubagent) bool {
+	return s.RetryUntilMs > 0 && s.RetryStatus == 429
+}
+
+// activeSpawnsLocked is b.spawns without the spawns that wait for the usage
+// reset: such a wait is not activity (Dick, 2026-11-16, #3146). Caller holds mu.
+func (b *convBinding) activeSpawnsLocked() []fap.RunningSubagent {
+	if !slices.ContainsFunc(b.spawns, spawnWaitsForUsageReset) {
+		return b.spawns
+	}
+	var active []fap.RunningSubagent
+	for _, s := range b.spawns {
+		if !spawnWaitsForUsageReset(s) {
+			active = append(active, s)
+		}
+	}
+	return active
+}
+
+// usageWaitLocked returns when the latest usage-reset wait of the agent's
+// turn or its spawns ends (unix ms; 0 = none waits) and the waiting spawns'
+// ids (#3146). Caller holds mu.
+func (b *convBinding) usageWaitLocked() (untilMs int64, ids []string) {
+	untilMs = b.usageWaitMs
+	for _, s := range b.spawns {
+		if spawnWaitsForUsageReset(s) {
+			ids = append(ids, s.ID)
+			untilMs = max(untilMs, s.RetryUntilMs)
+		}
+	}
+	return untilMs, ids
+}
+
 // agentActivityLocked resolves the AGENT's own activity, ignoring subagents:
 // waiting > retrying > turn-scoped > idle, plus the running tool's full command,
 // whether it is a shell command (#2140) and when that activity began (#2913).
@@ -2997,6 +3035,11 @@ func (b *convBinding) resolveActivity() (fap.ActivityKind, string) {
 func (b *convBinding) agentActivityLocked() (kind fap.ActivityKind, detail, command string, shell bool, startedMs int64) {
 	if b.waitingDetail != "" {
 		return fap.ActivityKindWaiting, b.waitingDetail, "", false, b.waitingStartedMs
+	}
+	if b.usageWaitMs > 0 {
+		// Waiting for the usage reset is not activity (#3146): the turn's
+		// last phase under it is not shown either.
+		return fap.ActivityKindIdle, "", "", false, 0
 	}
 	if b.retryDetail != "" {
 		return fap.ActivityKindRetrying, b.retryDetail, "", false, b.retryStartedMs
@@ -3017,7 +3060,10 @@ func (b *convBinding) activityIdle() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	kind, _ := b.resolveActivity()
-	return kind == fap.ActivityKindIdle
+	// A usage-reset wait shows no activity (#3146) but still holds work in
+	// flight, so the chat stays open.
+	until, _ := b.usageWaitLocked()
+	return kind == fap.ActivityKindIdle && until == 0
 }
 
 // activityFrameLocked builds the full Activity frame from the current inputs:
@@ -3030,9 +3076,10 @@ func (b *convBinding) activityFrameLocked() fap.Activity {
 		a.AgentKind, a.AgentDetail, a.AgentCommand, a.AgentShell, a.AgentStartedMs = string(ak), ad, cmd, shell, started
 	}
 	subagents, _ := b.visibleSubagentsLocked()
-	if len(subagents)+len(b.spawns) > 0 {
-		a.Subagents = append(append([]fap.RunningSubagent(nil), subagents...), b.spawns...)
+	if spawns := b.activeSpawnsLocked(); len(subagents)+len(spawns) > 0 {
+		a.Subagents = append(append([]fap.RunningSubagent(nil), subagents...), spawns...)
 	}
+	a.UsageResetMs, a.UsageWaitIDs = b.usageWaitLocked()
 	return a
 }
 
@@ -3094,6 +3141,7 @@ func (b *convBinding) setTurnTool(kind fap.ActivityKind, detail, command string,
 	var seq uint64
 	b.applyActivity(func() {
 		b.retryDetail = ""
+		b.usageWaitMs = 0
 		if kind == fap.ActivityKindTool || kind != b.turnKind {
 			b.turnStartedMs = time.Now().UnixMilli()
 		}
@@ -3136,6 +3184,18 @@ func (b *convBinding) setRetrying(detail string) {
 			b.retryStartedMs = time.Now().UnixMilli()
 		}
 		b.retryDetail = detail
+		b.usageWaitMs = 0
+	})
+}
+
+// setUsageWait records that Claude Code waits for the account's usage reset
+// (a 429 retry of the turn's API call) until untilMs (#3146). It is not
+// activity: the chat shows the wait in its activity place, and the roster no
+// activity. setTurnTool clears it, as it does a retry.
+func (b *convBinding) setUsageWait(untilMs int64) {
+	b.applyActivity(func() {
+		b.usageWaitMs = untilMs
+		b.retryDetail = ""
 	})
 }
 
@@ -3200,6 +3260,21 @@ func (b *convBinding) setSpawnModel(id, model string) {
 	})
 }
 
+// setSpawnRetry sets or clears (untilMs 0) one spawn's retry wait (#3146).
+func (b *convBinding) setSpawnRetry(id string, untilMs int64, status int) {
+	if untilMs == 0 {
+		status = 0
+	}
+	b.applyActivity(func() {
+		for i := range b.spawns {
+			if b.spawns[i].ID == id {
+				b.spawns[i].RetryUntilMs = untilMs
+				b.spawns[i].RetryStatus = status
+			}
+		}
+	})
+}
+
 func (b *convBinding) removeSpawn(id string) {
 	b.applyActivity(func() {
 		b.spawns = slices.DeleteFunc(b.spawns, func(s fap.RunningSubagent) bool { return s.ID == id })
@@ -3249,7 +3324,7 @@ func (b *convBinding) applyActivity(mutate func()) {
 func activityEqual(x, y fap.Activity) bool {
 	return x.ConversationID == y.ConversationID && x.Kind == y.Kind && x.Detail == y.Detail &&
 		x.AgentKind == y.AgentKind && x.AgentDetail == y.AgentDetail && x.AgentCommand == y.AgentCommand && x.AgentShell == y.AgentShell && x.AgentStartedMs == y.AgentStartedMs &&
-		slices.Equal(x.Subagents, y.Subagents)
+		slices.Equal(x.Subagents, y.Subagents) && x.UsageResetMs == y.UsageResetMs && slices.Equal(x.UsageWaitIDs, y.UsageWaitIDs)
 }
 
 // lastActivity returns the last visible frame's send time (unix ms) under

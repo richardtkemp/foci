@@ -241,7 +241,12 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		// Claude Code is waiting to retry the main thread's API call (#2260):
 		// shown until the next content or tool event, or the turn's end, clears
 		// it (setTurnTool). Heartbeats and subagent events do not clear it.
-		s.b.setRetrying(retryDetail(e.Status, e.Attempt, e.Delay))
+		// A 429 waits for the usage reset, which is not activity (#3146).
+		if e.Status == 429 {
+			s.b.setUsageWait(time.Now().Add(e.Delay).Round(time.Second).UnixMilli())
+		} else {
+			s.b.setRetrying(retryDetail(e.Status, e.Attempt, e.Delay))
+		}
 
 	case turnevent.TurnComplete:
 		// A final text that is foci's notice (e.g. "Max tool call depth

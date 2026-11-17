@@ -387,6 +387,10 @@ type ConversationInfo struct {
 	ActivityAgentShell     bool              `json:"activityAgentShell,omitempty"`
 	ActivityAgentStartedMs int64             `json:"activityAgentStartedMs,omitempty"`
 	Subagents              []RunningSubagent `json:"subagents,omitempty"`
+	// UsageResetMs and UsageWaitIDs are the snapshot halves of the Activity
+	// frame's fields of the same names (#3146).
+	UsageResetMs int64    `json:"usageResetMs,omitempty"`
+	UsageWaitIDs []string `json:"usageWaitIds,omitempty"`
 	// LastActivityTs and LastPreview seed the roster row (last-active time + last
 	// message preview) so a freshly-paired device renders them without opening each
 	// chat to backfill. LastActivityTs is unix ms of the last visible frame.
@@ -703,6 +707,15 @@ type Activity struct {
 	AgentShell     bool              `json:"agentShell,omitempty"`
 	AgentStartedMs int64             `json:"agentStartedMs,omitempty"`
 	Subagents      []RunningSubagent `json:"subagents,omitempty"`
+	// UsageResetMs is set while the agent's turn or one of its spawns waits
+	// for the account's usage reset (a rate-limit retry, HTTP 429): when the
+	// next try is due, unix ms (the latest of them) (#3146). Such a wait is not
+	// activity (Dick, 2026-11-16: "show no activity when waiting for a usage
+	// reset"): it does not set Kind, and a waiting spawn is left out of
+	// Subagents. The app shows "waiting for usage reset ~HH:MM" in the chat's
+	// activity place instead. UsageWaitIDs are the waiting spawns' ids.
+	UsageResetMs int64    `json:"usageResetMs,omitempty"`
+	UsageWaitIDs []string `json:"usageWaitIds,omitempty"`
 }
 
 // RunningSubagent is one running subagent (or background command) in an
@@ -725,6 +738,13 @@ type RunningSubagent struct {
 	// Command is a background command's full command line (kind=command).
 	Command   string `json:"command,omitempty"`
 	StartedMs int64  `json:"startedMs,omitempty"`
+	// RetryUntilMs, set only on a foci spawn's entry, is when its backend's
+	// next try of a failed API call is due (unix ms): the spawn is waiting,
+	// not thinking (#3146). RetryStatus is that call's HTTP status (0 =
+	// none). Both are 0 when not waiting. A spawn waiting on a 429 (the usage
+	// reset) is never listed: it is in Activity.UsageWaitIDs instead.
+	RetryUntilMs int64 `json:"retryUntilMs,omitempty"`
+	RetryStatus  int   `json:"retryStatus,omitempty"`
 }
 
 func (Activity) Type() string { return TypeActivity }

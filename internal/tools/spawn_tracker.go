@@ -91,6 +91,11 @@ type SpawnObserver interface {
 	// SpawnModel reports the model a running spawn runs on, when it became known
 	// or changed after SpawnStarted (#2879).
 	SpawnModel(parentSession, id, model string)
+	// SpawnRetry reports the spawn's backend is waiting to retry a failed API
+	// call (a rate limit, an overload), with the time the next try is due
+	// (unix ms) and its HTTP status (0 = none), or that the wait is over
+	// (untilMs 0) (#3146).
+	SpawnRetry(parentSession, id string, untilMs int64, status int)
 	// SpawnEnded reports the spawn finished, failed or was stopped.
 	SpawnEnded(parentSession, id string)
 }
@@ -841,6 +846,28 @@ type spawnTextSink struct {
 	// mu guards blocks: the text blocks forwarded so far, in order.
 	mu     sync.Mutex
 	blocks []string
+	// retrying is set while the observer shows a retry wait (#3146).
+	retrying atomic.Bool
+}
+
+// noteRetry tells the observer the backend waits to retry until now + delay
+// (#3146): the app shows the spawn as waiting, not as thinking. The time is
+// rounded to the second: Claude Code repeats a long wait's api_retry every
+// 30 s with the delay shortened by about 30 s, and an unrounded time would
+// differ by a few ms each time and re-send the app's activity frame.
+func (s *spawnTextSink) noteRetry(e turnevent.BackendRetry) {
+	s.retrying.Store(true)
+	if s.obs != nil {
+		s.obs.SpawnRetry(s.parent, s.id, time.Now().Add(e.Delay).Round(time.Second).UnixMilli(), e.Status)
+	}
+}
+
+// clearRetry ends a shown retry wait: the backend produced output again, or
+// the turn ended.
+func (s *spawnTextSink) clearRetry() {
+	if s.retrying.CompareAndSwap(true, false) && s.obs != nil {
+		s.obs.SpawnRetry(s.parent, s.id, 0, 0)
+	}
 }
 
 // noteModel records the model the spawn's backend reports and, on a change,
@@ -857,7 +884,13 @@ func (s *spawnTextSink) noteModel(model string) {
 }
 
 func (s *spawnTextSink) Emit(ctx context.Context, ev turnevent.Event) {
+	switch ev.(type) {
+	case turnevent.TextBlock, turnevent.TextDelta, turnevent.ThinkingDelta, turnevent.ToolCall, turnevent.TurnComplete:
+		s.clearRetry()
+	}
 	switch e := ev.(type) {
+	case turnevent.BackendRetry:
+		s.noteRetry(e)
 	case turnevent.ModelKnown:
 		s.noteModel(e.Model)
 	case turnevent.TextBlock:
