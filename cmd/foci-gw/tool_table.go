@@ -778,10 +778,19 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 			// Each successful read is stored in the usage history (#3103).
 			hist := usageBindingFor(d.p.cfg, acfg)
 			account := usageAccountFor(acfg.ID, acfg.Backend, acfg.BackendConfig.Env)
+			// #3151: after each stored read the app's roster carries the
+			// new figures (re-sent only when they changed). One record hook
+			// runs per account read, so one check per read.
 			spawnDeps.Usage = tools.SpawnUsageReader(acfg.Backend, usageTargetFor(d.p.cfg, acfg), q,
 				account,
 				func() bool { return live.Load().Tools.SpawnReservePercent > 0 },
-				hist.RecordRead)
+				func(info *delegator.UsageInfo, source string) {
+					hist.RecordRead(info, source)
+					app.AgentUsageChanged()
+				})
+			// #3151: the app's new-conversation picker shows the agent's
+			// allowance from its stored figures.
+			app.SetAgentUsageSource(acfg.ID, appUsageFromBinding(hist))
 			// #3144: a Claude Code agent is told of each usage warning level
 			// ([notify] usage_warning_levels, #3145) its account's reads
 			// reach, as the stream's notices are.

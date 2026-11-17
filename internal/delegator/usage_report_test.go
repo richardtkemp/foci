@@ -76,3 +76,20 @@ func TestReportWindows(t *testing.T) {
 		t.Errorf("codex windows = %+v", cx)
 	}
 }
+
+// #3151: the app's allowance indicator labels.
+func TestUsageWindowLabel(t *testing.T) {
+	for in, want := range map[string]string{
+		"five_hour":      "5h",
+		"seven_day":      "7d",
+		"seven_day_opus": "7d opus",
+		"codex/5h":       "5h",
+		"codex/7d":       "7d",
+		"premium/5h":     "premium 5h",
+		"odd_window":     "odd window",
+	} {
+		if got := UsageWindowLabel(in); got != want {
+			t.Errorf("UsageWindowLabel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

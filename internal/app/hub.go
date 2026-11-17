@@ -1172,6 +1172,20 @@ func (h *Hub) defaultAgentID() string {
 }
 
 func (h *Hub) agentRoster() []fap.AgentInfo {
+	roster, _ := h.agentRosterUsage()
+	return roster
+}
+
+// agentRosterUsage is agentRoster plus the per-agent usage it carries
+// (#3151), for pushHelloAll's record of what every socket was last sent.
+func (h *Hub) agentRosterUsage() ([]fap.AgentInfo, map[string]*fap.AgentUsage) {
+	// Each agent's allowance (#3151) is read before h.mu is taken: its source
+	// queries the usage history database.
+	h.mu.RLock()
+	usageIDs := append([]string(nil), h.agentOrder...)
+	h.mu.RUnlock()
+	usage := agentUsageFor(usageIDs)
+
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	order := append([]string(nil), h.agentOrder...)
@@ -1256,9 +1270,10 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 			AvatarURL: avatarURL, AvatarVer: avatarVer,
 			Conversations: convs,
 			Commands:      commandInfos(h.agents[id]),
+			Usage:         usage[id],
 		})
 	}
-	return out
+	return out, usage
 }
 
 // memoDefaultChat resolves an agent's default app chat, memoised in
@@ -2044,7 +2059,9 @@ func (h *Hub) pushRosterAll() {
 // without the command palette. A change to the caps alone, such as the speech
 // voices after a live [[tts]] edit (#2945), needs only this.
 func (h *Hub) pushHelloAll() {
-	hello := fap.HelloServer{Version: fap.ProtocolVersion, Caps: h.caps(), Agents: h.agentRoster()}
+	agents, usage := h.agentRosterUsage()
+	noteRosterUsage(usage) // what every live socket now holds (#3151)
+	hello := fap.HelloServer{Version: fap.ProtocolVersion, Caps: h.caps(), Agents: agents}
 	h.mu.RLock()
 	clients := make([]*wsClient, 0, len(h.clients))
 	for c := range h.clients {

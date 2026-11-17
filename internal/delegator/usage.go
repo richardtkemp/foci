@@ -244,6 +244,27 @@ func UsageWindowLength(window string) time.Duration {
 	return 0
 }
 
+// UsageWindowLabel is a stored window's short display name (#3151, the
+// app's allowance indicator): Claude Code's "five_hour" is "5h", "seven_day"
+// is "7d" and "seven_day_opus" is "7d opus"; a ReportWindows
+// "<bucket>/<label>" is its label for the main bucket ("codex/5h" is "5h")
+// and "<bucket> <label>" for another ("premium/5h" is "premium 5h"). Any
+// other name is shown as stored, with underscores as spaces.
+func UsageWindowLabel(window string) string {
+	for _, p := range []struct{ prefix, short string }{{"five_hour", "5h"}, {"seven_day", "7d"}} {
+		if rest, ok := strings.CutPrefix(window, p.prefix); ok {
+			return strings.TrimSpace(p.short + " " + strings.ReplaceAll(strings.TrimPrefix(rest, "_"), "_", " "))
+		}
+	}
+	if bucket, label, ok := strings.Cut(window, "/"); ok {
+		if bucket == "codex" || bucket == "" {
+			return label
+		}
+		return bucket + " " + label
+	}
+	return strings.ReplaceAll(window, "_", " ")
+}
+
 // labelLength parses a window label such as "5h", "7d" or "90m".
 func labelLength(label string) time.Duration {
 	if len(label) < 2 {

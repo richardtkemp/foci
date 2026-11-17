@@ -347,6 +347,31 @@ type AgentInfo struct {
 	AvatarVer     string             `json:"avatarVer,omitempty"` // image fingerprint (mtime+size); changes when the file changes, drives client cache invalidation
 	Conversations []ConversationInfo `json:"conversations,omitempty"`
 	Commands      []CommandInfo      `json:"commands,omitempty"` // the agent's slash-command palette (agent-level available); app renders these rather than hardcoding
+	// Usage is the agent's plan allowance as last read (#3151), for the app's
+	// new-conversation picker. Nil when the agent's backend has no usage
+	// source (opencode, API agents) or no reading is held yet. Agents on one
+	// account (one Claude Code login) carry the same figures.
+	Usage *AgentUsage `json:"usage,omitempty"`
+}
+
+// AgentUsage is an agent's plan allowance: one entry per time window of its
+// account that has a figure for the current period (#3151).
+type AgentUsage struct {
+	Windows []UsageWindow `json:"windows"`
+}
+
+// UsageWindow is one allowance window. Label is short, for display ("5h",
+// "7d", "7d opus", "premium 5h"); LengthMs is the window's length; UsedPct is
+// the percent of it used (0-100, rounded); ResetsMs is when it resets (unix
+// ms, 0 = unknown); AsOfMs is when the figure was received (unix ms).
+// LimitReached is true when the backend said the limit is reached.
+type UsageWindow struct {
+	Label        string `json:"label"`
+	LengthMs     int64  `json:"lengthMs,omitempty"`
+	UsedPct      int    `json:"usedPct"`
+	ResetsMs     int64  `json:"resetsMs,omitempty"`
+	AsOfMs       int64  `json:"asOfMs,omitempty"`
+	LimitReached bool   `json:"limitReached,omitempty"`
 }
 
 // ConversationInfo is a conversation (<-> a foci session key) within an agent.
