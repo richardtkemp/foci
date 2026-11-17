@@ -477,3 +477,30 @@ func TestQueryUsage_ReadFailureFallsBack(t *testing.T) {
 		t.Errorf("buckets = %+v, want the last pushed 10%%", a.Buckets)
 	}
 }
+
+// TestRateLimitsUpdatedOneNoticeAfterStore (#3154): an update that raises
+// notices for both windows reaches the gateway hook as ONE message (the
+// gateway adds a table of the account's windows to each message), and only
+// after the update is in the usage store, so that table holds its figures.
+func TestRateLimitsUpdatedOneNoticeAfterStore(t *testing.T) {
+	b := newTestBackend(t)
+	b.startOpts.AgentID = t.Name()
+	isolateRateLimits(t, t.Name())
+	var events []string
+	b.SetHostHooks(delegator.HostHooks{
+		OnRateLimitNotice: func(_, n string) { events = append(events, "notice:"+n) },
+	})
+	b.SetUsageSink(func(r delegator.UsageReport) { events = append(events, "stored:"+r.Source) })
+	update := func(p5, p7 int) {
+		b.dispatch([]byte(fmt.Sprintf(`{"jsonrpc":"2.0","method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":%d,"windowDurationMins":300,"resetsAt":%d},"secondary":{"usedPercent":%d,"windowDurationMins":10080,"resetsAt":%d}}}}`, p5, reset5h, p7, reset7d)))
+	}
+	update(10, 10) // seeds the marks
+	events = nil
+	update(55, 72)
+	if len(events) != 2 || events[0] != "stored:"+delegator.UsageSourceCodexUpdate || !strings.HasPrefix(events[1], "notice:") {
+		t.Fatalf("events %q, want the update stored, then one notice", events)
+	}
+	if n := events[1]; !strings.Contains(n, "5h usage at 55%") || !strings.Contains(n, "7d usage at 72%") {
+		t.Fatalf("notice %q, want both windows' notices in one message", n)
+	}
+}

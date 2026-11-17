@@ -495,9 +495,12 @@ func (b *Backend) onRateLimitsUpdated(params json.RawMessage) {
 	b.logDebugf("account/rateLimits/updated: %s", string(params))
 	now := timeutil.Now()
 	st := b.rateLimits()
-	b.deliverRateLimitNotices(st.apply(p.RateLimits, b.usageWarningLevels(), now))
+	notices := st.apply(p.RateLimits, b.usageWarningLevels(), now)
 	b.reportUsageWindows(p.RateLimits)
+	// Stored before the notice is raised: the gateway puts the stored
+	// windows in a table under it (#3154).
 	b.reportUsage(delegator.UsageSourceCodexUpdate, snapshotReportWindows(p.RateLimits), params)
+	b.deliverRateLimitNotices(notices)
 	// The startup read (seedRateLimits) never closes the gate: the gate's
 	// deadline survives a foci restart on its own, and re-closing it would
 	// re-broadcast the "rate limited" notice on every restart. A live update
@@ -596,12 +599,13 @@ func (b *Backend) readRateLimits(source string) (json.RawMessage, error) {
 		notices = st.apply(*r.RateLimits, levels, now)
 		windows = snapshotReportWindows(*r.RateLimits)
 	}
-	// Only a second process of an agent that already saw these buckets can
-	// get notices here, and only for a real change since then.
-	b.deliverRateLimitNotices(notices)
 	if source != "" {
 		b.reportUsage(source, windows, raw)
 	}
+	// Only a second process of an agent that already saw these buckets can
+	// get notices here, and only for a real change since then. Delivered
+	// after the read is stored, for the gateway's table (#3154).
+	b.deliverRateLimitNotices(notices)
 	return raw, nil
 }
 
@@ -667,6 +671,10 @@ func snapshotReportWindows(snap rateLimitSnapshot) []delegator.UsageReportWindow
 	return out
 }
 
+// deliverRateLimitNotices hands one update's notices to the gateway as ONE
+// message (#3154): the gateway adds a table of the account's windows to each
+// message, and one update can raise several notices (both windows, the
+// limit reached).
 func (b *Backend) deliverRateLimitNotices(notices []string) {
 	if len(notices) == 0 {
 		return
@@ -676,9 +684,9 @@ func (b *Backend) deliverRateLimitNotices(notices []string) {
 	b.mu.Unlock()
 	for _, n := range notices {
 		b.logInfof("rate-limit notice: %s", n)
-		if fn != nil && !b.startOpts.BatchOnly {
-			fn(b.startOpts.SessionKey, n)
-		}
+	}
+	if fn != nil && !b.startOpts.BatchOnly {
+		fn(b.startOpts.SessionKey, strings.Join(notices, "\n"))
 	}
 }
 

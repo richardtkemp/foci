@@ -27,6 +27,7 @@ import (
 	"foci/internal/tools"
 	"foci/internal/turn"
 	"foci/internal/turnevent"
+	"foci/internal/usagelog"
 	"foci/internal/voice"
 	"foci/shared/prompts"
 )
@@ -270,6 +271,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// exists, delivered by the generic log.SetWarnHook path
 	// (setupWarningHooks); a backend-specific hook alongside it only produced
 	// duplicates.
+	// This agent's view of the usage history (#3103): the account its
+	// backend's usage reports are stored under.
+	usageHist := newUsageBinding(backendName, agentID, bc.Env)
 	hostHooks := delegator.HostHooks{
 		// A backend with the Claude Code re-login runs it on a 401 (#843) via
 		// the shared trigger built above (same path as the manual /login
@@ -288,8 +292,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		// rate_limit_notify_to, read LIVE per notice (hot:"event") so an edit
 		// takes effect without a restart — the backend outlives the config
 		// (#1857).
+		// The notice carries a table of the account's windows (#3154).
 		OnRateLimitNotice: func(sessionKey, notice string) {
-			deliverRateLimitNotice(connMgr, agentID, sessionKey, notice,
+			deliverRateLimitNotice(connMgr, agentID, sessionKey, withUsageTable(notice, usageHist),
 				p.resolvedLive.Load().Notify.RateLimitNotifyTo, app.OpenSessionsForAgent)
 		},
 		// A model refusal fallback (CC's primary model refused and another
@@ -320,9 +325,6 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		ClaudeAISkills:     claudeAISkills,
 		AddDirs:            addDirs,
 	}
-	// This agent's view of the usage history (#3103): the account its
-	// backend's usage reports are stored under.
-	usageHist := newUsageBinding(backendName, agentID, bc.Env)
 	if spec.Supports(delegator.CapRelogin) {
 		hostHooks.OnAuthFailure = func(detail string) {
 			startRelogin("401 auth failure: "+firstLine(detail), "", acct.gate.StartAuto, true)
@@ -1256,11 +1258,13 @@ func deliverRateLimitNotice(connMgr platform.ConnectionManager, agentID, session
 // read has no triggering session, so the session key is "": "all" reaches
 // every open chat (else the primary), "session" and "default" the primary.
 // Delivery runs off the reading goroutine.
-// levels() is [notify] usage_warning_levels (#3145), also read live.
-func usageReadAlerter(connMgr platform.ConnectionManager, agentID string, raise usageNoticesFunc, target func() string, levels func() []int, openSessions func(agentID string) []string) tools.UsageRecorder {
+// levels() is [notify] usage_warning_levels (#3145), also read live. hist is
+// the agent's view of the usage history, for the notice's table of windows
+// (#3154; nil: no table).
+func usageReadAlerter(connMgr platform.ConnectionManager, agentID string, raise usageNoticesFunc, target func() string, levels func() []int, openSessions func(agentID string) []string, hist *usagelog.Binding) tools.UsageRecorder {
 	return func(info *delegator.UsageInfo, source string) {
 		to, lv := target(), levels()
-		go deliverUsageReadNotices(connMgr, agentID, raise, info, source, to, lv, openSessions)
+		go deliverUsageReadNotices(connMgr, agentID, raise, info, source, to, lv, openSessions, hist)
 	}
 }
 
@@ -1269,16 +1273,16 @@ type usageNoticesFunc = func(agentID string, info *delegator.UsageInfo, levels [
 
 // deliverUsageReadNotices raises (the backend's Spec.UsageReadNotices, at
 // levels) and delivers the notices of one usage read of agentID's account
-// (usageReadAlerter) to target.
-func deliverUsageReadNotices(connMgr platform.ConnectionManager, agentID string, raise usageNoticesFunc, info *delegator.UsageInfo, source, target string, levels []int, openSessions func(agentID string) []string) {
+// (usageReadAlerter) to target. The read's notices go as one message with
+// one table of the account's windows (#3154): a read that crosses levels in
+// two windows would otherwise send the same table twice.
+func deliverUsageReadNotices(connMgr platform.ConnectionManager, agentID string, raise usageNoticesFunc, info *delegator.UsageInfo, source, target string, levels []int, openSessions func(agentID string) []string, hist *usagelog.Binding) {
 	notices := raise(agentID, info, levels, timeutil.Now())
 	if len(notices) == 0 {
 		return
 	}
 	log.NewComponentLogger("agent:"+agentID).Infof("usage read (%s) raised %d usage notice(s) (target=%s)", source, len(notices), target)
-	for _, n := range notices {
-		deliverRateLimitNotice(connMgr, agentID, "", n, target, openSessions)
-	}
+	deliverRateLimitNotice(connMgr, agentID, "", withUsageTable(strings.Join(notices, "\n\n"), hist), target, openSessions)
 }
 
 // deliverRateLimitNoticeAll is the "all" target (#3137, Dick 2026-11-16:

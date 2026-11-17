@@ -799,7 +799,7 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 					usageReadAlerter(d.connMgr, acfg.ID, spec.UsageReadNotices,
 						func() string { return live.Load().Notify.RateLimitNotifyTo },
 						func() []int { return live.Load().Notify.UsageWarningLevels },
-						app.OpenSessionsForAgent))
+						app.OpenSessionsForAgent, hist))
 			}
 		}
 		spawnDeps.Delegated = &tools.DelegatedSpawn{
