@@ -78,6 +78,17 @@ type cutTurnState struct {
 	// output marks the sessions whose running record already has Output
 	// set, so the per-delta callback writes the record once per turn.
 	output map[string]bool
+
+	// early holds the sessions whose turn the backend has claimed
+	// (TurnEvents.OnBegin, before it writes the input) while the turn does
+	// not yet hold its record: primary-written fires only after the
+	// transport's post-write bookkeeping, and the backend can answer first
+	// (#3148). The value is true once output arrived in that window; the
+	// record takes it when it is written. Its own lock, never held across
+	// I/O, because OnBegin runs under the backend's locks. Lock order: mu,
+	// then earlyMu.
+	earlyMu sync.Mutex
+	early   map[string]bool
 }
 
 // cutTurnExcludedTriggers are the triggers whose turns a restart does not
@@ -136,7 +147,13 @@ func (a *Agent) trackCutTurn(ts *TurnState) (end func()) {
 	resumable := a.SessionIndex != nil && resumableTurn(ts)
 	sk := ts.SessionKey
 	var once sync.Once
-	var holds atomic.Bool
+	var holds, armed atomic.Bool
+	if resumable {
+		ts.cutTurnBegan = func() {
+			armed.Store(true)
+			a.armCutTurnOutput(sk)
+		}
+	}
 	ts.Ctx = WithOnPrimaryWritten(ts.Ctx, func() {
 		prev()
 		once.Do(func() {
@@ -146,6 +163,7 @@ func (a *Agent) trackCutTurn(ts *TurnState) (end func()) {
 			}
 			a.cutTurn.mu.Lock()
 			defer a.cutTurn.mu.Unlock()
+			early := armed.Swap(false) && a.takeCutTurnOutput(sk)
 			if ts.foldedFollowUp {
 				a.appendCutTurnInputLocked(sk, ts)
 				return
@@ -156,11 +174,15 @@ func (a *Agent) trackCutTurn(ts *TurnState) (end func()) {
 			a.cutTurn.running[sk]++
 			holds.Store(true)
 			if a.cutTurn.running[sk] == 1 {
-				a.writeCutTurnLocked(sk, ts)
+				a.writeCutTurnLocked(sk, ts, early)
 			}
 		})
 	})
 	return func() {
+		if armed.Swap(false) {
+			// Claimed but never written: its early output is no one's.
+			a.takeCutTurnOutput(sk)
+		}
 		if !holds.Load() {
 			return
 		}
@@ -191,19 +213,61 @@ func (a *Agent) noteCutTurnOutput(sk string) {
 	}
 	a.cutTurn.mu.Lock()
 	defer a.cutTurn.mu.Unlock()
-	if a.cutTurn.running[sk] == 0 || a.cutTurn.output[sk] {
+	if a.cutTurn.running[sk] == 0 {
+		a.noteEarlyCutTurnOutput(sk)
 		return
 	}
-	if a.cutTurn.output == nil {
-		a.cutTurn.output = map[string]bool{}
+	if a.cutTurn.output[sk] {
+		return
 	}
-	a.cutTurn.output[sk] = true
+	a.markCutTurnOutputLocked(sk)
 	rec, ok := a.loadCutTurn(sk)
 	if !ok || rec.Output {
 		return
 	}
 	rec.Output = true
 	a.saveCutTurn(sk, rec)
+}
+
+// markCutTurnOutputLocked notes that sk's running record has Output set.
+// Under cutTurn.mu.
+func (a *Agent) markCutTurnOutputLocked(sk string) {
+	if a.cutTurn.output == nil {
+		a.cutTurn.output = map[string]bool{}
+	}
+	a.cutTurn.output[sk] = true
+}
+
+// armCutTurnOutput starts sk's early window: the backend has claimed a
+// recorded turn and is about to write its input (TurnEvents.OnBegin). Runs
+// under the backend's locks, so it takes only earlyMu.
+func (a *Agent) armCutTurnOutput(sk string) {
+	a.cutTurn.earlyMu.Lock()
+	defer a.cutTurn.earlyMu.Unlock()
+	if a.cutTurn.early == nil {
+		a.cutTurn.early = map[string]bool{}
+	}
+	a.cutTurn.early[sk] = false
+}
+
+// noteEarlyCutTurnOutput records output on sk inside its early window, if
+// one is open. Output with no window open (between turns) is not a turn's.
+func (a *Agent) noteEarlyCutTurnOutput(sk string) {
+	a.cutTurn.earlyMu.Lock()
+	defer a.cutTurn.earlyMu.Unlock()
+	if _, open := a.cutTurn.early[sk]; open {
+		a.cutTurn.early[sk] = true
+	}
+}
+
+// takeCutTurnOutput closes sk's early window and reports whether output
+// arrived in it.
+func (a *Agent) takeCutTurnOutput(sk string) bool {
+	a.cutTurn.earlyMu.Lock()
+	defer a.cutTurn.earlyMu.Unlock()
+	out := a.cutTurn.early[sk]
+	delete(a.cutTurn.early, sk)
+	return out
 }
 
 // appendCutTurnInputLocked adds a folded follow-up's text to the record of
@@ -226,9 +290,17 @@ func (a *Agent) appendCutTurnInputLocked(sk string, ts *TurnState) {
 // writeCutTurnLocked stores ts as sk's running turn, unless sk holds a
 // record a restart left for its resume turn (Resumes > 0): that one is kept,
 // so a restart during the resume still names the original input and counts
-// toward maxRestartResumes. Under cutTurn.mu.
-func (a *Agent) writeCutTurnLocked(sk string, ts *TurnState) {
+// toward maxRestartResumes. output is whether the turn already answered
+// before this write (#3148). Under cutTurn.mu.
+func (a *Agent) writeCutTurnLocked(sk string, ts *TurnState, output bool) {
+	if output {
+		a.markCutTurnOutputLocked(sk)
+	}
 	if rec, ok := a.loadCutTurn(sk); ok && rec.Resumes > 0 {
+		if output && !rec.Output {
+			rec.Output = true
+			a.saveCutTurn(sk, rec)
+		}
 		return
 	}
 	rec := cutTurnRecord{
@@ -236,6 +308,7 @@ func (a *Agent) writeCutTurnLocked(sk string, ts *TurnState) {
 		StartedAt:   ts.StartedAt,
 		Input:       truncateCutInput(strings.Join(ts.Texts, "\n\n")),
 		Attachments: len(ts.Attachments),
+		Output:      output,
 	}
 	a.saveCutTurn(sk, rec)
 }
@@ -385,9 +458,13 @@ func (a *Agent) restoreCutTurn(sk string) {
 		a.logger().Warnf("cut turn: no driver for the resume of %s — kept for the next start", sk)
 		return
 	}
-	quote := restartResumeQuotes(a.DelegatedManager == nil, a.HasResumableSession(sk), rec)
+	api, resumable := a.DelegatedManager == nil, a.HasResumableSession(sk)
+	quote := restartResumeQuotes(api, resumable, rec)
 	env := restartResumeEnvelope(sk, a.UsageHeldDriver(sk), rec, quote)
-	a.logger().Infof("cut turn: resuming %s (trigger=%s, started %s, resume %d)", sk, rec.Trigger, rec.StartedAt.Format(time.RFC3339), rec.Resumes)
+	// The quote inputs are logged so a repeated input can be traced to its
+	// reason (#3148): api, no resume id, or no output before the cut.
+	a.logger().Infof("cut turn: resuming %s (trigger=%s, started %s, resume %d, quote=%t api=%t resumable=%t output=%t)",
+		sk, rec.Trigger, rec.StartedAt.Format(time.RFC3339), rec.Resumes, quote, api, resumable, rec.Output)
 	if !a.Enqueue(env) {
 		a.logger().Warnf("cut turn: inbox refused the resume of %s — kept for the next start", sk)
 		return

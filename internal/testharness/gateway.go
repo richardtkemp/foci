@@ -271,7 +271,9 @@ type Harness struct {
 
 	cmd       *exec.Cmd
 	stderrBuf *syncBuffer
-	stoppedCh chan struct{}
+	// prevStderr is the stderr of the process the last Restart stopped.
+	prevStderr string
+	stoppedCh  chan struct{}
 }
 
 // StartGateway builds foci-gw + cc-stub from source, generates a test
@@ -771,6 +773,9 @@ func (h *Harness) Restart() error {
 	// Discard the "did not exit cleanly; killed" error — SIGKILL is
 	// still a successful shutdown for restart purposes.
 	_ = h.Shutdown(15 * time.Second)
+	if h.stderrBuf != nil {
+		h.prevStderr = h.stderrBuf.String()
+	}
 	return h.spawnGateway()
 }
 
@@ -819,6 +824,14 @@ func (h *Harness) AgentBotToken(agentID string) string {
 // Useful for debugging or asserting on log lines.
 func (h *Harness) Stderr() string {
 	return h.stderrBuf.String()
+}
+
+// PrevStderr returns the stderr of the foci-gw process the last Restart
+// stopped, shutdown included ("" before any Restart). A failure that spans a
+// restart needs both halves: the cut happens in the old process, the resume
+// in the new one (#3148).
+func (h *Harness) PrevStderr() string {
+	return h.prevStderr
 }
 
 // WriteCCStubScript writes a script file consumed by cc-stub when it

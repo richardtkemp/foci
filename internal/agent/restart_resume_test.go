@@ -439,6 +439,53 @@ func TestCutTurn_OutputMarksRecord(t *testing.T) {
 	}
 }
 
+// #3148: the backend can answer before the transport fires primary-written
+// (CC's first output beats foci's post-write bookkeeping). Output after the
+// backend claimed the turn (TurnEvents.OnBegin) still marks the record, so
+// the resume does not repeat an input the conversation holds.
+func TestCutTurn_OutputBeforePrimaryWrittenMarksRecord(t *testing.T) {
+	a := cutTurnAgent(t, cutTurnIndex(t))
+	const sk = "test/c1"
+	be := &mockBackendDT{}
+	a.AttachDelivery(be, sk)
+	ts := &TurnState{Ctx: context.Background(), SessionKey: sk, Trigger: "app", Texts: []string{"the codeword is PELICAN"}, StartedAt: time.Now()}
+	end := a.trackCutTurn(ts)
+	ts.cutTurnBegan() // the backend claims the turn, then writes its input
+	be.sessionEvents.OnText("working on it")
+	OnPrimaryWrittenFromContext(ts.Ctx)()
+	a.MarkTurnsCut()
+	end()
+	rec, ok := hasCutTurn(t, a, sk)
+	if !ok {
+		t.Fatal("cut turn left no record")
+	}
+	if !rec.Output {
+		t.Errorf("record Output = false, want true: the turn answered before primary-written")
+	}
+	if restartResumeQuotes(false, true, rec) {
+		t.Error("the resume repeats an input the kept conversation holds")
+	}
+}
+
+// A claim whose turn never reaches primary-written leaves no mark behind:
+// the next turn's record starts without output.
+func TestCutTurn_EarlyOutputOfUndeliveredTurnNotCarried(t *testing.T) {
+	a := cutTurnAgent(t, cutTurnIndex(t))
+	const sk = "test/c1"
+	be := &mockBackendDT{}
+	a.AttachDelivery(be, sk)
+	ts := &TurnState{Ctx: context.Background(), SessionKey: sk, Trigger: "app", Texts: []string{"one"}, StartedAt: time.Now()}
+	end := a.trackCutTurn(ts)
+	ts.cutTurnBegan()
+	be.sessionEvents.OnText("x")
+	end() // the write failed: no primary-written
+	simTurn(a, context.Background(), sk, "app", []string{"two"}, true, a.MarkTurnsCut)
+	rec, ok := hasCutTurn(t, a, sk)
+	if !ok || rec.Output || rec.Input != "two" {
+		t.Fatalf("record = %+v (ok=%v), want input two with no output", rec, ok)
+	}
+}
+
 // Output between turns (an autonomous run) creates no record and marks none.
 func TestCutTurn_OutputBetweenTurnsNoRecord(t *testing.T) {
 	a := cutTurnAgent(t, cutTurnIndex(t))

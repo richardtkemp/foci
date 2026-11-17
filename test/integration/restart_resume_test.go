@@ -59,6 +59,9 @@ func TestL2_RestartResumesCutTurn(t *testing.T) {
 		t.Errorf("primary delivered %d times, want 1 (the kept conversation has it; the resume does not repeat it)", n)
 	}
 	if t.Failed() {
-		t.Logf("recorder:\n%s\nstderr:\n%s", recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+		// The cut happens in the stopped process: its whole log, then the
+		// new one's (#3148).
+		t.Logf("recorder:\n%s\nstderr before the restart:\n%s\nstderr after:\n%s",
+			recorderTail(t, h.RecorderPath()), h.PrevStderr(), h.Stderr())
 	}
 }

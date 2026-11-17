@@ -270,6 +270,12 @@ type TurnState struct {
 	// #3067). Empty when the backend did not call OnBegin or the turn needs
 	// no registration; the orchestrator then registers after RunInference.
 	beganSink beganSinkReg
+	// cutTurnBegan is set by trackCutTurn on a turn that holds a cut_turn
+	// record; the delegated transport calls it from TurnEvents.OnBegin, when
+	// the backend claims the turn and before it writes the input, so output
+	// that beats primary-written still counts as this turn's (#3148). Nil on
+	// other turns.
+	cutTurnBegan func()
 }
 
 // beganSinkReg is the registration a turn made from TurnEvents.OnBegin. The

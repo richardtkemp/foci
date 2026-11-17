@@ -515,6 +515,17 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 	if router, sink := a.systemTurnSink(ts); sink != nil {
 		turnEvents.OnBegin = func() { ts.beganSink.set(router.Register(sink)) }
 	}
+	// A turn holding a cut_turn record counts output from the claim on, so
+	// an answer that beats primary-written still marks the record (#3148).
+	if began := ts.cutTurnBegan; began != nil {
+		prevBegin := turnEvents.OnBegin
+		turnEvents.OnBegin = func() {
+			if prevBegin != nil {
+				prevBegin()
+			}
+			began()
+		}
+	}
 	if voiceMode != nil {
 		// The turn is async (delegated backends stream OnTurnComplete later,
 		// not on RunInference's return), so restoring effort has to hang off
