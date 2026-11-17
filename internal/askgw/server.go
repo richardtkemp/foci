@@ -45,7 +45,12 @@ const (
 // origin is the host the ask came from (#2800), taken from the connection,
 // never from the frame: this host's own name for the Unix socket, the peer's
 // reverse-DNS name or bare IP for HTTP. Empty when unknown.
-type PresentFn func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (platformMsgID string, outcome PresentOutcome)
+//
+// source is the ask frame's self-declared App name (AskFrame.Source, e.g.
+// "aisudo"). The app dialog uses it to choose which grants need the desktop
+// owner check (#3156, Q100). Empty when the App sent none. It is not
+// authenticated: it says which App claims to ask, not who asked.
+type PresentFn func(agentID, sessionKey, msgID, text, summary, origin, source string, choices []question.Choice, onResponse func(data string)) (platformMsgID string, outcome PresentOutcome)
 
 type CancelFn func(msgID, finalText string)
 
@@ -353,6 +358,7 @@ func (s *Server) handleAsk(connID uint64, client, origin string, cw connWriter, 
 		return errFrame(id, "rejected", err.Error())
 	}
 	e.origin = origin
+	e.source = ask.Source
 
 	switch outcome := s.presentQuestion(e, connID, id, firstIdx); outcome {
 	case Presented:
@@ -390,7 +396,7 @@ func (s *Server) presentQuestion(e *entry, connID uint64, askID string, idx int)
 		summary = "Question"
 	}
 
-	platformMsgID, outcome := s.present(e.agentID, e.sessionKey, msgID, text, summary, e.origin, choices, func(data string) {
+	platformMsgID, outcome := s.present(e.agentID, e.sessionKey, msgID, text, summary, e.origin, e.source, choices, func(data string) {
 		s.onAnswer(connID, askID, data)
 	})
 	if outcome != Presented {

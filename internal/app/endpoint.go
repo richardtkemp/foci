@@ -86,14 +86,16 @@ func ExpireBatchPrompts(maxAge time.Duration) {
 // push-wakeable with it); the caller then posts to the agent chat. A device
 // that is offline sees the prompt on its next connect. host is the host the
 // ask came from (#2800), shown in the dialog; empty when unknown.
-func PresentAskgwPrompt(id, header, text, host string, buttons []platform.ButtonChoice, onChoice func(data string)) bool {
+// source is the App that asked (#3156), sent with the prompt; empty when
+// unknown.
+func PresentAskgwPrompt(id, header, text, host, source string, buttons []platform.ButtonChoice, onChoice func(data string)) bool {
 	activeMu.RLock()
 	h := activeHub
 	activeMu.RUnlock()
 	if h == nil {
 		return false
 	}
-	return h.presentAskgw(id, header, platform.StripEmbeddedHeader(header, text), host, buttons, onChoice)
+	return h.presentAskgw(id, header, platform.StripEmbeddedHeader(header, text), host, source, buttons, onChoice)
 }
 
 // PresentAppPrompt shows an app-only prompt (#3090: an agent's secret

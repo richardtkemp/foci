@@ -150,7 +150,9 @@ func (s *askgwPromptSet) snapshot(withValue bool) fap.AskgwPrompts {
 //
 // host is the host the ask came from (#2800), which the dialog shows; empty
 // when unknown.
-func (h *Hub) presentAskgw(id, header, text, host string, buttons []platform.ButtonChoice, onChoice func(data string)) bool {
+// source is the App that asked (askgw frame Source, #3156); it rides on the
+// frame for the desktop owner check. Empty when unknown.
+func (h *Hub) presentAskgw(id, header, text, host, source string, buttons []platform.ButtonChoice, onChoice func(data string)) bool {
 	if !h.askgwReachable() {
 		if h.tokens.askgwSeenSinceStart() {
 			appLog.Infof("askgw: no device can show prompt %s (none connected or push-wakeable with %s), falling back to the agent chat", id, featureAskgwPrompts)
@@ -159,7 +161,7 @@ func (h *Hub) presentAskgw(id, header, text, host string, buttons []platform.But
 		}
 		return false
 	}
-	h.putAskgw(fap.AskgwPrompt{PromptID: id, Header: header, Text: text, Host: host, Choices: askgwChoices(buttons)},
+	h.putAskgw(fap.AskgwPrompt{PromptID: id, Header: header, Text: text, Host: host, Source: source, Choices: askgwChoices(buttons)},
 		func(data, _ string) {
 			if onChoice != nil {
 				onChoice(data)

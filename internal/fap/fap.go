@@ -847,6 +847,12 @@ type AskgwPrompt struct {
 	// name, else its bare IP, for HTTP), never from the request body. The
 	// dialog shows it. Absent when unknown.
 	Host string `json:"host,omitempty"`
+	// Source is the App that sent the askgw ask, as its frame names itself
+	// (askgw AskFrame.Source, e.g. "aisudo"). The desktop app asks for Touch
+	// ID before a granting choice on an "aisudo" prompt (#3156, Q100).
+	// Self-declared, not authenticated. Absent when the App sent none, and on
+	// app-only prompts (secrets, #3090). An older client ignores it.
+	Source string `json:"source,omitempty"`
 	// Warning, when set, is shown in large red type above Text, so the user
 	// sees at a glance what kind of operation this is (#3092: every secrets
 	// dialog). An older client ignores it. Absent on askgw prompts.

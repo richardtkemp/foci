@@ -35,7 +35,7 @@ func TestPresentAppPrompt_ValuePromptOnlyToValueCapable(t *testing.T) {
 		t.Errorf("older client snapshots = %v, want [[]] (prompt withheld)", got)
 	}
 
-	h.presentAskgw("a1", "Sudo", "y", "", askgwButtons, func(string) {})
+	h.presentAskgw("a1", "Sudo", "y", "", "", askgwButtons, func(string) {})
 	if got := askgwSnapshots(t, newer); !reflect.DeepEqual(got, [][]string{{"s1", "a1"}}) {
 		t.Errorf("value-capable snapshots = %v, want [[s1 a1]]", got)
 	}
@@ -132,7 +132,7 @@ func TestAskgwResponse_PlainPromptRefusesValue(t *testing.T) {
 	h := newTestHub()
 	c := askgwClient(h, "mac")
 	fired := false
-	h.presentAskgw("a1", "Sudo", "x", "", askgwButtons, func(string) { fired = true })
+	h.presentAskgw("a1", "Sudo", "x", "", "", askgwButtons, func(string) { fired = true })
 	drain(t, c)
 	h.handleAskgwResponse(c, fap.AskgwResponse{PromptID: "a1", Data: "opt:0", Value: "x"})
 	if fired {

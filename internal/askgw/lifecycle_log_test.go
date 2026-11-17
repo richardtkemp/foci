@@ -89,7 +89,7 @@ func sudoAsk(id string, timeoutSeconds float64) *AskFrame {
 func TestLifecycleLog_SocketAnswered(t *testing.T) {
 	logs := captureLog(t)
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+	present := func(agentID, sessionKey, msgID, text, summary, origin, source string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
 		return "plat-42", Presented
 	}
@@ -119,7 +119,7 @@ func TestLifecycleLog_SocketAnswered(t *testing.T) {
 
 func TestLifecycleLog_SocketTimeoutIsWarn(t *testing.T) {
 	logs := captureLog(t)
-	present := func(string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+	present := func(string, string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
 		return "", Presented
 	}
 	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
@@ -138,7 +138,7 @@ func TestLifecycleLog_SocketTimeoutIsWarn(t *testing.T) {
 func TestLifecycleLog_HTTPArrivalAnswerTimeout(t *testing.T) {
 	logs := captureLog(t)
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+	present := func(agentID, sessionKey, msgID, text, summary, origin, source string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
 		return "", Presented
 	}

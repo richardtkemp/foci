@@ -41,7 +41,7 @@ func askBody(id string) []byte {
 
 func TestHTTPSubmitAnswerRoundTrip(t *testing.T) {
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+	present := func(agentID, sessionKey, msgID, text, summary, origin, source string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
 		return "", Presented
 	}
@@ -100,7 +100,7 @@ func TestHTTPPollUnknownID(t *testing.T) {
 }
 
 func TestHTTPSubmitDuplicateID(t *testing.T) {
-	present := func(string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+	present := func(string, string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
 		return "", Presented
 	}
 	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
@@ -158,7 +158,7 @@ func TestHTTPSubmitWrongType(t *testing.T) {
 }
 
 func TestHTTPSubmitUnavailable(t *testing.T) {
-	present := func(string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+	present := func(string, string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
 		t.Fatal("present should not be called when no session resolves")
 		return "", PresentFailed
 	}
@@ -183,7 +183,7 @@ func TestHTTPSubmitUnavailable(t *testing.T) {
 // platform refuses (Slack until #2459 C) polls to the denial frame
 // (dismissed), the same frame the socket sends — never unavailable.
 func TestHTTPSubmitRefused(t *testing.T) {
-	present := func(string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+	present := func(string, string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
 		return "", PresentRefused
 	}
 	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
@@ -205,7 +205,7 @@ func TestHTTPSubmitRefused(t *testing.T) {
 
 func TestHTTPTimeout(t *testing.T) {
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+	present := func(agentID, sessionKey, msgID, text, summary, origin, source string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
 		return "", Presented
 	}
@@ -229,7 +229,7 @@ func TestHTTPTimeout(t *testing.T) {
 func TestHTTPCancel(t *testing.T) {
 	cb := &capturedCallback{}
 	cancelled := make(chan struct{})
-	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+	present := func(agentID, sessionKey, msgID, text, summary, origin, source string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
 		return "", Presented
 	}
@@ -284,7 +284,7 @@ func TestHTTPCancel(t *testing.T) {
 
 func TestHTTPSweepAbandoned(t *testing.T) {
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+	present := func(agentID, sessionKey, msgID, text, summary, origin, source string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
 		return "", Presented
 	}
@@ -328,7 +328,7 @@ func notifyBody(id string, exitCode int) []byte {
 func TestHTTPNotifyEditsAnsweredAsk(t *testing.T) {
 	cb := &capturedCallback{}
 	nr := &notifyRecorder{}
-	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+	present := func(agentID, sessionKey, msgID, text, summary, origin, source string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		cb.set(onResponse)
 		return "platform-msg-http", Presented
 	}
@@ -380,7 +380,7 @@ func TestHTTPNotifyEditsAnsweredAsk(t *testing.T) {
 }
 
 func TestHTTPNotifyRejectsMalformedEnvelope(t *testing.T) {
-	srv := newHTTPTestServer(t, func(string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
+	srv := newHTTPTestServer(t, func(string, string, string, string, string, string, string, []question.Choice, func(string)) (string, PresentOutcome) {
 		return "", Presented
 	}, func(string) (string, string) { return "agent1", "agent1/chat1" }, 0)
 
@@ -407,7 +407,7 @@ func TestHTTPSubmitPassesOriginToPresent(t *testing.T) {
 	cb := &capturedCallback{}
 	var mu sync.Mutex
 	var origins []string
-	present := func(agentID, sessionKey, msgID, text, summary, origin string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
+	present := func(agentID, sessionKey, msgID, text, summary, origin, source string, choices []question.Choice, onResponse func(data string)) (string, PresentOutcome) {
 		mu.Lock()
 		origins = append(origins, origin)
 		mu.Unlock()
