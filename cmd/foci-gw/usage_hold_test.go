@@ -19,7 +19,7 @@ func TestUsageHoldThreshold_LiveEdit(t *testing.T) {
 		t.Fatal("usage_hold.threshold has no live applier")
 	}
 	t.Cleanup(func() { usagehold.Default.SetThresholdPercent(usagehold.DefaultThresholdPercent) })
-	applyUsageHoldThreshold(&config.Config{})
+	applyUsageHoldConfig(&config.Config{})
 	acct := "test-" + t.Name()
 	now := time.Now()
 	ev := usagehold.Event{Window: "seven_day", Util: 0.96, HasUtil: true, ResetAt: now.Add(time.Hour)}
@@ -27,11 +27,36 @@ func TestUsageHoldThreshold_LiveEdit(t *testing.T) {
 		t.Fatalf("0.96 at the default: %v, want open", st.Phase)
 	}
 	n := 95
-	applyUsageHoldThreshold(&config.Config{UsageHold: config.UsageHoldConfig{Threshold: &n}})
+	applyUsageHoldConfig(&config.Config{UsageHold: config.UsageHoldConfig{Threshold: &n}})
 	if st := usagehold.Default.Observe(acct, ev, now); st.Phase != usagehold.Hold {
 		t.Errorf("0.96 after a live edit to 95: %v, want hold", st.Phase)
 	}
 }
+
+// TestUsageHoldResumeMaxIdle_LiveEdit is #3155's hot idle limit: the applier
+// for usage_hold.resume_max_idle sets the process registry; unset is the
+// 12h default and "0" turns the limit off.
+func TestUsageHoldResumeMaxIdle_LiveEdit(t *testing.T) {
+	if !slices.Contains(liveApplyUsageHoldAddrs, "usage_hold.resume_max_idle") {
+		t.Fatal("usage_hold.resume_max_idle has no live applier")
+	}
+	t.Cleanup(func() { applyUsageHoldConfig(&config.Config{}) })
+	for _, tc := range []struct {
+		val  *string
+		want time.Duration
+	}{
+		{nil, usagehold.DefaultResumeMaxIdle},
+		{ptrStr("30m"), 30 * time.Minute},
+		{ptrStr("0"), 0},
+	} {
+		applyUsageHoldConfig(&config.Config{UsageHold: config.UsageHoldConfig{ResumeMaxIdle: tc.val}})
+		if got := usagehold.Default.ResumeMaxIdle(); got != tc.want {
+			t.Errorf("resume_max_idle %v: registry has %s, want %s", tc.val, got, tc.want)
+		}
+	}
+}
+
+func ptrStr(s string) *string { return &s }
 
 // TestUsageHoldDriver_IsTheSessionsPlatform: the driver of the usage hold's
 // resume line and restored held input reports the session's own platform

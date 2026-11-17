@@ -353,6 +353,15 @@ func (a *Agent) releaseUsageHeld(ctx context.Context, inb *sessionInbox) bool {
 		head.Driver, head.UserID, head.Username, head.SenderName = src.Driver, src.UserID, src.Username, src.SenderName
 		head.ChatID, head.Original, head.Human = src.ChatID, src.Original, src.Human
 	}
+	if held[0].usageResume {
+		// A session idle too long asks instead of resuming (#3155).
+		if limit := a.usageRegistry().ResumeMaxIdle(); limit > 0 {
+			if idle := usageResumeIdle(held, time.Now()); idle > limit {
+				a.logger().Infof("inbox: usage hold lifted after %s idle on %s (limit %s): the agent asks the user instead of resuming", idle.Round(time.Second), inb.sk, limit)
+				held[0].Text = usageResumeAskLine(idle)
+			}
+		}
+	}
 	a.logger().Infof("inbox: usage hold lifted, running %d held input(s) as one turn sk=%s (resume=%v)", len(held), inb.sk, held[0].usageResume)
 	inb.usageRelease = held[1:]
 	return a.runUserBatch(ctx, inb, held[0])

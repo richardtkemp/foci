@@ -1700,6 +1700,9 @@ type BackgroundConfig struct {
 // hold is per account, not per agent.
 type UsageHoldConfig struct {
 	Threshold *int `toml:"threshold" default:"98" hot:"event" scope:"global" desc:"Usage percentage of a Claude Code or Codex usage window at which foci pauses all work on that account except keepalives and reminders, so the rest of the allowance keeps conversations warm. Applies to the next usage report. 1 to 100"`
+	// ResumeMaxIdle (#3155, Dick 2026-11-17: "Configurable time threshold,
+	// hot-reloadable. Instead agent should ask what to do").
+	ResumeMaxIdle *string `toml:"resume_max_idle" default:"12h" hot:"event" scope:"global" type:"duration" desc:"When a usage hold interrupts a conversation's turn, the turn resumes when the hold lifts. If the conversation has been idle longer than this by then, the agent is instead told to ask the user what to do. 0 means always resume. Applies to the next lift"`
 }
 
 // DebugConfig holds developer/debugging knobs that can be configured at

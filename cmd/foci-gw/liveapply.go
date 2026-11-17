@@ -132,7 +132,7 @@ var (
 
 	// The usage-hold threshold (#2491): global only, read from the raw
 	// config into the process-wide usagehold.Default.
-	liveApplyUsageHoldAddrs = []string{"usage_hold.threshold"}
+	liveApplyUsageHoldAddrs = []string{"usage_hold.threshold", "usage_hold.resume_max_idle"}
 
 	// The chat "!" command limit (#3045): global only, read from the raw
 	// config into the process-wide userCommandTimeoutNs at each run.
@@ -357,7 +357,7 @@ func registerLiveAppliers(la *liveApply, agents *agentRegistry) {
 	})
 
 	la.register(liveApplyUsageHoldAddrs, func(fresh *config.Config) error {
-		applyUsageHoldThreshold(fresh)
+		applyUsageHoldConfig(fresh)
 		return nil
 	})
 

@@ -142,16 +142,20 @@ type Registry struct {
 	resetSubs map[string]map[int]func()
 	nextSub   int
 	threshold float64 // fraction, e.g. 0.98
-	store     Store
+	// resumeMaxIdle: a session idle longer than this at lift is not told to
+	// resume (#3155); <= 0 means always resume.
+	resumeMaxIdle time.Duration
+	store         Store
 }
 
 // New returns an empty registry with the default threshold.
 func New() *Registry {
 	return &Registry{
-		accounts:  map[string]*account{},
-		subs:      map[string]map[int]func(Change){},
-		resetSubs: map[string]map[int]func(){},
-		threshold: DefaultThresholdPercent / 100.0,
+		accounts:      map[string]*account{},
+		subs:          map[string]map[int]func(Change){},
+		resetSubs:     map[string]map[int]func(){},
+		threshold:     DefaultThresholdPercent / 100.0,
+		resumeMaxIdle: DefaultResumeMaxIdle,
 	}
 }
 
@@ -176,6 +180,26 @@ func (r *Registry) ThresholdPercent() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return int(math.Round(r.threshold * 100))
+}
+
+// DefaultResumeMaxIdle is the resume idle limit when none is configured
+// (#3155, Dick 2026-11-17: "if they've been inactive more then 12 hours").
+const DefaultResumeMaxIdle = 12 * time.Hour
+
+// SetResumeMaxIdle sets how long a session the hold interrupted may have been
+// idle at lift and still be told to resume (#3155). Longer idle gets the ask
+// line instead. d <= 0 means always resume.
+func (r *Registry) SetResumeMaxIdle(d time.Duration) {
+	r.mu.Lock()
+	r.resumeMaxIdle = d
+	r.mu.Unlock()
+}
+
+// ResumeMaxIdle is the current resume idle limit (<= 0: no limit).
+func (r *Registry) ResumeMaxIdle() time.Duration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.resumeMaxIdle
 }
 
 // SetStore sets where account state persists. Call it once at startup,

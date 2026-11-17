@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"time"
 
 	"foci/internal/agent"
 	"foci/internal/config"
@@ -38,10 +39,10 @@ func (s usageHoldStore) SaveUsageHold(account, value string) {
 }
 
 // setupUsageHold wires the process-wide usage hold at startup: its threshold
-// from the global [usage_hold] section, and its store, after renaming any
+// and resume idle limit from the global [usage_hold] section, and its store, after renaming any
 // state stored under a backend-wide key (migrateUsageHoldKeys).
 func setupUsageHold(cfg *config.Config, idx *session.SessionIndex) {
-	applyUsageHoldThreshold(cfg)
+	applyUsageHoldConfig(cfg)
 	if idx != nil {
 		migrateUsageHoldKeys(idx)
 		usagehold.Default.SetStore(usageHoldStore{idx: idx})
@@ -83,14 +84,26 @@ func migrateUsageHoldKeys(idx *session.SessionIndex) {
 	}
 }
 
-// applyUsageHoldThreshold sets the hold threshold from cfg; the live applier
-// calls it on an edit of usage_hold.threshold, so the next usage event uses it.
-func applyUsageHoldThreshold(cfg *config.Config) {
+// applyUsageHoldConfig sets the [usage_hold] section from cfg: the hold
+// threshold (the next usage event uses it) and the resume idle limit (#3155;
+// the next lift uses it). The live applier calls it on an edit of either key.
+func applyUsageHoldConfig(cfg *config.Config) {
 	pct := usagehold.DefaultThresholdPercent
 	if cfg.UsageHold.Threshold != nil {
 		pct = *cfg.UsageHold.Threshold
 	}
 	usagehold.Default.SetThresholdPercent(pct)
+	idle := usagehold.DefaultResumeMaxIdle
+	if v := config.DerefStr(cfg.UsageHold.ResumeMaxIdle); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			// Load validation rejects a bad duration first; keep the default.
+			mainLog.Warnf("usage hold: resume_max_idle %q: %v — using %s", v, err, idle)
+		} else {
+			idle = d
+		}
+	}
+	usagehold.Default.SetResumeMaxIdle(idle)
 }
 
 // wireUsageHeldRestore sets how ag drives the input a usage hold parked when

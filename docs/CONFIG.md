@@ -1373,6 +1373,7 @@ When a Claude Code or Codex usage window (Claude Code: the 5-hour and 7-day wind
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `threshold` | int | `98` | Usage percentage (1 to 100) at which the account holds. Live-appliable: the next usage report uses the new value. |
+| `resume_max_idle` | duration | `"12h"` | A conversation whose turn the hold interrupted resumes it when the hold lifts. If the conversation has been idle longer than this at the lift (idle since the interruption, or since your latest message held during the hold), the agent does not resume on its own: it tells you what it was doing and asks what to do. `"0"` means always resume. Live-appliable: the next lift uses the new value. Spawns and background work are not affected. |
 
 ### Keepalive (`[keepalive]` / `[[agents.keepalive]]`)
 

@@ -787,6 +787,7 @@ bind = "127.0.0.1"
 # resets or drops below it. No per-agent setting.
 # [usage_hold]
 # threshold = 98                          # 1-100; live-appliable
+# resume_max_idle = "12h"                 # idle at lift past this: ask the user instead of resuming; "0" = always resume; live-appliable
 
 # ─── Global Keepalive ────────────────────────────────────────────────
 # [keepalive]

@@ -224,6 +224,7 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	// logging
 	add("logging", "level", cfg.Logging.Level)
 	add("usage_hold", "threshold", cfg.UsageHold.Threshold)
+	add("usage_hold", "resume_max_idle", cfg.UsageHold.ResumeMaxIdle)
 	add("logging", "event_file", cfg.Logging.EventFile)
 	add("logging", "api_file", cfg.Logging.APIFile)
 	add("logging", "api_db", cfg.Logging.APIDB)
