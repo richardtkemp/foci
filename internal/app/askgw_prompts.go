@@ -252,16 +252,18 @@ func (h *Hub) closeAskgw(id string) bool {
 // set so its stale dialog closes.
 func (h *Hub) handleAskgwResponse(client *wsClient, f fap.AskgwResponse) {
 	p, known := h.askgw.takeIfValid(f.PromptID, f.Data, f.Value)
+	device := client.device()
 	if p == nil {
 		if known {
 			// Never log f.Value: it is a secret typed in a value step.
-			appLog.Warnf("askgw: response for prompt %s carries an answer it cannot take (choice %q, value given: %t), ignored", f.PromptID, f.Data, f.Value != "")
+			appLog.Warnf("askgw: response for prompt %s from device=%s carries an answer it cannot take (choice %q, value given: %t), ignored", f.PromptID, device, f.Data, f.Value != "")
 		} else {
-			appLog.Infof("askgw: response for prompt %s no longer pending, ignored", f.PromptID)
+			appLog.Infof("askgw: response for prompt %s from device=%s no longer pending, ignored", f.PromptID, device)
 		}
 		h.pushAskgw(client)
 		return
 	}
+	logAskgwAnswer(device, client.ip, f)
 	// The callback may present the ask's next question (a new prompt id)
 	// synchronously; the broadcast after it carries both changes at once.
 	if p.onAnswer != nil {
@@ -329,4 +331,27 @@ func askgwPreview(header, text string) string {
 		s = string(r[:askgwPreviewMax-1]) + "…"
 	}
 	return s
+}
+
+// askgwMinFocusedMs is the shortest focus time a current app reports with an
+// answer: its dialog takes no choice until it has held window focus this long
+// (#3156, the app's ASKGW_ARM_DELAY_MS).
+const askgwMinFocusedMs = 3000
+
+// logAskgwAnswer records which device answered an askgw prompt, from where, and
+// how (#3156): the answer arrived as an askgw.response frame, which only the
+// app's dialog sends on a tapped choice, with the time the dialog had held
+// focus. A sudo approval nobody remembers making is traced from this line.
+// An answer reporting less focus than the app's arm delay is logged at WARN:
+// the app's guard did not hold. Never logs f.Value (a secret).
+func logAskgwAnswer(device, ip string, f fap.AskgwResponse) {
+	if f.FocusedMs == nil {
+		appLog.Infof("askgw: prompt %s answered by device=%s ip=%s action=dialog-choice choice=%q focused=unknown (app build predates #3156)", f.PromptID, device, ip, f.Data)
+		return
+	}
+	if *f.FocusedMs < askgwMinFocusedMs {
+		appLog.Warnf("askgw: prompt %s answered by device=%s ip=%s action=dialog-choice choice=%q focused=%dms, under the app's %dms arm delay", f.PromptID, device, ip, f.Data, *f.FocusedMs, askgwMinFocusedMs)
+		return
+	}
+	appLog.Infof("askgw: prompt %s answered by device=%s ip=%s action=dialog-choice choice=%q focused=%dms", f.PromptID, device, ip, f.Data, *f.FocusedMs)
 }

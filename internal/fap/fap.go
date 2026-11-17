@@ -1834,6 +1834,10 @@ type AskgwResponse struct {
 	// Value is the text typed in a ValueInput step (#3090), sent only with
 	// Data = ValueInput.Choice. It is a secret: never log or store it.
 	Value string `json:"value,omitempty"`
+	// FocusedMs is how long the app's dialog window had held focus, without
+	// a break, when the choice was tapped (#3156). The app takes no choice
+	// before it has held focus for 3s; nil from builds older than that.
+	FocusedMs *int64 `json:"focusedMs,omitempty"`
 }
 
 // ViewingSync lists the conversations the user's OTHER devices are viewing

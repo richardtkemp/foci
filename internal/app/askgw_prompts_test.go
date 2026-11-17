@@ -428,3 +428,50 @@ func TestAskgwHello_RecordsDeviceCapability(t *testing.T) {
 		t.Errorf("after old-build hello targets = %v, want none", got)
 	}
 }
+
+// Every askgw answer logs the answering device, the action and how long the
+// app's dialog had held focus (#3156: a sudo approval nobody remembered making
+// left no trace of which device sent it). A focus time under the app's arm
+// delay is a WARN: the app's guard did not hold. Old builds send none.
+func TestAskgwResponse_LogsAnsweringDeviceAndFocusTime(t *testing.T) {
+	var buf bytes.Buffer
+	flog.SetOutput(&buf)
+	flog.SetLevel(flog.INFO)
+	t.Cleanup(func() { flog.SetOutput(os.Stderr); flog.SetLevel(flog.INFO) })
+
+	ms := func(v int64) *int64 { return &v }
+	cases := []struct {
+		name      string
+		focused   *int64
+		wantLevel string
+		want      string
+	}{
+		{"timed", ms(4210), "INFO", "focused=4210ms"},
+		{"too quick", ms(1450), "WARN", "focused=1450ms, under the app's 3000ms arm delay"},
+		{"old build", nil, "INFO", "focused=unknown"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newTestHub()
+			phone := askgwClient(h, "phone-1")
+			phone.ip = "203.0.113.7"
+			h.presentAskgw("p1", "Sudo", "x", "", askgwButtons, func(string) {})
+			buf.Reset()
+			h.handleAskgwResponse(phone, fap.AskgwResponse{PromptID: "p1", Data: "opt:0", FocusedMs: tc.focused})
+			var line string
+			for _, l := range strings.Split(buf.String(), "\n") {
+				if strings.Contains(l, "askgw: prompt p1 answered") {
+					line = l
+				}
+			}
+			if line == "" {
+				t.Fatalf("no answer line logged: %q", buf.String())
+			}
+			for _, w := range []string{tc.wantLevel, "device=phone-1", "ip=203.0.113.7", "action=dialog-choice", `choice="opt:0"`, tc.want} {
+				if !strings.Contains(line, w) {
+					t.Errorf("answer line lacks %q: %q", w, line)
+				}
+			}
+		})
+	}
+}
