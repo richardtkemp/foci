@@ -37,8 +37,10 @@ func TestL2_UsageReadAlert_PerAccount(t *testing.T) {
 	}
 
 	const notice = "Approaching Anthropic 5-hour rate limit."
-	waitSent(t, h, "beta", notice, "Usage: 85%")
-	waitSent(t, h, "beta2", notice, "Usage: 85%")
+	// #3154: the figure is in the window table (Q97 dropped the notice's own
+	// "Usage:" line when a table is attached).
+	waitSent(t, h, "beta", notice, "| 5h | 85% |")
+	waitSent(t, h, "beta2", notice, "| 5h | 85% |")
 	for _, id := range []string{"beta", "beta2"} {
 		if n := countContaining(sentTexts(h, id), notice); n != 1 {
 			t.Errorf("%s got %d usage notices, want 1: %q", id, n, sentTexts(h, id))
