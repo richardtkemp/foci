@@ -6,7 +6,7 @@
 
 - **Cold-launch effort:** pass `claude --effort <level>` (`internal/delegator/backend.go` → ccstream). NOT via `--settings`: an `effortLevel` there is silently ignored. Mid-session effort changes use the `apply_flag_settings` control (`internal/delegator/control.go`).
 - `--settings` carries only the hook command string (the PostToolUse hook that installs `foci-cc-hook`). `--resume <id>` continues a CC session across a foci restart.
-- **Two timeouts:** the idle timeout closes an idle delegated backend (the next turn resumes it): `[[agents]].backend_config.idle_timeout`, else `[sessions] idle_timeout`, else 3h (`delegated_manager.go`). The live-session caps (`max_live_sessions`, #2280) evict the longest-idle backend early. `streamIdleTimeout` (~24h) is the silence tolerance inside one turn stream.
+- **Two timeouts:** the idle timeout closes an idle delegated backend (the next turn resumes it): `[[agents]].backend_config.idle_timeout`, else `[sessions] idle_timeout`, else 3h (`delegated_manager.go`); a spawn's backend whose turn waits on an unanswered prompt, with no background work running, is closed just before the prompt would expire (prompt TTL = min(`[permissions] prompt_ttl`, idle timeout)), whatever its idleness, and its end starts no turn anywhere (#3149, `delegator.ErrPromptReaped`, `quietPromptClose`). Any other session (Dick's own chats, a spawn with subagents/background shells/an autonomous run) keeps the idle timeout, and its expired prompt is denied. The live-session caps (`max_live_sessions`, #2280) evict the longest-idle backend early. `streamIdleTimeout` (~24h) is the silence tolerance inside one turn stream.
 
 ## opencode
 

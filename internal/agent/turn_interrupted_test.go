@@ -112,3 +112,108 @@ func TestDelegatedTurn_BackendClosedMidTurnIsAnError(t *testing.T) {
 	err, buf := runInterruptedTurn(t, a)
 	assertInterrupted(t, err, buf)
 }
+
+// #3149: the idle reaper closes a backend whose turn waits on a prompt nobody
+// answered just before the prompt would expire. That turn still ends
+// as interrupted, and its error also matches delegator.ErrPromptReaped, so no
+// consumer reports it to another session as a turn.
+func TestDelegatedTurn_PromptReapedTurnEndsQuietly(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "has-input")
+	a, _ := interruptedTurnAgent(t, stubInit+
+		"while read -r line; do case \"$line\" in *'\"type\":\"user\"'*) : > '"+marker+"'; exec sleep 60;; esac; done\n")
+	mgr := a.DelegatedManager
+	mgr.PromptTTL = time.Millisecond
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	go func() {
+		for {
+			if _, err := os.Stat(marker); err == nil {
+				// The turn now waits; a prompt is raised for it. The
+				// session is a spawn's (Q95 "Spawns only"), set after launch
+				// so the launch itself is unchanged.
+				mgr.setBatchSpec("test/s", batchSpec{spawn: true})
+				mgr.SetPermissionPending("test/s", true)
+				time.Sleep(20 * time.Millisecond)
+				mgr.closeIdle(time.Millisecond)
+				return
+			}
+			select {
+			case <-stop:
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}()
+	err, buf := runInterruptedTurn(t, a)
+	assertInterrupted(t, err, buf)
+	if !errors.Is(err, delegator.ErrPromptReaped) {
+		t.Fatalf("HandleMessage error = %v, want one matching delegator.ErrPromptReaped", err)
+	}
+	if !errors.Is(buf.Err(), delegator.ErrPromptReaped) {
+		t.Fatalf("the turn's sink saw err=%v, want one matching delegator.ErrPromptReaped", buf.Err())
+	}
+}
+
+// #3149 Q95 "Spawns only": a non-spawn session whose turn waits on a prompt
+// keeps today's behaviour. The idle reaper closes it at the idle timeout like
+// any other, and the turn ends interrupted but not prompt-reaped.
+func TestDelegatedTurn_NonSpawnPromptWaitIsNotPromptReaped(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "has-input")
+	a, _ := interruptedTurnAgent(t, stubInit+
+		"while read -r line; do case \"$line\" in *'\"type\":\"user\"'*) : > '"+marker+"'; exec sleep 60;; esac; done\n")
+	mgr := a.DelegatedManager
+	mgr.PromptTTL = time.Millisecond
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	go func() {
+		for {
+			if _, err := os.Stat(marker); err == nil {
+				mgr.SetPermissionPending("test/s", true)
+				time.Sleep(20 * time.Millisecond)
+				mgr.closeIdle(time.Millisecond)
+				return
+			}
+			select {
+			case <-stop:
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}()
+	err, buf := runInterruptedTurn(t, a)
+	assertInterrupted(t, err, buf)
+	if errors.Is(err, delegator.ErrPromptReaped) {
+		t.Fatalf("HandleMessage error = %v matches ErrPromptReaped, but the session is not a spawn", err)
+	}
+}
+
+// Control for the test above: a backend closed under a turn with no pending
+// prompt (a shutdown's close) is interrupted but not prompt-reaped.
+func TestDelegatedTurn_ClosedWithoutPromptIsNotPromptReaped(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "has-input")
+	a, _ := interruptedTurnAgent(t, stubInit+
+		"while read -r line; do case \"$line\" in *'\"type\":\"user\"'*) : > '"+marker+"'; exec sleep 60;; esac; done\n")
+	mgr := a.DelegatedManager
+	mgr.PromptTTL = time.Millisecond
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	go func() {
+		for {
+			if _, err := os.Stat(marker); err == nil {
+				time.Sleep(20 * time.Millisecond)
+				mgr.closeIdle(time.Millisecond)
+				return
+			}
+			select {
+			case <-stop:
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}()
+	err, buf := runInterruptedTurn(t, a)
+	assertInterrupted(t, err, buf)
+	if errors.Is(err, delegator.ErrPromptReaped) {
+		t.Fatalf("HandleMessage error = %v matches ErrPromptReaped, but no prompt was pending", err)
+	}
+}

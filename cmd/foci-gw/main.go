@@ -527,19 +527,7 @@ Subcommands:
 	if stop := setupGoroutineMonitor(cfg, agents.Len(), ctx); stop != nil {
 		defer stop()
 	}
-	// Prompt TTL = min(configured prompt_ttl, idle timeout). An unanswered
-	// prompt must never outlive the backend waiting on it — the idle reaper
-	// clears the prompt anyway when it closes the backend. promptTTL starts at
-	// the global idle timeout ([sessions] idle_timeout, else the default) and
-	// the config override only lowers it (d < promptTTL).
-	promptTTL := agent.DefaultIdleTimeout
-	if d, err := time.ParseDuration(cfg.Sessions.IdleTimeout); err == nil && d > 0 {
-		promptTTL = d
-	}
-	if d, err := time.ParseDuration(cfg.Permissions.PromptTTL); err == nil && d > 0 && d < promptTTL {
-		promptTTL = d
-	}
-	setupInteractiveCleanup(ctx, promptTTL)
+	setupInteractiveCleanup(ctx, effectivePromptTTL(cfg))
 	setupToolDetailCleanup(toolDetailStore, ctx)
 	// L2 integration-test lifecycle control. Opens a UNIX-domain socket
 	// at FOCI_TESTHARNESS_CONTROL_SOCK if set; otherwise no-op. Tests

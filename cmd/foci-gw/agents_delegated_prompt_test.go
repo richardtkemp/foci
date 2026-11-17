@@ -424,6 +424,41 @@ func TestPermissionPrompt_ExpiryDeniesToBackend(t *testing.T) {
 	}
 }
 
+// TestPermissionPrompt_ExpiryClosesWaitingBackendInsteadOfDenying proves
+// #3149 (Dick 2026-11-17: "kill the process just before the ask expires"):
+// when a backend still waits on the expiring prompt, the expiry closes that
+// backend and sends no denial, because a denial resumes the turn. The test
+// above is the control: with no backend waiting, the expiry denies.
+// Not parallel: CleanupExpiredInteractive sweeps the process-global prompt store.
+func TestPermissionPrompt_ExpiryClosesWaitingBackendInsteadOfDenying(t *testing.T) {
+	conn := telegramLikeConn()
+
+	var decisions, closed []string
+	approval, _ := backendPromptFuncs(backendPromptDeps{
+		ag:      &agent.Agent{DelegatedManager: &agent.DelegatedManager{}},
+		connMgr: oneConnMgr{conn: conn},
+		agentID: "main",
+		respond: func(_ context.Context, _, requestID, choice string) error {
+			decisions = append(decisions, requestID+"="+choice)
+			return nil
+		},
+		closeOnExpiry: func(sessionKey string) bool {
+			closed = append(closed, sessionKey)
+			return true
+		},
+	})
+	approval("main/c999", "req-expire-close", "Allow Bash?", "Bash", "", promptChoices())
+
+	platform.CleanupExpiredInteractive(-time.Hour) // every entry is older than a cutoff in the future
+
+	if len(closed) != 1 || closed[0] != "main/c999" {
+		t.Errorf("backends closed on expiry = %v, want [main/c999]", closed)
+	}
+	if len(decisions) != 0 {
+		t.Errorf("backend decisions = %v, want none (a denial would resume the turn)", decisions)
+	}
+}
+
 // TestAskgwPresent_RefusedConnFailsClosed proves the askgw entry point of
 // the interim rule: an ask presented on a refusing connection posts nothing
 // and reports PresentRefused, so the askgw server DENIES the ask (the

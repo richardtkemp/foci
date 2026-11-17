@@ -1048,6 +1048,35 @@ type turnInterruptedError struct{ msg string }
 func (e *turnInterruptedError) Error() string        { return e.msg }
 func (e *turnInterruptedError) Is(target error) bool { return target == ErrTurnInterrupted }
 
+// ErrPromptReaped marks a turn foci ended by closing its backend because it
+// waited on a prompt (permission or question) that nobody answered and that
+// was about to expire (#3149): the idle reaper just before the expiry, or the
+// expiry itself. Match it with errors.Is. Dick 2026-11-17: "reap in such a
+// way that does not trigger a turn", then "kill the process just before the
+// ask expires": a consumer that would report the
+// end of such a turn to another session (a spawn's [SPAWN RESULT], a
+// send_to_session caller notice) stays silent instead.
+var ErrPromptReaped = errors.New("delegator: turn ended by the idle reaper while it waited on an unanswered prompt")
+
+// PromptReaped wraps cause, the TurnResult.Interrupted of a turn foci ended
+// while it waited on an expiring prompt, so errors.Is(err,
+// ErrPromptReaped) holds as well as everything cause matches
+// (ErrTurnInterrupted).
+func PromptReaped(cause error, waited time.Duration) error {
+	return &promptReapedError{cause: cause, waited: waited}
+}
+
+type promptReapedError struct {
+	cause  error
+	waited time.Duration
+}
+
+func (e *promptReapedError) Error() string {
+	return fmt.Sprintf("%v (its prompt went unanswered for %s)", e.cause, e.waited.Round(time.Minute))
+}
+func (e *promptReapedError) Is(target error) bool { return target == ErrPromptReaped }
+func (e *promptReapedError) Unwrap() error        { return e.cause }
+
 // ThreadNameConsumer is an optional capability for backends whose
 // TurnResult.ThreadName is a one-time auto-generated title (Codex's
 // thread/name/updated fires once early in a thread's life) rather than a

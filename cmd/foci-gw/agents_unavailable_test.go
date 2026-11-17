@@ -389,6 +389,11 @@ func TestCallerWatch_TurnEnded(t *testing.T) {
 		{name: "interrupted at shutdown", shutdown: true, act: func(w *callerWatch) {
 			w.turnEnded(delegator.TurnInterrupted("Session closed while turn was in flight"), false)
 		}, want: "may resume after a restart", unwant: "not delivered"},
+		// #3149: the idle reaper ended the target's turn on a prompt nobody
+		// answered, just before it expired. Dick 2026-11-17: the reap must not trigger a turn.
+		{name: "prompt reaped", act: func(w *callerWatch) {
+			w.turnEnded(fmt.Errorf("turn: %w", delegator.PromptReaped(delegator.TurnInterrupted("Session closed while turn was in flight"), 170*time.Minute)), false)
+		}},
 		{name: "empty reply in a hold", hold: true, act: func(w *callerWatch) { w.turnEnded(nil, false) }, want: "stopped working"},
 		{name: "failed in a hold", hold: true, act: func(w *callerWatch) { w.turnEnded(errors.New("boom"), false) }, want: "stopped working"},
 		{name: "shutting down, open", shutdown: true, act: func(w *callerWatch) { w.turnEnded(agent.ErrShuttingDown, false) }, want: "not delivered"},

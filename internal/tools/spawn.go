@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -1583,6 +1584,7 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 	var result string
 	var runErr error
 	var stopped, interrupted, holdCold bool
+	var quiet bool // its backend was closed on an expiring unanswered prompt: no result (#3149)
 	var dropped int
 	var handedOff *spawnAutonomousSink // a run on the branch took the spawn over (#3143)
 	var handedOffAtLift bool           // ... at a usage hold's lift, the step cut by the hold
@@ -1645,6 +1647,9 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 		case runErr != nil:
 			tr.setOutcome(parent, id, "failed")
 			tr.appendLog(parent, id, "error", runErr.Error())
+			if quiet = promptReaped(runErr); quiet {
+				s.endQuietly(parent, id, branchKey)
+			}
 		default:
 			tr.setOutcome(parent, id, "completed")
 		}
@@ -1669,7 +1674,7 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 		ThresholdSecs: 0, // always async
 		Done:          signal,
 		NotifyMessage: func() string {
-			if interrupted || handedOffAtLift {
+			if interrupted || handedOffAtLift || quiet {
 				return ""
 			}
 			if holdCold {
@@ -1701,6 +1706,21 @@ func (s *Spawner) closeBranchNow(running RunningSpawn) {
 		return
 	}
 	s.closeBranch(running)
+}
+
+// promptReaped reports whether err ended a spawn's run because foci closed
+// its branch while the turn waited on an unanswered prompt about to expire
+// (delegator.ErrPromptReaped, #3149). Dick 2026-11-17: "reap in such a way
+// that does not trigger a turn": such a run delivers no [SPAWN RESULT].
+func promptReaped(err error) bool { return errors.Is(err, delegator.ErrPromptReaped) }
+
+// endQuietly finishes the record of a spawn whose run promptReaped ended: no
+// result is delivered, so none is kept for a restart to deliver either (the
+// persisted row goes); spawn_status still shows it failed, with the reason in
+// its log (#3149).
+func (s *Spawner) endQuietly(parent, id, branchKey string) {
+	spawnLog.Infof("spawn=%s branch=%s ended by closing its backend on an expiring unanswered prompt: no result delivered", id, branchKey)
+	s.deps.Tracker.persist(parent, id)
 }
 
 // spawnBackgroundID is the Background ID a background spawn prints: its name,

@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"foci/internal/delegator"
 	"foci/internal/platform"
 )
 
@@ -197,6 +199,7 @@ func TestSpawnPersistedUntilParentTakesResult(t *testing.T) {
 type errAgent struct {
 	started chan struct{}
 	release chan struct{}
+	err     error // the run's error; nil = "backend closed"
 }
 
 func (a *errAgent) HandleMessage(ctx context.Context, _ string, _ []string, _ []platform.Attachment) error {
@@ -204,6 +207,9 @@ func (a *errAgent) HandleMessage(ctx context.Context, _ string, _ []string, _ []
 	select {
 	case <-a.release:
 	case <-ctx.Done():
+	}
+	if a.err != nil {
+		return a.err
 	}
 	return errors.New("backend closed")
 }
@@ -224,6 +230,44 @@ func TestSpawnCutByShutdownLeftForNextProcess(t *testing.T) {
 	rec, ok := h.store.record(t, id)
 	if !ok || !rec.Running || rec.Result != "" {
 		t.Fatalf("record after a shutdown cut = %+v (ok %v), want still running", rec, ok)
+	}
+}
+
+// #3149: a run the idle reaper ended while its turn waited on a prompt nobody
+// answered, just before it expired, is reported to nobody: a [SPAWN RESULT] would start a turn
+// in the parent (seen 2026-11-17 03:36 on the work Mac), and Dick ruled the
+// reap must not trigger one. The spawn ends failed, and no persisted result is
+// left for a restart to deliver.
+func TestSpawnPromptReapedEndsWithoutResult(t *testing.T) {
+	t.Parallel()
+	agent := &errAgent{started: make(chan struct{}, 1), release: make(chan struct{}),
+		err: fmt.Errorf("turn: %w", delegator.PromptReaped(delegator.TurnInterrupted("Session closed while turn was in flight"), 170*time.Minute))}
+	h := newPersistHarness(agent, nil)
+	id := h.spawn(t, "long task")
+	<-agent.started
+	close(agent.release)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, ok := h.store.record(t, id); !ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			rec, _ := h.store.record(t, id)
+			t.Fatalf("persisted record after a prompt reap = %+v, want it gone (no result to deliver)", rec)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	h.noDelivery(t)
+	h.tracker.mu.Lock()
+	s := h.tracker.spawns["test/imain"][id]
+	outcome := ""
+	if s != nil {
+		outcome = s.outcome
+	}
+	h.tracker.mu.Unlock()
+	if outcome != "failed" {
+		t.Errorf("spawn outcome = %q, want failed", outcome)
 	}
 }
 

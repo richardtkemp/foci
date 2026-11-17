@@ -227,6 +227,24 @@ type DelegatedManager struct {
 	// Zero uses DefaultIdleTimeout.
 	IdleTimeout time.Duration
 
+	// PromptTTL is how long an unanswered prompt lives before the gateway's
+	// hourly sweep expires it (cmd/foci-gw effectivePromptTTL: min([permissions]
+	// prompt_ttl, the global idle timeout)). A spawn's backend whose turn waits
+	// on a prompt (and runs no background work: quietPromptClose) is closed
+	// quietly just before that (promptReapAfter), so the expiry never denies
+	// the prompt and resumes the turn (#3149, Dick
+	// 2026-11-17: "kill the process just before the ask expires"). Zero uses
+	// DefaultIdleTimeout, the TTL with no config.
+	PromptTTL time.Duration
+
+	// promptReaped holds, per backend (delegator.Delegator) the idle reaper
+	// closed under a turn that waited on an unanswered prompt, how long that
+	// prompt had waited. The turn's OnTurnComplete takes it
+	// (takePromptReaped) and ends the turn with delegator.PromptReaped, so no
+	// consumer reports it as a turn elsewhere (#3149). Its own lock (a
+	// sync.Map), never m.mu: OnTurnComplete runs inside the backend's close.
+	promptReaped sync.Map
+
 	// LiveSessions is the gateway's shared live-session limiter (#2280),
 	// holding the gateway cap ([sessions] max_live_sessions). Nil = a private
 	// limiter with no gateway cap (limiter()).
@@ -306,6 +324,7 @@ type managedBackend struct {
 	// See WaitForPermission / SetPermissionPending.
 	permMu      sync.Mutex
 	permPending bool
+	permSince   time.Time  // when permPending last went true (#3149); zero when clear
 	permCond    *sync.Cond // lazy-init on first WaitForPermission
 
 	// dropUndelivered is set by ResetSession before it closes the backend:
@@ -497,6 +516,7 @@ func (m *DelegatedManager) RunningSubagents(sessionKey string) []delegator.Runni
 func (mb *managedBackend) clearPermission() {
 	mb.permMu.Lock()
 	mb.permPending = false
+	mb.permSince = time.Time{}
 	if mb.permCond != nil {
 		mb.permCond.Broadcast()
 	}
@@ -1173,6 +1193,9 @@ func (m *DelegatedManager) SetPermissionPending(sessionKey string, pending bool)
 	}
 	if pending {
 		mb.permMu.Lock()
+		if !mb.permPending {
+			mb.permSince = time.Now()
+		}
 		mb.permPending = true
 		mb.permMu.Unlock()
 		m.logger().Debugf("permission pending for %s", sessionKey)
@@ -2345,7 +2368,117 @@ func (m *DelegatedManager) BackendInfo(sessionKey string, compacting bool) strin
 	return info
 }
 
+// promptReapAfter is how long a pending prompt keeps its backend from the
+// idle reaper (#3149): PromptTTL less one reaper period and a minute, so a
+// reaper tick (every idleReapPeriod(timeout)) falls between it and the TTL,
+// before the hourly sweep can expire the prompt (it expires only prompts
+// older than the TTL). Never below half the TTL.
+func (m *DelegatedManager) promptReapAfter(timeout time.Duration) time.Duration {
+	ttl := m.PromptTTL
+	if ttl <= 0 {
+		ttl = DefaultIdleTimeout
+	}
+	after := ttl - idleReapPeriod(timeout) - time.Minute
+	if after < ttl/2 {
+		after = ttl / 2
+	}
+	return after
+}
+
+// ClosePromptExpired is the expiry path of a backend prompt (#3149): when
+// sessionKey's backend still waits on a prompt and quietPromptClose allows
+// it (a spawn with no background work), it closes the backend quietly instead of letting the expiry deny the prompt, because a denial
+// resumes the turn (and a spawn's end then starts a turn in its owner's
+// chat). The resume ID is kept. It reports whether it closed one; false
+// means no live backend waits, or it is not one to close quietly, and the
+// caller denies as before.
+// The idle reaper normally gets there first (promptReapAfter); this covers
+// a backend it does not reap (an ephemeral session) or a missed tick.
+func (m *DelegatedManager) ClosePromptExpired(sessionKey string) bool {
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	mb, ok := m.backends[sessionKey]
+	if !ok || mb.creating.Load() {
+		m.mu.Unlock()
+		return false
+	}
+	spec := m.batchSpecs[sessionKey]
+	seenAt := mb.lastActive
+	m.mu.Unlock()
+
+	// Backend state is read without m.mu, as evictable does.
+	mb.permMu.Lock()
+	pending, since := mb.permPending, mb.permSince
+	mb.permMu.Unlock()
+	if !pending || !quietPromptClose(spec, mb.be) {
+		return false
+	}
+	waited := time.Since(since)
+	turn := mb.be.IsTurnInFlight()
+
+	m.mu.Lock()
+	if cur, ok := m.backends[sessionKey]; !ok || cur != mb || !mb.lastActive.Equal(seenAt) {
+		// Replaced or used since: the caller denies as before.
+		m.mu.Unlock()
+		return false
+	}
+	if turn {
+		m.promptReaped.Store(mb.be, waited)
+	}
+	delete(m.backends, sessionKey)
+	m.saveResumeID(sessionKey, mb.be.SessionID())
+	m.mu.Unlock()
+
+	m.logger().Infof("closing session %s: its prompt expired unanswered after %s; its turn ends without a report (session %s)",
+		sessionKey, waited.Round(time.Minute), mb.be.SessionID())
+	m.closeRemoved(sessionKey, mb)
+	return true
+}
+
+// quietPromptClose reports whether a backend whose turn waits on a prompt
+// is closed quietly just before the prompt expires (#3149), rather than kept
+// to today's rules (the idle timeout; the expiry denies the prompt and the
+// agent carries on). Only a spawn's session (batchSpec.spawn: a direct
+// spawn's batch or a background character spawn's branch) qualifies (Dick
+// 2026-11-17, Q95: "Spawns only"), and not while its backend has background
+// work: Agent-tool subagents, background shells or an autonomous run they
+// trigger (Q96: "Skip if work running"). It reads the backend directly, so
+// call it without m.mu (as evictable).
+func quietPromptClose(spec batchSpec, be delegator.Delegator) bool {
+	if !spec.spawn {
+		return false
+	}
+	if r, ok := delegator.As[delegator.SubagentReporter](be); ok && len(r.RunningSubagents()) > 0 {
+		return false
+	}
+	if aw, ok := delegator.As[delegator.AutonomousRunAwaiter](be); ok && aw.AwaitingAutonomousRun() {
+		return false
+	}
+	return true
+}
+
+// takePromptReaped reports whether the idle reaper closed be under a turn
+// that waited on an unanswered prompt, and for how long it had waited; the
+// mark is consumed (#3149).
+func (m *DelegatedManager) takePromptReaped(be delegator.Delegator) (time.Duration, bool) {
+	if m == nil || be == nil {
+		return 0, false
+	}
+	v, ok := m.promptReaped.LoadAndDelete(be)
+	if !ok {
+		return 0, false
+	}
+	return v.(time.Duration), true
+}
+
 // closeIdle closes delegated backends that have been idle longer than timeout.
+// A spawn's backend whose turn waits on an unanswered prompt, with no
+// background work (quietPromptClose), is judged by the prompt
+// instead: it is closed quietly (promptReaped) once the prompt has waited
+// promptReapAfter, just before the prompt would expire, and not before
+// (#3149).
 //
 // Map mutation happens under m.mu; the (potentially slow) be.Close() calls
 // run after the lock is released. Holding m.mu across be.Close would
@@ -2354,35 +2487,90 @@ func (m *DelegatedManager) BackendInfo(sessionKey string, compacting bool) strin
 // sk(). The 2s timer is set up *after* sk() returns, so the timer never
 // arms and Close blocks the full bounded-shutdown timeout. See TODO #749.
 func (m *DelegatedManager) closeIdle(timeout time.Duration) {
+	// Snapshot under m.mu, judge each backend without it (its prompt, turn
+	// and background-work state take the backend's own locks, as in
+	// evictable), then remove under m.mu only a backend that is still the
+	// one judged and unused since (closeIdleExact's rule).
+	type cand struct {
+		key    string
+		mb     *managedBackend
+		seenAt time.Time
+		spec   batchSpec
+	}
 	m.mu.Lock()
+	var cands []cand
+	for key, mb := range m.backends {
+		if m.isEphemeralSession(key) {
+			continue
+		} // live-only contexts cannot be idle-resumed
+		cands = append(cands, cand{key: key, mb: mb, seenAt: mb.lastActive, spec: m.batchSpecs[key]})
+	}
+	m.mu.Unlock()
 
 	now := time.Now()
+	type victim struct {
+		cand
+		quiet  bool          // a quiet close of a spawn waiting on a prompt (#3149)
+		turn   bool          // its turn is in flight: end it as promptReaped
+		waited time.Duration // how long its prompt has waited (quiet only)
+		idle   time.Duration
+	}
+	var victims []victim
+	for _, c := range cands {
+		// Use backend stream activity if available (tracks actual CC events),
+		// falling back to lastActive (when foci last sent a message).
+		lastSeen := c.seenAt
+		if ac, ok := delegator.As[delegator.ActivityChecker](c.mb.be); ok {
+			if t := ac.LastActivity(); !t.IsZero() && t.After(lastSeen) {
+				lastSeen = t
+			}
+		}
+		// A spawn whose turn waits on a prompt nobody has answered keeps its
+		// backend until just before the prompt would expire; it is then
+		// closed without its end being reported anywhere as a turn, so the
+		// expiry's denial never resumes it (#3149). Every other backend
+		// (Dick's own chats, a spawn with background work): idle timeout as
+		// before, and the expiry denies its prompt.
+		c.mb.permMu.Lock()
+		pending, since := c.mb.permPending, c.mb.permSince
+		c.mb.permMu.Unlock()
+		v := victim{cand: c, idle: now.Sub(lastSeen)}
+		if pending && quietPromptClose(c.spec, c.mb.be) {
+			v.quiet, v.waited = true, now.Sub(since)
+			if v.waited < m.promptReapAfter(timeout) {
+				continue
+			}
+			v.turn = c.mb.be.IsTurnInFlight()
+		} else if v.idle < timeout {
+			continue
+		}
+		victims = append(victims, v)
+	}
+
+	m.mu.Lock()
 	type corpse struct {
 		key string
 		mb  *managedBackend
 	}
 	var dead []corpse
-	for key, mb := range m.backends {
-		if m.isEphemeralSession(key) {
-			continue
-		} // live-only contexts cannot be idle-resumed
-		// Use backend stream activity if available (tracks actual CC events),
-		// falling back to lastActive (when foci last sent a message).
-		lastSeen := mb.lastActive
-		if ac, ok := delegator.As[delegator.ActivityChecker](mb.be); ok {
-			if t := ac.LastActivity(); !t.IsZero() && t.After(lastSeen) {
-				lastSeen = t
-			}
+	for _, v := range victims {
+		if cur, ok := m.backends[v.key]; !ok || cur != v.mb || !v.mb.lastActive.Equal(v.seenAt) {
+			continue // replaced or used since it was judged
 		}
-		if now.Sub(lastSeen) < timeout {
-			continue
+		if v.turn {
+			m.promptReaped.Store(v.mb.be, v.waited)
 		}
-		mb.clearPermission()
-		m.saveResumeID(key, mb.be.SessionID())
-		m.logger().Infof("closing idle session %s (idle %s, session %s)",
-			key, now.Sub(lastSeen).Round(time.Minute), mb.be.SessionID())
-		delete(m.backends, key)
-		dead = append(dead, corpse{key: key, mb: mb})
+		v.mb.clearPermission()
+		m.saveResumeID(v.key, v.mb.be.SessionID())
+		if v.quiet {
+			m.logger().Infof("closing session %s: its prompt has waited %s unanswered (idle %s, session %s); its turn ends without a report",
+				v.key, v.waited.Round(time.Minute), v.idle.Round(time.Minute), v.mb.be.SessionID())
+		} else {
+			m.logger().Infof("closing idle session %s (idle %s, session %s)",
+				v.key, v.idle.Round(time.Minute), v.mb.be.SessionID())
+		}
+		delete(m.backends, v.key)
+		dead = append(dead, corpse{key: v.key, mb: v.mb})
 	}
 	m.mu.Unlock()
 

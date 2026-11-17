@@ -182,6 +182,11 @@ func (w *callerWatch) turnEnded(err error, hasReply bool) {
 		w.finish()
 	case errors.Is(err, agent.ErrShuttingDown):
 		w.refused()
+	case errors.Is(err, delegator.ErrPromptReaped):
+		// foci closed the target's backend while its turn waited on an
+		// expiring prompt nobody answered: a notice would start a turn in the
+		// caller's session, which the reap must not do (#3149).
+		w.finish()
 	case errors.Is(err, delegator.ErrTurnInterrupted):
 		// The target took the message, but its backend ended under the turn
 		// (#3070). Not "send it again": a restart may resume the cut turn

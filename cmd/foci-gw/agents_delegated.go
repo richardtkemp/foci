@@ -484,6 +484,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		// #2684: a spawn starts in its spawner's permission mode.
 		SpawnerPermissionMode: ag.SessionPermissionMode,
 		IdleTimeout:           idleTimeout,
+		// A backend waiting on a prompt is closed quietly just before the
+		// prompt expires (#3149).
+		PromptTTL: effectivePromptTTL(p.cfg),
 		// Live-session caps (#2280): the shared gateway limiter and this
 		// agent's own cap; a backend is evictable only when neither a turn nor
 		// a compaction is running on its session.
@@ -518,6 +521,24 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		skillRegistry: br.skillRegistry,
 		skillsDirs:    br.skillsDirs,
 	}, true
+}
+
+// effectivePromptTTL is how long an unanswered interactive prompt lives
+// before setupInteractiveCleanup expires it: min([permissions] prompt_ttl,
+// the global idle timeout ([sessions] idle_timeout, else the default)). An
+// unanswered prompt must never outlive the backend waiting on it; the
+// config override only lowers it. Every delegated manager gets the same value
+// (DelegatedManager.PromptTTL) and closes a backend waiting on a prompt just
+// before this expiry (#3149).
+func effectivePromptTTL(cfg *config.Config) time.Duration {
+	ttl := agent.DefaultIdleTimeout
+	if d, err := time.ParseDuration(cfg.Sessions.IdleTimeout); err == nil && d > 0 {
+		ttl = d
+	}
+	if d, err := time.ParseDuration(cfg.Permissions.PromptTTL); err == nil && d > 0 && d < ttl {
+		ttl = d
+	}
+	return ttl
 }
 
 // resolveIdleTimeout returns an agent's delegated idle timeout (#2280): its
@@ -644,6 +665,11 @@ type backendPromptDeps struct {
 	// substitute a recorder so a fail-closed denial is observable without a
 	// live backend.
 	respond func(ctx context.Context, sessionKey, requestID, choice string) error
+	// closeOnExpiry closes the backend still waiting on an expired prompt
+	// instead of denying it (#3149). Production leaves it nil (closeExpired
+	// then uses the agent's DelegatedManager.ClosePromptExpired); tests
+	// substitute a recorder.
+	closeOnExpiry func(sessionKey string) bool
 }
 
 // backendPromptTargets is the chat list of a prompt from sessionKey: for a
@@ -696,6 +722,19 @@ func mediaChats(d backendPromptDeps, sessionKey string) []app.SessionChat {
 func depthSessionLive(sessionKey string) bool {
 	m := tools.DepthManagerFor(sessionKey)
 	return m == nil || m.SessionLive(sessionKey)
+}
+
+// closeExpired is deps.closeOnExpiry with the nil fallback applied: the
+// agent's delegated manager closes a backend still waiting on an expired
+// prompt (#3149).
+func (d backendPromptDeps) closeExpired(sessionKey string) bool {
+	if d.closeOnExpiry != nil {
+		return d.closeOnExpiry(sessionKey)
+	}
+	if d.ag == nil || d.ag.DelegatedManager == nil {
+		return false
+	}
+	return d.ag.DelegatedManager.ClosePromptExpired(sessionKey)
 }
 
 // sendPermissionResponse is deps.respond with the nil fallback applied.
@@ -772,8 +811,19 @@ func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, 
 		}
 	}
 	onExpire := func() {
-		// Expiry: deny the prompt so a turn blocked in WaitForPermission
-		// unblocks instead of orphaning. The message edit to an "expired"
+		// Expiry: a spawn's backend still waiting on the prompt, with no
+		// background work, is closed quietly instead (#3149, Dick 2026-11-17:
+		// "kill the process just before the ask expires"; Q95 spawns only,
+		// Q96 not while work runs): a denial would resume the turn, and the
+		// spawn's end would then start a turn in its owner's chat. The idle
+		// reaper normally closed it already (DelegatedManager.promptReapAfter).
+		if d.closeExpired(sessionKey) {
+			logger.Infof("expired prompt: sk=%s reqID=%s — its backend was closed instead of denying it (#3149)", sessionKey, requestID)
+			return
+		}
+		// Otherwise (no backend waits, not a spawn, or background work runs):
+		// deny the prompt so nothing blocked in
+		// WaitForPermission orphans. The message edit to an "expired"
 		// notice is handled by CleanupExpiredInteractive.
 		if err := d.sendPermissionResponse(context.Background(), sessionKey, requestID, "deny"); err != nil {
 			logger.Warnf("expire prompt deny failed: sk=%s reqID=%s err=%v", sessionKey, requestID, err)

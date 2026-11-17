@@ -47,6 +47,8 @@ type mockBackendDM struct {
 	sessionEvents    *delegator.SessionEvents
 	sendCommandFn    func(context.Context, string) error
 	closeFn          func() error
+	subagents        []delegator.RunningSubagent // RunningSubagents (#3149)
+	awaitingAuto     bool                        // AwaitingAutonomousRun (#3149)
 }
 
 func (m *mockBackendDM) Start(_ context.Context, opts delegator.StartOptions) error {
@@ -217,7 +219,17 @@ func (m *mockBackendDM) SetOnSubagentStatus(fn func(detail string)) {
 
 func (m *mockBackendDM) SetOnSubagentRunning(func([]delegator.RunningSubagent)) {}
 
-func (m *mockBackendDM) RunningSubagents() []delegator.RunningSubagent { return nil }
+func (m *mockBackendDM) RunningSubagents() []delegator.RunningSubagent {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.subagents
+}
+
+func (m *mockBackendDM) AwaitingAutonomousRun() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.awaitingAuto
+}
 
 func (m *mockBackendDM) AttachSessionEvents(events *delegator.SessionEvents) {
 	m.mu.Lock()
@@ -1142,6 +1154,221 @@ func TestCloseIdle(t *testing.T) {
 	val, _ := idx.GetSessionMetadata("test-agent/c1", "cc_resume_id")
 	if val != "uuid-idle-1" {
 		t.Errorf("saved resume ID = %q, want %q", val, "uuid-idle-1")
+	}
+}
+
+// #3149 (Dick 2026-11-17: "kill the process just before the ask expires"):
+// a spawn's backend whose turn waits on an unanswered prompt is judged by the prompt,
+// not by idleness. It is kept while the prompt is younger than
+// promptReapAfter, however long it has been idle, and closed (marked so its
+// turn ends quietly) once the prompt is older, even with recent activity. A
+// backend with no pending prompt is reaped at the idle timeout as before.
+func TestCloseIdle_PendingPromptClosedJustBeforeItExpires(t *testing.T) {
+	t.Parallel()
+	idx := newTestSessionIndex(t)
+	mgr, mocks := newTestManager(t, idx)
+	mgr.PromptTTL = 3 * time.Hour
+	const timeout = 3 * time.Hour
+
+	keys := []string{"test-agent/young", "test-agent/old", "test-agent/plain", "test-agent/busy"}
+	for _, k := range keys {
+		if _, err := mgr.Get(context.Background(), k); err != nil {
+			t.Fatalf("Get %s: %v", k, err)
+		}
+	}
+	young, old, plain, busy := (*mocks)[0], (*mocks)[1], (*mocks)[2], (*mocks)[3]
+	mgr.setBatchSpec("test-agent/plain", batchSpec{spawn: true})
+	young.turnInFlight, old.turnInFlight, busy.turnInFlight = true, true, true
+	for _, k := range []string{"test-agent/young", "test-agent/old", "test-agent/busy"} {
+		mgr.SetPermissionPending(k, true)
+		mgr.setBatchSpec(k, batchSpec{spawn: true})
+	}
+
+	mgr.mu.Lock()
+	for k, mb := range mgr.backends {
+		mb.lastActive = time.Now().Add(-50 * time.Hour) // idle past every timeout
+		mb.permMu.Lock()
+		switch k {
+		case "test-agent/young":
+			mb.permSince = time.Now().Add(-2*time.Hour - 40*time.Minute)
+		case "test-agent/old":
+			mb.permSince = time.Now().Add(-2*time.Hour - 55*time.Minute)
+		case "test-agent/busy":
+			mb.lastActive = time.Now() // recent activity does not keep it
+			mb.permSince = time.Now().Add(-2*time.Hour - 55*time.Minute)
+		}
+		mb.permMu.Unlock()
+	}
+	mgr.mu.Unlock()
+
+	mgr.closeIdle(timeout)
+
+	if young.wasClosed() {
+		t.Error("a backend whose prompt has waited 2h40m of a 3h TTL was reaped; want it kept until just before expiry")
+	}
+	if !mgr.IsPermissionPending("test-agent/young") {
+		t.Error("the kept backend's pending prompt was cleared")
+	}
+	if !old.wasClosed() {
+		t.Error("a backend whose prompt has waited 2h55m of a 3h TTL was not reaped before the expiry")
+	}
+	if !busy.wasClosed() {
+		t.Error("a backend whose prompt is about to expire was kept because of recent activity")
+	}
+	if !plain.wasClosed() {
+		t.Error("an idle backend with no pending prompt was not reaped at the idle timeout")
+	}
+	if waited, ok := mgr.takePromptReaped(old); !ok || waited < 2*time.Hour+55*time.Minute {
+		t.Errorf("takePromptReaped(old) = %v, %v; want the 2h55m wait marked", waited, ok)
+	}
+	if _, ok := mgr.takePromptReaped(plain); ok {
+		t.Error("a normal idle reap was marked as a prompt reap")
+	}
+	if _, ok := mgr.takePromptReaped(young); ok {
+		t.Error("a kept backend was marked as a prompt reap")
+	}
+}
+
+// #3149: the reaper must get to a waiting backend before the gateway's
+// hourly sweep expires its prompt (the sweep expires prompts older than the
+// TTL), so the reap point plus one reaper period stays below the TTL.
+func TestPromptReapAfter_OneReaperTickBeforeTheTTL(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ ttl, timeout time.Duration }{
+		{3 * time.Hour, 3 * time.Hour},
+		{3 * time.Hour, 30 * time.Minute},
+		{3 * time.Hour, 48 * time.Hour},
+		{24 * time.Hour, 3 * time.Hour},
+		{time.Hour, 20 * time.Minute},
+	} {
+		m := &DelegatedManager{PromptTTL: tc.ttl}
+		after := m.promptReapAfter(tc.timeout)
+		if after <= 0 || after+idleReapPeriod(tc.timeout) >= tc.ttl {
+			t.Errorf("ttl %v, idle timeout %v: reap after %v, period %v; want a tick before the TTL", tc.ttl, tc.timeout, after, idleReapPeriod(tc.timeout))
+		}
+	}
+}
+
+// #3149: when a backend prompt expires, ClosePromptExpired closes the
+// backend still waiting on it (marked, resume ID kept) so the expiry does not
+// deny it and resume the turn. With no prompt pending it closes nothing and
+// the caller denies as before.
+func TestClosePromptExpired(t *testing.T) {
+	t.Parallel()
+	idx := newTestSessionIndex(t)
+	mgr, mocks := newTestManager(t, idx)
+	for _, k := range []string{"test-agent/waiting", "test-agent/free", "test-agent/chat", "test-agent/bg"} {
+		if _, err := mgr.Get(context.Background(), k); err != nil {
+			t.Fatalf("Get %s: %v", k, err)
+		}
+	}
+	waiting, free, chat, bg := (*mocks)[0], (*mocks)[1], (*mocks)[2], (*mocks)[3]
+	waiting.turnInFlight, chat.turnInFlight, bg.turnInFlight = true, true, true
+	waiting.sessionID = "sid-waiting"
+	bg.subagents = []delegator.RunningSubagent{{ID: "t1"}}
+	for _, k := range []string{"test-agent/waiting", "test-agent/chat", "test-agent/bg"} {
+		mgr.SetPermissionPending(k, true)
+	}
+	for _, k := range []string{"test-agent/waiting", "test-agent/free", "test-agent/bg"} {
+		mgr.setBatchSpec(k, batchSpec{spawn: true})
+	}
+
+	// Q95 "Spawns only": a non-spawn session's expired prompt is denied as
+	// before. Q96 "Skip if work running": so is a spawn's with background work.
+	if mgr.ClosePromptExpired("test-agent/chat") || chat.wasClosed() {
+		t.Error("ClosePromptExpired closed a non-spawn session; want it left for the deny")
+	}
+	if mgr.ClosePromptExpired("test-agent/bg") || bg.wasClosed() {
+		t.Error("ClosePromptExpired closed a spawn with background work running; want it left for the deny")
+	}
+
+	if mgr.ClosePromptExpired("test-agent/free") {
+		t.Error("ClosePromptExpired closed a backend with no pending prompt")
+	}
+	if free.wasClosed() {
+		t.Error("a backend with no pending prompt was closed")
+	}
+	if mgr.ClosePromptExpired("test-agent/missing") {
+		t.Error("ClosePromptExpired reported a close for a session with no backend")
+	}
+	if !mgr.ClosePromptExpired("test-agent/waiting") {
+		t.Fatal("ClosePromptExpired did not close the backend waiting on the expired prompt")
+	}
+	if !waiting.wasClosed() {
+		t.Error("the waiting backend was not closed")
+	}
+	if _, ok := mgr.takePromptReaped(waiting); !ok {
+		t.Error("the closed backend's turn was not marked to end quietly")
+	}
+	if v, _ := idx.GetSessionMetadata("test-agent/waiting", session.MetaKeyCCResumeID); v != "sid-waiting" {
+		t.Errorf("resume ID = %q, want sid-waiting kept", v)
+	}
+}
+
+// #3149 rulings 3-4 (Dick 2026-11-17, Q95 "Spawns only", Q96 "Skip if work
+// running"): the quiet close before a prompt expires applies only to a
+// spawn's session with no background work. A non-spawn session, or a spawn
+// with subagents, background shells or an autonomous run, keeps today's
+// rule: reaped only at the idle timeout, unmarked, so the expiry denies its
+// prompt and the agent carries on.
+func TestCloseIdle_QuietPromptCloseSpawnsOnlyWithoutBackgroundWork(t *testing.T) {
+	t.Parallel()
+	idx := newTestSessionIndex(t)
+	mgr, mocks := newTestManager(t, idx)
+	mgr.PromptTTL = 3 * time.Hour
+	const timeout = 3 * time.Hour
+
+	keys := []string{"test-agent/chat", "test-agent/chatidle", "test-agent/sub", "test-agent/auto", "test-agent/spawn"}
+	for _, k := range keys {
+		if _, err := mgr.Get(context.Background(), k); err != nil {
+			t.Fatalf("Get %s: %v", k, err)
+		}
+		mgr.SetPermissionPending(k, true)
+	}
+	chat, chatIdle, sub, auto, spawn := (*mocks)[0], (*mocks)[1], (*mocks)[2], (*mocks)[3], (*mocks)[4]
+	for _, mb := range []*mockBackendDM{chat, chatIdle, sub, auto, spawn} {
+		mb.turnInFlight = true
+	}
+	sub.subagents = []delegator.RunningSubagent{{ID: "bg-shell", Kind: "bash"}}
+	auto.awaitingAuto = true
+	for _, k := range []string{"test-agent/sub", "test-agent/auto", "test-agent/spawn"} {
+		mgr.setBatchSpec(k, batchSpec{spawn: true})
+	}
+
+	mgr.mu.Lock()
+	for k, mb := range mgr.backends {
+		mb.lastActive = time.Now().Add(-time.Hour) // inside the idle timeout
+		if k == "test-agent/chatidle" {
+			mb.lastActive = time.Now().Add(-50 * time.Hour)
+		}
+		mb.permMu.Lock()
+		mb.permSince = time.Now().Add(-2*time.Hour - 55*time.Minute) // past promptReapAfter
+		mb.permMu.Unlock()
+	}
+	mgr.mu.Unlock()
+
+	mgr.closeIdle(timeout)
+
+	if chat.wasClosed() {
+		t.Error("a non-spawn session with a prompt about to expire was closed; want today's behaviour (deny at expiry)")
+	}
+	if sub.wasClosed() {
+		t.Error("a spawn with background work running was closed quietly; want today's behaviour")
+	}
+	if auto.wasClosed() {
+		t.Error("a spawn awaiting an autonomous run was closed quietly; want today's behaviour")
+	}
+	if !spawn.wasClosed() {
+		t.Error("a spawn with no background work was not closed before its prompt expired")
+	}
+	if !chatIdle.wasClosed() {
+		t.Error("a non-spawn session idle past the timeout was not reaped (normal reaps unchanged)")
+	}
+	if _, ok := mgr.takePromptReaped(chatIdle); ok {
+		t.Error("a normal idle reap of a non-spawn session was marked as a quiet prompt close")
+	}
+	if _, ok := mgr.takePromptReaped(spawn); !ok {
+		t.Error("the quiet close of a spawn was not marked")
 	}
 }
 

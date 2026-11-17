@@ -873,6 +873,12 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 				ts.FinalModel = result.Model
 				if result.Interrupted != nil {
 					err := result.Interrupted
+					// The idle reaper closed the backend while this turn
+					// waited on an unanswered prompt: its end must not be
+					// reported anywhere as a turn (#3149).
+					if waited, ok := a.DelegatedManager.takePromptReaped(be); ok {
+						err = delegator.PromptReaped(err, waited)
+					}
 					ts.interrupted.Store(&err)
 				}
 				if result.Usage != nil {

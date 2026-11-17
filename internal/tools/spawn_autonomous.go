@@ -175,7 +175,9 @@ func (a *spawnAutonomousSink) finish(tc turnevent.TurnComplete) {
 	}
 	if end.handedOff != nil {
 		// Another run on the branch goes on and reports the next result.
-		s.deliver(parent, id, s.resultMessage(parent, id, branchKey, false, tc.Err, a.FinalText(), 0))
+		if !promptReaped(tc.Err) {
+			s.deliver(parent, id, s.resultMessage(parent, id, branchKey, false, tc.Err, a.FinalText(), 0))
+		}
 		end.handedOff.tookOver()
 		return
 	}
@@ -195,6 +197,10 @@ func (a *spawnAutonomousSink) finish(tc turnevent.TurnComplete) {
 	}
 	if s.deps.Observer != nil {
 		s.deps.Observer.SpawnEnded(parent, id)
+	}
+	if !end.stopped && promptReaped(tc.Err) {
+		s.endQuietly(parent, id, branchKey)
+		return
 	}
 	s.deliver(parent, id, s.resultMessage(parent, id, branchKey, end.stopped, tc.Err, a.FinalText(), end.dropped))
 }
