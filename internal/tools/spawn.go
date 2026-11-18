@@ -385,7 +385,15 @@ type Spawner struct {
 	// restorePlan is what AdoptSpawns found, for RestoreSpawns (#3163).
 	restoreMu   sync.Mutex
 	restorePlan *spawnRestorePlan
+
+	// directEndGrace overrides directRunEndGrace (tests); 0 = the default.
+	directEndGrace time.Duration
 }
+
+// directRunEndGrace is how long a direct spawn's run may take to end once it
+// is cancelled (spawn_stop, /stop, or its call's caller gone) before the
+// spawn is marked ended without it (#3166).
+const directRunEndGrace = 30 * time.Second
 
 // NewSpawner builds the shared state of spawn, spawn_send and spawn_status.
 // agentFn is a lazy getter for the agent (resolved at call time, since the
@@ -747,7 +755,7 @@ func (s *Spawner) runDirect(ctx context.Context, host *Spawner, mode, name, prom
 	// Its send_to_spawner finds it through this (#2662).
 	runCtx = withSpawnLink(runCtx, spawnLink{s: s, parent: parent, id: info.ID, info: info})
 	tee := &spawnTextSink{BufferSink: turnevent.NewBufferSink(), obs: obs, tracker: tr, parent: parent, id: info.ID}
-	res, err := run(turnevent.WithTee(runCtx, tee))
+	res, err := s.awaitDirectRun(runCtx, info.ID, tee, run)
 	outcome, detail := "completed", ""
 	switch {
 	case err != nil:
@@ -778,6 +786,50 @@ func (s *Spawner) runDirect(ctx context.Context, host *Spawner, mode, name, prom
 	}
 	res.Text = head + res.Text
 	return res, nil
+}
+
+// awaitDirectRun runs a direct spawn's run and waits for it, but once runCtx
+// is cancelled (spawn_stop, /stop, or the call's caller gone) for at most
+// directRunEndGrace more (#3166). A run that ignores its cancellation (a
+// backend whose close left its turn open) must not leave the spawn 'running'
+// for good, with spawn_stop saying it is not: past the grace the spawn ends,
+// failed, and the run is left to finish alone, its later output detached from
+// the spawn's entry.
+func (s *Spawner) awaitDirectRun(runCtx context.Context, id string, tee *spawnTextSink, run func(context.Context) (ToolResult, error)) (ToolResult, error) {
+	type ended struct {
+		res ToolResult
+		err error
+	}
+	done := make(chan ended, 1)
+	started := time.Now()
+	go func() {
+		res, err := run(turnevent.WithTee(runCtx, tee))
+		if tee.detached.Load() {
+			spawnLog.Infof("direct spawn=%s: its run ended %s after it started, after the spawn was marked ended (err=%v)",
+				id, time.Since(started).Round(time.Second), err)
+		}
+		done <- ended{res, err}
+	}()
+	select {
+	case r := <-done:
+		return r.res, r.err
+	case <-runCtx.Done():
+	}
+	grace := s.directEndGrace
+	if grace <= 0 {
+		grace = directRunEndGrace
+	}
+	t := time.NewTimer(grace)
+	defer t.Stop()
+	select {
+	case r := <-done:
+		return r.res, r.err
+	case <-t.C:
+	}
+	tee.detached.Store(true)
+	spawnLog.Warnf("direct spawn=%s: its run did not end within %s of being cancelled (%v); marking the spawn ended without it",
+		id, grace, context.Cause(runCtx))
+	return ToolResult{}, fmt.Errorf("its run did not end within %s of being cancelled (%v)", grace, context.Cause(runCtx))
 }
 
 // inSpawnTempDir runs a raw spawn in a fresh temp dir and appends a list of

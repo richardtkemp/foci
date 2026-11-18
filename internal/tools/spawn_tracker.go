@@ -861,6 +861,9 @@ type spawnTextSink struct {
 	blocks []string
 	// retrying is set while the observer shows a retry wait (#3146).
 	retrying atomic.Bool
+	// detached is set when the spawn was marked ended while its run went on
+	// (awaitDirectRun, #3166): the run's later events reach only its buffer.
+	detached atomic.Bool
 }
 
 // noteRetry tells the observer the backend waits to retry until now + delay
@@ -897,6 +900,10 @@ func (s *spawnTextSink) noteModel(model string) {
 }
 
 func (s *spawnTextSink) Emit(ctx context.Context, ev turnevent.Event) {
+	if s.detached.Load() {
+		s.BufferSink.Emit(ctx, ev)
+		return
+	}
 	switch ev.(type) {
 	case turnevent.TextBlock, turnevent.TextDelta, turnevent.ThinkingDelta, turnevent.ToolCall, turnevent.TurnComplete:
 		s.clearRetry()

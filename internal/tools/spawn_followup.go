@@ -339,6 +339,10 @@ func (s *Spawner) stop(caller, id string) (ToolResult, error) {
 		return ToolResult{}, err
 	}
 	if _, stopped := tr.stopOne(parent, snap.ID); !stopped {
+		if snap.Running {
+			// Stopped already, and its run has not ended yet (#3166).
+			return TextResult(fmt.Sprintf("Spawn %s is already being stopped; its run has not ended yet (%s).", snap.ID, spawnState(snap, time.Now()))), nil
+		}
 		return TextResult(fmt.Sprintf("Spawn %s is not running (%s).", snap.ID, spawnState(snap, time.Now()))), nil
 	}
 	if snap.Direct && snap.Resumes == 0 {

@@ -331,7 +331,15 @@ func (b *Backend) Close() error {
 		// handed back to it explicitly, or codex keeps it loaded — with its
 		// rollout and writer-lock files open — for the app-server's whole life
 		// (release.go).
+		//
+		// No process exit ends this facade's running turn, as it does for the
+		// last close (onReaderStopped) and for Claude Code: stop it in codex
+		// first, then complete it here (#3166).
+		running := b.interruptOnClose()
 		b.releaseThread(threadID)
+		if running {
+			b.completeClosedTurn()
+		}
 		return nil
 	}
 	b = owner
@@ -378,6 +386,42 @@ func (b *Backend) Close() error {
 	}
 
 	return nil
+}
+
+// interruptOnClose stops this facade's running turn in codex when the facade
+// closes on an app-server that lives on, and reports whether a turn was
+// running. Without it, codex goes on running (and billing) a turn that nothing
+// reads any more: its thread is unsubscribed, so its events are dropped.
+func (b *Backend) interruptOnClose() bool {
+	b.turnMu.Lock()
+	active := b.turnActive
+	b.turnMu.Unlock()
+	if !active {
+		return false
+	}
+	if err := b.Interrupt(context.Background()); err != nil {
+		b.logWarnf("close: interrupt of the running turn failed (codex may run it to its end): %v", err)
+	}
+	return true
+}
+
+// completeClosedTurn completes, as interrupted, a turn still open after its
+// facade released its thread (#3166). The agent's turn waits for this
+// completion, not for the caller's ctx: before it, a direct spawn's batch
+// whose caller had gone (RunBatch closes its backend) never returned, and the
+// spawn stayed 'running' in spawn_status. The turn/completed codex sends for
+// the interrupt usually arrives first and completes it; once the thread is
+// released nothing else can, so this is the last word.
+func (b *Backend) completeClosedTurn() {
+	b.turnMu.Lock()
+	active := b.turnActive
+	text := b.turnText.String()
+	b.turnMu.Unlock()
+	if !active {
+		return
+	}
+	b.completeTurn(&delegator.TurnResult{Text: text,
+		Interrupted: delegator.TurnInterrupted("codex session closed mid-turn")})
 }
 
 // interruptTimeout bounds the wait for codex's turn/interrupt answer. Live

@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"sync"
@@ -252,5 +253,91 @@ func TestReleasedThreadLinesAreNotLost(t *testing.T) {
 	b.flushUnclaimed(start.Add(unclaimedGrace+time.Second), false)
 	if got := lostWarns(warns()); len(got) != 1 {
 		t.Fatalf("a line after thread/closed: lost WARNs = %q, want one", got)
+	}
+}
+
+// interruptedTurns reads the stub app-server's capture file and returns the
+// "threadId/turnId" of every turn/interrupt request, in order.
+func interruptedTurns(t *testing.T, capture string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatalf("read capture: %v", err)
+	}
+	var out []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		var msg struct {
+			Method string `json:"method"`
+			Params struct {
+				ThreadID string `json:"threadId"`
+				TurnID   string `json:"turnId"`
+			} `json:"params"`
+		}
+		if json.Unmarshal([]byte(line), &msg) == nil && msg.Method == "turn/interrupt" {
+			out = append(out, msg.Params.ThreadID+"/"+msg.Params.TurnID)
+		}
+	}
+	return out
+}
+
+// TestCloseMidTurnOnSharedAppServerEndsTheTurn is #3166: a facade that
+// closes while its turn runs, on an app-server that lives on for a sibling
+// (RunBatch closing an abandoned direct spawn's batch), must stop the turn in
+// codex and complete it, interrupted. Before, no process exit ended it, its
+// thread was unsubscribed, and the agent's turn waited on a completion that
+// never came: the direct spawn stayed 'running' for good.
+func TestCloseMidTurnOnSharedAppServerEndsTheTurn(t *testing.T) {
+	stub, capture := stubAppServer(t)
+	const agent = "closeturn-agent"
+	owner := startFacade(t, stub, agent, "session/owner", "")
+	defer owner.Close()
+	batch := startFacade(t, stub, agent, "session/batch", "")
+	thread := batch.SessionID()
+
+	done := make(chan *delegator.TurnResult, 2)
+	applySessionAndTurn(batch, &delegator.SessionEvents{}, &delegator.TurnEvents{
+		OnTurnComplete: func(r *delegator.TurnResult) { done <- r },
+	})
+	batch.turnMu.Lock()
+	batch.turnID = "turn-running"
+	batch.turnText.WriteString("half an answer")
+	batch.turnMu.Unlock()
+
+	_ = batch.Close()
+
+	select {
+	case r := <-done:
+		if !errors.Is(r.Interrupted, delegator.ErrTurnInterrupted) {
+			t.Errorf("Interrupted = %v, want ErrTurnInterrupted: the turn did not finish", r.Interrupted)
+		}
+		if r.Text != "half an answer" {
+			t.Errorf("Text = %q, want the partial text kept", r.Text)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("closing the facade mid-turn never completed its turn")
+	}
+	select {
+	case r := <-done:
+		t.Fatalf("turn completed twice (second: %+v)", r)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if got := interruptedTurns(t, capture); len(got) != 1 || got[0] != thread+"/turn-running" {
+		t.Errorf("turn/interrupt sent for %q, want [%s/turn-running]: codex would run the turn on unread", got, thread)
+	}
+	if !owner.IsRunning() {
+		t.Error("the shared app-server stopped")
+	}
+}
+
+// An idle facade's close sends no turn/interrupt and completes nothing.
+func TestCloseIdleOnSharedAppServerSendsNoInterrupt(t *testing.T) {
+	stub, capture := stubAppServer(t)
+	const agent = "closeidle-agent"
+	owner := startFacade(t, stub, agent, "session/owner", "")
+	defer owner.Close()
+	idle := startFacade(t, stub, agent, "session/idle", "")
+	_ = idle.Close()
+	if got := interruptedTurns(t, capture); len(got) != 0 {
+		t.Errorf("turn/interrupt sent for %q, want none: no turn ran", got)
 	}
 }
