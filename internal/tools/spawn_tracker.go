@@ -172,6 +172,16 @@ type trackedSpawn struct {
 	// the spawn ran, for a result that would otherwise not carry it (a paused
 	// spawn gone cold, #3143). Cleared when the spawn's run ends.
 	adriftAnswer string
+	// wake holds what its own spawns sent it after its run ended, for the
+	// run that resumes it (#3163, wakeSpawn), in arrival order. Persisted
+	// (spawnRecord.Wake, Dick 2026-11-18: "Persist the queue"). waking says
+	// a resume is under way (in memory only).
+	wake   []childReport
+	waking bool
+	// reporting: its run has ended and its result is not recorded yet
+	// (finishOrNext to pushResult); a persist from one of its own spawns
+	// then leaves its row as it is (#3163).
+	reporting bool
 }
 
 // SpawnLogEntry is one step of a spawn's activity, kept for spawn_status
@@ -529,6 +539,7 @@ func (t *SpawnTracker) finishOrNext(parent, id string, force bool) runEnd {
 	end := runEnd{done: true, stopped: s.stopped, dropped: len(s.pending)}
 	s.pending = nil
 	s.running = false
+	s.reporting = true
 	s.ended = time.Now()
 	s.adriftAnswer = ""
 	t.pruneFinished(parent)
@@ -572,7 +583,9 @@ func (t *SpawnTracker) setOutcome(parent, id, outcome string) {
 func (t *SpawnTracker) pruneFinished(parent string) {
 	var done []*trackedSpawn
 	for _, s := range t.spawns[parent] {
-		if !s.running {
+		// A finished spawn stays known while its own spawns run or hold a
+		// result for it, or while reports wait to wake it (#3163).
+		if !s.running && !s.waking && len(s.wake) == 0 && !t.liveChildrenLocked(s.info.BranchKey) {
 			done = append(done, s)
 		}
 	}
@@ -597,7 +610,7 @@ func (t *SpawnTracker) restart(parent, id string, cancel context.CancelFunc) boo
 		t.mu.Unlock()
 		return false
 	}
-	s.running, s.stopped, s.cancel = true, false, cancel
+	s.running, s.stopped, s.cancel, s.reporting = true, false, cancel, false
 	s.ended, s.outcome = time.Time{}, ""
 	t.mu.Unlock()
 	t.persist(parent, id)

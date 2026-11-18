@@ -53,41 +53,108 @@ type spawnRestoreReport struct {
 // resume turns. It returns at once; the resumed runs start on a goroutine as
 // slots free up (max_concurrent_spawns).
 func (s *Spawner) RestoreSpawns() {
+	p := s.takeRestorePlan()
+	if p == nil {
+		p = s.adoptSpawns()
+	}
+	if p == nil {
+		return
+	}
+	// Every agent's spawns are known by now (AdoptSpawns ran for each
+	// before any RestoreSpawns): a result for a parent spawn another agent
+	// tracks finds it, and wakes it, whatever order the agents restore in
+	// (#3163).
+	for _, d := range p.deliveries {
+		d()
+	}
+	for _, rec := range p.wakes {
+		spawnLog.Infof("spawn=%s resuming with %d report(s) from its own spawns the last process had queued", rec.ID, len(rec.Wake))
+		s.startWake(rec.Parent, rec.ID)
+	}
+	for _, parent := range p.parents {
+		s.noticeRestore(parent, p.reports[parent])
+	}
+	s.startResumes(p.resumes)
+}
+
+// spawnRestorePlan is what AdoptSpawns found in this agent's persisted spawns
+// and RestoreSpawns then does: its deliveries, wakes, notices and resumes.
+type spawnRestorePlan struct {
+	deliveries []func()
+	wakes      []spawnRecord
+	reports    map[string]*spawnRestoreReport
+	parents    []string
+	resumes    []pendingResume
+}
+
+type pendingResume struct {
+	rec    spawnRecord
+	host   *Spawner
+	agent  SpawnAgent
+	base   context.Context //nolint:containedctx // the resumed run's base, made at adoption
+	stop   context.CancelFunc
+	notice string
+}
+
+// AdoptSpawns registers this agent's persisted spawns in the tracker, and
+// delivers and resumes nothing: RestoreSpawns does that. The gateway runs
+// AdoptSpawns for every agent before RestoreSpawns for any (#3163), so a
+// child spawn's undelivered result, restored by one agent, finds its parent
+// spawn, whose record another agent holds (a spawn run as another agent:
+// its row is under its caller's agent, its children's under its own).
+// RestoreSpawns without a prior AdoptSpawns adopts first.
+func (s *Spawner) AdoptSpawns() {
+	p := s.adoptSpawns()
+	s.restoreMu.Lock()
+	s.restorePlan = p
+	s.restoreMu.Unlock()
+}
+
+func (s *Spawner) takeRestorePlan() *spawnRestorePlan {
+	s.restoreMu.Lock()
+	defer s.restoreMu.Unlock()
+	p := s.restorePlan
+	s.restorePlan = nil
+	return p
+}
+
+// adoptSpawns adopts this agent's persisted spawns and returns what is to be
+// done with them, or nil when there is nothing.
+func (s *Spawner) adoptSpawns() *spawnRestorePlan {
 	tr := s.deps.Tracker
 	recs := tr.loadRecords(s.deps.AgentID)
 	if len(recs) == 0 {
-		return
+		return nil
 	}
 	if s.deps.Notifier == nil {
 		spawnLog.Errorf("agent=%s %d persisted spawn(s) but no background delivery — left in place", s.deps.AgentID, len(recs))
-		return
+		return nil
 	}
-	reports := map[string]*spawnRestoreReport{}
-	var parents []string
+	p := &spawnRestorePlan{reports: map[string]*spawnRestoreReport{}}
 	report := func(parent string) *spawnRestoreReport {
-		if r := reports[parent]; r != nil {
+		if r := p.reports[parent]; r != nil {
 			return r
 		}
 		r := &spawnRestoreReport{}
-		reports[parent] = r
-		parents = append(parents, parent)
+		p.reports[parent] = r
+		p.parents = append(p.parents, parent)
 		return r
 	}
-
-	type pendingResume struct {
-		rec    spawnRecord
-		host   *Spawner
-		agent  SpawnAgent
-		base   context.Context
-		stop   context.CancelFunc
-		notice string
+	deliver := func(parent, id, msg string) {
+		p.deliveries = append(p.deliveries, func() { s.deliver(parent, id, msg) })
 	}
-	var resumes []pendingResume
 	for _, rec := range recs {
 		if !rec.Running {
 			tr.adopt(rec, false, "completed", func() {})
-			spawnLog.Infof("spawn=%s delivering the result the last process could not", rec.ID)
-			s.deliver(rec.Parent, rec.ID, rec.Result)
+			if rec.Result != "" {
+				spawnLog.Infof("spawn=%s delivering the result the last process could not", rec.ID)
+				deliver(rec.Parent, rec.ID, rec.Result)
+			}
+			// A finished spawn kept for its own spawns (#3163): reports
+			// that were waiting to wake it resume it in RestoreSpawns.
+			if len(rec.Wake) > 0 {
+				p.wakes = append(p.wakes, rec)
+			}
 			continue
 		}
 		label := fmt.Sprintf("%s (%s)", rec.ID, recInfo(rec).Label())
@@ -108,19 +175,21 @@ func (s *Spawner) RestoreSpawns() {
 		if reason != "" {
 			tr.adopt(rec, false, "lost", func() {})
 			spawnLog.Warnf("spawn=%s branch=%s cannot be resumed after restart: %s", rec.ID, rec.BranchKey, reason)
-			// Its app chit was left open by the last process, and no
-			// later run will close it (#3127): end it here.
-			if s.deps.Observer != nil {
-				s.deps.Observer.SpawnEnded(rec.Parent, rec.ID)
-			}
-			if rec.Result != "" {
-				s.deliver(rec.Parent, rec.ID, rec.Result)
-			}
-			// The messages it kept for its spawner head the report, as
-			// they would have headed its result (#2677).
-			s.deliver(rec.Parent, rec.ID, keptMessagesHead(rec.ID, tr.takeKept(rec.Parent, rec.ID))+fmt.Sprintf(
-				"%s was lost in a foci restart and could not be resumed: %s. Its task was:\n\n%s",
-				spawnResultHead(recInfo(rec).Label(), rec.BranchKey, rec.ID), reason, rec.Prompt))
+			p.deliveries = append(p.deliveries, func() {
+				// Its app chit was left open by the last process, and no
+				// later run will close it (#3127): end it here.
+				if s.deps.Observer != nil {
+					s.deps.Observer.SpawnEnded(rec.Parent, rec.ID)
+				}
+				if rec.Result != "" {
+					s.deliver(rec.Parent, rec.ID, rec.Result)
+				}
+				// The messages it kept for its spawner head the report, as
+				// they would have headed its result (#2677).
+				s.deliver(rec.Parent, rec.ID, keptMessagesHead(rec.ID, tr.takeKept(rec.Parent, rec.ID))+fmt.Sprintf(
+					"%s was lost in a foci restart and could not be resumed: %s. Its task was:\n\n%s",
+					spawnResultHead(recInfo(rec).Label(), rec.BranchKey, rec.ID), reason, rec.Prompt))
+			})
 			report(rec.Parent).lost = append(report(rec.Parent).lost, label+": "+reason)
 			continue
 		}
@@ -134,20 +203,21 @@ func (s *Spawner) RestoreSpawns() {
 		base, stop := context.WithCancel(context.Background())
 		tr.adopt(rec, true, "", stop)
 		if rec.Result != "" {
-			s.deliver(rec.Parent, rec.ID, rec.Result)
+			deliver(rec.Parent, rec.ID, rec.Result)
 		}
 		report(rec.Parent).resumed = append(report(rec.Parent).resumed, label)
 		if rec.OneShot != nil {
-			resumes = append(resumes, pendingResume{rec: rec, host: host, base: base, stop: stop})
+			p.resumes = append(p.resumes, pendingResume{rec: rec, host: host, base: base, stop: stop})
 			continue
 		}
-		resumes = append(resumes, pendingResume{rec: rec, host: host, agent: agent, base: base, stop: stop,
+		p.resumes = append(p.resumes, pendingResume{rec: rec, host: host, agent: agent, base: base, stop: stop,
 			notice: host.withSteerNotice(spawnRestartNotice(rec.Prompt))})
 	}
+	return p
+}
 
-	for _, parent := range parents {
-		s.noticeRestore(parent, reports[parent])
-	}
+// startResumes runs the restored spawns' resumes, in order, as slots free up.
+func (s *Spawner) startResumes(resumes []pendingResume) {
 	if len(resumes) == 0 {
 		return
 	}

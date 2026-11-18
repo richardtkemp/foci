@@ -301,6 +301,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	})
 	ag.AskRouter = out.askRouter
 	if out.spawner != nil {
+		ag.SpawnAdopt = out.spawner.AdoptSpawns     // #3163: every agent's, before any SpawnRestore
 		ag.SpawnRestore = out.spawner.RestoreSpawns // #2589: main runs it once the platforms are up
 	}
 	if out.depth != nil {

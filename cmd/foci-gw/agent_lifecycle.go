@@ -234,6 +234,16 @@ func armFirstRun(inst *agentInstance, sessionIndex *session.SessionIndex) {
 // after StartAll; a hot-add runs them for the new agent after its
 // connections start.
 var agentRestorePhases = []func(*agentInstance){
+	// Register every agent's persisted spawns before any agent delivers or
+	// resumes one (#3163): a spawn run as another agent has its record under
+	// its caller's agent and its children's under its own, and a child's
+	// undelivered result must find (and wake) that parent spawn whichever
+	// agent restores first.
+	func(inst *agentInstance) {
+		if a := inst.ag.SpawnAdopt; a != nil {
+			a()
+		}
+	},
 	// Pick up the background spawns the last process left running, or whose
 	// results it could not deliver (#2589). After StartAll (the resumed runs
 	// and deliveries need chats), and before RestoreUndelivered: a resumed

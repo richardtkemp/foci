@@ -1541,6 +1541,7 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, wakeC
 		if a := agLazy(); a != nil {
 			a.AskRouter = out.askRouter
 			if out.spawner != nil {
+				a.SpawnAdopt = out.spawner.AdoptSpawns     // #3163: every agent's, before any SpawnRestore
 				a.SpawnRestore = out.spawner.RestoreSpawns // #2589: main runs it once the platforms are up
 			}
 			if out.depth != nil {

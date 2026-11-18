@@ -136,7 +136,7 @@ func (a *gatedSpawnAgent) HandleMessage(ctx context.Context, _ string, _ []strin
 func TestSpawnRecord_KeepsSpawnerUnattended(t *testing.T) {
 	t.Parallel()
 	ts := &trackedSpawn{info: RunningSpawn{ID: "spawn-1", BranchKey: "test/c1/b1", SpawnerUnattended: true}, running: true}
-	rec := ts.record("test/c1")
+	rec := ts.record("test/c1", false)
 	if rec == nil || !rec.SpawnerUnattended {
 		t.Fatalf("record = %+v, want SpawnerUnattended", rec)
 	}

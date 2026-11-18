@@ -62,6 +62,11 @@ type spawnRecord struct {
 	// saved conversation (oneShotRecord.Conversation, #2984), not by a turn
 	// on a branch; it has no BranchKey. nil for every other spawn.
 	OneShot *oneShotRecord `json:"one_shot,omitempty"`
+	// Wake: what its own spawns sent it after its run ended, in arrival
+	// order, for the run that resumes it (#3163); a new process resumes it
+	// with them. Stopped: it was stopped, so they pass up instead.
+	Wake    []childReport `json:"wake,omitempty"`
+	Stopped bool          `json:"stopped,omitempty"`
 }
 
 // keptRecord is the persisted form of one kept message to the spawner.
@@ -151,9 +156,11 @@ func (t *SpawnTracker) ForgetAgent(agentID string) {
 }
 
 // record is the persisted form of s, or nil when nothing about it must
-// survive a restart (finished, result delivered). Caller holds t.mu.
-func (s *trackedSpawn) record(parent string) *spawnRecord {
-	if !s.running && s.result == "" {
+// survive a restart (finished, result delivered, no reports waiting to wake
+// it). live: its own spawns still run or hold a result for it, so it must
+// stay known for them (#3163). Caller holds t.mu.
+func (s *trackedSpawn) record(parent string, live bool) *spawnRecord {
+	if !s.running && s.result == "" && len(s.wake) == 0 && !live {
 		return nil
 	}
 	return &spawnRecord{
@@ -164,15 +171,34 @@ func (s *trackedSpawn) record(parent string) *spawnRecord {
 		Character: s.info.Character, SpawnModel: s.info.SpawnModel,
 		Agent: s.info.Agent, SpawnerUnattended: s.info.SpawnerUnattended, Depth: s.info.Depth,
 		Kept: keptRecords(s.kept), OneShot: s.oneShot,
+		Wake: slices.Clone(s.wake), Stopped: s.stopped && !s.running,
 	}
 }
 
 // persist writes the spawn's current state to the store, or deletes its row
 // when nothing about it must survive a restart. A no-op without a store.
+// When parent is itself a background spawn's branch, that spawn's row is
+// rewritten too: whether it must stay depends on its spawns (#3163).
 func (t *SpawnTracker) persist(parent, id string) {
 	if t == nil {
 		return
 	}
+	upward := false
+	for range maxPassUp {
+		up, upID, ok := t.persistOne(parent, id, upward)
+		if !ok {
+			return
+		}
+		parent, id, upward = up, upID, true
+	}
+}
+
+// persistOne is persist for one spawn. It returns the spawn whose branch is
+// parent, when there is one and the store is set. upward: the call comes
+// from one of the spawn's own spawns, and leaves alone a spawn whose run has
+// ended and whose result is not recorded yet (reporting): its row stays
+// "running" until then (finishOrNext).
+func (t *SpawnTracker) persistOne(parent, id string, upward bool) (upParent, upID string, up bool) {
 	t.persistMu.Lock()
 	defer t.persistMu.Unlock()
 	t.mu.Lock()
@@ -183,14 +209,28 @@ func (t *SpawnTracker) persist(parent, id string) {
 			// A direct spawn's caller waits for it in this process only;
 			// an API one-shot is the exception (#2979).
 			t.mu.Unlock()
-			return
+			return "", "", false
 		}
-		rec = s.record(parent)
+		if upward && s.reporting {
+			t.mu.Unlock()
+			return "", "", false
+		}
+		rec = s.record(parent, t.liveChildrenLocked(s.info.BranchKey))
+	}
+	if store != nil {
+		upParent, upID, up = t.spawnOfBranchLocked(parent)
 	}
 	t.mu.Unlock()
 	if store == nil {
-		return
+		return "", "", false
 	}
+	t.writeRecord(store, parent, id, rec)
+	return upParent, upID, up
+}
+
+// writeRecord stores rec as parent's spawn id's row, or deletes the row when
+// rec is nil.
+func (t *SpawnTracker) writeRecord(store SpawnStore, parent, id string, rec *spawnRecord) {
 	agentID, key := session.AgentIDFromKey(parent), spawnMetaPrefix+id
 	if rec == nil {
 		if err := store.DeleteAgentMetadata(agentID, key); err != nil {
@@ -291,6 +331,7 @@ func (t *SpawnTracker) adopt(rec spawnRecord, running bool, outcome string, canc
 		cancel: cancel, running: running,
 		prompt: rec.Prompt, resumes: rec.Resumes, result: rec.Result,
 		kept: keptEntries(rec.Kept), oneShot: rec.OneShot,
+		wake: slices.Clone(rec.Wake), stopped: rec.Stopped && !running,
 	}
 	if running {
 		s.resumes++

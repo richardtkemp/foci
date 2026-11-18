@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"foci/internal/delegator"
 )
@@ -134,10 +135,25 @@ func TestBackgroundSpawnDepthRecorded(t *testing.T) {
 	if _, err := start(WithSessionKey(context.Background(), branch2), "bgdepth3"); err == nil || !strings.Contains(err.Error(), "spawn depth limit is 2") {
 		t.Errorf("spawn from the depth-2 branch: err = %v, want refused by the limit", err)
 	}
-	close(agent.gates[0])
+	// The depth-2 spawn's result goes to the depth-1 spawn as its input
+	// (#3163), not to its session: it joins the depth-1 run, which reports
+	// once, to the chat.
 	close(agent.gates[1])
-	h.nextDelivery(t).done(true)
-	h.nextDelivery(t).done(true)
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		if snap, _ := h.tracker.Lookup("test/imain", id1, 0); snap.Pending == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the depth-2 spawn's result never reached the depth-1 spawn's queue")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(agent.gates[0])
+	d := h.nextDelivery(t)
+	if d.session != "test/imain" || !strings.Contains(d.msg, id2) {
+		t.Errorf("delivery to %q = %q, want the depth-1 spawn's result, carrying the depth-2 one, at the chat", d.session, d.msg)
+	}
+	d.done(true)
 }
 
 // TestAPICharacterOneShotGetsNoSpawn proves an API character one-shot is

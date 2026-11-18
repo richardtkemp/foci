@@ -176,9 +176,10 @@ func (s *Spawner) messageFromSpawn(parent, id string, direct bool, from, text st
 		spawnLog.Infof("spawn=%s message to spawner %s kept for its result (%d chars)", id, parent, len(text))
 		return TextResult("Kept: " + keepWhy + ". It will head your result."), nil
 	}
-	origin := spawnOrigin(info, from, text)
-	origin.SteerText = formatSpawnerMessageSteer(info, direct, text)
-	s.deps.Notifier.InjectAgentMessage(owner, formatSpawnerMessage(info, direct, text), "", origin)
+	// A spawner that is itself a background spawn takes the message as its
+	// own input, and is resumed by it when its run has ended; a stopped one
+	// passes it up to its own spawner (#3163). Any other goes as before.
+	s.deliverChild(owner, messageReport(info, direct, from, text))
 	tr.appendLog(parent, id, "to-spawner", text)
 	spawnLog.Infof("spawn=%s message to spawner %s delivered (%d chars)", id, owner, len(text))
 	return TextResult("Sent to your spawner (" + owner + ")."), nil

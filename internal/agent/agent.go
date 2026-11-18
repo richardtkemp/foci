@@ -103,6 +103,7 @@ type Agent struct {
 	Compactor       *compaction.Compactor   // nil disables auto-compaction
 	AsyncNotifier   *tools.AsyncNotifier    // nil disables async-pending compaction guard
 	AskRouter       *tools.AskRouter        // nil disables typed-answer routing for the foci-native `ask` tool
+	SpawnAdopt      func()                  // registers the persisted spawns before any agent's SpawnRestore (#3163, Spawner.AdoptSpawns); nil = the agent has no spawn tool
 	SpawnRestore    func()                  // resumes the spawns a restart interrupted (#2589, Spawner.RestoreSpawns); nil = the agent has no spawn tool
 	DepthRestore    func()                  // rebuilds the depth-mode trees after a restart (#2588, DepthManager.Restore); nil = depth mode off
 	WakeRestore     func()                  // re-arms the foci_remind wakes stored before a restart; an overdue one fires at once, so it runs once the chats are up (#3131); nil = no reminder store

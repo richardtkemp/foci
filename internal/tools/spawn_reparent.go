@@ -59,19 +59,17 @@ func reparentedNote(via string) string {
 // inject hands msg (parent's spawn id's recorded result) to r's owner; the
 // record keeps it until the owner's turn has taken it.
 func (s *Spawner) inject(parent, id, msg string, r SpawnRoute) {
-	tr := s.deps.Tracker
 	text := msg
 	if r.Owner != parent && r.Via != "" {
 		text = reparentedNote(r.Via) + "\n\n" + msg
 		spawnLog.Infof("spawn=%s result for %s delivered to its new owner %s", id, parent, r.Owner)
 	}
-	s.deps.Notifier.InjectToAgentThen(r.Owner, text, "async_notify", func(delivered bool) {
-		if delivered {
-			tr.clearResult(parent, id, msg)
-			return
-		}
-		spawnLog.Infof("spawn=%s result not taken by %s (refused) — kept for the next process", id, r.Owner)
-	})
+	// An owner that is itself a background spawn takes the result as its
+	// own input, and is resumed by it when its run has ended; a stopped one
+	// passes it up to its own owner (#3163).
+	rep := s.resultReport(parent, id, msg)
+	rep.Text = text
+	s.deliverChild(r.Owner, rep)
 }
 
 // ReleaseHeld delivers every held spawn result of this agent whose owner may
@@ -235,7 +233,7 @@ func (t *SpawnTracker) pushResult(parent, id, msg string, hold bool) string {
 		if s.held && s.result != "" && s.result != msg {
 			msg = s.result + reparentedSep + msg
 		}
-		s.result, s.held = msg, hold
+		s.result, s.held, s.reporting = msg, hold, false
 	}
 	t.mu.Unlock()
 	t.persist(parent, id)

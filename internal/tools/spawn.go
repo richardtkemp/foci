@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"foci/internal/config"
@@ -380,6 +381,10 @@ type Spawner struct {
 	deps    SpawnDeps
 	agentFn func() SpawnAgent
 	slots   *spawnSlots
+
+	// restorePlan is what AdoptSpawns found, for RestoreSpawns (#3163).
+	restoreMu   sync.Mutex
+	restorePlan *spawnRestorePlan
 }
 
 // NewSpawner builds the shared state of spawn, spawn_send and spawn_status.
@@ -1682,7 +1687,12 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 			}
 			return s.resultMessage(parent, id, branchKey, stopped, runErr, result, dropped)
 		},
-		Deliver:       func(msg string) { s.deliver(parent, id, msg) },
+		Deliver: func(msg string) {
+			s.deliver(parent, id, msg)
+			// Reports from its own spawns that could not wake it while it
+			// was being stopped, or arrived as it ended, go now (#3163).
+			s.startWake(parent, id)
+		},
 		Cleanup:       s.slots.release,
 		ID:            spawnBackgroundID(running),
 		PendingResult: TextResult(pendingResult),
