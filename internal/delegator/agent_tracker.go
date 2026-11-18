@@ -22,10 +22,23 @@ var (
 // personality that talks to another via send_to_session).
 //
 // All methods are safe for concurrent use.
+//
+// Callbacks (OnRunning, OnStatus) never run with mu held, so a callback may
+// call back into the tracker (#3169: the app's waiting-on-other refresh reads
+// Pending from inside OnRunning, which self-deadlocked when notify ran under
+// mu). A state change bumps gen under mu; flush then delivers the latest state
+// outside mu. Only one goroutine delivers at a time (delivering), so the
+// callbacks see states in order and never run concurrently; a change made
+// while another goroutine delivers is picked up by that deliverer's loop, and
+// the mutator returns without waiting for it.
 type SubagentTracker struct {
 	mu      sync.Mutex
 	pending []TrackedSubagent
 	start   time.Time
+
+	gen        uint64 // bumped by every status change (changedLocked)
+	delivered  uint64 // the gen the callbacks were last given
+	delivering bool   // a goroutine is in flush's delivery loop
 
 	// MaxAge bounds how long a spawn lingers without a completion signal before
 	// pruneLocked drops it. Zero → defaultAgentMaxAge. Set from config at backend
@@ -109,6 +122,7 @@ func (t *SubagentTracker) Add(id, description string) {
 // AddEntry registers a new spawn carrying its kind, model and subagent type.
 // Add is the description-only shorthand. Duplicate IDs are ignored, as in Add.
 func (t *SubagentTracker) AddEntry(e TrackedSubagent) {
+	defer t.flush()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.pruneLocked()
@@ -125,15 +139,21 @@ func (t *SubagentTracker) AddEntry(e TrackedSubagent) {
 	if t.start.IsZero() {
 		t.start = time.Now()
 	}
-	t.notify()
+	t.changedLocked()
 }
 
-// pruneLocked drops agents older than agentMaxAge. Caller holds mu; it does
-// not notify (callers already do around their own mutations).
+// pruneLocked drops agents older than agentMaxAge, recording a status change
+// when it drops any. Caller holds mu and flushes after releasing it.
 func (t *SubagentTracker) pruneLocked() {
 	if len(t.pending) == 0 {
 		return
 	}
+	before := len(t.pending)
+	defer func() {
+		if len(t.pending) != before {
+			t.changedLocked()
+		}
+	}()
 	cutoff := time.Now().Add(-t.maxAge())
 	kept := t.pending[:0]
 	for _, ag := range t.pending {
@@ -160,13 +180,14 @@ func (t *SubagentTracker) SetModel(id, model string) {
 	if model == "" {
 		return
 	}
+	defer t.flush()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for i := range t.pending {
 		if t.pending[i].ID == id {
 			if t.pending[i].Model != model {
 				t.pending[i].Model = model
-				t.notify()
+				t.changedLocked()
 			}
 			return
 		}
@@ -187,26 +208,27 @@ func (t *SubagentTracker) IDsOfKind(kind string) []string {
 	return ids
 }
 
-// NotifyIdle re-sends the "nothing running" status to both callbacks, to clear
-// a stale indicator when the tracker is already empty.
+// NotifyIdle re-sends the current status to both callbacks even though it did
+// not change, to clear a stale indicator when the tracker is already empty
+// (the only state its caller sends it in: nil and ""). It goes through the
+// same ordered delivery as a change, so it cannot overtake a newer state.
 func (t *SubagentTracker) NotifyIdle() {
-	if t.OnRunning != nil {
-		t.OnRunning(nil)
-	}
-	if t.OnStatus != nil {
-		t.OnStatus("")
-	}
+	t.mu.Lock()
+	t.changedLocked()
+	t.mu.Unlock()
+	t.flush()
 }
 
 // Remove marks an agent as completed by its tool_use ID.
 // Returns true if the agent was found and removed.
 func (t *SubagentTracker) Remove(id string) bool {
+	defer t.flush()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for i, ag := range t.pending {
 		if ag.ID == id {
 			t.pending = append(t.pending[:i], t.pending[i+1:]...)
-			t.notify()
+			t.changedLocked()
 			return true
 		}
 	}
@@ -218,6 +240,7 @@ func (t *SubagentTracker) Remove(id string) bool {
 // don't carry the original tool_use ID).
 // Returns true if an agent was removed.
 func (t *SubagentTracker) RemoveOne() bool {
+	defer t.flush()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.pruneLocked()
@@ -225,32 +248,40 @@ func (t *SubagentTracker) RemoveOne() bool {
 		return false
 	}
 	t.pending = t.pending[1:]
-	t.notify()
+	t.changedLocked()
 	return true
 }
 
 // ClearAll removes all pending agents and fires a completion
 // notification if any were pending. Safe to call when already empty.
 func (t *SubagentTracker) ClearAll() {
+	defer t.flush()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if len(t.pending) == 0 {
 		return
 	}
 	t.pending = nil
-	t.notify()
+	t.changedLocked()
 }
 
 // Pending returns the number of agents currently tracked.
+//
+// A read never runs a callback on its caller's goroutine: its callers include
+// the app's waiting-on-other refresh, which holds a per-conversation lock that
+// a callback re-takes (#3169). A prune it makes is delivered on a new
+// goroutine.
 func (t *SubagentTracker) Pending() int {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	before := len(t.pending)
+	before := t.gen
 	t.pruneLocked()
-	if len(t.pending) != before {
-		t.notify()
+	n := len(t.pending)
+	changed := t.gen != before
+	t.mu.Unlock()
+	if changed {
+		go t.flush()
 	}
-	return len(t.pending)
+	return n
 }
 
 // Running returns a snapshot of what is running (nil when nothing is), the same
@@ -272,26 +303,65 @@ func (t *SubagentTracker) runningLocked() []RunningSubagent {
 	return running
 }
 
-// notify sends the current status DETAIL via OnStatus. Must be called with mu
-// held. The detail is the comma-joined running-subagent descriptions (or a
-// count when none carry a description), or "" when nothing is running — so it
-// maps directly onto the app's setSubagentDetail. Human-facing wording
-// ("🔄 …running" / "✅ …complete") is the caller's concern.
-func (t *SubagentTracker) notify() {
+// changedLocked records a status change for the next flush. Caller holds mu.
+func (t *SubagentTracker) changedLocked() {
 	if len(t.pending) == 0 {
 		t.start = time.Time{}
 	}
-	if t.OnRunning != nil {
-		t.OnRunning(t.runningLocked())
-	}
-	if t.OnStatus == nil {
+	t.gen++
+}
+
+// flush delivers the latest status to the callbacks, with mu NOT held: the
+// structured list via OnRunning, then the DETAIL via OnStatus. The detail is
+// the comma-joined running-subagent descriptions (or a count when none carry a
+// description), or "" when nothing is running — so it maps directly onto the
+// app's setSubagentDetail. Human-facing wording ("🔄 …running" / "✅
+// …complete") is the caller's concern.
+//
+// Caller must not hold mu. A no-op when nothing changed since the last
+// delivery, or when another goroutine is delivering: that goroutine re-reads
+// gen after each delivery, so it sends this change too. Each pass snapshots
+// the state under mu, so a callback that changes the tracker (or reads it,
+// pruning) is delivered by the next pass rather than recursively.
+func (t *SubagentTracker) flush() {
+	t.mu.Lock()
+	if t.delivering {
+		t.mu.Unlock()
 		return
 	}
-	descs := make([]string, len(t.pending))
-	for i, ag := range t.pending {
-		descs[i] = ag.Description
+	t.delivering = true
+	t.mu.Unlock()
+	finished := false
+	defer func() {
+		if !finished { // a callback panicked: let the next change deliver
+			t.mu.Lock()
+			t.delivering = false
+			t.mu.Unlock()
+		}
+	}()
+	for {
+		t.mu.Lock()
+		if t.delivered == t.gen {
+			t.delivering = false
+			finished = true
+			t.mu.Unlock()
+			return
+		}
+		t.delivered = t.gen
+		onRunning, onStatus := t.OnRunning, t.OnStatus
+		running := t.runningLocked()
+		descs := make([]string, len(t.pending))
+		for i, ag := range t.pending {
+			descs[i] = ag.Description
+		}
+		t.mu.Unlock()
+		if onRunning != nil {
+			onRunning(running)
+		}
+		if onStatus != nil {
+			onStatus(FormatSubagentDetail(descs))
+		}
 	}
-	t.OnStatus(FormatSubagentDetail(descs))
 }
 
 // FormatSubagentDetail flattens running descriptions into the one-line detail
