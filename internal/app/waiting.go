@@ -69,14 +69,12 @@ func (h *Hub) clock() clock.Clock {
 	return clock.Real()
 }
 
-// waitInputsLocked returns agentID's inputs, or nil when the agent has none
-// (no registered connection, or a handler that is not an agent core). Caller
-// holds h.mu (read or write).
-func (h *Hub) waitInputsLocked(agentID string) waitInputs {
+// waitInputsOf returns the inputs of agentID, whose connection is conn (nil =
+// not registered). It takes no lock.
+func (h *Hub) waitInputsOf(agentID string, conn *appConn) waitInputs {
 	if h.waitInputsFor != nil {
 		return h.waitInputsFor(agentID)
 	}
-	conn := h.agents[agentID]
 	if conn == nil || conn.agentRef == nil {
 		return nil
 	}
@@ -84,10 +82,14 @@ func (h *Hub) waitInputsLocked(agentID string) waitInputs {
 	return in
 }
 
+// waitInputs returns agentID's inputs, or nil when the agent has none (no
+// registered connection, or a handler that is not an agent core). It holds
+// h.mu only for the lookup: the caller calls the inputs with it released.
 func (h *Hub) waitInputs(agentID string) waitInputs {
 	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return h.waitInputsLocked(agentID)
+	conn := h.agents[agentID]
+	h.mu.RUnlock()
+	return h.waitInputsOf(agentID, conn)
 }
 
 // waitSnap is the part of the rule the binding decides from its own state.
@@ -232,15 +234,27 @@ func (h *Hub) waitingOnOther(b *convBinding, now time.Time) bool {
 
 // refreshWaiting re-evaluates b's value and, on a change from what the
 // devices hold, sends a WaitingOnOther frame. A depth leaf's change can move
-// its root's value, so the root is refreshed after it. waitMu serialises the
-// evaluate-and-send per conversation, so two racing refreshes cannot send
-// their values out of order.
+// its root's value, so the root is refreshed after it.
+//
+// The evaluation holds no lock (#3170): it calls into the agent and the
+// reminder store, and one stuck call must not stop the conversation's other
+// refreshes. Two racing refreshes still cannot send out of order: each is
+// numbered when it starts reading, and waitMu applies only an evaluation
+// newer than the last one applied. Every input a later-numbered evaluation
+// reads is read after the earlier one started, so dropping the older one
+// loses nothing.
 func (h *Hub) refreshWaiting(b *convBinding) {
 	if h == nil || b == nil {
 		return
 	}
-	b.waitMu.Lock()
+	seq := b.waitEvalSeq.Add(1)
 	v := h.waitingOnOther(b, h.now())
+	b.waitMu.Lock()
+	if seq < b.waitSentSeq {
+		b.waitMu.Unlock()
+		return // a newer evaluation was applied (and refreshed the root)
+	}
+	b.waitSentSeq = seq
 	b.mu.Lock()
 	changed := v != b.waitingOther
 	b.waitingOther = v
@@ -288,22 +302,24 @@ func (h *Hub) startWaitingSweep() {
 	})
 }
 
-// rosterWaitingLocked computes every conversation's value for a roster
-// build. rs maps a conversation to its pending wake list (the roster already
-// read it). It does not change what the devices are recorded to hold: the
-// roster may go to one socket only, and the others hold the last frame. A
-// conversation whose value moved since that frame is refreshed off the
-// caller's goroutine, so every device gets the change. Caller holds h.mu.
-func (h *Hub) rosterWaitingLocked(rs map[string][]fap.PendingReminder) map[string]bool {
+// rosterWaiting computes every conversation's value for a roster build.
+// bindings and conns are the roster's copy of the hub's maps; rs maps a
+// conversation to its pending wake list (the roster already read it). It
+// does not change what the devices are recorded to hold: the roster may go
+// to one socket only, and the others hold the last frame. A conversation
+// whose value moved since that frame is refreshed off the caller's
+// goroutine, so every device gets the change. Caller must not hold h.mu: the
+// rule calls into the agents (#3170).
+func (h *Hub) rosterWaiting(bindings []*convBinding, conns map[string]*appConn, rs map[string][]fap.PendingReminder) map[string]bool {
 	now := h.now()
-	own := make(map[string]bool, len(h.convs))
-	roots := make(map[string]string, len(h.convs))
-	for id, b := range h.convs {
+	own := make(map[string]bool, len(bindings))
+	roots := make(map[string]string, len(bindings))
+	for _, b := range bindings {
 		b.mu.Lock()
 		s := b.waitSnapLocked()
 		b.mu.Unlock()
-		own[id] = s.busy || ownWaiting(s, rs[id], h.waitInputsLocked(s.agentID), now)
-		roots[id] = s.depthRootID
+		own[b.convID] = s.busy || ownWaiting(s, rs[b.convID], h.waitInputsOf(s.agentID, conns[s.agentID]), now)
+		roots[b.convID] = s.depthRootID
 	}
 	out := make(map[string]bool, len(own))
 	for id, v := range own {
@@ -313,9 +329,9 @@ func (h *Hub) rosterWaitingLocked(rs map[string][]fap.PendingReminder) map[strin
 		}
 	}
 	var moved []*convBinding
-	for id, b := range h.convs {
+	for _, b := range bindings {
 		b.mu.Lock()
-		if b.waitingOther != out[id] {
+		if b.waitingOther != out[b.convID] {
 			moved = append(moved, b)
 		}
 		b.mu.Unlock()

@@ -490,20 +490,26 @@ func (h *Hub) caps() fap.Caps {
 	if h.pusher != nil {
 		c.Push = []string{"fcm"}
 	}
+	// h.mu only copies the connections: streamSetup calls the gateway
+	// (#3170).
 	h.mu.RLock()
+	conns := make([]*appConn, 0, len(h.agents))
 	for _, conn := range h.agents {
+		conns = append(conns, conn)
+	}
+	h.mu.RUnlock()
+	for _, conn := range conns {
 		if voice.STTConfigured(conn.stt) {
 			c.Features = append(c.Features, "voice")
 			break
 		}
 	}
-	for _, conn := range h.agents {
+	for _, conn := range conns {
 		if conn.streamSetup().STT != nil {
 			c.Features = append(c.Features, featureSTTStream)
 			break
 		}
 	}
-	h.mu.RUnlock()
 	if h.deps.SessionIndex != nil {
 		c.Features = append(c.Features, featureSettingsSync)
 	}
@@ -1179,16 +1185,29 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 // agentRosterUsage is agentRoster plus the per-agent usage it carries
 // (#3151), for pushHelloAll's record of what every socket was last sent.
 func (h *Hub) agentRosterUsage() ([]fap.AgentInfo, map[string]*fap.AgentUsage) {
-	// Each agent's allowance (#3151) is read before h.mu is taken: its source
-	// queries the usage history database.
+	// h.mu is held only to copy the hub's maps (#3170). Every value that comes
+	// from an agent, a backend or a store (usage, wake lists, the waiting
+	// value, cache expiry, the command palette, chat metadata) is read after
+	// it is released: on 18 Nov a build stuck in one such call kept the read
+	// lock, a writer queued behind it, and every later reader and new socket
+	// blocked. The cost is a staleness window: a conversation bound, renamed
+	// or dropped while the build runs is reported as it was at the copy, and
+	// the next roster carries the change.
 	h.mu.RLock()
-	usageIDs := append([]string(nil), h.agentOrder...)
-	h.mu.RUnlock()
-	usage := agentUsageFor(usageIDs)
-
-	h.mu.RLock()
-	defer h.mu.RUnlock()
 	order := append([]string(nil), h.agentOrder...)
+	conns := make(map[string]*appConn, len(h.agents))
+	for id, c := range h.agents {
+		conns[id] = c
+	}
+	bindings := make([]*convBinding, 0, len(h.convs))
+	for _, b := range h.convs {
+		bindings = append(bindings, b)
+	}
+	h.mu.RUnlock()
+
+	// Each agent's allowance (#3151): its source queries the usage history
+	// database.
+	usage := agentUsageFor(order)
 	sort.Strings(order)
 
 	// Per-agent default chat (app platform), resolved through memoDefaultChat
@@ -1223,15 +1242,16 @@ func (h *Hub) agentRosterUsage() ([]fap.AgentInfo, map[string]*fap.AgentUsage) {
 	// cache expiry below, so a reconnect after a restart sees the truth. A
 	// depth leaf's conversation carries its own (#2646). Read first: the
 	// waiting-on-other value (#3112) needs every conversation's list.
-	remindersByConv := make(map[string][]fap.PendingReminder, len(h.convs))
-	for id, b := range h.convs {
-		remindersByConv[id] = remindersFor(b.identity())
+	remindersByConv := make(map[string][]fap.PendingReminder, len(bindings))
+	for _, b := range bindings {
+		remindersByConv[b.convID] = remindersFor(b.identity())
 	}
-	waiting := h.rosterWaitingLocked(remindersByConv)
-	for _, b := range h.convs {
+	waiting := h.rosterWaiting(bindings, conns, remindersByConv)
+	for _, b := range bindings {
+		agentID, sk := b.identity()
 		ci := b.info()
 		ci.WaitingOnOther = waiting[b.convID]
-		ci.Title = h.aliasFor(b)
+		ci.Title = h.aliasForChat(agentID, b.chatID)
 		// b.cacheExpiryMs is a push-dedup cache (set by setCacheExpiry on a live
 		// touch) — it does NOT get rehydrated when ensureBinding rebuilds a
 		// binding after a restart, so a session untouched since the last restart
@@ -1241,8 +1261,8 @@ func (h *Hub) agentRosterUsage() ([]fap.AgentInfo, map[string]*fap.AgentUsage) {
 		// this is the only path that feeds hello/roster snapshots (what a
 		// reconnecting client actually sees), so there is nothing to seed at
 		// startup for THIS field.
-		if conn := h.agents[b.agent()]; conn != nil && conn.agentRef != nil {
-			ci.CacheExpiryMs = conn.agentRef.CacheExpiryMs(b.key(), time.Now())
+		if conn := conns[agentID]; conn != nil && conn.agentRef != nil {
+			ci.CacheExpiryMs = conn.agentRef.CacheExpiryMs(sk, time.Now())
 		}
 		// The pending wake list read above becomes the push cache too
 		// (#2602): the device now holds it.
@@ -1251,13 +1271,13 @@ func (h *Hub) agentRosterUsage() ([]fap.AgentInfo, map[string]*fap.AgentUsage) {
 			ci.Reminders = rs
 		}
 		b.noteRemindersAdvertised(rs)
-		if dc := memoDefaultChat(idx, defaultChatByAgent, b.agent()); dc != 0 && dc == b.chatID {
+		if dc := memoDefaultChat(idx, defaultChatByAgent, agentID); dc != 0 && dc == b.chatID {
 			ci.IsDefault = true
 		}
-		if archivedChats(b.agent())[b.chatID] {
+		if archivedChats(agentID)[b.chatID] {
 			ci.Archived = true
 		}
-		byAgent[b.agent()] = append(byAgent[b.agent()], ci)
+		byAgent[agentID] = append(byAgent[agentID], ci)
 	}
 	out := make([]fap.AgentInfo, 0, len(order))
 	for _, id := range order {
@@ -1269,7 +1289,7 @@ func (h *Hub) agentRosterUsage() ([]fap.AgentInfo, map[string]*fap.AgentUsage) {
 			ID: id, Name: name, Avatar: emoji,
 			AvatarURL: avatarURL, AvatarVer: avatarVer,
 			Conversations: convs,
-			Commands:      commandInfos(h.agents[id]),
+			Commands:      commandInfos(conns[id]),
 			Usage:         usage[id],
 		})
 	}
@@ -1298,9 +1318,9 @@ func memoDefaultChat(idx *session.SessionIndex, defaultChats map[string]int64, a
 // backend/transport and its default model), with no session in context. The app
 // shows it only until a conversation's own Commands frame arrives (#898: it used
 // to list every non-hidden command, so a cold-started client offered commands
-// the agent could not run). Lock-free — the caller (agentRoster) already holds
-// h.mu, and a Registry's command set is populated once at startup and never
-// mutated. Returns nil for a connection with no registry (e.g. bare test agents),
+// the agent could not run). Called with h.mu released (#3170): command
+// availability can consult the agent. A Registry's command set is populated
+// once at startup and never mutated. Returns nil for a connection with no registry (e.g. bare test agents),
 // which JSON-omits the field.
 func commandInfos(conn *appConn) []fap.CommandInfo {
 	if conn == nil || conn.commands == nil {
@@ -2783,10 +2803,16 @@ type convBinding struct {
 	// (the hub sets Hub.refreshWaiting). waitingOther is the value the
 	// devices hold (the last WaitingOnOther frame; false before any).
 	// commandSeenMs is when each background command with no start time of
-	// its own was first seen. waitMu serialises a refresh's evaluate-and-send.
-	// waitingOther and commandSeenMs are guarded by mu.
+	// its own was first seen. waitingOther and commandSeenMs are guarded by
+	// mu. A refresh evaluates with no lock held (#3170): the rule calls into
+	// the agent. waitEvalSeq numbers each evaluation at its start; waitMu
+	// serialises the compare-and-send, and waitSentSeq (guarded by waitMu)
+	// is the number of the last evaluation applied, so an evaluation that
+	// started before it is dropped instead of overwriting a newer value.
 	onActivityChange func(b *convBinding)
+	waitEvalSeq      atomic.Uint64
 	waitMu           sync.Mutex
+	waitSentSeq      uint64
 	waitingOther     bool
 	commandSeenMs    map[string]int64
 }

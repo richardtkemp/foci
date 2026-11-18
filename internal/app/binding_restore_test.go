@@ -370,7 +370,10 @@ func TestConvBindingFieldCensus(t *testing.T) {
 		// until a frame is sent; the roster on hello computes the truth and the
 		// sweep sends any change. commandSeenMs belongs to running background
 		// commands, which the backend re-reports; waitMu is a lock.
+		// waitEvalSeq/waitSentSeq (#3170) order one process's refreshes; a
+		// fresh binding starts both at zero.
 		"waitMu": true, "waitingOther": true, "commandSeenMs": true,
+		"waitEvalSeq": true, "waitSentSeq": true,
 	}
 
 	rt := reflect.TypeOf(convBinding{})
