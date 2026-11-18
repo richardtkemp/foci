@@ -2101,6 +2101,15 @@ app branch with no conversation returns none, so the walk moves on. A redirected
 carries `originNote`'s "From session …" line. A session whose platform confines replies
 (Slack) is offered only its own chat.
 
+The bust's own WARN line (`logCacheReport`) logs under `ledger/<agent>`, not `ledger`
+(#3161). `registerCacheAlert` also stores the agent's `cache_bust_notify` gate in
+`cacheBustGates`, and `pushLogWarning` skips every chat warning queue for a
+`ledger/<agent>` line whose gate is off (`cacheBustChatMuted`, read live). Without it the
+WARN reached chat as `[system diagnostics]` through the generic warn hook, which pushes
+every WARN to every agent, whatever the key said. The agent warning queues still get the
+line. With the key on, a bust reaches chat twice: the alert, and the diagnostics WARN
+when `inject_chat_warnings` includes warnings (not ruled).
+
 **Direct API adapter** (`apicall.go`, the backend switched in P2). `APIResponse.Call()`
 makes one response one call: `backend='api'`, key = `<kind>:<session>@<start nanos>`,
 prefixed `<provider response id>@` when the response has one. The provider id alone is not

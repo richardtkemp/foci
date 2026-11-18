@@ -105,15 +105,10 @@ func initLogging(cfg *config.Config, processStart time.Time) func() {
 	// what its request should have read (#2930): a bust at WARN, an expiry
 	// (the TTL ran out) at INFO. Each line names the session, the expected and
 	// actual read, the rewrite's cost and the likely cause. A bust is also
-	// posted to a chat by its agent's sink (#2933, cache_alert.go).
-	accounting.CacheReportHook = func(r accounting.CacheReport) {
-		if r.Class == accounting.CacheClassBust {
-			ledgerLog.Warnf("%s", r)
-			dispatchCacheAlert(r)
-			return
-		}
-		ledgerLog.Infof("%s", r)
-	}
+	// posted to a chat by its agent's sink (#2933, cache_alert.go). A bust
+	// logs under "ledger/<agent>" so the warning hook can keep a muted agent's
+	// bust out of chat (#3161).
+	accounting.CacheReportHook = logCacheReport
 	cleanups = append(cleanups, func() { accounting.CacheReportHook = nil })
 
 	// The cost ledger (#2111) in api.db. Opening a pre-ledger api.db migrates

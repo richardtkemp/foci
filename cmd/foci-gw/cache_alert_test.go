@@ -120,8 +120,8 @@ func TestCacheAlert_Disabled(t *testing.T) {
 // Only a bust reaches a sink, and only its own agent's; an expiry does not.
 func TestCacheAlert_DispatchFilters(t *testing.T) {
 	got := make(chan accounting.CacheReport, 4)
-	registerCacheAlert("alertagent", func(r accounting.CacheReport) { got <- r })
-	t.Cleanup(func() { registerCacheAlert("alertagent", nil) })
+	registerCacheAlert("alertagent", func(r accounting.CacheReport) { got <- r }, nil)
+	t.Cleanup(func() { registerCacheAlert("alertagent", nil, nil) })
 
 	bust := bustReport("alertagent/c1")
 	bust.AgentID = ""

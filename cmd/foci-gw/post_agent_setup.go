@@ -73,12 +73,17 @@ func (h *warningHook) install() {
 // "relogin/<agent>") go only to agents on that login (#3014): those hold them
 // while it is pending and drop them when it succeeds (periodic_setup.go). An
 // agent on another backend is not held by the login and cannot act on them.
+// A cache bust of an agent whose [notify] cache_bust_notify is off reaches no
+// chat queue (#3161); it still reaches the agent queues.
 func pushLogWarning(ag *agent.Agent, level log.Level, component, msg string) {
 	if !ag.UsesCCLogin() && isReloginComponent(component) {
 		return
 	}
 	if w := ag.Warnings(); w != nil {
 		w.Push(level.String(), component, msg)
+	}
+	if cacheBustChatMuted(component) {
+		return
 	}
 	if w := ag.ChatWarnings(); w != nil {
 		w.Push(level.String(), component, msg)

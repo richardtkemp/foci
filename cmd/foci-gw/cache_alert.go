@@ -36,16 +36,80 @@ import (
 // is process-wide (one hook); the sinks are per agent.
 var cacheAlerts sync.Map // agentID -> func(accounting.CacheReport)
 
-// registerCacheAlert installs (or, with a nil sink, removes) agentID's sink.
-func registerCacheAlert(agentID string, sink func(accounting.CacheReport)) {
+// cacheBustGates maps an agent id to its live [notify] cache_bust_notify gate.
+// The log warning hook reads it to keep a muted agent's bust WARN out of every
+// chat warning queue (#3161).
+var cacheBustGates sync.Map // agentID -> func() bool
+
+// registerCacheAlert installs (or, with a nil sink, removes) agentID's sink and
+// its enabled gate. A nil enabled means always on.
+func registerCacheAlert(agentID string, sink func(accounting.CacheReport), enabled func() bool) {
 	if agentID == "" {
 		return
 	}
 	if sink == nil {
 		cacheAlerts.Delete(agentID)
+		cacheBustGates.Delete(agentID)
 		return
 	}
 	cacheAlerts.Store(agentID, sink)
+	if enabled == nil {
+		cacheBustGates.Delete(agentID)
+	} else {
+		cacheBustGates.Store(agentID, enabled)
+	}
+}
+
+// cacheBustLogBase is the ledger's log component; a bust logs under
+// "ledger/<agent>".
+const cacheBustLogBase = "ledger"
+
+// cacheBustLogComponent is the log component of a bust's WARN: "ledger/<agent>",
+// so the warning hook can tell whose bust a line is (the "relogin/<agent>"
+// pattern). A report with no agent logs under plain "ledger".
+func cacheBustLogComponent(r accounting.CacheReport) string {
+	agentID := cacheReportAgent(r)
+	if agentID == "" {
+		return cacheBustLogBase
+	}
+	return cacheBustLogBase + "/" + agentID
+}
+
+// logCacheReport logs one cache report: a bust at WARN under its agent's
+// component, an expiry at INFO under "ledger". A bust is then handed to its
+// agent's chat alert sink.
+func logCacheReport(r accounting.CacheReport) {
+	if r.Class == accounting.CacheClassBust {
+		log.NewComponentLogger(cacheBustLogComponent(r)).Warnf("%s", r)
+		dispatchCacheAlert(r)
+		return
+	}
+	ledgerLog.Infof("%s", r)
+}
+
+// cacheBustChatMuted reports whether a log line is a cache bust of an agent
+// whose [notify] cache_bust_notify is off (read live at each line). Such a line
+// must not reach any chat as a [system diagnostics] warning (#3161): the key
+// means none of the agent's busts produce a chat message by any path.
+func cacheBustChatMuted(component string) bool {
+	agentID, ok := strings.CutPrefix(component, cacheBustLogBase+"/")
+	if !ok || agentID == "" {
+		return false
+	}
+	v, ok := cacheBustGates.Load(agentID)
+	if !ok {
+		return false
+	}
+	return !v.(func() bool)()
+}
+
+// cacheReportAgent is the agent a report belongs to: its AgentID, else the
+// session key's agent.
+func cacheReportAgent(r accounting.CacheReport) string {
+	if r.AgentID != "" {
+		return r.AgentID
+	}
+	return session.AgentIDFromKey(r.Session)
 }
 
 // dispatchCacheAlert hands a bust to its agent's sink. The cache report hook
@@ -65,11 +129,7 @@ func cacheAlertSinkFor(r accounting.CacheReport) (func(accounting.CacheReport), 
 	if r.Class != accounting.CacheClassBust {
 		return nil, false
 	}
-	agentID := r.AgentID
-	if agentID == "" {
-		agentID = session.AgentIDFromKey(r.Session)
-	}
-	v, ok := cacheAlerts.Load(agentID)
+	v, ok := cacheAlerts.Load(cacheReportAgent(r))
 	if !ok {
 		return nil, false
 	}
