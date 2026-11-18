@@ -54,3 +54,6 @@ foci's own startup label (`internal/startup/diagnosis.go`, from proof-of-life ti
 **Order** for "why did it restart": 1. `uptime` (host reboot?) 2. foci binary mtime (`stat -c %y $(which foci)`: deploy?) 3. journal stop reason 4. foci's startup label, last and cross-checked.
 
 **Goroutine count:** a step-up on an active session *plateaus* until the driving activity ends (a live quiz, a build). That is not a leak.
+
+## Hung gateway (process alive, nothing responds)
+Dump goroutines before any restart: POST `{"enabled":true}` to `/-/pprof`, then GET `/debug/pprof/goroutine?debug=2` (localhost, `Authorization: Bearer` the `[http] api_key` secret). Find goroutines blocked many minutes on one lock. No visible holder? Read each waiter's full stack: a re-entrant Lock makes the holder one of the waiters.
