@@ -139,7 +139,7 @@ func (a *Agent) tryEvictInbox(inb *sessionInbox) bool {
 	inb.pendMu.Lock()
 	queued := len(inb.pending)
 	inb.pendMu.Unlock()
-	if queued > 0 {
+	if queued > 0 || inb.overflowLen() > 0 {
 		return false
 	}
 	if !inb.evictMu.TryLock() {

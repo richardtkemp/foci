@@ -516,6 +516,13 @@ type sessionInbox struct {
 	enqSeq      atomic.Uint64
 	stopThrough atomic.Uint64
 
+	// overflow holds SkipHolds injections that found ch full, in arrival
+	// order; pumping says pumpOverflow is moving them onto ch (#3163,
+	// inbox_overflow.go). Both under overflowMu.
+	overflowMu sync.Mutex
+	overflow   []Envelope
+	pumping    bool
+
 	// Idle eviction (#2283, inbox_evict.go). evictMu is read-locked by an
 	// Enqueue from finding this inbox until it has written to it (pinInbox),
 	// and write-locked (TryLock only) by tryEvictInbox, which sets evicted
@@ -1166,13 +1173,9 @@ func (a *Agent) enqueueInjection(inb *sessionInbox, env Envelope, reloginHold bo
 	// Numbered in the same series as user messages, so a release can keep
 	// held injections and held user messages in arrival order (#3121).
 	env.enqSeq = inb.enqSeq.Add(1)
-	select {
-	case inb.ch <- env:
-		return true
-	default:
-		a.logger().Warnf("inbox: queue full for sk=%s, dropping injection trigger=%s", env.SessionKey, env.Inject.Trigger)
-		return false
-	}
+	// A SkipHolds injection that finds the channel full waits in the
+	// overflow list instead of being dropped (#3163, inbox_overflow.go).
+	return a.sendInjection(inb, env)
 }
 
 // steerToBackend folds env into the backend's in-flight turn
