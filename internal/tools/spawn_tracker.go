@@ -683,21 +683,23 @@ func (t *SpawnTracker) addDirect(parent string, s RunningSpawn, cancel context.C
 //
 // An API one-shot's persisted record (#2979) is forgotten here, unless foci
 // is shutting down and the run did not complete: then it stays, for the next
-// process to resume it. Its conversation file stays either way (#2984).
-func (t *SpawnTracker) endDirect(parent, id, outcome, detail string) (stoppedBy string, kept []SpawnLogEntry) {
+// process to resume it, and resumes is true: the resumed run delivers its
+// result and kept messages (#3168: so a late report must not). Its
+// conversation file stays either way (#2984).
+func (t *SpawnTracker) endDirect(parent, id, outcome, detail string) (stoppedBy string, kept []SpawnLogEntry, resumes bool) {
 	if t == nil {
-		return "", nil
+		return "", nil, false
 	}
 	t.mu.Lock()
 	s := t.spawns[parent][id]
 	if s == nil {
 		t.mu.Unlock()
-		return "", nil
+		return "", nil, false
 	}
 	if s.oneShot != nil {
-		cut := outcome != "completed" && !s.stopped &&
+		resumes = outcome != "completed" && !s.stopped &&
 			(t.shuttingDown || t.stopping[session.AgentIDFromAnyKey(parent)])
-		if !cut {
+		if !resumes {
 			defer t.persist(parent, id)
 		}
 	}
@@ -718,12 +720,12 @@ func (t *SpawnTracker) endDirect(parent, id, outcome, detail string) (stoppedBy 
 	}
 	t.pruneFinished(parent)
 	if !s.stopped {
-		return "", kept
+		return "", kept, resumes
 	}
 	if s.stoppedBy == "" {
-		return "the user", kept
+		return "the user", kept, resumes
 	}
-	return s.stoppedBy, kept
+	return s.stoppedBy, kept, resumes
 }
 
 // stoppedBySpawnStop is stoppedBy for spawn_stop.

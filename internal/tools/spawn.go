@@ -755,7 +755,7 @@ func (s *Spawner) runDirect(ctx context.Context, host *Spawner, mode, name, prom
 	// Its send_to_spawner finds it through this (#2662).
 	runCtx = withSpawnLink(runCtx, spawnLink{s: s, parent: parent, id: info.ID, info: info})
 	tee := &spawnTextSink{BufferSink: turnevent.NewBufferSink(), obs: obs, tracker: tr, parent: parent, id: info.ID}
-	res, err := s.awaitDirectRun(runCtx, info.ID, tee, run)
+	res, later, err := s.awaitDirectRun(runCtx, info.ID, tee, run)
 	outcome, detail := "completed", ""
 	switch {
 	case err != nil:
@@ -766,16 +766,28 @@ func (s *Spawner) runDirect(ctx context.Context, host *Spawner, mode, name, prom
 			obs.SpawnText(parent, info.ID, res.Text)
 		}
 	}
-	by, kept := tr.endDirect(parent, info.ID, outcome, detail)
+	by, kept, resumes := tr.endDirect(parent, info.ID, outcome, detail)
 	if obs != nil {
 		obs.SpawnEnded(parent, info.ID)
 	}
 	head := keptMessagesHead(info.ID, kept)
 	if by != "" {
+		// Stopped (spawn_stop, /stop): its kept messages and output go
+		// only to a caller still waiting, never late (Dick 2026-11-18,
+		// #3168: "Drop on stop").
 		return ToolResult{}, fmt.Errorf("%sspawn %s was stopped by %s before it finished", head, info.ID, by)
 	}
-	if err == nil && ctx.Err() != nil {
-		// The call itself ended (its caller is gone): nothing to return to.
+	if ctx.Err() != nil {
+		// The call itself ended (its caller is gone): nobody reads what it
+		// returns, so the spawn's kept messages and result go to its
+		// spawner as a late report (#3168), unless a restart resumes it
+		// and delivers them itself.
+		if !resumes {
+			s.deliverLateDirect(parent, info, kept, res, err, tee, later)
+		}
+		if err != nil {
+			return ToolResult{}, err
+		}
 		return ToolResult{}, ctx.Err()
 	}
 	if err != nil {
@@ -794,12 +806,10 @@ func (s *Spawner) runDirect(ctx context.Context, host *Spawner, mode, name, prom
 // backend whose close left its turn open) must not leave the spawn 'running'
 // for good, with spawn_stop saying it is not: past the grace the spawn ends,
 // failed, and the run is left to finish alone, its later output detached from
-// the spawn's entry.
-func (s *Spawner) awaitDirectRun(runCtx context.Context, id string, tee *spawnTextSink, run func(context.Context) (ToolResult, error)) (ToolResult, error) {
-	type ended struct {
-		res ToolResult
-		err error
-	}
+// the spawn's entry. later is then the channel its end arrives on (nil when
+// the run ended in time), for a late report (#3168).
+func (s *Spawner) awaitDirectRun(runCtx context.Context, id string, tee *spawnTextSink, run func(context.Context) (ToolResult, error)) (ToolResult, <-chan directRunEnd, error) {
+	type ended = directRunEnd
 	done := make(chan ended, 1)
 	started := time.Now()
 	go func() {
@@ -812,7 +822,7 @@ func (s *Spawner) awaitDirectRun(runCtx context.Context, id string, tee *spawnTe
 	}()
 	select {
 	case r := <-done:
-		return r.res, r.err
+		return r.res, nil, r.err
 	case <-runCtx.Done():
 	}
 	grace := s.directEndGrace
@@ -823,13 +833,19 @@ func (s *Spawner) awaitDirectRun(runCtx context.Context, id string, tee *spawnTe
 	defer t.Stop()
 	select {
 	case r := <-done:
-		return r.res, r.err
+		return r.res, nil, r.err
 	case <-t.C:
 	}
 	tee.detached.Store(true)
 	spawnLog.Warnf("direct spawn=%s: its run did not end within %s of being cancelled (%v); marking the spawn ended without it",
 		id, grace, context.Cause(runCtx))
-	return ToolResult{}, fmt.Errorf("its run did not end within %s of being cancelled (%v)", grace, context.Cause(runCtx))
+	return ToolResult{}, done, fmt.Errorf("its run did not end within %s of being cancelled (%v)", grace, context.Cause(runCtx))
+}
+
+// directRunEnd is how a direct spawn's run ended.
+type directRunEnd struct {
+	res ToolResult
+	err error
 }
 
 // inSpawnTempDir runs a raw spawn in a fresh temp dir and appends a list of
