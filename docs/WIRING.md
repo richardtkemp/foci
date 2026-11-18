@@ -3483,6 +3483,17 @@ of order. `agentRosterUsage` holds `h.mu` only to copy `agentOrder`, `agents` an
 palette and chat metadata are read after the release. A binding added or
 renamed during a build shows in the next roster.
 
+**Hub lock watchdog (`lockwatch.go`, #3171).** `StartAll` starts
+`startLockWatchdog` (once per hub, only with a gateway context; stops with it).
+Every 10s it probes `h.mu` with a read lock in its own goroutine (a read lock
+blocks as soon as a writer waits, the 18 Nov cascade). A probe not granted
+within 20s logs one WARN `app hub lock not granted for …` naming a full
+goroutine dump (`pprof` goroutine, debug=2) written to `hang-<UTC>.txt` in the
+event log's directory (the temp dir with no config). While that probe stays
+blocked no new probe starts and nothing more is logged; when it is granted, one
+INFO `app hub lock granted again after …`. No config: the thresholds are the
+constants `hubLockProbeInterval` and `hubLockStuckAfter`.
+
 **Push (`push.go`, slice 5):** offline wake via FCM v1 data-messages. `fcmPusher`
 authenticates with a service-account token source (`golang.org/x/oauth2/google`,
 auto-refreshing). `newFCMPusherForApp` resolves the credential in priority
