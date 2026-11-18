@@ -1,8 +1,14 @@
 package browser
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"runtime/debug"
 	"strings"
 	"testing"
+
+	"foci/internal/tools"
 
 	"github.com/go-rod/rod"
 )
@@ -147,4 +153,121 @@ func TestSnapshotHTMLContentType(t *testing.T) {
 	if !strings.Contains(result.Text, "```yaml") {
 		t.Errorf("expected ```yaml code block for HTML content type, got:\n%s", result.Text)
 	}
+}
+
+// navigateNoPanic runs a navigate through the tool and turns a panic into a
+// test failure, so a regression reports here instead of killing the binary.
+func navigateNoPanic(t *testing.T, tool *tools.Tool, url string) string {
+	t.Helper()
+	var text string
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("navigate panicked: %v", r)
+			}
+		}()
+		result, err := tool.Execute(t.Context(), marshalParams(t, map[string]any{"action": "navigate", "url": url}))
+		if err != nil {
+			t.Fatalf("navigate: %v", err)
+		}
+		text = result.Text
+	}()
+	return text
+}
+
+func TestSnapshotDocumentlessIframeDoesNotFailNavigate(t *testing.T) {
+	// #3164: an iframe the snapshot lists, but that has no content document by
+	// the time its frame is captured, made rod's getJSCtxID dereference a nil
+	// ContentDocument and failed the whole navigate. The page below moves the
+	// iframe into a document with no browsing context as soon as the snapshot
+	// stamps it: it stays isConnected (so the ref still resolves) but has no
+	// document. The rest of the page must be returned and the frame marked.
+	t.Parallel()
+	srv := testHTMLServer(t, `<html><head><title>Parent</title></head><body>
+		<h1>Outer Heading</h1>
+		<iframe id="f" srcdoc="<button>Inside Frame</button>"></iframe>
+		<button>Outer Button</button>
+		<script>
+		const f = document.getElementById("f");
+		new MutationObserver(() => {
+			if (f.ownerDocument === document) {
+				document.implementation.createHTMLDocument("").body.appendChild(f);
+			}
+		}).observe(f, {attributes: true, attributeFilter: ["data-foci-ref"]});
+		</script></body></html>`)
+
+	text := navigateNoPanic(t, NewBrowserTool(sharedBrowserManager(t)), srv.URL)
+
+	for _, want := range []string{"Outer Heading", "Outer Button", unreadableFrameMarker} {
+		if !strings.Contains(text, want) {
+			t.Errorf("snapshot missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "Inside Frame") {
+		t.Errorf("documentless iframe content captured, want it marked unreadable:\n%s", text)
+	}
+}
+
+func TestSnapshotSameOriginIframeIsCaptured(t *testing.T) {
+	// Positive control for #3164: a same-origin iframe's content is still inlined.
+	t.Parallel()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/child", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<html><body><button>Inside Frame</button></body></html>`)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<html><body><h1>Outer Heading</h1><iframe src="/child" title="same"></iframe></body></html>`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	tool := NewBrowserTool(sharedBrowserManager(t))
+	text := navigateNoPanic(t, tool, srv.URL)
+
+	if !strings.Contains(text, "Inside Frame") {
+		t.Errorf("same-origin iframe content not captured:\n%s", text)
+	}
+	if strings.Contains(text, unreadableFrameMarker) {
+		t.Errorf("same-origin iframe marked unreadable:\n%s", text)
+	}
+}
+
+func TestCaptureDetachedChildFrameReturnsError(t *testing.T) {
+	// #3164 reproduction: an iframe element with no content document (here, one
+	// removed from the DOM after its frame page was taken, as when a page drops
+	// an iframe during load). rod's getJSCtxID dereferences the nil
+	// ContentDocument; capturing that frame must return an error, not panic.
+	t.Parallel()
+	srv := testHTMLServer(t, `<html><body><iframe id="f" srcdoc="<button>Inside</button>"></iframe></body></html>`)
+	mgr := sharedBrowserManager(t)
+	navigateNoPanic(t, NewBrowserTool(mgr), srv.URL)
+	page, err := mgr.getPage()
+	if err != nil {
+		t.Fatalf("getPage: %v", err)
+	}
+	iframe, err := page.Element("#f")
+	if err != nil {
+		t.Fatalf("find iframe: %v", err)
+	}
+	child, err := iframe.Frame()
+	if err != nil {
+		t.Fatalf("iframe.Frame: %v", err)
+	}
+	if _, err := page.Eval(`() => document.getElementById("f").remove()`); err != nil {
+		t.Fatalf("remove iframe: %v", err)
+	}
+
+	snap := &Snapshot{frames: []*rod.Page{page}}
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("capturing a detached child frame panicked: %v\n%s", r, debug.Stack())
+			}
+		}()
+		if _, err := snap.captureWithFrames(child); err == nil {
+			t.Fatal("capturing a detached child frame succeeded, want an error")
+		}
+	}()
 }

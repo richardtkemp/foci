@@ -13,6 +13,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// unreadableFrameMarker stands in for an iframe's content when it cannot be
+// captured, so the rest of the page's snapshot is still returned.
+const unreadableFrameMarker = "<could not capture iframe snapshot>"
+
 // Snapshot holds the result of an accessibility tree capture, including
 // frame registry for cross-frame ref resolution.
 type Snapshot struct {
@@ -91,7 +95,18 @@ func snapshotLang(page *rod.Page, yamlBytes []byte) string {
 
 // captureWithFrames injects JS into the page, runs the ARIA snapshot,
 // unmarshals the YAML, and walks the tree to handle iframes.
-func (s *Snapshot) captureWithFrames(page *rod.Page) (*yaml.Node, error) {
+//
+// A panic inside rod is returned as an error (#3164): rod v0.116.2's
+// Page.getJSCtxID dereferences the iframe's ContentDocument without a nil
+// check, and an iframe can lose its document (removed from the DOM, or its
+// browsing context torn down) between walk's readability check and the eval
+// here. The caller then marks only that frame unreadable.
+func (s *Snapshot) captureWithFrames(page *rod.Page) (doc *yaml.Node, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			doc, err = nil, fmt.Errorf("capture frame: rod panicked: %v", r)
+		}
+	}()
 	s.frames = append(s.frames, page)
 	frameIndex := len(s.frames) - 1
 
@@ -168,12 +183,19 @@ func (s *Snapshot) walk(node *yaml.Node, frameIndex int, frame *rod.Page) (*yaml
 						Kind: yaml.MappingNode,
 						Content: []*yaml.Node{
 							{Kind: yaml.ScalarNode, Value: node.Value},
-							{Kind: yaml.ScalarNode, Value: "<could not capture iframe snapshot>"},
+							{Kind: yaml.ScalarNode, Value: unreadableFrameMarker},
 						},
 					}
 
 					childFrameEle, err := queryEleByAria(frame, ref)
 					if err != nil {
+						return pairNode, nil
+					}
+
+					// rod reads an iframe's JS context through its
+					// ContentDocument, which is nil when the iframe has no
+					// document (#3164): skip such a frame up front.
+					if !frameHasDocument(childFrameEle) {
 						return pairNode, nil
 					}
 
@@ -198,6 +220,16 @@ func (s *Snapshot) walk(node *yaml.Node, frameIndex int, frame *rod.Page) (*yaml
 	}
 
 	return node, nil
+}
+
+// frameHasDocument reports whether an iframe element has a content document
+// that rod can resolve. It is false for an iframe with no browsing context
+// (removed from the DOM, or moved into a document that has none). An
+// out-of-process iframe should also report no ContentDocument, but rod
+// launches Chrome with site-per-process disabled and none has been observed.
+func frameHasDocument(iframe *rod.Element) bool {
+	node, err := iframe.Describe(1, true)
+	return err == nil && node.ContentDocument != nil
 }
 
 // queryEleByAria finds an element on a page by its ARIA snapshot ref.
