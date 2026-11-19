@@ -296,12 +296,16 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 	case "commandExecution":
 		if se != nil && se.OnToolEnd != nil {
 			isError := item.Status == "failed"
-			se.OnToolEnd(item.ID, "bash", "", isError)
+			output := ""
+			if item.AggregatedOutput != nil {
+				output = *item.AggregatedOutput
+			}
+			se.OnToolEnd(item.ID, "bash", output, isError)
 		}
 
 	case "fileChange":
 		if se != nil && se.OnToolEnd != nil {
-			se.OnToolEnd(item.ID, "edit", "", item.Status == "failed")
+			se.OnToolEnd(item.ID, "edit", fileChangeOutput(item), item.Status == "failed")
 		}
 
 	case "mcpToolCall":
@@ -363,6 +367,37 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 			se.OnToolEnd(item.ID, item.Type, "", item.Status == "failed")
 		}
 	}
+}
+
+// fileChangeOutput is a completed fileChange item's result text: per change,
+// its kind and path, then for "add" the new file's content and for "update"
+// the unified diff (codex's FileUpdateChange.diff). A deleted file's content
+// is left out: it is gone, not written. A change that was not applied
+// (status failed, declined or still in progress) has no output, so its text
+// never reads as written (the own-material index, #3185, takes tool output
+// as lines the session wrote or read).
+func fileChangeOutput(item itemEnvelope) string {
+	if item.Status != "completed" {
+		return ""
+	}
+	var b strings.Builder
+	for _, c := range item.Changes {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		kind := c.Kind.Type
+		if kind == "" {
+			kind = "change"
+		}
+		fmt.Fprintf(&b, "%s %s\n", kind, c.Path)
+		if kind != "delete" && c.Diff != "" {
+			b.WriteString(c.Diff)
+			if !strings.HasSuffix(c.Diff, "\n") {
+				b.WriteString("\n")
+			}
+		}
+	}
+	return b.String()
 }
 
 // itemSuccess returns true if a dynamic tool call succeeded.

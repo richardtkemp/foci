@@ -75,3 +75,16 @@ func TestHashLine_TrimsSpace(t *testing.T) {
 		t.Fatal("different lines share a hash")
 	}
 }
+
+// A unified diff's added line counts without its "+" (a codex fileChange
+// result, #3185); the "+++" header and removed lines do not.
+func TestExtractLines_UnifiedDiffAddedLines(t *testing.T) {
+	diff := "update /w/memory/a.md\n--- a/memory/a.md\n+++ b/memory/a.md/with/a/long/enough/path/to/pass/forty\n@@ -1,2 +1,3 @@\n # A\n+" + noteLine + "\n-- an old line that was removed from the file today\n"
+	got := ExtractLines(diff)
+	if !has(got, noteLine) {
+		t.Fatalf("%q lacks the added line", got)
+	}
+	if has(got, "/w/memory/a.md/with/a/long/enough/path/to/pass/forty") || has(got, "- an old line that was removed from the file today") {
+		t.Fatalf("header or removed line taken as written: %q", got)
+	}
+}

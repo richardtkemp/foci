@@ -32,8 +32,9 @@ var quoted = regexp.MustCompile(`"((?:[^"\\]|\\.)*)"|'([^']*)'`)
 // is JSON (a tool's input: a Bash command with its heredoc, an Edit's
 // new_string, a Write's content), else from text itself (a tool result, a
 // codex command line). A quoted string of MinLineRunes or more inside a line
-// is added as well (an `echo "…" >>` write). Order is kept, duplicates are
-// not removed.
+// is added as well (an `echo "…" >>` write), and so is a unified diff's added
+// line without its "+" (a codex fileChange result). Order is kept,
+// duplicates are not removed.
 func ExtractLines(text string) []string {
 	if len(text) > maxTextBytes {
 		text = text[:maxTextBytes]
@@ -45,6 +46,13 @@ func ExtractLines(text string) []string {
 				return out
 			}
 			l = strings.TrimSpace(l)
+			// A unified diff's added line ("+text", not the "+++ path"
+			// header) wrote "text": a codex fileChange result is the diff.
+			if strings.HasPrefix(l, "+") && !strings.HasPrefix(l, "+++") {
+				if a := strings.TrimSpace(l[1:]); utf8.RuneCountInString(a) >= MinLineRunes {
+					out = append(out, a)
+				}
+			}
 			if utf8.RuneCountInString(l) < MinLineRunes {
 				continue
 			}

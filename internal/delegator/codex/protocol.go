@@ -407,8 +407,12 @@ type itemEnvelope struct {
 	ID     string `json:"id"`
 	Status string `json:"status,omitempty"`
 	Text   string `json:"text,omitempty"`
-	// commandExecution fields
-	Command string `json:"command,omitempty"`
+	// commandExecution fields. AggregatedOutput is "the command's output,
+	// aggregated from stdout and stderr" (string|null in the codex-cli
+	// 0.145.0 generated schema, CommandExecutionThreadItem); set on
+	// item/completed.
+	Command          string  `json:"command,omitempty"`
+	AggregatedOutput *string `json:"aggregatedOutput,omitempty"`
 	// fileChange fields
 	Changes []fileChangeEntry `json:"changes,omitempty"`
 	// mcpToolCall / dynamicToolCall fields
@@ -431,10 +435,14 @@ type itemEnvelope struct {
 }
 
 // fileChangeEntry is one file change in a fileChange item's changes array
-// (codex FileUpdateChange).
+// (codex FileUpdateChange). Diff is required in the schema: codex fills it
+// (app-server-protocol item_builders.rs format_file_change_diff) with the new
+// file's content for "add", the removed file's content for "delete", and the
+// unified diff for "update".
 type fileChangeEntry struct {
 	Path string          `json:"path,omitempty"`
 	Kind patchChangeKind `json:"kind"`
+	Diff string          `json:"diff,omitempty"`
 }
 
 // patchChangeKind is codex's PatchChangeKind: an object, not a string
