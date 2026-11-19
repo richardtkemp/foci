@@ -145,6 +145,7 @@ var globalSections = map[string]reflect.Type{
 	"tools":            reflect.TypeOf(ToolsConfig{}),
 	"browser":          reflect.TypeOf(BrowserConfig{}),
 	"depth":            reflect.TypeOf(DepthConfig{}),
+	"jit_memory":       reflect.TypeOf(JITMemoryConfig{}),
 	"keepalive":        reflect.TypeOf(KeepaliveConfig{}),
 	"background":       reflect.TypeOf(BackgroundConfig{}),
 	"reflection":       reflect.TypeOf(ReflectionConfig{}),

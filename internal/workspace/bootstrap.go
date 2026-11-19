@@ -127,6 +127,17 @@ func (b *Bootstrap) SectionSizes() []SectionSize {
 	return sizes
 }
 
+// FilePaths returns the absolute paths of the files the system prompt is
+// built from, in order, whether or not each exists (#3175: JIT memory never
+// offers the agent a note from one of them).
+func (b *Bootstrap) FilePaths() []string {
+	out := make([]string, 0, len(b.fileOrder))
+	for _, name := range b.fileOrder {
+		out = append(out, filepath.Join(b.dir, name))
+	}
+	return out
+}
+
 // Reload re-reads workspace files from disk. Call after compaction or session reset.
 func (b *Bootstrap) Reload() {
 	blocks, names := b.loadFromDisk()

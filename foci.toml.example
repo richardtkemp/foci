@@ -363,6 +363,10 @@ system_files = [
 # [agents.depth]
 # enabled = true
 
+# Per-agent JIT memory override (#3175):
+# [agents.jit_memory]
+# enabled = true
+
 # Per-agent reflection pass (memory + skill formation):
 # [agents.reflection]
 # interval_enabled = true
@@ -761,6 +765,25 @@ bind = "127.0.0.1"
 # ─── Depth mode (experimental, #2588) ─────────────────────────────────
 # [depth]
 # enabled = false                        # foci_depth_* tools: fan an app chat out into leaves answered in a feed
+
+# ─── JIT memory (#3175) ───────────────────────────────────────────────
+# Search the agent's memory on each chat message; the fast summary model
+# (platforms.app.pin_summary_model) writes queries and judges the hits; the
+# relevant notes are given to the agent. Invisible to the user. Every run is
+# logged to <data>/jit_memory.db.
+# [jit_memory]
+# enabled = false
+# skip_chars = 10                        # shorter messages are not searched
+# context_chars = 80                     # shorter messages are searched with earlier messages as context
+# context_messages = 4                   # how many earlier messages (both sides)
+# top_n = 5                              # hits per query given to the judge
+# wait = "3s"                            # how long a user message waits; a later result goes as for agent messages
+# dedupe_compactions = 3                 # a section judged once in a session is not judged again for this many compactions
+# inject_max_chars = 3000                # cap on one message's injected notes
+# section_max_chars = 1200               # cap on one hit's section
+# query_strategy = "both"                # raw | model | both
+# query_model = ""                       # default pin_summary_model
+# judge_model = ""                       # default pin_summary_model
 
 # ─── Resources ────────────────────────────────────────────────────────
 # [resources]

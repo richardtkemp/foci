@@ -113,6 +113,9 @@ func (s *loggingSink) Emit(ctx context.Context, ev turnevent.Event) {
 	case turnevent.TextBlock:
 		if e.Phase == turnevent.PhaseIntermediate && e.Text != "" {
 			s.record(e.Text, "", "", 0)
+			if s.turnKind == "" {
+				s.a.jitOnAgentMessage(ctx, s.sk, e.Text) // #3175
+			}
 		}
 	case turnevent.SubagentStart:
 		s.record(subagentPromptText(e.Label, e.Prompt), convo.ContentTypeSubagentPrompt, e.GroupKey, e.RunIndex)

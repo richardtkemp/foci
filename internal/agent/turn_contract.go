@@ -445,6 +445,9 @@ func (s *sharedTurnOps) LogConversationSent(ts *TurnState) {
 		Text:      ts.FinalText,
 		Session:   ts.SessionKey,
 	})
+	// The API transport's final reply (#3175); the delegated transport's
+	// text reaches jitOnAgentMessage through the logging sink.
+	s.agent.jitOnAgentMessage(ts.Ctx, ts.SessionKey, ts.FinalText)
 }
 
 // TouchActivityPost fires OnActivity callbacks after the turn completes.

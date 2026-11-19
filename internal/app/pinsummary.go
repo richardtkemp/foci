@@ -454,6 +454,13 @@ type summaryAsk struct {
 	// id). On a dispatched endpoint (#3019) a waiting call of the same task
 	// and chat is replaced by a newer one (dispatchKey).
 	chat string
+	// model, when set, replaces the target's model for this call (the JIT
+	// memory query and judge models, #3175); the endpoint stays the
+	// target's.
+	model string
+	// report, when set, receives the served model, endpoint, token counts
+	// and duration of a successful call (#3175's evaluation log).
+	report *FastCallReport
 }
 
 // dispatchTier is the priority of a's calls on a local endpoint (#3019): the
@@ -517,6 +524,9 @@ func summaryWordsOK(summary string, maxWords int) bool {
 // where the call is booked in the cost ledger ("" = no session).
 func (s *pinSummariser) ask(ctx context.Context, a summaryAsk, text, session, agentID string) (string, error) {
 	t := s.target(a.use)
+	if a.model != "" && !t.off() {
+		t.model = a.model
+	}
 	if t.off() {
 		return "", nil
 	}
@@ -631,6 +641,10 @@ func (s *pinSummariser) ask(ctx context.Context, a summaryAsk, text, session, ag
 	appLog.Infof("%s: session=%s model=%s endpoint=%s input=%d output=%d finish=%s duration=%s in_flight_at_start=%d",
 		a.what, session, served, t.endpoint, out.Usage.PromptTokens, out.Usage.CompletionTokens, out.Choices[0].FinishReason, duration.Round(time.Millisecond), ahead)
 	bookSummary(a.what, out, served, t.endpoint, session, agentID, start, duration)
+	if a.report != nil {
+		*a.report = FastCallReport{Model: served, Endpoint: t.endpoint, InputTokens: out.Usage.PromptTokens,
+			OutputTokens: out.Usage.CompletionTokens, Duration: duration}
+	}
 
 	if a.raw {
 		answer := strings.TrimSpace(stripThinkingPreamble(out.Choices[0].Message.Content))

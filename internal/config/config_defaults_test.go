@@ -444,7 +444,7 @@ func TestExampleConfigKeysValid(t *testing.T) {
 	for _, sec := range []string{"notify", "display", "nudge", "voice", "behavior",
 		"system", "sessions", "tools", "debug", "environment", "browser", "keepalive",
 		"background", "reflection", "scheduler", "maintenance", "groups",
-		"permissions", "memory"} {
+		"permissions", "memory", "jit_memory"} {
 		mounts = append(mounts, []string{sec + ".", "agents." + sec + "."})
 	}
 	documented := func(key string) bool {

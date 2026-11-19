@@ -500,6 +500,7 @@ type AgentConfig struct {
 	Environment EnvironmentConfig     `toml:"environment"` // overrides from [environment]
 	Browser     BrowserConfig         `toml:"browser"`     // overrides from [browser]
 	Depth       DepthConfig           `toml:"depth"`       // overrides from [depth]
+	JITMemory   JITMemoryConfig       `toml:"jit_memory"`  // overrides from [jit_memory]
 	Keepalive   KeepaliveConfig       `toml:"keepalive"`   // overrides from [keepalive]
 	Background  BackgroundConfig      `toml:"background"`  // overrides from [background]
 	Reflection  ReflectionConfig      `toml:"reflection"`  // overrides from [reflection]
@@ -1471,6 +1472,26 @@ type DepthConfig struct {
 	Enabled *bool `toml:"enabled" default:"false" hot:"turn" desc:"Give the agent the depth-mode tools (foci_depth_fanout and friends), which fan an app conversation out into leaf branches that you work through one at a time inside it. Needs the app platform and a backend that can branch"`
 }
 
+// JITMemoryConfig is just-in-time memory search (#3175): on each chat message
+// (the user's, and the agent's on a backend that steers mid-turn) foci searches
+// the agent's memory, the fast-summary model judges the hits, and the relevant
+// ones are given to the agent. Global: [jit_memory]; per agent:
+// [agents.jit_memory]. Every key applies at the next message.
+type JITMemoryConfig struct {
+	Enabled           *bool   `toml:"enabled"            default:"false" hot:"turn" desc:"Search the agent's memory on each chat message and give the agent the notes the fast summary model judges relevant: attached to a user message, or sent to the agent after one of its own messages (only on a backend that can take a message mid-turn). Invisible to the user. Every run is logged to jit_memory.db"`
+	SkipChars         *int    `toml:"skip_chars"         default:"10"    hot:"turn" min:"0" desc:"A message shorter than this many characters is not searched (default 10)"`
+	ContextChars      *int    `toml:"context_chars"      default:"80"    hot:"turn" min:"0" desc:"A message shorter than this many characters is searched with the messages before it (context_messages of them, from both sides) as context (default 80)"`
+	ContextMessages   *int    `toml:"context_messages"   default:"4"     hot:"turn" min:"0" desc:"How many earlier messages a short message is searched with (default 4)"`
+	TopN              *int    `toml:"top_n"              default:"5"     hot:"turn" min:"1" desc:"How many hits of each query go to the judge (default 5)"`
+	Wait              *string `toml:"wait"               default:"3s"    hot:"turn" type:"duration" desc:"How long a user message waits for the result before it goes to the agent alone; a later result is sent to the agent as for its own messages (default 3s)"`
+	DedupeCompactions *int    `toml:"dedupe_compactions" default:"3"     hot:"turn" min:"0" desc:"A memory section already sent to the judge in a session is not sent again until this many compactions of the session have passed (default 3)"`
+	InjectMaxChars    *int    `toml:"inject_max_chars"   default:"3000"  hot:"turn" min:"200" desc:"The most characters one message's injected notes carry (default 3000)"`
+	SectionMaxChars   *int    `toml:"section_max_chars"  default:"1200"  hot:"turn" min:"100" desc:"The most characters of the section around one hit, as the judge sees it and as it is injected (default 1200)"`
+	QueryStrategy     *string `toml:"query_strategy"     default:"both"  hot:"turn" choices:"raw,model,both" desc:"What is searched: raw (the message itself), model (1 to 3 keyword queries the query model writes) or both, hits merged (default both)"`
+	QueryModel        *string `toml:"query_model"                        hot:"turn" desc:"Model that writes the search queries, on platforms.app.pin_summary_endpoint (default: pin_summary_model)"`
+	JudgeModel        *string `toml:"judge_model"                        hot:"turn" desc:"Model that judges which hits are relevant, on platforms.app.pin_summary_endpoint (default: pin_summary_model)"`
+}
+
 type ToolsConfig struct {
 	SummaryConfig // global summary/tool-result defaults (resolved via Merge with per-agent)
 	ToolConfig    // global tool behavioral defaults (resolved via Merge with per-agent)
@@ -1761,6 +1782,7 @@ type Config struct {
 	Tools              ToolsConfig               `toml:"tools"`
 	Browser            BrowserConfig             `toml:"browser"`
 	Depth              DepthConfig               `toml:"depth"`
+	JITMemory          JITMemoryConfig           `toml:"jit_memory"`
 	Keepalive          KeepaliveConfig           `toml:"keepalive"`
 	Background         BackgroundConfig          `toml:"background"`
 	Reflection         ReflectionConfig          `toml:"reflection"`

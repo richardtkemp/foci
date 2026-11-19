@@ -527,6 +527,47 @@ func resolveDepth(m DepthConfig) ResolvedDepth {
 	return ResolvedDepth{Enabled: DerefBool(m.Enabled)}
 }
 
+// ResolvedJITMemory is the resolved [jit_memory] section (#3175). Wait is
+// the parsed duration (3s when unset or unparsable).
+type ResolvedJITMemory struct {
+	Enabled           bool
+	SkipChars         int
+	ContextChars      int
+	ContextMessages   int
+	TopN              int
+	Wait              time.Duration
+	DedupeCompactions int
+	InjectMaxChars    int
+	SectionMaxChars   int
+	QueryStrategy     string
+	QueryModel        string
+	JudgeModel        string
+}
+
+// DefaultJITMemoryWait is [jit_memory] wait's default.
+const DefaultJITMemoryWait = 3 * time.Second
+
+func resolveJITMemory(m JITMemoryConfig) ResolvedJITMemory {
+	wait := DefaultJITMemoryWait
+	if d, err := time.ParseDuration(DerefStr(m.Wait)); err == nil && d >= 0 {
+		wait = d
+	}
+	return ResolvedJITMemory{
+		Enabled:           DerefBool(m.Enabled),
+		SkipChars:         intOr(m.SkipChars, 10),
+		ContextChars:      intOr(m.ContextChars, 80),
+		ContextMessages:   intOr(m.ContextMessages, 4),
+		TopN:              positiveOr(m.TopN, 5),
+		Wait:              wait,
+		DedupeCompactions: intOr(m.DedupeCompactions, 3),
+		InjectMaxChars:    positiveOr(m.InjectMaxChars, 3000),
+		SectionMaxChars:   positiveOr(m.SectionMaxChars, 1200),
+		QueryStrategy:     jitQueryStrategy(DerefStr(m.QueryStrategy)),
+		QueryModel:        DerefStr(m.QueryModel),
+		JudgeModel:        DerefStr(m.JudgeModel),
+	}
+}
+
 type ResolvedBrowser struct {
 	Enabled        bool
 	Headless       bool
@@ -655,4 +696,22 @@ func resolvePermissions(agent, global PermissionsConfig) ResolvedPermissions {
 		AutoApproveCommonReadonly:  commonReadonly,
 		AutoApproveCommonSafeWrite: commonSafeWrite,
 	}
+}
+
+// intOr is *p, or def when p is nil.
+func intOr(p *int, def int) int {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
+// jitQueryStrategy normalises [jit_memory] query_strategy: raw, model or
+// both; anything else (unset included) is both.
+func jitQueryStrategy(s string) string {
+	switch s {
+	case "raw", "model":
+		return s
+	}
+	return "both"
 }

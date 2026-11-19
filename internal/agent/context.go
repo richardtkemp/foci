@@ -276,7 +276,10 @@ func typingAllowedFor(ctx context.Context, trigger string) bool {
 //   - scheduled_wake: a foci_remind wake and the compaction wake
 //     (compactionWakeTrigger);
 //   - compaction-resume: the nudge that resumes the work a compaction cut
-//     when no compaction wake follows (#845).
+//     when no compaction wake follows (#845);
+//   - jit_memory: memory notes foci found for a chat message (#3175). Its
+//     turn delivers to the chat like the turn it follows; it must not hide
+//     that chat's flow from the user, so user input steers into it.
 //
 // A turn under one of these is a work turn only while its output reaches the
 // session's chat (isWorkTurn): the reply_to=caller target turn, whose output
@@ -287,6 +290,7 @@ var workTurnTriggers = map[string]bool{
 	"depth_results":     true,
 	"scheduled_wake":    true,
 	"compaction-resume": true,
+	TriggerJITMemory:    true,
 }
 
 // isWorkTurn reports whether ts is a work turn (workTurnTriggers): a system
@@ -554,6 +558,7 @@ func nudgesAllowed(ts *TurnState) bool {
 //   - wake: a self-scheduled wakeup (remind wake=true)
 //   - background: a periodic self-maintenance tick (keepalive/reflection/consolidation)
 //   - memory: a memory-maintenance write (post-compaction, session-end)
+//   - jit-memory: memory notes foci found for a chat message (#3175)
 //   - system: a system-initiated notification (restart changelog, proactive warning)
 //   - tmux: tmux watch inactivity detection
 //   - async: async tool result (shell, http_request, etc.)
@@ -592,6 +597,8 @@ func triggerToPlatform(trigger string) string {
 		return "memory"
 	case "restart", "proactive_warning":
 		return "system"
+	case TriggerJITMemory:
+		return "jit-memory"
 	default:
 		return "cron"
 	}

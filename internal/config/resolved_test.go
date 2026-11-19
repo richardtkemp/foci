@@ -442,3 +442,22 @@ func TestResolve_StayBusyWaitThreshold(t *testing.T) {
 		t.Fatalf("unparseable: %s, want the 1h default", got)
 	}
 }
+
+// #3175: [jit_memory] defaults, the agent override and the query strategy.
+func TestResolve_JITMemory(t *testing.T) {
+	r := resolveJITMemory(JITMemoryConfig{})
+	if r.Enabled || r.SkipChars != 10 || r.ContextChars != 80 || r.ContextMessages != 4 || r.TopN != 5 ||
+		r.Wait != DefaultJITMemoryWait || r.DedupeCompactions != 3 || r.InjectMaxChars != 3000 ||
+		r.SectionMaxChars != 1200 || r.QueryStrategy != "both" || r.QueryModel != "" || r.JudgeModel != "" {
+		t.Fatalf("defaults = %+v", r)
+	}
+	cfg := &Config{JITMemory: JITMemoryConfig{Enabled: Ptr(true), Wait: Ptr("5s"), QueryStrategy: Ptr("raw")}}
+	acfg := AgentConfig{JITMemory: JITMemoryConfig{Enabled: Ptr(false), JudgeModel: Ptr("x/y")}}
+	got := Resolve(cfg, acfg).JITMemory
+	if got.Enabled || got.Wait != 5*time.Second || got.QueryStrategy != "raw" || got.JudgeModel != "x/y" {
+		t.Fatalf("resolved = %+v", got)
+	}
+	if s := resolveJITMemory(JITMemoryConfig{QueryStrategy: Ptr("bogus")}).QueryStrategy; s != "both" {
+		t.Fatalf("bogus strategy resolved to %q", s)
+	}
+}

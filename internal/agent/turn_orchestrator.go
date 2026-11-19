@@ -107,6 +107,10 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	if err := tc.CheckStaleContext(ts); err != nil {
 		return "", err
 	}
+	// JIT memory (#3175): a user message's search starts now and is waited
+	// for (at most [jit_memory] wait) after the prompt is composed.
+	jitP := a.startUserJIT(ts)
+	defer jitP.abandon()
 
 	// Phase 1b: Logging & tracking
 	tc.LogConversationRecv(ts)
@@ -149,6 +153,7 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	}
 	tc.BuildSystemAndTools(ts)
 	tc.InjectNudges(ts)
+	a.attachUserJIT(ts, jitP)
 	a.traceInput(ctx, ts)
 
 	// Phase 3: Execution

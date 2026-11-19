@@ -422,6 +422,7 @@ func setupPlatformConnections(
 	}
 
 	wireAgentPlatformCallbacks(ag, acfg, p.resolvedLive, p.connMgr, p.sessionIndex)
+	wireJITMemory(ag, p)
 
 	return result
 }

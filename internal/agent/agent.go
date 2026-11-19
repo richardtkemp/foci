@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"foci/internal/jitmemory"
 	"foci/internal/usagehold"
 	"strings"
 	"sync"
@@ -159,6 +160,8 @@ type Agent struct {
 	MaxOutputTokens               int                                     // max tokens in model response (default 16384)
 	Nudger                        *nudge.Scheduler                        // nil disables nudge reminders; pre-answer gate/min-tools live in its settings
 	NudgeReloadFunc               func()                                  // called after bootstrap reload to refresh nudge rules; nil disables
+	JIT                           *jitmemory.Engine                       // JIT memory search (#3175); nil = not wired. Gated per message by LiveConfigFn().JITMemory.Enabled
+	JITDeliverFn                  func(sessionKey, text string)           // sends a JIT memory result to the agent as a SkipHolds injection (trigger jit_memory); nil = agent-side results are dropped
 	FirstRunMessage               atomic.Value                            // string; prepended as separate content block on first HandleMessage, then cleared
 	OnFirstRunConsumed            func()                                  // fired once when FirstRunMessage is actually consumed into a delivered turn (nil disables); marks onboarding complete
 	FirstRunAddendum              func() string                           // called once, on the consume that wins FirstRunMessage; a non-empty result is appended to the onboarding text (the install's one-time import, #3049). nil disables

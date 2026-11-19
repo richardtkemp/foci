@@ -323,6 +323,19 @@ var (
 		// #2603: the depth tools' live gate reads LiveConfig().Depth.Enabled;
 		// an off→on edit restores the trees (getDepth's OnChange).
 		"depth.enabled", "agent.depth.enabled",
+		// #3175: JIT memory reads LiveConfig().JITMemory at each message.
+		"jit_memory.enabled", "agent.jit_memory.enabled",
+		"jit_memory.skip_chars", "agent.jit_memory.skip_chars",
+		"jit_memory.context_chars", "agent.jit_memory.context_chars",
+		"jit_memory.context_messages", "agent.jit_memory.context_messages",
+		"jit_memory.top_n", "agent.jit_memory.top_n",
+		"jit_memory.wait", "agent.jit_memory.wait",
+		"jit_memory.dedupe_compactions", "agent.jit_memory.dedupe_compactions",
+		"jit_memory.inject_max_chars", "agent.jit_memory.inject_max_chars",
+		"jit_memory.section_max_chars", "agent.jit_memory.section_max_chars",
+		"jit_memory.query_strategy", "agent.jit_memory.query_strategy",
+		"jit_memory.query_model", "agent.jit_memory.query_model",
+		"jit_memory.judge_model", "agent.jit_memory.judge_model",
 	}
 
 	liveApplyWarningAddrs = []string{

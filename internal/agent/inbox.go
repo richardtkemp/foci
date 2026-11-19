@@ -1209,6 +1209,9 @@ func (a *Agent) steerToBackend(be delegator.Delegator, env Envelope) bool {
 		if userInput {
 			a.noteUserInputDelivered(env.SessionKey)
 		}
+		if env.Inject == nil && !env.Automated {
+			a.jitOnSteeredUserMessage(env.SessionKey, env.Text) // #3175
+		}
 		a.reportDelivery(env.SessionKey, envRefs(env), DeliverySteered, a.LiveTurnID(env.SessionKey))
 		// The sender's text as a turn records it (attributedText), not
 		// inj.Text: a fresh turn's recv row holds what the sender wrote, not
