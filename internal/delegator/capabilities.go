@@ -39,6 +39,7 @@ const (
 	CapPostToolNudge Capability = iota
 	CapPreAnswerNudge
 	CapStreaming
+	CapToolIO
 
 	// Runtime control (ControlSender) and its per-request sub-capabilities.
 	CapControl
@@ -126,6 +127,9 @@ type CapabilityInfo struct {
 	Iface reflect.Type
 	// Requires lists capabilities that a Yes for this one implies.
 	Requires []Capability
+	// AllowsPartial: a backend may declare it Partial(reason) as well as Yes,
+	// No or NotApplicable. Only a KindBehaviour capability can.
+	AllowsPartial bool
 }
 
 func ifaceOf[T any]() reflect.Type { return reflect.TypeFor[T]() }
@@ -136,6 +140,7 @@ var capabilityTable = [numCapabilities]CapabilityInfo{
 	CapPostToolNudge:  {Name: "post_tool_nudge", Kind: KindBehaviour, Doc: "calls TurnEvents.PostToolNudgeFunc after each tool and injects what it returns (every_n_tools, after_error, tool_pattern nudges)"},
 	CapPreAnswerNudge: {Name: "pre_answer_nudge", Kind: KindBehaviour, Doc: "calls TurnEvents.PreAnswerNudgeFunc at the final answer and re-dispatches the turn with what it returns (pre_answer nudges)"},
 	CapStreaming:      {Name: "streaming", Kind: KindBehaviour, Doc: "emits SessionEvents.OnTextDelta/OnThinkingDelta during a turn (live stream_output)"},
+	CapToolIO:         {Name: "tool_io", Kind: KindBehaviour, AllowsPartial: true, Doc: "reports every tool's full input (SessionEvents.OnToolStart; OnSubagentTool for a subagent's tools) and full output (OnToolEnd), for its own and its subagents' tools; the own-material index of the memory search reads them (#3185, #3187). Partial: some of it is missing (the reason says what)"},
 
 	CapControl:               {Name: "control", Kind: KindInterface, Iface: ifaceOf[ControlSender](), Doc: "accepts runtime control requests (ControlSender)"},
 	CapControlModel:          {Name: "control_model", Kind: KindBehaviour, Requires: []Capability{CapControl}, Doc: "applies a SetModelRequest mid-session"},
@@ -222,14 +227,17 @@ const (
 	Supported
 	Unsupported
 	NotApplicableState
+	// PartialState: supported in part; Reason says what is missing. Only a
+	// capability whose row AllowsPartial can be declared so.
+	PartialState
 )
 
 // Support is one capability declaration. Build it with Yes, No or
 // NotApplicable; the zero value is "undeclared", which Validate rejects.
 type Support struct {
 	state SupportState
-	// Reason says why a No or NotApplicable holds. Required for both: it is
-	// rendered into docs/BACKENDS.md.
+	// Reason says why a No, NotApplicable or Partial holds. Required for
+	// all three: it is rendered into docs/BACKENDS.md.
 	Reason string
 }
 
@@ -242,6 +250,11 @@ func No(reason string) Support { return Support{state: Unsupported, Reason: reas
 // NotApplicable declares the capability meaningless for this backend, with
 // the reason. Supports reports false, as for No.
 func NotApplicable(reason string) Support { return Support{state: NotApplicableState, Reason: reason} }
+
+// Partial declares the capability supported in part, with what is missing.
+// Supports reports false, as for No; valid only for a capability whose row
+// AllowsPartial.
+func Partial(reason string) Support { return Support{state: PartialState, Reason: reason} }
 
 // State returns the declaration's verdict.
 func (s Support) State() SupportState { return s.state }
@@ -399,11 +412,22 @@ func (s Spec) Validate() error {
 		sup := s.Caps[c]
 		switch sup.state {
 		case Undeclared:
-			bad("does not declare capability %s: add Yes(), No(reason) or NotApplicable(reason) to its Spec.Caps", c)
+			if info.AllowsPartial {
+				bad("does not declare capability %s: add Yes(), Partial(reason), No(reason) or NotApplicable(reason) to its Spec.Caps", c)
+			} else {
+				bad("does not declare capability %s: add Yes(), No(reason) or NotApplicable(reason) to its Spec.Caps", c)
+			}
 			continue
 		case Unsupported, NotApplicableState:
 			if sup.Reason == "" {
 				bad("declares %s unsupported without a reason", c)
+			}
+		case PartialState:
+			if !info.AllowsPartial {
+				bad("declares %s partial, which only a capability whose row AllowsPartial can be", c)
+			}
+			if sup.Reason == "" {
+				bad("declares %s partial without saying what is missing", c)
 			}
 		}
 		yes := sup.state == Supported

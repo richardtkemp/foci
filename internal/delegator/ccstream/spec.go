@@ -45,6 +45,7 @@ var spec = delegator.Spec{
 		delegator.CapPostToolNudge:  delegator.Yes(),
 		delegator.CapPreAnswerNudge: delegator.Yes(),
 		delegator.CapStreaming:      delegator.Yes(),
+		delegator.CapToolIO:         delegator.Partial("a subagent's tool results are not reported (its PostToolUse hook carries an agent_id and is dropped before OnToolEnd); its tool inputs are (OnSubagentTool), and the main thread's inputs and results are in full"),
 
 		delegator.CapControl:               delegator.Yes(),
 		delegator.CapControlModel:          delegator.Yes(),

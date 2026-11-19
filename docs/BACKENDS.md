@@ -138,6 +138,7 @@ Every delegated backend declares every capability in its `delegator.Spec` (`inte
 | `post_tool_nudge` | calls TurnEvents.PostToolNudgeFunc after each tool and injects what it returns (every_n_tools, after_error, tool_pattern nudges) | ✓ | ✗ | ✗ |
 | `pre_answer_nudge` | calls TurnEvents.PreAnswerNudgeFunc at the final answer and re-dispatches the turn with what it returns (pre_answer nudges) | ✓ | ✗ | ✓ |
 | `streaming` | emits SessionEvents.OnTextDelta/OnThinkingDelta during a turn (live stream_output) | ✓ | ✓ | ✓ |
+| `tool_io` | reports every tool's full input (SessionEvents.OnToolStart; OnSubagentTool for a subagent's tools) and full output (OnToolEnd), for its own and its subagents' tools; the own-material index of the memory search reads them (#3185, #3187). Partial: some of it is missing (the reason says what) | partial | partial | partial |
 | `control` | accepts runtime control requests (ControlSender) | ✓ | ✓ | ✓ |
 | `control_model` | applies a SetModelRequest mid-session | ✓ | ✓ | ✓ |
 | `control_effort` | applies an effort change (ApplyFlagSettingsRequest effortLevel) | ✓ | ✓ | ✗ |
@@ -187,6 +188,7 @@ Why not:
 
 - `post_tool_nudge`: codex: no mid-turn injection point is wired for the app-server; opencode: opencode exposes no per-tool point to inject a nudge at.
 - `pre_answer_nudge`: codex: no mid-turn injection point is wired for the app-server.
+- `tool_io`: claude-code (partial): a subagent's tool results are not reported (its PostToolUse hook carries an agent_id and is dropped before OnToolEnd); its tool inputs are (OnSubagentTool), and the main thread's inputs and results are in full; codex (partial): MCP and dynamic tool arguments are cut to 200 bytes and their results, and web search results, are not reported; an edit's input is its paths only (its result carries the diff); subagent tools are not reported; opencode (partial): a subagent's (task tool's) tools are not reported: a child session's events give only its text.
 - `control_effort`: opencode: opencode has no effort setting; SendControl accepts and ignores the request.
 - `thinking_control`: claude-code: the session thinking setting is read only by the API transport; codex: the session thinking setting is read only by the API transport; opencode: the session thinking setting is read only by the API transport.
 - `model_resolve`: claude-code: CC resolves model aliases itself; opencode: model names pass through to opencode unresolved.

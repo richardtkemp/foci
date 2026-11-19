@@ -137,6 +137,18 @@ func (x *Index) genLocked(family string) int {
 	return g
 }
 
+// NoteToolIO logs, once at startup, that agentID's backend does not report
+// every tool's full input and output (its tool_io capability is level,
+// "partial" or "no", #3187 Q127): the index holds only part of that agent's
+// own material, so a memory hit it wrote by an unreported tool still reads
+// as not its own. Nil-safe.
+func (x *Index) NoteToolIO(agentID, backend, level, reason string) {
+	if x == nil {
+		return
+	}
+	ownLog.Infof("agent=%s backend=%s tool_io=%s: the own-material index sees only part of this agent's tools (%s)", agentID, backend, level, reason)
+}
+
 // Observe records the lines of one tool input or result of sessionKey (see
 // ExtractLines) under its family's current compaction count. Nil-safe; never
 // blocks: when the writer is far behind the lines are dropped (one WARN per

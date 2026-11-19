@@ -50,6 +50,8 @@ func TestCapabilityTableComplete(t *testing.T) {
 			t.Errorf("%s: KindInterface needs an interface Iface, got %v", c, info.Iface)
 		case info.Kind != KindInterface && info.Iface != nil:
 			t.Errorf("%s: only KindInterface rows carry an Iface", c)
+		case info.AllowsPartial && info.Kind != KindBehaviour:
+			t.Errorf("%s: only a KindBehaviour row can allow Partial", c)
 		}
 	}
 }
@@ -68,6 +70,9 @@ func TestSpecValidate_FailArms(t *testing.T) {
 		want   string
 	}{
 		{"undeclared capability", func(s *Spec) { delete(s.Caps, CapStreaming) }, "does not declare capability streaming"},
+		{"undeclared tool_io", func(s *Spec) { delete(s.Caps, CapToolIO) }, "does not declare capability tool_io"},
+		{"partial without a reason", func(s *Spec) { s.Caps[CapToolIO] = Partial("") }, "declares tool_io partial without saying what is missing"},
+		{"partial where not allowed", func(s *Spec) { s.Caps[CapStreaming] = Partial("some") }, "declares streaming partial, which only"},
 		{"no reason", func(s *Spec) { s.Caps[CapStreaming] = No("") }, "streaming unsupported without a reason"},
 		{"n/a no reason", func(s *Spec) { s.Caps[CapStreaming] = NotApplicable("") }, "streaming unsupported without a reason"},
 		{"unknown capability", func(s *Spec) { s.Caps[numCapabilities] = Yes() }, "unknown capability"},
@@ -124,6 +129,13 @@ func TestSpecSupports(t *testing.T) {
 	}
 	if s.Supports(CapStreaming) || s.Supports(CapPreAnswerNudge) {
 		t.Error("Supports is true for NotApplicable or No")
+	}
+	s.Caps[CapToolIO] = Partial("some")
+	if s.Supports(CapToolIO) {
+		t.Error("Supports is true for Partial")
+	}
+	if err := s.Validate(); err != nil {
+		t.Errorf("a Partial tool_io with a reason is invalid: %v", err)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/app"
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/jitmemory"
 	"foci/internal/memsearch"
 	"foci/internal/workspace"
@@ -78,6 +79,24 @@ func jitFastModel(agentID string) jitmemory.ModelFunc {
 	}
 }
 
+// ownToolIOGap reads a delegated backend's tool_io declaration (#3187
+// Q127): gap is true unless it declares Yes, with level "partial" or "no"
+// and the declaration's reason. An API agent's tool loop sees every tool,
+// so it has no Spec to ask.
+func ownToolIOGap(spec delegator.Spec) (level, reason string, gap bool) {
+	sup := spec.Support(delegator.CapToolIO)
+	switch sup.State() {
+	case delegator.Supported:
+		return "", "", false
+	case delegator.PartialState:
+		return "partial", sup.Reason, true
+	case delegator.Undeclared:
+		return "no", "not declared", true
+	default:
+		return "no", sup.Reason, true
+	}
+}
+
 // wireJITMemory gives ag its JIT memory engine and the delivery of its
 // results (#3175), and the own-material index its tool events feed (#3185). Wired for every agent with a memory index; the feature
 // itself is gated per message by [jit_memory] enabled, so turning it on is a
@@ -88,6 +107,11 @@ func wireJITMemory(ag *agent.Agent, p setupParams) {
 	}
 	acfg, cfg := p.acfg, p.cfg
 	ag.OwnMemory = p.ownIndex
+	if ag.DelegatedManager != nil {
+		if level, reason, gap := ownToolIOGap(ag.DelegatedManager.Spec); gap {
+			p.ownIndex.NoteToolIO(acfg.ID, ag.DelegatedManager.Spec.Name, level, reason)
+		}
+	}
 	ag.JIT = jitmemory.New(jitmemory.Deps{
 		AgentID: acfg.ID,
 		Search:  newMemSearcher(p).Search,

@@ -42,6 +42,7 @@ var spec = delegator.Spec{
 		delegator.CapPostToolNudge:  delegator.No("no mid-turn injection point is wired for the app-server"),
 		delegator.CapPreAnswerNudge: delegator.No("no mid-turn injection point is wired for the app-server"),
 		delegator.CapStreaming:      delegator.Yes(),
+		delegator.CapToolIO:         delegator.Partial("MCP and dynamic tool arguments are cut to 200 bytes and their results, and web search results, are not reported; an edit's input is its paths only (its result carries the diff); subagent tools are not reported"),
 
 		delegator.CapControl:               delegator.Yes(),
 		delegator.CapControlModel:          delegator.Yes(),

@@ -35,7 +35,8 @@ func TestSpecs_RegisteredAndValid(t *testing.T) {
 }
 
 // proofs names, for every backend, the test that proves each KindBehaviour
-// capability it declares Yes (#2154 Q4). A behavioural claim has no method to
+// capability it declares Yes or Partial (#2154 Q4; Partial: the part it
+// claims). A behavioural claim has no method to
 // check, so without a named proof nothing stops a backend claiming what it
 // never does (cctmux claimed nudges and streaming it never delivered). The
 // test must exist in the backend's own package.
@@ -57,6 +58,7 @@ var proofs = map[string]map[delegator.Capability]string{
 		delegator.CapReadOnlyBatch:            "TestStart_AccessLaunchArgs",
 		delegator.CapLimitReset:               "TestParseUsagePayload_UsageAvailability",
 		delegator.CapMidTurnSteer:             "TestInject_Steer_InFlight_NoInterrupt_PriorityNext",
+		delegator.CapToolIO:                   "TestToolIO_InputsAndOutputsReachSessionEvents",
 	},
 	"codex": {
 		delegator.CapEphemeralSessions:        "TestEphemeralForkAdoptsLiveThread",
@@ -68,6 +70,7 @@ var proofs = map[string]map[delegator.Capability]string{
 		delegator.CapCommandApprovalAllowlist: "TestOnCommandApproval_AutoApproveRuleAccepts",
 		delegator.CapReadOnlyBatch:            "TestStartThread_ReadOnlyBatchSandbox",
 		delegator.CapMidTurnSteer:             "TestImmediateInject_InFlight_SteerAndUserFold",
+		delegator.CapToolIO:                   "TestToolIO_InputsAndOutputsReachSessionEvents",
 	},
 	"opencode": {
 		delegator.CapPreAnswerNudge:           "TestOnSessionIdle_PreAnswerReDispatches",
@@ -76,6 +79,7 @@ var proofs = map[string]map[delegator.Capability]string{
 		delegator.CapControlPermissionMode:    "TestSendControl_SetPermissionMode",
 		delegator.CapCommandApprovalAllowlist: "TestAutoApprove_BashMatchingRule_NoPrompt",
 		delegator.CapReadOnlyBatch:            "TestBackend_Start_ReadOnlyBatch_RulesetEnforced",
+		delegator.CapToolIO:                   "TestToolIO_InputsAndOutputsReachSessionEvents",
 	},
 }
 
@@ -92,11 +96,12 @@ func TestBehaviourCapabilities_HaveProofs(t *testing.T) {
 				continue
 			}
 			proof, ok := named[c]
+			claims := s.Supports(c) || s.Support(c).State() == delegator.PartialState
 			switch {
-			case s.Supports(c) && !ok:
-				t.Errorf("%s declares %s Yes with no proving test: add one to proofs in %s", s.Name, c, "internal/delegator/all/spec_test.go")
-			case !s.Supports(c) && ok:
-				t.Errorf("%s: stale proof %s for %s, which it does not declare Yes", s.Name, proof, c)
+			case claims && !ok:
+				t.Errorf("%s declares %s Yes or Partial with no proving test: add one to proofs in %s", s.Name, c, "internal/delegator/all/spec_test.go")
+			case !claims && ok:
+				t.Errorf("%s: stale proof %s for %s, which it does not declare Yes or Partial", s.Name, proof, c)
 			case ok && !tests[proof]:
 				t.Errorf("%s: proof %s for %s is not a test in %s", s.Name, proof, c, dir)
 			}
@@ -177,6 +182,21 @@ func TestSpecs_LiveModel(t *testing.T) {
 	}
 }
 
+// TestSpecs_ToolIO pins each backend's tool_io declaration (#3187 Q127): no
+// delegated backend reports every tool's input and output today, and each
+// says what it leaves out.
+func TestSpecs_ToolIO(t *testing.T) {
+	for _, name := range []string{"claude-code", "codex", "opencode"} {
+		s, ok := delegator.SpecFor(name)
+		if !ok {
+			t.Fatalf("%s not registered", name)
+		}
+		if sup := s.Support(delegator.CapToolIO); sup.State() != delegator.PartialState || sup.Reason == "" {
+			t.Errorf("%s: tool_io = %+v, want Partial with a reason", name, sup)
+		}
+	}
+}
+
 // TestSpecs_ModelcapsKey holds modelcaps.BackendKey to each Spec.
 func TestSpecs_ModelcapsKey(t *testing.T) {
 	for _, s := range delegator.Specs() {
@@ -248,6 +268,9 @@ func renderCapabilityTable(specs []delegator.Spec) string {
 			case delegator.NotApplicableState:
 				b.WriteString(" n/a |")
 				why[c] = append(why[c], s.Name+" (n/a): "+sup.Reason)
+			case delegator.PartialState:
+				b.WriteString(" partial |")
+				why[c] = append(why[c], s.Name+" (partial): "+sup.Reason)
 			default:
 				b.WriteString(" ? |")
 			}

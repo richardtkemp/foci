@@ -27,6 +27,7 @@ var spec = delegator.Spec{
 		delegator.CapPostToolNudge:  delegator.No("opencode exposes no per-tool point to inject a nudge at"),
 		delegator.CapPreAnswerNudge: delegator.Yes(),
 		delegator.CapStreaming:      delegator.Yes(),
+		delegator.CapToolIO:         delegator.Partial("a subagent's (task tool's) tools are not reported: a child session's events give only its text"),
 
 		delegator.CapControl:               delegator.Yes(),
 		delegator.CapControlModel:          delegator.Yes(),
