@@ -39,7 +39,13 @@ type loggingSink struct {
 	sk     string
 	// turnKind tags every row this sink writes with the kind of non-delivered
 	// turn it is recording (see recordedTurnKind); "" for delivered turns.
-	turnKind  string
+	turnKind string
+	// trigger is the trigger of the turn whose text this sink carries, when
+	// the builder knows it ("" otherwise). JIT memory reads it to skip a
+	// jit_memory turn's own reply (#3176): on a delegated backend the text
+	// arrives through the session router with context.Background(), so the
+	// ctx carries no trigger.
+	trigger   string
 	lastTouch time.Time // debounce for the mid-turn activity heartbeat; single-producer (Emit is sequential per turn), so no lock
 }
 
@@ -113,9 +119,7 @@ func (s *loggingSink) Emit(ctx context.Context, ev turnevent.Event) {
 	case turnevent.TextBlock:
 		if e.Phase == turnevent.PhaseIntermediate && e.Text != "" {
 			s.record(e.Text, "", "", 0)
-			if s.turnKind == "" {
-				s.a.jitOnAgentMessage(ctx, s.sk, e.Text) // #3175
-			}
+			s.jitAgentMessage(ctx, e.Text)
 		}
 	case turnevent.SubagentStart:
 		s.record(subagentPromptText(e.Label, e.Prompt), convo.ContentTypeSubagentPrompt, e.GroupKey, e.RunIndex)
@@ -126,6 +130,20 @@ func (s *loggingSink) Emit(ctx context.Context, ev turnevent.Event) {
 	}
 	s.heartbeat(ctx, ev)
 	s.inner.Emit(ctx, ev)
+}
+
+// jitAgentMessage hands one intermediate text block to JIT memory (#3175).
+// Whether it reaches a chat is this sink's own answer, not the ctx sink's: on
+// a delegated backend Emit is called by the session router with
+// context.Background(), whose sink is a NopSink (#3176). A recorded
+// non-delivered turn (turnKind set) never reaches a chat. The trigger is the
+// ctx's when it has one, else the one the sink was built with.
+func (s *loggingSink) jitAgentMessage(ctx context.Context, text string) {
+	trigger := TriggerFromContext(ctx)
+	if trigger == "" {
+		trigger = s.trigger
+	}
+	s.a.jitOnAgentMessage(s.sk, text, s.turnKind == "" && s.inner.DeliversToPlatform(), trigger)
 }
 
 // record writes one outbound row. contentType "" is main-thread text; a
@@ -224,8 +242,15 @@ func (s *loggingSink) Unwrap() turnevent.Sink { return s.inner }
 // Injected turns carry no incoming message, so the chat ID resolves from the
 // session key rather than TurnMetadata, exactly as the adopted-autonomous path
 // in in_flight.go does.
-func (a *Agent) WrapConversationLogging(sink turnevent.Sink, sessionKey string) turnevent.Sink {
-	return newLoggingSink(sink, a, session.ChatIDFromKey(sessionKey), &TurnMetadata{}, sessionKey)
+//
+// trigger is the trigger of the turn the sink serves; JIT memory reads it to
+// skip a jit_memory turn's own reply (#3176).
+func (a *Agent) WrapConversationLogging(sink turnevent.Sink, sessionKey, trigger string) turnevent.Sink {
+	s := newLoggingSink(sink, a, session.ChatIDFromKey(sessionKey), &TurnMetadata{}, sessionKey)
+	if ls, ok := s.(*loggingSink); ok {
+		ls.trigger = trigger
+	}
+	return s
 }
 
 // RecordConversationSent persists text as an outbound conversation entry for

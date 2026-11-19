@@ -455,7 +455,7 @@ func deliverToResolvedSession(
 // and any future one from having to remember.
 func turnSinkForConn(ag *agent.Agent, conn platform.Connection, sessionKey, trigger string) (turnevent.Sink, func()) {
 	sink, cleanup := rawTurnSinkForConn(conn, sessionKey, trigger)
-	return ag.WrapConversationLogging(sink, sessionKey), cleanup
+	return ag.WrapConversationLogging(sink, sessionKey, trigger), cleanup
 }
 
 // rawTurnSinkForConn is turnSinkForConn's sink ladder WITHOUT the

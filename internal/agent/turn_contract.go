@@ -13,6 +13,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
+	"foci/internal/turnevent"
 )
 
 // TurnContract defines every concern of a turn. Both APITransport and
@@ -447,7 +448,7 @@ func (s *sharedTurnOps) LogConversationSent(ts *TurnState) {
 	})
 	// The API transport's final reply (#3175); the delegated transport's
 	// text reaches jitOnAgentMessage through the logging sink.
-	s.agent.jitOnAgentMessage(ts.Ctx, ts.SessionKey, ts.FinalText)
+	s.agent.jitOnAgentMessage(ts.SessionKey, ts.FinalText, turnevent.SinkFromContext(ts.Ctx).DeliversToPlatform(), ts.Trigger)
 }
 
 // TouchActivityPost fires OnActivity callbacks after the turn completes.

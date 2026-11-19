@@ -36,7 +36,6 @@ import (
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
-	"foci/internal/turnevent"
 )
 
 // TriggerJITMemory is the trigger of a JIT memory result sent to the agent.
@@ -214,9 +213,13 @@ func (a *Agent) jitOnSteeredUserMessage(sk, text string) {
 }
 
 // jitOnAgentMessage runs one agent message that reached the user's chat.
-// ctx is the turn's (its trigger and sink).
-func (a *Agent) jitOnAgentMessage(ctx context.Context, sk, text string) {
-	s, run := a.jitAgentMessageRuns(ctx, sk, text)
+// delivers is whether the sink carrying the text delivers to a platform chat,
+// and trigger is the trigger of the turn that wrote it ("" = unknown). Both
+// come from the caller, not from a ctx: on a delegated backend the text
+// reaches the logging sink through the session router with
+// context.Background(), which carries neither (#3176).
+func (a *Agent) jitOnAgentMessage(sk, text string, delivers bool, trigger string) {
+	s, run := a.jitAgentMessageRuns(sk, text, delivers, trigger)
 	if !run {
 		return
 	}
@@ -232,24 +235,52 @@ func (a *Agent) jitOnAgentMessage(ctx context.Context, sk, text string) {
 	}()
 }
 
+// Why an agent message on a chat session was not searched (runs.skipped of
+// its row; #3176: every such skip is recorded, so a gate that drops every
+// message shows in jit_memory.db instead of passing unseen).
+const (
+	jitSkipSilent     = "agent: silent reply"
+	jitSkipJITTurn    = "agent: reply in a jit_memory turn"
+	jitSkipNoDelivery = "agent: not delivered to a chat"
+	jitSkipNoSteer    = "agent: backend takes no message mid-turn"
+	jitSkipNoDeliver  = "agent: no JIT delivery wired"
+)
+
 // jitAgentMessageRuns decides whether an agent message is searched, and
 // returns the settings for the run. Never a message from a jit_memory turn (no
-// chains), a silent one, one that reaches no chat or one off a chat session.
-// On a backend without mid-turn steer (Q109) the message is only kept as
-// context for the next short user message.
-func (a *Agent) jitAgentMessageRuns(ctx context.Context, sk, text string) (jitmemory.Settings, bool) {
+// chains), a silent one, or one that reaches no chat. On a backend without
+// mid-turn steer (Q109) the message is only kept as context for the next
+// short user message. Each of these skips writes a skipped row with its
+// reason. The feature off, empty text or a session that is not a chat's own
+// (a spawn, a branch) returns without a row: those are not messages to the
+// user's chat.
+func (a *Agent) jitAgentMessageRuns(sk, text string, delivers bool, trigger string) (jitmemory.Settings, bool) {
 	s, on := a.jitSettings()
-	if !on || !jitChatSession(sk) || platform.IsSilent(text) || TriggerFromContext(ctx) == TriggerJITMemory {
+	if !on || !jitChatSession(sk) || strings.TrimSpace(text) == "" {
 		return s, false
 	}
-	if !turnevent.SinkFromContext(ctx).DeliversToPlatform() {
-		return s, false
+	skip := ""
+	switch {
+	case platform.IsSilent(text):
+		skip = jitSkipSilent
+	case trigger == TriggerJITMemory:
+		skip = jitSkipJITTurn
+	case !delivers:
+		skip = jitSkipNoDelivery
+	case !a.backendSteersMidTurn():
+		skip = jitSkipNoSteer
+	case a.JITDeliverFn == nil:
+		skip = jitSkipNoDeliver
 	}
-	if !a.backendSteersMidTurn() || a.JITDeliverFn == nil {
+	if skip == "" {
+		return s, true
+	}
+	if skip == jitSkipNoSteer || skip == jitSkipNoDeliver {
 		a.JIT.Observe(sk, jitmemory.RoleAgent, text)
-		return s, false
 	}
-	return s, true
+	a.JIT.RecordSkip(sk, jitmemory.RoleAgent, text, skip)
+	a.logger().Debugf("jit-memory: session=%s agent message not searched: %s", sk, skip)
+	return s, false
 }
 
 // noteJITCompaction counts a compaction of sk for the dedupe lifetime

@@ -130,7 +130,7 @@ func TestRecordingSystemSink(t *testing.T) {
 		a := &Agent{}
 		ts := &TurnState{SessionKey: "test/c1", Trigger: "branch", Meta: &TurnMetadata{}}
 		logged := fnSink(func(context.Context, turnevent.Event) {})
-		inner := a.WrapConversationLogging(logged, "test/c1")
+		inner := a.WrapConversationLogging(logged, "test/c1", "")
 		s := a.recordingSystemSink(inner, ts)
 		if s != inner {
 			t.Fatalf("an already-logging sink was wrapped again (%T)", s)
