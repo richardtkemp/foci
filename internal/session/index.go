@@ -912,7 +912,8 @@ func (idx *SessionIndex) TouchActivity(sessionKey string) {
 
 // RebuildIndex clears the rows the scan owns — those whose file lives under
 // storeDir — and repopulates them from entries (the scan of storeDir).
-// Preserves last_reflection timestamps across the rebuild.
+// Preserves last_reflection timestamps across the rebuild, and never moves a
+// row's last_activity_at backwards (#3184).
 // Wrapped in a single transaction for performance (~3000x fewer fsyncs).
 func (idx *SessionIndex) RebuildIndex(storeDir string, entries []SessionIndexEntry) (int, error) {
 	idx.mu.Lock()
@@ -926,14 +927,18 @@ func (idx *SessionIndex) RebuildIndex(storeDir string, entries []SessionIndexEnt
 	// --if-active gate and cache-bust idle baseline. File-backed rows are
 	// DELETEd and re-INSERTed below (which would null these columns), so
 	// snapshot and restore them for every row that has any set.
+	//
+	// last_activity_at is snapshotted too (#3184), and the re-INSERT keeps
+	// the newer of the row's value and the file's mtime. For a gzipped file
+	// the row's value wins outright: a .gz is never appended to, so the row
+	// already holds its last activity, while the gz mtime is the gzip time
+	// (files gzipped before gzipFile kept the mtime).
 	type preservedStamps struct{ reflection, userActivity, cacheTouch sql.NullString }
 	saved := make(map[string]preservedStamps)
+	savedActivity := make(map[string]time.Time)
 	rows, err := idx.db.Query(
-		`SELECT session_key, last_reflection, last_user_activity_at, last_cache_touch
-		   FROM session_index
-		  WHERE last_reflection IS NOT NULL
-		     OR last_user_activity_at IS NOT NULL
-		     OR last_cache_touch IS NOT NULL`)
+		`SELECT session_key, last_reflection, last_user_activity_at, last_cache_touch, last_activity_at
+		   FROM session_index`)
 	if err != nil {
 		// Fail closed: if we can't read the timestamps we're about to clear,
 		// don't proceed to DELETE — that would silently wipe every session's
@@ -944,11 +949,19 @@ func (idx *SessionIndex) RebuildIndex(storeDir string, entries []SessionIndexEnt
 	for rows.Next() {
 		var key string
 		var p preservedStamps
-		if err := rows.Scan(&key, &p.reflection, &p.userActivity, &p.cacheTouch); err != nil {
+		var activity sql.NullString
+		if err := rows.Scan(&key, &p.reflection, &p.userActivity, &p.cacheTouch, &activity); err != nil {
 			_ = rows.Close()
 			return 0, fmt.Errorf("preserve activity timestamps (scan): %w", err)
 		}
-		saved[key] = p
+		if p.reflection.Valid || p.userActivity.Valid || p.cacheTouch.Valid {
+			saved[key] = p
+		}
+		if activity.Valid {
+			if t, err := time.Parse(time.RFC3339, activity.String); err == nil {
+				savedActivity[key] = t
+			}
+		}
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
@@ -1001,6 +1014,10 @@ func (idx *SessionIndex) RebuildIndex(storeDir string, entries []SessionIndexEnt
 		activityAt := e.LastActivityAt
 		if activityAt.IsZero() {
 			activityAt = e.CreatedAt
+		}
+		if prev, ok := savedActivity[e.SessionKey]; ok &&
+			(strings.HasSuffix(e.FilePath, ".gz") || prev.After(activityAt)) {
+			activityAt = prev
 		}
 		agentID, chatID, isRoot := keyColumns(e.SessionKey)
 		_, err := stmt.Exec(

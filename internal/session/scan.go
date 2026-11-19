@@ -68,151 +68,149 @@ func (s *Store) ListChatSessions(agentID string) ([]ChatSessionInfo, error) {
 	return sessions, nil
 }
 
-// ScanAllSessions walks all session files and returns index entries.
-// Current (non-archive) files are always marked active.
-// Numbered archive files (e.g. .1.jsonl) are returned as compacted entries.
-// Gzipped files (.jsonl.gz) are returned as archived entries.
-// ScanAllSessions walks the session directory and returns index entries for
-// all session files. Uses WalkDir for efficiency and parallelizes per-file
-// metadata reads for active sessions (the I/O-bound part).
+// ScanAllSessions walks the session directory and returns an index entry for
+// every session file: a current file (.jsonl) is active, a compaction/reset
+// archive (.<ts>.jsonl) is compacted, and any gzipped file (.jsonl.gz) is
+// archived. Each entry carries the identity foci wrote when it first created
+// the row (scanEntry), so a rebuild restores it rather than the file's mtime.
+// The per-file first-line reads (the I/O-bound part) run in parallel.
 func (s *Store) ScanAllSessions() ([]SessionIndexEntry, error) {
 	// Phase 1: Walk the directory tree collecting file info.
 	// No store lock needed — this is read-only and runs at startup before
 	// any message processing starts.
 	type fileInfo struct {
 		path    string
-		name    string
 		modTime time.Time
 	}
-	var activeFiles []fileInfo
-	var staticEntries []SessionIndexEntry
+	var files []fileInfo
 
 	err := filepath.WalkDir(s.dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
-
 		name := d.Name()
+		if !strings.HasSuffix(name, ".jsonl") && !strings.HasSuffix(name, ".jsonl.gz") {
+			return nil
+		}
 		info, err := d.Info()
 		if err != nil {
 			return nil
 		}
-
-		if strings.HasSuffix(name, ".jsonl.gz") {
-			rel, err := filepath.Rel(s.dir, path)
-			if err != nil {
-				return nil
-			}
-			key := pathToKey(strings.TrimSuffix(rel, ".jsonl.gz"))
-			staticEntries = append(staticEntries, SessionIndexEntry{
-				SessionKey:  key,
-				FilePath:    path,
-				CreatedAt:   info.ModTime(),
-				SessionType: ClassifySessionKey(key),
-				Status:      SessionStatusArchived,
-			})
-			return nil
-		}
-
-		if !strings.HasSuffix(name, ".jsonl") {
-			return nil
-		}
-
-		if isArchiveFile(name) {
-			rel, err := filepath.Rel(s.dir, path)
-			if err != nil {
-				return nil
-			}
-			key := pathToKey(strings.TrimSuffix(rel, ".jsonl"))
-			parentKey := archiveParentKey(key)
-			staticEntries = append(staticEntries, SessionIndexEntry{
-				SessionKey:       key,
-				FilePath:         path,
-				CreatedAt:        info.ModTime(),
-				ParentSessionKey: parentKey,
-				SessionType:      ClassifySessionKey(parentKey),
-				Status:           SessionStatusCompacted,
-			})
-			return nil
-		}
-
-		// Active session file — needs metadata read (phase 2).
-		activeFiles = append(activeFiles, fileInfo{
-			path:    path,
-			name:    name,
-			modTime: info.ModTime(),
-		})
+		files = append(files, fileInfo{path: path, modTime: info.ModTime()})
 		return nil
 	})
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
 
-	// Phase 2: Read metadata for active files in parallel.
-	// Each goroutine reads the first line of a file for created_at/branch_meta.
-	results := make([]SessionIndexEntry, len(activeFiles))
-	ch := make(chan int, len(activeFiles))
-	for i := range activeFiles {
+	// Phase 2: derive each file's entry in parallel.
+	results := make([]SessionIndexEntry, len(files))
+	ok := make([]bool, len(files))
+	ch := make(chan int, len(files))
+	for i := range files {
 		ch <- i
 	}
 	close(ch)
 
 	const workers = 8
 	var wg sync.WaitGroup
-	for w := 0; w < workers && w < len(activeFiles); w++ {
+	for w := 0; w < workers && w < len(files); w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for i := range ch {
-				af := activeFiles[i]
-				rel, err := filepath.Rel(s.dir, af.path)
-				if err != nil {
-					continue
-				}
-				key := pathToKey(strings.TrimSuffix(rel, ".jsonl"))
-
-				createdAt := af.modTime
-				if meta := s.getStoredCreatedAt(key); meta != "" {
-					if t, err := time.Parse(time.RFC3339, meta); err == nil {
-						createdAt = t
-					}
-				}
-
-				var parentKey string
-				// Roots classify from the key; branches recover their
-				// fine-grained type from the persisted branch_type (the key
-				// alone can't distinguish facet/reflection/spawn/…).
-				sessionType := ClassifySessionKey(key)
-				if bm, _ := s.readBranchMeta(key); bm != nil {
-					parentKey = bm.ParentKey
-					if bm.BranchType != "" {
-						sessionType = SessionTypeForBranch(bm.BranchType)
-					}
-				}
-
-				results[i] = SessionIndexEntry{
-					SessionKey: key,
-					FilePath:   af.path,
-					CreatedAt:  createdAt,
-					// The file's mtime is the last append — the true "last
-					// activity" for a file-backed session. Without it, a
-					// rebuild seeds activity from created_at and the
-					// most-recently-active ordering (default-chat routing!)
-					// degrades to creation order.
-					LastActivityAt:   af.modTime,
-					ParentSessionKey: parentKey,
-					SessionType:      sessionType,
-					Status:           SessionStatusActive,
-				}
+				results[i], ok[i] = s.scanEntry(files[i].path, files[i].modTime)
 			}
 		}()
 	}
 	wg.Wait()
 
-	entries := make([]SessionIndexEntry, 0, len(staticEntries)+len(results))
-	entries = append(entries, staticEntries...)
-	entries = append(entries, results...)
+	entries := make([]SessionIndexEntry, 0, len(files))
+	for i := range results {
+		if ok[i] {
+			entries = append(entries, results[i])
+		}
+	}
 	return entries, nil
+}
+
+// scanEntry derives one file's index entry. created_at, session_type and
+// parent_session_key are what foci writes when it first creates the row
+// (#3184), read from the file's name and first line:
+//
+//   - a compaction/reset archive: created_at is the time in its suffix (the
+//     gateway's archive row is stamped then), the parent is the live session
+//     it was rotated from, the type is that session's key class;
+//   - a session file: created_at is its session_meta line's, else the time
+//     its key encodes (a branch's b<ts>; branch files have no session_meta);
+//     a branch_meta line gives the parent and the branch type.
+//
+// The mtime is the fallback created_at only when neither holds a time. A
+// .gz file is read the same way: gzipping changes the mtime, not the content.
+// last_activity_at is the mtime (the last append, for a session file); an
+// archive's is left to fall back to its created_at, as the gateway's is.
+func (s *Store) scanEntry(path string, modTime time.Time) (SessionIndexEntry, bool) {
+	rel, err := filepath.Rel(s.dir, path)
+	if err != nil {
+		return SessionIndexEntry{}, false
+	}
+	gz := strings.HasSuffix(rel, ".gz")
+	plain := strings.TrimSuffix(rel, ".gz")
+	key := pathToKey(strings.TrimSuffix(plain, ".jsonl"))
+
+	if isArchiveFile(filepath.Base(plain)) {
+		parentKey := archiveParentKey(key)
+		createdAt := modTime
+		if t, ok := archiveSuffixTime(key); ok {
+			createdAt = t
+		}
+		status := SessionStatusCompacted
+		if gz {
+			status = SessionStatusArchived
+		}
+		return SessionIndexEntry{
+			SessionKey:       key,
+			FilePath:         path,
+			CreatedAt:        createdAt,
+			ParentSessionKey: parentKey,
+			SessionType:      ClassifySessionKey(parentKey),
+			Status:           status,
+		}, true
+	}
+
+	id := readFileIdentity(path)
+	createdAt := id.createdAt
+	if createdAt.IsZero() {
+		if t, ok := keyTimestamp(key); ok {
+			createdAt = t
+		} else {
+			createdAt = modTime
+		}
+	}
+	// Roots classify from the key; branches recover their fine-grained
+	// type from the persisted branch_type (the key alone can't distinguish
+	// facet/reflection/spawn/…).
+	sessionType := ClassifySessionKey(key)
+	if id.branch && id.typ != "" {
+		sessionType = SessionTypeForBranch(id.typ)
+	}
+	status := SessionStatusActive
+	if gz {
+		status = SessionStatusArchived
+	}
+	return SessionIndexEntry{
+		SessionKey: key,
+		FilePath:   path,
+		CreatedAt:  createdAt,
+		// The file's mtime is the last append — the true "last activity"
+		// for a file-backed session. Without it, a rebuild seeds activity
+		// from created_at and the most-recently-active ordering
+		// (default-chat routing!) degrades to creation order.
+		LastActivityAt:   modTime,
+		ParentSessionKey: id.parent,
+		SessionType:      sessionType,
+		Status:           status,
+	}, true
 }
 
 // pathToKey converts a relative file path (extension already stripped) back to

@@ -11,7 +11,6 @@ import (
 	"foci/internal/config"
 	"foci/internal/session"
 	"foci/internal/startup"
-	"foci/internal/timeutil"
 )
 
 type sessionInfra struct {
@@ -69,40 +68,12 @@ func initSessions(cfg *config.Config) sessionInfra {
 				})
 			case session.SessionStatusCompacted:
 				sessionIndex.RecordArchive(e.Key, e.ArchivePath, "compaction")
-				if e.ArchivePath != "" {
-					rel, err := filepath.Rel(cfg.Sessions.Dir, e.ArchivePath)
-					if err == nil {
-						archiveKey := strings.TrimSuffix(rel, ".jsonl")
-						archiveKey = strings.ReplaceAll(archiveKey, string(filepath.Separator), ":")
-						sessionIndex.Upsert(session.SessionIndexEntry{
-							SessionKey:       archiveKey,
-							FilePath:         e.ArchivePath,
-							CreatedAt:        timeutil.Now(),
-							ParentSessionKey: e.Key,
-							SessionType:      e.Type,
-							Status:           session.SessionStatusCompacted,
-						})
-					}
-				}
+				indexArchive(sessionIndex, cfg.Sessions.Dir, e)
 			case session.SessionStatusReset:
 				sessionIndex.RecordArchive(e.Key, e.ArchivePath, "reset")
 				// Index the archived file; the session key itself is stable
 				// and its next Append re-activates it.
-				if e.ArchivePath != "" {
-					rel, err := filepath.Rel(cfg.Sessions.Dir, e.ArchivePath)
-					if err == nil {
-						archiveKey := strings.TrimSuffix(rel, ".jsonl")
-						archiveKey = strings.ReplaceAll(archiveKey, string(filepath.Separator), ":")
-						sessionIndex.Upsert(session.SessionIndexEntry{
-							SessionKey:       archiveKey,
-							FilePath:         e.ArchivePath,
-							CreatedAt:        timeutil.Now(),
-							ParentSessionKey: e.Key,
-							SessionType:      e.Type,
-							Status:           session.SessionStatusCompacted,
-						})
-					}
-				}
+				indexArchive(sessionIndex, cfg.Sessions.Dir, e)
 				sessionIndex.UpdateStatus(e.Key, session.SessionStatusReset)
 			case session.SessionStatusCleared:
 				sessionIndex.UpdateStatus(e.Key, session.SessionStatusCleared)
@@ -192,6 +163,30 @@ func initSessions(cfg *config.Config) sessionInfra {
 			}
 		},
 	}
+}
+
+// indexArchive writes the row of a compaction/reset archive file. Its key and
+// created_at come from session.ArchiveIndexIdentity, the derivation an index
+// rebuild uses for the same file, so a row written here and one rebuilt
+// from disk agree (#3184). The key once used ':' separators and the clock
+// read after the archive was named; a rebuild replaced both.
+func indexArchive(idx *session.SessionIndex, storeDir string, e session.SessionEvent) {
+	if e.ArchivePath == "" {
+		return
+	}
+	key, createdAt, err := session.ArchiveIndexIdentity(storeDir, e.ArchivePath)
+	if err != nil {
+		mainLog.Warnf("index archive %s: %v", e.ArchivePath, err)
+		return
+	}
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey:       key,
+		FilePath:         e.ArchivePath,
+		CreatedAt:        createdAt,
+		ParentSessionKey: e.Key,
+		SessionType:      e.Type,
+		Status:           session.SessionStatusCompacted,
+	})
 }
 
 // migrateStateJSON performs a one-time migration of state.json key-value data

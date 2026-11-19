@@ -530,8 +530,9 @@ func archiveIfStillIdle(store *Store, path string, cutoff time.Time) (bool, erro
 }
 
 // gzipFile compresses src to src.gz and removes the original.
-// The .gz file is created with the same permission bits as src so that
-// archived sessions inherit whatever mode the live file was using.
+// The .gz file is created with the same permission bits and mtime as src so
+// that archived sessions inherit whatever mode the live file was using, and
+// a rebuild reads the last append, not the gzip time.
 func gzipFile(src string) error {
 	in, err := os.Open(src)
 	if os.IsNotExist(err) {
@@ -575,6 +576,11 @@ func gzipFile(src string) error {
 	if err := out.Close(); err != nil {
 		_ = os.Remove(dst)
 		return fmt.Errorf("close %s: %w", dst, err)
+	}
+	// Keep the source's mtime (its last append): an index rebuild reads a
+	// gz file's mtime as its last activity, and the gzip time is not (#3184).
+	if err := os.Chtimes(dst, info.ModTime(), info.ModTime()); err != nil {
+		sessLog.Warnf("archive sweep: keep mtime of %s: %v", dst, err)
 	}
 
 	if err := os.Remove(src); err != nil {
