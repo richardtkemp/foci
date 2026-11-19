@@ -308,9 +308,11 @@ func (a *Agent) parkUsageHeld(inb *sessionInbox, env Envelope) {
 	if !env.restartResume {
 		a.storeUsageHeld(&env)
 	}
+	inb.usageHeldMu.Lock()
 	if env.usageResume {
 		for _, h := range inb.usageHeld {
 			if h.usageResume {
+				inb.usageHeldMu.Unlock()
 				return // one resume line per session
 			}
 		}
@@ -318,9 +320,11 @@ func (a *Agent) parkUsageHeld(inb *sessionInbox, env Envelope) {
 	} else {
 		inb.usageHeld = append(inb.usageHeld, env)
 	}
+	n := len(inb.usageHeld)
+	inb.usageHeldMu.Unlock()
 	a.syncUsageHeldMirror(inb)
 	st := a.UsageHold(inb.sk)
-	a.logger().Infof("inbox: usage hold (%s) holds a message sk=%s (%dB, resume=%v, %d held)", st.Phase, env.SessionKey, len(env.Text), env.usageResume, len(inb.usageHeld))
+	a.logger().Infof("inbox: usage hold (%s) holds a message sk=%s (%dB, resume=%v, %d held)", st.Phase, env.SessionKey, len(env.Text), env.usageResume, n)
 	if fn := a.TurnQueuedNotifyFunc; fn != nil && !env.Automated && !env.usageResume && !restored {
 		text := a.AccountFor(inb.sk).WithName("⏸️ Held: usage is at the hold limit, so this message waits until " + formatLift(st.LiftAt) + ", then runs.")
 		go fn(env.SessionKey, text)
@@ -334,11 +338,16 @@ func (a *Agent) parkUsageHeld(inb *sessionInbox, env Envelope) {
 // real messages takes their driver and sender, so the turn renders where they
 // came from. Returns false when the worker must stop.
 func (a *Agent) releaseUsageHeld(ctx context.Context, inb *sessionInbox) bool {
-	if len(inb.usageHeld) == 0 || a.usageHoldsTrigger(inb.sk, "user", false) {
+	if inb.usageHeldLen() == 0 || a.usageHoldsTrigger(inb.sk, "user", false) {
 		return true
 	}
+	inb.usageHeldMu.Lock()
 	held := inb.usageHeld
 	inb.usageHeld = nil
+	inb.usageHeldMu.Unlock()
+	if len(held) == 0 {
+		return true // a bare /lb took the last one meanwhile
+	}
 	a.syncUsageHeldMirror(inb)
 	if held[0].usageResume && len(held) > 1 {
 		head, src := &held[0], held[1]

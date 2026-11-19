@@ -574,10 +574,11 @@ func (a *Agent) heldReleasable(inb *sessionInbox) bool {
 func (a *Agent) releaseHeldInArrivalOrder(ctx context.Context, inb *sessionInbox) bool {
 	a.takeUsageResume(inb)
 	for {
-		if len(inb.usageHeld) == 0 {
+		headSeq, ok := inb.usageHeldHeadSeq()
+		if !ok {
 			return a.releaseHeld(ctx, inb)
 		}
-		bound := &heldBound{seq: inb.usageHeld[0].enqSeq, phase: a.usageHoldPhase(inb.sk)}
+		bound := &heldBound{seq: headSeq, phase: a.usageHoldPhase(inb.sk)}
 		if !a.releaseHeldBefore(ctx, inb, bound) {
 			return false
 		}

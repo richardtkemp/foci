@@ -54,7 +54,7 @@ func (a *Agent) SetOnWaitInputsChanged(fn func(sessionKey string)) {
 // for UsageHeldInput, and reports a change of "any held" to the registered
 // hook. Worker-confined callers (it reads inb's worker-owned lists).
 func (a *Agent) syncUsageHeldMirror(inb *sessionInbox) {
-	n := len(inb.usageHeld)
+	n := inb.usageHeldLen()
 	for _, env := range inb.held {
 		if env.usageHeldID != "" {
 			n++

@@ -449,6 +449,20 @@ type sessionInbox struct {
 	// the batch its head starts. Worker-confined.
 	usageHeld    []Envelope
 	usageRelease []Envelope
+	// usageHeldMu guards usageHeld: the worker writes it, and a bare /lb
+	// (LimitBreakHeld, #3182) takes its newest message from another
+	// goroutine. usageRelease stays worker-confined.
+	usageHeldMu sync.Mutex
+	// heldQueuedSeq is the enqSeq of the newest plain user message Enqueue
+	// queued on ch while the usage hold held it (the worker parks it on
+	// dequeue) (#3182, usage_hold_force.go).
+	// userTakenThrough is the highest enqSeq of a user message the worker
+	// has taken off its queue (takeUser); usageForceThrough is the highest a
+	// bare /lb marked: a non-automated user message numbered at or below it
+	// runs past the hold when the worker takes it. Both under usageHeldMu.
+	heldQueuedSeq     atomic.Uint64
+	userTakenThrough  uint64
+	usageForceThrough uint64
 	// usageResume is set when a usage hold interrupted this session's turn:
 	// the worker parks the hidden resume line at the head of usageHeld at
 	// its next loop top (takeUsageResume). usageKick wakes an idle worker for
@@ -661,6 +675,14 @@ func (inb *sessionInbox) pushPending(envs ...Envelope) {
 		}
 		inb.pending = slices.Insert(inb.pending, i, env)
 	}
+}
+
+// unshiftPending puts envs, in order, at the head of the worker's queue
+// (a bare /lb's released messages, LimitBreakHeld).
+func (inb *sessionInbox) unshiftPending(envs ...Envelope) {
+	inb.pendMu.Lock()
+	defer inb.pendMu.Unlock()
+	inb.pending = slices.Insert(inb.pending, 0, envs...)
 }
 
 // popPending removes and returns the head of the worker's queue.
@@ -952,8 +974,12 @@ func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 	// out a protected turn as any user message does (trySteer). #3131: it
 	// used to queue here and wait ten minutes behind a wake turn.
 	if (a.usageHoldsTrigger(env.SessionKey, "user", false) && !env.usageForce) || env.usageHeldID != "" || env.queuedID != "" || env.restartResume {
+		fresh := env.usageHeldID == "" && env.queuedID == "" && !env.restartResume && !env.Automated
 		a.storeQueuedInput(&env)
 		env.enqSeq = inb.enqSeq.Add(1)
+		if fresh {
+			inb.heldQueuedSeq.Store(env.enqSeq)
+		}
 		select {
 		case inb.ch <- env:
 			a.reportDelivery(env.SessionKey, envRefs(env), DeliveryQueued, "")
@@ -1601,7 +1627,7 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 			openCh = inb.heldWatch.open
 		}
 		var usageCh <-chan struct{}
-		if len(inb.usageHeld) > 0 {
+		if inb.usageHeldLen() > 0 {
 			usageCh = usageChanged
 		}
 		select {
@@ -1611,7 +1637,9 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 			// The usage hold changed: the loop top releases what it may.
 		case <-inb.usageKick:
 			// A usage hold interrupted this session: the loop top parks
-			// its resume line.
+			// its resume line. Or a bare /lb took a held message
+			// (LimitBreakHeld): the mirror catches up.
+			a.syncUsageHeldMirror(inb)
 		case <-openCh:
 			// Gate signalled open — a hint. Drop the watch (it is spent: one
 			// result per watch) and loop: releaseHeld re-checks the head
@@ -1643,6 +1671,7 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 // or off the channel: an injection through dispatchInject, a user message as
 // the head of a user batch. It returns false when the worker must stop.
 func (a *Agent) handleDequeued(ctx context.Context, inb *sessionInbox, env Envelope) bool {
+	inb.takeUser(&env)
 	// Queued before a /stop that dropped this session's waiting
 	// batch, but not yet pulled into it: the /stop covers it too
 	// (#2337, see stopThrough). Injections are never dropped here.
@@ -1671,7 +1700,8 @@ func (a *Agent) handleDequeued(ctx context.Context, inb *sessionInbox, env Envel
 	// The account-wide usage hold (#2491): a user message waits — the sender
 	// is told — and runs at lift, folded with the session's other held
 	// messages into one turn (releaseUsageHeld). A limit-break message
-	// (#3128) runs now.
+	// (#3128) runs now, as does the message a bare /lb marked (#3182,
+	// takeUser at the top).
 	if !env.usageForce && a.usageHoldsTrigger(inb.sk, "user", false) {
 		a.parkUsageHeld(inb, env)
 		return true
@@ -1714,6 +1744,7 @@ func (a *Agent) takeQueuedUsers(inb *sessionInbox) []Envelope {
 	inb.pushPending(inb.drainAvailable()...)
 	var out []Envelope
 	for _, env := range inb.takePendingUsers() {
+		inb.takeUser(&env)
 		if !a.stoppedQueued(inb, env) {
 			out = append(out, env)
 		}
@@ -2094,6 +2125,7 @@ func (a *Agent) waitTurnSlot(ctx, waitCtx context.Context, inb *sessionInbox, li
 				}
 				continue
 			}
+			inb.takeUser(&env)
 			*batch = append(*batch, env)
 		case <-openCh:
 			// The gate opened for the parked injects — release them now,

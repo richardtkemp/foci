@@ -19,8 +19,16 @@ import (
 // named limit_break; typed text may still use the hyphen).
 var LimitBreakWords = []string{"limit_break", "lb", "limit-break"}
 
-// LimitBreakUsage is the reply to a bare /lb.
-const LimitBreakUsage = "Usage: /lb <message> (or /limit_break <message>) — run this one message now, past the usage hold. The hold stays on for everything else."
+// LimitBreakUsage is the reply to a bare /lb when the usage hold is not on.
+const LimitBreakUsage = "Usage: /lb <message> (or /limit_break <message>) — run this one message now, past the usage hold. A bare /lb runs every message of yours the hold is holding in this chat now. The hold stays on for everything else."
+
+// LimitBreakNothingHeld is the reply to a bare /lb when the usage hold is on
+// but holds no user message of the chat (#3182).
+const LimitBreakNothingHeld = "Nothing is held in this chat.\n" + LimitBreakUsage
+
+// LimitBreakReleased is the reply to a bare /lb that released the chat's
+// held messages (#3182).
+const LimitBreakReleased = "▶️ Your held messages run now, past the usage hold, in the order you sent them. The hold stays on for everything else."
 
 // ParseLimitBreak reports whether text's first whitespace-delimited word is a
 // limit-break word with a "/" or "." prefix (any case; leading whitespace

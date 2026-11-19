@@ -67,3 +67,31 @@ func TestUsageHold_PlainMessageStillWaitsDuringWorkTurn(t *testing.T) {
 		}
 	}
 }
+
+// TestLimitBreakHeld_SteersParkedIntoWorkTurn (#3182): with a wake turn
+// running and two messages parked (nothing still queued), a bare /lb steers
+// both into the running turn, oldest first, without waiting it out.
+func TestLimitBreakHeld_SteersParkedIntoWorkTurn(t *testing.T) {
+	t.Parallel()
+	a, be := heldWorkTurnAgent(t)
+	inb := a.getOrCreateInbox("test/s")
+	a.parkUsageHeld(inb, Envelope{SessionKey: "test/s", Text: "first held"})
+	a.parkUsageHeld(inb, Envelope{SessionKey: "test/s", Text: "second held"})
+	before := len(be.InjectsRecorded())
+
+	if got := a.LimitBreakHeld("test/s"); got != LimitBreakReleased {
+		t.Fatalf("LimitBreakHeld = %v, want released", got)
+	}
+	var steered []string
+	for _, inj := range be.InjectsRecorded()[before:] {
+		if inj.Source == delegator.SourceSteer {
+			steered = append(steered, inj.Text)
+		}
+	}
+	if len(steered) != 2 || steered[0] != "first held" || steered[1] != "second held" {
+		t.Fatalf("steered = %q, want [first held, second held]", steered)
+	}
+	if n := inb.usageHeldLen(); n != 0 {
+		t.Errorf("%d message(s) still parked", n)
+	}
+}
