@@ -62,8 +62,8 @@ func startUsageAccounts(t *testing.T, base int64, ccB string) (*testharness.Harn
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: users[0]},
-			{ID: "beta", UserID: users[1], ExtraEnv: map[string]string{"CLAUDE_CONFIG_DIR": ccB}},
-			{ID: "beta2", UserID: users[2], ExtraEnv: map[string]string{"CLAUDE_CONFIG_DIR": ccB}},
+			{ID: "beta", UserID: users[1], Accounts: []string{ccB}},
+			{ID: "beta2", UserID: users[2], Accounts: []string{ccB}},
 		},
 		ReadyTimeout: 30 * time.Second,
 	})

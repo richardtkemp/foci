@@ -96,7 +96,7 @@ func (a *Agent) RestorePausedBackground(start func(ctx context.Context, pb Pause
 func (a *Agent) waitPausedBackground(ctx context.Context, key string) bool {
 	a.UsageHoldPause(key, "background", true)
 	defer a.UsageHoldPause(key, "background", false)
-	return a.WaitUsageLift(ctx)
+	return a.WaitUsageLift(ctx, key)
 }
 
 func (a *Agent) savePausedBackground(pb PausedBackground) {

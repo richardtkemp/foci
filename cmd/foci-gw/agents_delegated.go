@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/account"
 	"foci/internal/agent"
 	"foci/internal/app"
-	"foci/internal/ccaccount"
 	"foci/internal/config"
 	"foci/internal/delegator"
 	"foci/internal/delegator/autoapprove"
@@ -18,6 +18,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/provider"
+	"foci/internal/ratelimit"
 	"foci/internal/relogin"
 	"foci/internal/route"
 	"foci/internal/secrets"
@@ -167,25 +168,17 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// command reports "unavailable" rather than mis-driving the wrong backend.
 	claudeBin := config.DerefStr(bc.Binary)
 	workDir := p.acfg.Workspace
-	// The agent's Claude Code account (#3104 phase 2): its own gate, login
-	// pane session and expiry warner. Only for a backend with the CC login.
-	var acct *loginAccount
-	if spec.Supports(delegator.CapRelogin) {
-		var err error
-		if acct, err = gwLoginAccounts.forAgent(p.cfg, bc.Env); err != nil {
-			log.NewComponentLogger("relogin/"+agentID).Warnf("resolve the Claude Code account: %v; using the host account's login", err)
-			acct = &loginAccount{gate: relogin.G, session: relogin.DefaultSession, warner: relogin.NewExpiryWarner(p.cfg.DataPath(hostLoginExpiryFile))}
-		}
-		ag.LoginGate = acct.gate
-	}
+	// The agent's accounts (#3186): its pool. A session runs on one of them
+	// (ag.AccountFor), and everything a login owns is asked of that account.
+	accounts := agentAccounts(p.cfg, spec, agentID, bc.Accounts)
 	// start claims the account's gate: Start for /login (always starts one),
 	// StartAuto for an automatic trigger (a 401, the startup probe: one
 	// attempt per expiry, nothing while a login is pending, #3006), and
 	// StartAfterUserFailure for a user-typed message that met the expired
 	// login (#3015). auto marks the automatic trigger, for the refusal log.
-	startRelogin := func(reason, sessionKey string, start func() bool, auto bool) bool {
+	startRelogin := func(acct *account.Account, reason, sessionKey string, start func() bool, auto bool) bool {
 		if !start() {
-			if auto && !acct.gate.Active() {
+			if auto && !acct.Login().Active() {
 				// INFO, not WARN: a warning here would become a proactive
 				// injection, which is what this rule exists to stop.
 				log.NewComponentLogger("relogin/"+agentID).Infof(
@@ -201,14 +194,14 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			WorkDir:   workDir,
 			ClaudeBin: claudeBin,
 			// The login pane's claude runs under a tmux server that may
-			// predate this process, so it is told the agent's CC config
+			// predate this process, so it is told the account's CC config
 			// folder and secure-storage folder (and the user's HOME)
 			// explicitly: a login written to another account's folder
-			// would leave this agent logged out and overwrite that
+			// would leave this account logged out and overwrite that
 			// account's login (#2580, #3104 F2).
-			Env:     ccaccount.LoginEnv(bc.Env),
-			Gate:    acct.gate,
-			Session: acct.session,
+			Env:     acct.LoginEnv(),
+			Gate:    acct.Login(),
+			Session: acct.LoginSession(),
 			Link:    reloginLinkTarget(connMgr, agentID, sessionKey),
 			SendMessage: func(text string) error {
 				// Resolve via the triggering session key so the login URL reaches
@@ -231,12 +224,15 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		return true
 	}
 	if spec.Supports(delegator.CapRelogin) {
+		// Both start the login of the account sessionKey is on.
 		ag.ReloginTrigger = func(reason, sessionKey string) bool {
-			return startRelogin(reason, sessionKey, acct.gate.Start, false)
+			acct := ag.AccountFor(sessionKey)
+			return startRelogin(acct, reason, sessionKey, acct.Login().Start, false)
 		}
 		ag.ReloginRetry = func(sessionKey string, attempt uint64) bool {
-			return startRelogin("a user message met the expired login", sessionKey,
-				func() bool { return acct.gate.StartAfterUserFailure(attempt) }, false)
+			acct := ag.AccountFor(sessionKey)
+			return startRelogin(acct, "a user message met the expired login", sessionKey,
+				func() bool { return acct.Login().StartAfterUserFailure(attempt) }, false)
 		}
 		ag.ReloginLinkTarget = func(sessionKey string) *relogin.LinkTarget {
 			return reloginLinkTarget(connMgr, agentID, sessionKey)
@@ -271,9 +267,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// exists, delivered by the generic log.SetWarnHook path
 	// (setupWarningHooks); a backend-specific hook alongside it only produced
 	// duplicates.
-	// This agent's view of the usage history (#3103): the account its
-	// backend's usage reports are stored under.
-	usageHist := newUsageBinding(backendName, agentID, bc.Env)
+	// The hooks that belong to a login (auth failure, sign-in expiry and
+	// email, usage windows, hard limits) are added per backend instance, for
+	// the account it runs on (bindAccount below).
 	hostHooks := delegator.HostHooks{
 		// A backend with the Claude Code re-login runs it on a 401 (#843) via
 		// the shared trigger built above (same path as the manual /login
@@ -292,9 +288,10 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		// rate_limit_notify_to, read LIVE per notice (hot:"event") so an edit
 		// takes effect without a restart — the backend outlives the config
 		// (#1857).
-		// The notice carries a table of the account's windows (#3154).
+		// The notice carries a table of the windows of the session's account
+		// (#3154).
 		OnRateLimitNotice: func(sessionKey, notice string) {
-			deliverRateLimitNotice(connMgr, agentID, sessionKey, withUsageTable(notice, usageHist),
+			deliverRateLimitNotice(connMgr, agentID, sessionKey, withUsageTable(notice, ag.AccountFor(sessionKey).Readings(agentID)),
 				p.resolvedLive.Load().Notify.RateLimitNotifyTo, app.OpenSessionsForAgent)
 		},
 		// A model refusal fallback (CC's primary model refused and another
@@ -312,11 +309,6 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 				deliverModelFallbackNotice(connMgr, agentID, sessionKey, agent.ModelBlockNotice(detail))
 			}
 		},
-		// A hard limit (CC session limit, opencode rejected usage) engages the
-		// rate-limit gate so background/periodic work pauses until the window
-		// resets; the gate's own hooks notify the user.
-		EngageRateLimit: ag.EngageRateLimit,
-		OnUsageWindow:   ag.ObserveUsage,
 		// [notify] usage_warning_levels, read LIVE per usage event
 		// (hot:"event", #3145).
 		UsageWarningLevels: func() []int { return p.resolvedLive.Load().Notify.UsageWarningLevels },
@@ -325,12 +317,38 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		ClaudeAISkills:     claudeAISkills,
 		AddDirs:            addDirs,
 	}
-	if spec.Supports(delegator.CapRelogin) {
-		hostHooks.OnAuthFailure = func(detail string) {
-			startRelogin("401 auth failure: "+firstLine(detail), "", acct.gate.StartAuto, true)
+	// bindAccount wires one backend instance to the account it runs on
+	// (DelegatedManager.BindAccount): what the instance reports about its
+	// login reaches that account, and no other.
+	bindAccount := func(be delegator.Delegator, acct *account.Account) {
+		hooks := hostHooks
+		// A hard limit (CC session limit, opencode rejected usage) engages
+		// the account's rate-limit gate so background/periodic work on it
+		// pauses until the window resets; the gate's own hooks notify the
+		// user.
+		hooks.EngageRateLimit = func(signal ratelimit.Signal) { ag.EngageRateLimit(acct, signal) }
+		hooks.OnUsageWindow = acct.ObserveUsage
+		if spec.Supports(delegator.CapRelogin) {
+			// A 401 runs the account's re-login (#843) via the shared
+			// trigger built above (same path as the manual /login command);
+			// auto-401 has no triggering chat, "" → the default chat.
+			hooks.OnAuthFailure = func(detail string) {
+				startRelogin(acct, "401 auth failure: "+firstLine(detail), "", acct.Login().StartAuto, true)
+			}
+			hooks.OnLoginExpiry = loginExpiryHook(acct.ExpiryWarner(), connMgr, masterOnAccount(p.cfg, acct), agentID, acct.Login().Pending)
+			hooks.OnLoginEmail = acct.Login().SetEmail
 		}
-		hostHooks.OnLoginExpiry = loginExpiryHook(acct.warner, connMgr, masterOnAccount(p.cfg, acct.account), agentID, acct.gate.Pending)
-		hostHooks.OnLoginEmail = acct.gate.SetEmail
+		if hh, ok := delegator.As[delegator.HostHooksAcceptor](be); ok {
+			hh.SetHostHooks(hooks)
+		}
+		// The usage figures the backend receives go to the account's usage
+		// history (#3103): a backend with /usage must take the sink
+		// (CapUsageReports, which CapUsageQuery requires).
+		if hist := acct.Readings(agentID); hist != nil {
+			if ur, ok := delegator.As[delegator.UsageReporter](be); ok {
+				ur.SetUsageSink(hist.Record)
+			}
+		}
 	}
 
 	// The manager's two prompt surfaces (#2275): approvals land in the
@@ -362,21 +380,10 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			// Sandbox grants are backend-neutral and frozen with the backend instance.
 			cfgMap[delegator.WritableRootsConfigKey] = p.resolved.Sandbox.WritableRoots // static-cfg:ignore: sandbox grants are restart-required like backend sandbox/reviewer; pooled app-server launch and thread RPCs must agree
 			cfgMap[delegator.FociVersionConfigKey] = version
-			be, err := delegator.New(backendName, cfgMap)
-			if err != nil {
-				return nil, err
-			}
-			if hh, ok := delegator.As[delegator.HostHooksAcceptor](be); ok {
-				hh.SetHostHooks(hostHooks)
-			}
-			// The usage figures the backend receives go to the usage history
-			// (#3103): a backend with /usage must take the sink
-			// (CapUsageReports, which CapUsageQuery requires).
-			if ur, ok := delegator.As[delegator.UsageReporter](be); ok && usageHist != nil {
-				ur.SetUsageSink(usageHist.Record)
-			}
-			return be, nil
+			return delegator.New(backendName, cfgMap)
 		},
+		Accounts:    account.NewPool(accountBindings(p.sessionIndex), accounts...),
+		BindAccount: bindAccount,
 		StartOpts: delegator.StartOptions{
 			WorkDir:      p.acfg.Workspace,
 			SystemPrompt: systemPrompt,
@@ -514,7 +521,6 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	}
 	// The account-wide usage hold (#2491): this agent follows its usage
 	// account from now on (its Claude Code login, #3104).
-	ag.UsageAccountKey = usageAccountFor(agentID, backendName, bc.Env)
 	wireUsageHeldRestore(ag, p.ctx, connMgr, agentID, p.agentResolverFn, app.DeliverAgentMessage)
 	ag.StartUsageHold()
 

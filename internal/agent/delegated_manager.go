@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"foci/internal/account"
 	"foci/internal/delegator"
 	"foci/internal/delegator/accounting"
 	"foci/internal/log"
@@ -80,8 +81,20 @@ type DelegatedManager struct {
 	mu       sync.Mutex
 	backends map[string]*managedBackend // sessionKey → managed backend
 
-	// NewBackend creates a fresh Backend instance (does not start it).
+	// NewBackend creates a fresh Backend instance (does not start it), on no
+	// account yet. Everything but OpenBackendCleanupScope takes its instances
+	// through NewBackendFor, which puts each on an account.
 	NewBackend func() (delegator.Delegator, error)
+
+	// Accounts is the agent's pool of accounts, and which session is on
+	// which (#3186). Nil = the agent's sessions have no account.
+	Accounts *account.Pool
+
+	// BindAccount wires a new instance to the account it runs on: the
+	// gateway's hooks that belong to a login (auth failure, sign-in expiry
+	// and email, usage windows, hard limits) and the account's usage
+	// history. Nil = no wiring.
+	BindAccount func(be delegator.Delegator, acct *account.Account)
 
 	// Spec is the backend's declaration (delegator.SpecFor of the agent's
 	// [agents].backend): what it can do and its static data. Ask Supports
@@ -407,11 +420,43 @@ func (a *Agent) delegatedSpec() delegator.Spec {
 // resumeRetention is how long the backend keeps an idle transcript before
 // deleting it itself (Spec.ResumeRetention). Zero = unknown, and the
 // resume-missed notice never guesses at retention.
-func (m *DelegatedManager) resumeRetention() time.Duration {
+func (m *DelegatedManager) resumeRetention(sessionKey string) time.Duration {
 	if m.Spec.ResumeRetention == nil {
 		return 0
 	}
-	return m.Spec.ResumeRetention(m.StartOpts.Env)
+	return m.Spec.ResumeRetention(m.LaunchEnv(sessionKey))
+}
+
+// LaunchEnv is the launch env of sessionKey's backend before the per-launch
+// additions (the session key, the exec bridge): the agent's
+// backend_config.env with the part of the session's account on top. The
+// Spec's functions that read a session's files without a backend instance
+// (ResumeRetention, TranscriptChecker) and a usage read (UsageTarget) take it.
+func (m *DelegatedManager) LaunchEnv(sessionKey string) map[string]string {
+	return m.Accounts.For(sessionKey).LaunchEnv(m.StartOpts.Env)
+}
+
+// NewBackendFor creates a fresh Backend instance on acct (does not start
+// it): the instance reads acct's files and its process runs on acct's login
+// (delegator.AccountAcceptor), and what it reports about its login reaches
+// acct (BindAccount).
+func (m *DelegatedManager) NewBackendFor(acct *account.Account) (delegator.Delegator, error) {
+	be, err := m.NewBackend()
+	if err != nil {
+		return nil, err
+	}
+	if aa, ok := delegator.As[delegator.AccountAcceptor](be); ok {
+		aa.SetAccount(acct.Spec())
+	}
+	if m.BindAccount != nil {
+		m.BindAccount(be, acct)
+	}
+	return be, nil
+}
+
+// newSessionBackend is NewBackendFor the account sessionKey is on.
+func (m *DelegatedManager) newSessionBackend(sessionKey string) (delegator.Delegator, error) {
+	return m.NewBackendFor(m.Accounts.For(sessionKey))
 }
 
 // Supports reports whether the agent's backend declares capability c.
@@ -630,8 +675,8 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string, u
 		}
 	}()
 
-	// Create and start a new Backend for this session.
-	be, err := m.NewBackend()
+	// Create and start a new Backend for this session, on its account.
+	be, err := m.newSessionBackend(sessionKey)
 	if err != nil {
 		return nil, fmt.Errorf("create delegated backend for %s: %w", sessionKey, err)
 	}
@@ -807,7 +852,7 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string, u
 		if resumeID != "" && !opts.Ephemeral {
 			m.logger().Warnf("start with --resume %s failed for %s: %v — retrying without resume", resumeID, sessionKey, err)
 			_ = be.Close()
-			newBe, err := m.NewBackend()
+			newBe, err := m.newSessionBackend(sessionKey)
 			if err != nil {
 				if bridge != nil {
 					bridge.Close()
@@ -873,7 +918,7 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string, u
 			_ = mb.be.Close()
 			m.clearResumeID(sessionKey)
 
-			newBe, err := m.NewBackend()
+			newBe, err := m.newSessionBackend(sessionKey)
 			if err != nil {
 				if bridge != nil {
 					bridge.Close()
@@ -928,7 +973,7 @@ func (m *DelegatedManager) notifyResumeMissed(sessionKey, resumeID string) {
 	if m.LastUseFunc != nil {
 		lastUse, known = m.LastUseFunc(sessionKey)
 	}
-	m.SystemNoticeFunc(sessionKey, resumeMissedNotice(resumeID, lastUse, known, m.resumeRetention(), time.Now()))
+	m.SystemNoticeFunc(sessionKey, resumeMissedNotice(resumeID, lastUse, known, m.resumeRetention(sessionKey), time.Now()))
 }
 
 // resumeMissedNotice words the fallback: "maybe retention" only when the
@@ -1306,7 +1351,7 @@ func (m *DelegatedManager) ResetSession(sessionKey string) {
 	if _, managed := m.getManaged(sessionKey); !managed {
 		if id, ok := m.ephemeralID(sessionKey); ok {
 			if id != "" {
-				_ = m.CleanupBackendSession(context.Background(), id)
+				_ = m.CleanupBackendSession(context.Background(), sessionKey, id)
 			}
 			m.clearResumeID(sessionKey)
 		}
@@ -1533,11 +1578,11 @@ func (m *DelegatedManager) Close() {
 		m.reaperStop()
 		m.reaperStop = nil
 	}
-	var pendingEphemeral []string
+	pendingEphemeral := map[string]string{} // session key → backend session id
 	m.ephemeralMu.Lock()
 	for key, id := range m.ephemeralIDs {
 		if _, live := m.backends[key]; !live && id != "" {
-			pendingEphemeral = append(pendingEphemeral, id)
+			pendingEphemeral[key] = id
 		}
 	}
 	m.ephemeralMu.Unlock()
@@ -1564,8 +1609,8 @@ func (m *DelegatedManager) Close() {
 		}
 		mb.place.release()
 	}
-	for _, id := range pendingEphemeral {
-		_ = m.CleanupBackendSession(context.Background(), id)
+	for key, id := range pendingEphemeral {
+		_ = m.CleanupBackendSession(context.Background(), key, id)
 	}
 }
 
@@ -1830,6 +1875,7 @@ func (m *DelegatedManager) RemapSession(oldKey, newKey string) bool {
 		m.clearResumeID(oldKey)
 	}
 	m.moveUndelivered(oldKey, newKey)
+	m.Accounts.Moved(oldKey, newKey)
 	return true
 }
 
@@ -1855,6 +1901,9 @@ func (m *DelegatedManager) OpenBackendCleanupScope(ctx context.Context) (func(),
 	if m.NewBackend == nil {
 		return noop, nil
 	}
+	// The scope belongs to no session, so its instance is on no account: a
+	// backend whose instances differ by login (Claude Code) deletes straight
+	// from disk and has no scope to open.
 	be, err := m.NewBackend()
 	if err != nil {
 		return noop, err
@@ -1876,17 +1925,17 @@ func (m *DelegatedManager) OpenBackendCleanupScope(ctx context.Context) (func(),
 	return release, nil
 }
 
-// CleanupBackendSession deletes the backend session for sessionID (via
-// BackendBrancher.CleanupSession). No-op if the backend can't branch or
+// CleanupBackendSession deletes the backend session sessionID of sessionKey
+// (via BackendBrancher.CleanupSession), in the files of sessionKey's account. No-op if the backend can't branch or
 // sessionID is empty. Usually a pure filesystem delete; for backends
 // implementing delegator.RunningBackendCleaner it is an RPC to a live server,
 // so a caller deleting several sessions should bracket them with
 // OpenBackendCleanupScope.
-func (m *DelegatedManager) CleanupBackendSession(ctx context.Context, sessionID string) error {
+func (m *DelegatedManager) CleanupBackendSession(ctx context.Context, sessionKey, sessionID string) error {
 	if sessionID == "" {
 		return nil
 	}
-	be, err := m.NewBackend()
+	be, err := m.newSessionBackend(sessionKey)
 	if err != nil {
 		return err
 	}
@@ -1907,7 +1956,8 @@ func (m *DelegatedManager) forkParentSession(ctx context.Context, parentKey stri
 	if parentID == "" {
 		return "", false, nil // no known backend session to fork
 	}
-	be, err := m.NewBackend()
+	// The fork is a child of parentKey, so it is made on the parent's account.
+	be, err := m.newSessionBackend(parentKey)
 	if err != nil {
 		return "", false, fmt.Errorf("fork parent: new backend: %w", err)
 	}

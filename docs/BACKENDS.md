@@ -21,7 +21,7 @@ The table below contrasts the API backend with the delegated backends in general
 |---|---|---|
 | LLM inference | Foci → `provider.Send` | Subprocess (CC / `codex app-server` / `opencode serve`) |
 | Tool registry & execution | Foci's `tools/` package | Backend's built-in tools + MCP |
-| Session history | Foci-managed JSONL in `data/sessions/` | Backend-managed (CC: `<agent's CC config folder>/projects/`: the agent's `backend_config.env` `CLAUDE_CONFIG_DIR`, else the host's `~/.claude`, #3104; Codex/OpenCode: their own stores) |
+| Session history | Foci-managed JSONL in `data/sessions/` | Backend-managed (CC: `<the session's account's CC config folder>/projects/`: the agent's `backend_config.accounts` folder, else the host's `~/.claude`, #3104/#3186; Codex/OpenCode: their own stores) |
 | Context / compaction | Foci `compaction/compact.go` | Backend's own context manager (CC: `/compact`; Codex: `thread/compact/start`; OpenCode: its own mechanism) |
 | Rate limiting | Foci per-endpoint gate | Backend's own limiter |
 | Turn serialization | Foci per-session lock | Backend serializes internally |
@@ -183,6 +183,7 @@ Every delegated backend declares every capability in its `delegator.Spec` (`inte
 | `usage_query` | reports plan usage for /mana (Spec.UsageQuery) | ✓ | ✓ | ✗ |
 | `usage_reports` | hands every usage figure it receives to the host's usage store (UsageReporter, #3103); usage_query requires it | ✓ | ✓ | ✗ |
 | `limit_reset` | /limit_reset force-lifts the rate-limit gate and usage hold, and a /usage read that finds usage available lifts them (its UsageQuery reports rate-limit availability) | ✓ | ✗ | ✗ |
+| `accounts` | an instance runs on one of several logins, each with its own folder (AccountAcceptor, Spec.Account, backend_config.accounts, #3186); without it every agent of the backend shares one login | ✓ | ✗ | ✗ |
 
 Why not:
 
@@ -222,6 +223,7 @@ Why not:
 - `usage_query`: opencode: no plan usage to report.
 - `usage_reports`: opencode: no usage figures to report.
 - `limit_reset`: codex: Dick 2026-11-11: /limit_reset and the /usage unblock are Claude Code only; opencode: no usage hold or plan usage to reset.
+- `accounts`: codex: one login for all the backend's agents; opencode: one login for all the backend's agents.
 
 <!-- END GENERATED CAPABILITIES -->
 
@@ -394,6 +396,7 @@ Generated from each backend's `Spec.ConfigKeys` / `Spec.StartFields` (`internal/
 | `idle_timeout` (gateway) | ✓ | ✓ | ✓ |
 | `skip_permissions` | ✓ | ✗ | ✓ |
 | `env` (gateway) | ✓ | ✓ | ✓ |
+| `accounts` | ✓ | ✗ | ✗ |
 | `hostname` | ✗ | ✗ | ✓ |
 | `server_auth` | ✗ | ✗ | ✓ |
 | `log_level` | ✗ | ✗ | ✓ |

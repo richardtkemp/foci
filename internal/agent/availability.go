@@ -6,16 +6,16 @@ import (
 	"foci/internal/delegator"
 )
 
-// Unavailable reports why this agent cannot run a turn now, for a sender that
-// must be told (#2892): a usage hold or stop on its account, or a backend that
-// needs a login (only an agent on the Claude Code login, UsesCCLogin, #3014).
-// Both are waits: what is queued runs when they end. A dead backend is not
-// here: it shows only when a turn fails.
-func (a *Agent) Unavailable() (reason string, unavailable bool) {
-	if blocked, why := a.UsageHoldBlocks(false); blocked {
+// Unavailable reports why sessionKey cannot run a turn now, for a sender that
+// must be told (#2892): a usage hold or stop on its account, or an account
+// that needs a login (only an agent on the Claude Code login, UsesCCLogin,
+// #3014). Both are waits: what is queued runs when they end. A dead backend
+// is not here: it shows only when a turn fails.
+func (a *Agent) Unavailable(sessionKey string) (reason string, unavailable bool) {
+	if blocked, why := a.UsageHoldBlocks(sessionKey, false); blocked {
 		return why, true
 	}
-	if g := a.LoginGateOrDefault(); a.UsesCCLogin() && (g.Active() || g.Pending()) {
+	if g := a.loginGate(sessionKey); a.UsesCCLogin() && (g.Active() || g.Pending()) {
 		return "its backend needs a new login", true
 	}
 	return "", false

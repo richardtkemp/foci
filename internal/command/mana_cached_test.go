@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"foci/internal/account/accounttest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,6 +29,16 @@ func testHistory(t *testing.T, account string, now time.Time) (*usagelog.Store, 
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	return st, &usagelog.Binding{Store: st, Backend: "claude-code", Account: account, AgentID: "cam", Now: func() time.Time { return now }}
+}
+
+// fixedTarget and fixedHistory are a ManaTarget and a ManaHistory that give
+// every session the same target and history.
+func fixedTarget(t delegator.UsageTarget) ManaTarget {
+	return func(CommandContext, string) delegator.UsageTarget { return t }
+}
+
+func fixedHistory(b *usagelog.Binding) ManaHistory {
+	return func(CommandContext, string) *usagelog.Binding { return b }
 }
 
 func storeReading(t *testing.T, st *usagelog.Store, account string, received time.Time, source string, windows ...delegator.UsageReportWindow) {
@@ -67,7 +78,7 @@ func TestManaCached_InstantWhileReadBlocks(t *testing.T) {
 		<-ctx.Done() // a read that hangs until its caller gives up
 		return nil, ctx.Err()
 	}
-	cmd := ManaCommand(block, delegator.UsageTarget{AgentID: "cam"}, true, hist)
+	cmd := ManaCommand(block, fixedTarget(delegator.UsageTarget{AgentID: "cam"}), true, fixedHistory(hist))
 
 	done := make(chan string, 1)
 	go func() { done <- runMana(t, cmd, "cached", CommandContext{}) }()
@@ -113,7 +124,7 @@ func TestManaCached_JSON(t *testing.T) {
 	r5 := now.Add(2 * time.Hour)
 	storeReading(t, st, "claude-code:A", now.Add(-20*time.Minute), delegator.UsageSourceScheduled,
 		pctWindow("five_hour", 30, r5), pctWindow("seven_day", 20, now.Add(72*time.Hour)))
-	text := runMana(t, ManaCommand(nil, delegator.UsageTarget{}, false, hist), "cached json", CommandContext{})
+	text := runMana(t, ManaCommand(nil, fixedTarget(delegator.UsageTarget{}), false, fixedHistory(hist)), "cached json", CommandContext{})
 
 	var got map[string]any
 	if err := json.Unmarshal([]byte(text), &got); err != nil {
@@ -155,7 +166,7 @@ func TestManaCached_PercentlessEvent(t *testing.T) {
 	storeReading(t, st, "A", hm(20, 40), delegator.UsageSourceScheduled, pctWindow("five_hour", 30, hm(23, 0)))
 	storeReading(t, st, "A", hm(20, 55), delegator.UsageSourceCCEvent,
 		delegator.UsageReportWindow{Window: "five_hour", Length: 5 * time.Hour, ResetsAt: hm(23, 0), Status: "allowed"})
-	text := runMana(t, ManaCommand(nil, delegator.UsageTarget{}, false, hist), "cached json", CommandContext{})
+	text := runMana(t, ManaCommand(nil, fixedTarget(delegator.UsageTarget{}), false, fixedHistory(hist)), "cached json", CommandContext{})
 	var got manaCachedReply
 	if err := json.Unmarshal([]byte(text), &got); err != nil {
 		t.Fatal(err)
@@ -168,7 +179,7 @@ func TestManaCached_PercentlessEvent(t *testing.T) {
 	storeReading(t, st2, "B", hm(17, 50), delegator.UsageSourceScheduled, pctWindow("five_hour", 80, hm(18, 0)))
 	storeReading(t, st2, "B", hm(18, 5), delegator.UsageSourceCCEvent,
 		delegator.UsageReportWindow{Window: "five_hour", Length: 5 * time.Hour, ResetsAt: hm(23, 0), Status: "allowed"})
-	cmd := ManaCommand(nil, delegator.UsageTarget{}, false, hist2)
+	cmd := ManaCommand(nil, fixedTarget(delegator.UsageTarget{}), false, fixedHistory(hist2))
 	readable := runMana(t, cmd, "cached", CommandContext{})
 	if strings.Contains(readable, "80%") || !strings.Contains(readable, "no percent figure held for the current window") {
 		t.Errorf("figure from before the reset shown, or no 'none held' line:\n%s", readable)
@@ -185,7 +196,7 @@ func TestManaCached_PercentlessEvent(t *testing.T) {
 // so.
 func TestManaCached_NothingStored(t *testing.T) {
 	_, hist := testHistory(t, "A", time.Now())
-	cmd := ManaCommand(nil, delegator.UsageTarget{}, false, hist)
+	cmd := ManaCommand(nil, fixedTarget(delegator.UsageTarget{}), false, fixedHistory(hist))
 	if text := runMana(t, cmd, "cached", CommandContext{}); !strings.Contains(text, "holds no usage figures") {
 		t.Errorf("readable: %s", text)
 	}
@@ -194,7 +205,7 @@ func TestManaCached_NothingStored(t *testing.T) {
 		t.Errorf("json: %+v %v", got, err)
 	}
 	// No history at all (no store): the same answer, no panic.
-	if text := runMana(t, ManaCommand(nil, delegator.UsageTarget{}, false), "cached", CommandContext{}); !strings.Contains(text, "holds no usage figures") {
+	if text := runMana(t, ManaCommand(nil, fixedTarget(delegator.UsageTarget{}), false), "cached", CommandContext{}); !strings.Contains(text, "holds no usage figures") {
 		t.Errorf("no store: %s", text)
 	}
 }
@@ -203,32 +214,32 @@ func TestManaCached_NothingStored(t *testing.T) {
 // available never lift the usage hold or the rate-limit gate; a fresh read
 // of the same does (#3043, unchanged).
 func TestManaCached_NoLift(t *testing.T) {
-	a := &agent.Agent{AgentID: "cam", UsageHoldRegistry: usagehold.New()}
-	a.DelegatedManager = &agent.DelegatedManager{BackendType: "claude-code"}
-	a.ObserveUsage(usagehold.Event{Window: "five_hour", Reached: true, ResetAt: time.Now().Add(2 * time.Hour)})
-	a.EngageRateLimit(ratelimit.Signal{Kind: ratelimit.KindUsage, ResetAt: time.Now().Add(2 * time.Hour)})
+	a := &agent.Agent{AgentID: "cam"}
+	a.DelegatedManager = &agent.DelegatedManager{BackendType: "claude-code", Accounts: accounttest.Pool("claude-code", "", usagehold.New(), nil)}
+	a.AccountFor("").ObserveUsage(usagehold.Event{Window: "five_hour", Reached: true, ResetAt: time.Now().Add(2 * time.Hour)})
+	a.EngageRateLimit(a.AccountFor(""), ratelimit.Signal{Kind: ratelimit.KindUsage, ResetAt: time.Now().Add(2 * time.Hour)})
 	gateClosed := func() bool { lim, _ := a.SessionRateLimited("agent:cam:main"); return lim }
-	if a.UsageHold().Phase != usagehold.Stop || !gateClosed() {
-		t.Fatalf("setup: phase %v, gate closed %v", a.UsageHold().Phase, gateClosed())
+	if a.UsageHold("").Phase != usagehold.Stop || !gateClosed() {
+		t.Fatalf("setup: phase %v, gate closed %v", a.UsageHold("").Phase, gateClosed())
 	}
 
 	now := time.Now()
-	st, hist := testHistory(t, a.UsageAccount(), now)
-	storeReading(t, st, a.UsageAccount(), now.Add(-time.Minute), delegator.UsageSourceScheduled,
+	st, hist := testHistory(t, a.AccountFor("").Key(), now)
+	storeReading(t, st, a.AccountFor("").Key(), now.Add(-time.Minute), delegator.UsageSourceScheduled,
 		pctWindow("five_hour", 5, now.Add(time.Hour)), pctWindow("seven_day", 5, now.Add(48*time.Hour)))
 	read := func(context.Context, delegator.UsageTarget) (*delegator.UsageInfo, error) {
 		return &delegator.UsageInfo{Backend: "Claude Code", RateLimitsAvailable: true,
 			FiveHour: delegator.UsageWindow{Percent: 5, Reported: true}, SevenDay: delegator.UsageWindow{Percent: 5, Reported: true}}, nil
 	}
-	cmd := ManaCommand(read, delegator.UsageTarget{AgentID: "cam"}, true, hist)
+	cmd := ManaCommand(read, fixedTarget(delegator.UsageTarget{AgentID: "cam"}), true, fixedHistory(hist))
 
 	text := runMana(t, cmd, "cached", CommandContext{Agent: a})
-	if a.UsageHold().Phase != usagehold.Stop || !gateClosed() || strings.Contains(text, "Lifted") {
-		t.Errorf("after /mana cached: phase %v, gate closed %v; want both still on\n%s", a.UsageHold().Phase, gateClosed(), text)
+	if a.UsageHold("").Phase != usagehold.Stop || !gateClosed() || strings.Contains(text, "Lifted") {
+		t.Errorf("after /mana cached: phase %v, gate closed %v; want both still on\n%s", a.UsageHold("").Phase, gateClosed(), text)
 	}
 	runMana(t, cmd, "", CommandContext{Agent: a})
-	if a.UsageHold().Phase != usagehold.Open || gateClosed() {
-		t.Errorf("after plain /mana at 5%%: phase %v, gate closed %v; want both lifted", a.UsageHold().Phase, gateClosed())
+	if a.UsageHold("").Phase != usagehold.Open || gateClosed() {
+		t.Errorf("after plain /mana at 5%%: phase %v, gate closed %v; want both lifted", a.UsageHold("").Phase, gateClosed())
 	}
 }
 
@@ -242,11 +253,11 @@ func TestMana_FreshReadIsStored(t *testing.T) {
 		return &delegator.UsageInfo{Backend: "Claude Code", Raw: raw,
 			FiveHour: delegator.UsageWindow{Percent: 12, Reported: true, ResetsAt: now.Add(2 * time.Hour)}}, nil
 	}
-	runMana(t, ManaCommand(ok, delegator.UsageTarget{AgentID: "cam"}, false, hist), "", CommandContext{})
+	runMana(t, ManaCommand(ok, fixedTarget(delegator.UsageTarget{AgentID: "cam"}), false, fixedHistory(hist)), "", CommandContext{})
 	failing := func(context.Context, delegator.UsageTarget) (*delegator.UsageInfo, error) {
 		return nil, errors.New("boom")
 	}
-	if _, err := ManaCommand(failing, delegator.UsageTarget{AgentID: "cam"}, false, hist).Execute(context.Background(), Request{Name: "mana"}, CommandContext{}); err == nil {
+	if _, err := ManaCommand(failing, fixedTarget(delegator.UsageTarget{AgentID: "cam"}), false, fixedHistory(hist)).Execute(context.Background(), Request{Name: "mana"}, CommandContext{}); err == nil {
 		t.Fatal("a failed read returned no error")
 	}
 	reps, err := st.Reports("")
@@ -287,16 +298,17 @@ func TestManaCached_AfterRestart(t *testing.T) {
 		t.Error("a read was made")
 		return nil, errors.New("no")
 	}
-	text := runMana(t, ManaCommand(never, delegator.UsageTarget{}, false, hist), "cached", CommandContext{})
+	text := runMana(t, ManaCommand(never, fixedTarget(delegator.UsageTarget{}), false, fixedHistory(hist)), "cached", CommandContext{})
 	if !strings.Contains(text, "44%") || !strings.Contains(text, "received 1h 30m ago") {
 		t.Errorf("after reopen:\n%s", text)
 	}
 }
 
-// TestManaCached_CodexAccountsDoNotMix is H10 (requirement 7) at the
-// command, for codex: two agents, two accounts; each reply shows only its
-// own figures, each bucket's windows with their lengths.
-func TestManaCached_CodexAccountsDoNotMix(t *testing.T) {
+// TestManaCached_AccountsDoNotMix is H10 (requirement 7) at the command: two
+// accounts; each reply shows only its own figures, each bucket's windows
+// with their lengths. (Until #3186 this ran two codex agents, whose figures
+// were stored per agent; codex agents now share the backend's one account.)
+func TestManaCached_AccountsDoNotMix(t *testing.T) {
 	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
 	st, err := usagelog.Open(filepath.Join(t.TempDir(), "usage-history.db"))
 	if err != nil {
@@ -304,7 +316,7 @@ func TestManaCached_CodexAccountsDoNotMix(t *testing.T) {
 	}
 	defer func() { _ = st.Close() }()
 	bind := func(agentID string) *usagelog.Binding {
-		return &usagelog.Binding{Store: st, Backend: "codex", Account: usagelog.AccountKey("codex", agentID, ""), AgentID: agentID, Now: func() time.Time { return now }}
+		return &usagelog.Binding{Store: st, Backend: "codex", Account: "account-of-" + agentID, AgentID: agentID, Now: func() time.Time { return now }}
 	}
 	x, y := bind("x"), bind("y")
 	x.Record(delegator.UsageReport{Source: delegator.UsageSourceCodexUpdate, Windows: []delegator.UsageReportWindow{
@@ -315,10 +327,10 @@ func TestManaCached_CodexAccountsDoNotMix(t *testing.T) {
 		{Window: "codex/5h", Length: 5 * time.Hour, Used: pf(91), UsedUnit: delegator.UsageUnitPercent, ResetsAt: now.Add(time.Hour)},
 	}})
 	var gx, gy manaCachedReply
-	xJSON := runMana(t, ManaCommand(nil, delegator.UsageTarget{}, false, x), "cached json", CommandContext{})
+	xJSON := runMana(t, ManaCommand(nil, fixedTarget(delegator.UsageTarget{}), false, fixedHistory(x)), "cached json", CommandContext{})
 	t.Logf("codex agent x, /mana cached json:\n%s", xJSON)
 	_ = json.Unmarshal([]byte(xJSON), &gx)
-	_ = json.Unmarshal([]byte(runMana(t, ManaCommand(nil, delegator.UsageTarget{}, false, y), "cached json", CommandContext{})), &gy)
+	_ = json.Unmarshal([]byte(runMana(t, ManaCommand(nil, fixedTarget(delegator.UsageTarget{}), false, fixedHistory(y)), "cached json", CommandContext{})), &gy)
 	if len(gx.Windows) != 2 || *gx.Windows[0].UsedPercent != 34 || gx.Windows[0].LengthSeconds != 18000 || gx.Windows[1].LengthSeconds != 604800 {
 		t.Errorf("x = %+v", gx)
 	}
@@ -337,7 +349,7 @@ func TestManaCached_CodexAccountsDoNotMix(t *testing.T) {
 // /mana cached and its keys.
 func TestManaHelp_DocumentsCached(t *testing.T) {
 	r := NewRegistry()
-	r.Register(ManaCommand(nil, delegator.UsageTarget{}, false))
+	r.Register(ManaCommand(nil, fixedTarget(delegator.UsageTarget{}), false))
 	help := HelpCommand(r)
 	resp, err := help.Execute(context.Background(), Request{Name: "help", Args: "mana"}, CommandContext{})
 	if err != nil {

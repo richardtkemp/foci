@@ -217,12 +217,50 @@ func TestCurrent_AccountsDoNotMix(t *testing.T) {
 	}
 }
 
-func TestAccountKey(t *testing.T) {
-	if got := AccountKey("claude-code", "clutch", "claude-code:abc"); got != "claude-code:abc" {
-		t.Errorf("CC key = %q", got)
+// TestMergeAgentAccounts (#3186): the figures a backend with one login stored
+// per agent ("codex/<agent>") move to the backend's one account, each row
+// keeping its agent; another backend's accounts, and a second run, are left
+// alone.
+func TestMergeAgentAccounts(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "usage-history.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if a, b := AccountKey("codex", "x", ""), AccountKey("codex", "y", ""); a == b {
-		t.Errorf("two codex agents share key %q", a)
+	defer func() { _ = st.Close() }()
+	now := time.Now()
+	used := 40.0
+	save := func(backend, account, agentID string, at time.Time) {
+		t.Helper()
+		if err := st.Save(delegator.UsageReport{Source: "test", ReceivedAt: at, Backend: backend, Account: account, AgentID: agentID,
+			Windows: []delegator.UsageReportWindow{{Window: "w", Length: time.Hour, Used: &used, UsedUnit: delegator.UsageUnitPercent, ResetsAt: now.Add(time.Hour)}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save("codex", "codex/x", "x", now.Add(-2*time.Minute))
+	save("codex", "codex/y", "y", now.Add(-time.Minute))
+	save("claude-code", "claude-code:file:/codex/y", "z", now)
+	if n, err := st.MergeAgentAccounts("codex"); err != nil || n != 2 {
+		t.Fatalf("merge = %d, %v; want 2 reports moved", n, err)
+	}
+	reps, err := st.Reports("codex")
+	if err != nil || len(reps) != 2 {
+		t.Fatalf("reports under codex = %d, %v; want 2", len(reps), err)
+	}
+	agents := map[string]bool{}
+	for _, r := range reps {
+		agents[r.AgentID] = true
+	}
+	if !agents["x"] || !agents["y"] {
+		t.Errorf("the moved reports lost their agents: %v", agents)
+	}
+	if cur, err := st.Current("codex", now); err != nil || len(cur.Windows) != 1 {
+		t.Errorf("current of codex = %+v, %v; want the moved window", cur, err)
+	}
+	if other, _ := st.Reports("claude-code:file:/codex/y"); len(other) != 1 {
+		t.Errorf("another backend's account was touched: %d reports", len(other))
+	}
+	if n, err := st.MergeAgentAccounts("codex"); err != nil || n != 0 {
+		t.Errorf("second merge = %d, %v; want nothing to move", n, err)
 	}
 }
 

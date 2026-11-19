@@ -15,7 +15,7 @@ type paths struct {
 	SessionsDir string   `json:"sessions_dir"`
 	OldWS       string   `json:"old_workspace"`
 	NewWS       string   `json:"new_workspace"` // == OldWS in keep mode
-	CCProjects  string   `json:"cc_projects"`   // <CC config dir>/projects
+	CCProjects  []string `json:"cc_projects"`   // <CC config dir>/projects, one per account of the agent
 	StateDB     string   `json:"state_db"`
 	APIDB       string   `json:"api_db"`
 	APIShadowDB string   `json:"api_shadow_db"`
@@ -71,10 +71,11 @@ func dbSpecs(p paths, r ids, wsDir string, move bool) []dbSpec {
 		if !move {
 			return nil
 		}
-		return []rule{
-			path(t, c, p.OldWS+"/", p.NewWS+"/"),
-			path(t, c, filepath.Join(p.CCProjects, ccSlug(p.OldWS))+"/", filepath.Join(p.CCProjects, ccSlug(p.NewWS))+"/"),
+		rules := []rule{path(t, c, p.OldWS+"/", p.NewWS+"/")}
+		for _, dir := range p.CCProjects {
+			rules = append(rules, path(t, c, filepath.Join(dir, ccSlug(p.OldWS))+"/", filepath.Join(dir, ccSlug(p.NewWS))+"/"))
 		}
+		return rules
 	}
 
 	// state.db. Value and key rewrites select the agent's rows by its OLD id,
@@ -164,13 +165,13 @@ func dbSpecs(p paths, r ids, wsDir string, move bool) []dbSpec {
 	return specs
 }
 
-// usageRules rewrite the usage history (#3111). A report is stored under
-// usagelog.AccountKey: the backend's usage account when it has one (a Claude
-// Code login, which holds no agent id and is left alone), else
-// "<backend>/<agent id>" — codex always, any backend whose account cannot
-// be resolved. So an account equal to its own row's backend + "/" + OLD
-// becomes backend + "/" + NEW, for every backend. usage_windows has no
-// backend column: it takes its report's.
+// usageRules rewrite the usage history (#3111). A report is stored under its
+// account's key (account.Account.Key), which holds no agent id and is left
+// alone. A store the gateway has not opened since #3186 can still hold a
+// codex agent's figures under "<backend>/<agent id>" (the gateway moves them
+// to the backend's account at its next start), so an account equal to its
+// own row's backend + "/" + OLD becomes backend + "/" + NEW. usage_windows
+// has no backend column: it takes its report's.
 func usageRules(r ids) []rule {
 	acct := func(t, backend string) rule {
 		return rule{table: t, col: "account", kind: kindBackendKey, backendExpr: backend, from: r.old, to: r.new, idRule: true, r: r}

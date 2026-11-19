@@ -14,15 +14,16 @@ import (
 const defaultCleanupPeriodDays = 30
 
 // CleanupPeriod implements Spec.ResumeRetention: how long Claude Code keeps an
-// idle transcript before its own startup cleanup deletes it, for the agent
-// whose backend_config.env is agentEnv. It is cleanupPeriodDays from that
-// agent's CC config folder's settings.json (ccaccount.ForAgent, #3104), else
+// idle transcript before its own startup cleanup deletes it, for a session
+// whose launch env is launchEnv. It is cleanupPeriodDays from the
+// settings.json of that session's account's CC config folder
+// (ccaccount.ForLaunchEnv, #3104, #3186), else
 // CC's default of 30 days. Foci never sweeps a root chat session's transcript
 // itself (cleanup_ephemeral.go is forks only), so a session idle past this
 // period will fail to --resume on its next turn.
-func CleanupPeriod(agentEnv map[string]string) time.Duration {
+func CleanupPeriod(launchEnv map[string]string) time.Duration {
 	days := defaultCleanupPeriodDays
-	if loc, err := ccaccount.ForAgent(agentEnv); err == nil {
+	if loc, err := ccaccount.ForLaunchEnv(launchEnv); err == nil {
 		if raw, err := os.ReadFile(filepath.Join(loc.Dir, "settings.json")); err == nil {
 			var s struct {
 				CleanupPeriodDays *int `json:"cleanupPeriodDays"`

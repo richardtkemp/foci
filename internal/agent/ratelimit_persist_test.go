@@ -23,7 +23,7 @@ func TestRateLimitGate_DeadlineSurvivesRestart(t *testing.T) {
 	boot := func() *Agent { return &Agent{AgentID: "ag", Endpoint: "anthropic", SessionIndex: idx} }
 
 	resetAt := time.Now().Add(time.Hour)
-	boot().engageRateLimit("anthropic", ratelimit.Signal{Kind: ratelimit.KindUsage, ResetAt: resetAt}, false)
+	boot().engageRateLimit("anthropic", nil, ratelimit.Signal{Kind: ratelimit.KindUsage, ResetAt: resetAt}, false)
 
 	limited, until := boot().getOrCreateRateLimitGate("anthropic").IsLimited()
 	if !limited || !until.Equal(resetAt) {

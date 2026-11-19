@@ -84,15 +84,3 @@ func TestUsageCache_OnReadReachesEveryAgentOfTheAccount(t *testing.T) {
 		t.Fatalf("source = %q, want %q", src, delegator.UsageSourceSpawn)
 	}
 }
-
-// TestSpawnUsageKey: OnSpawnUsageRead keys an agent exactly as
-// SpawnUsageReader does, so its listener hears the reads of its account.
-func TestSpawnUsageKey(t *testing.T) {
-	t.Parallel()
-	if got := spawnUsageKey("claude-code", "a", "acct-1"); got != "acct-1" {
-		t.Fatalf("with account: %q", got)
-	}
-	if got := spawnUsageKey("codex", "a", ""); got != "codex/a" {
-		t.Fatalf("without account: %q", got)
-	}
-}

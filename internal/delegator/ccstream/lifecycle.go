@@ -190,7 +190,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// so it must be the operator's full environment.
 	cmd := procx.Spawn(cmdCtx, procx.Operator, claudeBin, args...)
 	cmd.Dir = opts.WorkDir
-	cmd.Env = buildEnv(opts.Env, hookEnv)
+	cmd.Env = buildEnv(b.withAccountEnv(opts.Env), hookEnv)
 	b.autoApproveEnv = autoapprove.EnvironmentFromList(cmd.Env)
 
 	// Get pipes.

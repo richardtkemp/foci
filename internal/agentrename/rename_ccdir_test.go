@@ -9,8 +9,8 @@ import (
 	"foci/internal/fociroot"
 )
 
-// TestRenameMoveWorkspace_AgentsOwnCCFolder (#3104 H7): an agent whose
-// backend_config.env sets its own CLAUDE_CONFIG_DIR has its CC project folder
+// TestRenameMoveWorkspace_AgentsOwnCCFolder (#3104 H7, #3186): an agent on
+// an account of its own (backend_config.accounts) has its CC project folder
 // moved inside THAT folder's projects/ when --move-workspace changes the
 // workspace slug, and the host folder is not touched. (TestRenameMoveWorkspace
 // is the host-folder arm: an agent with no override still moves within the
@@ -24,8 +24,8 @@ func TestRenameMoveWorkspace_AgentsOwnCCFolder(t *testing.T) {
 	if !strings.Contains(string(cfg), anchor) {
 		t.Fatalf("fixture config has no %q", anchor)
 	}
-	withEnv := strings.Replace(string(cfg), anchor, anchor+"\n[agents.backend_config.env]\nCLAUDE_CONFIG_DIR = \""+ccB+"\"\n", 1)
-	writeFile(t, f.cfgPath, []byte(withEnv))
+	withAccount := strings.Replace(string(cfg), anchor, anchor+"\n[agents.backend_config]\naccounts = [\""+ccB+"\"]\n", 1)
+	writeFile(t, f.cfgPath, []byte(withAccount))
 
 	oldWS, newWS := filepath.Join(f.root, "bob"), filepath.Join(f.root, "rob")
 	ownOld := filepath.Join(ccB, "projects", fociroot.CCProjectSlug(oldWS), "u2.jsonl")

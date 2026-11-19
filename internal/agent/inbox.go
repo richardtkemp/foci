@@ -38,6 +38,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"foci/internal/account"
 	"slices"
 	"strings"
 	"sync"
@@ -871,7 +872,7 @@ func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 	}
 
 	// CC re-login gate (#843). A 401 on a Claude Code account's credential
-	// pauses every agent on that account (its LoginGateOrDefault, #3104) while
+	// pauses every agent on that account (Account.Login, #3104) while
 	// an automated re-login runs. DelegatedManager != nil
 	// is the cheap "this is a delegated (CC) agent" test — it avoids spinning up
 	// a backend just to classify. The one capture window diverts the triggering
@@ -893,7 +894,7 @@ func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 	// user-typed message guards both, so background and system sources never
 	// cause a repeat.
 	reloginHold := false
-	if g := a.LoginGateOrDefault(); a.UsesCCLogin() && g.Active() {
+	if g := a.loginGate(env.SessionKey); a.UsesCCLogin() && g.Active() {
 		if env.Inject == nil && !env.Automated && env.Steer != platform.SteerNever &&
 			strings.TrimSpace(env.Text) != "" {
 			if g.CaptureCode(a.AgentID, env.SessionKey, env.Text) {
@@ -950,7 +951,7 @@ func (a *Agent) Enqueue(env Envelope) (accepted bool) {
 	// wake a hold lets through) instead of waiting it out, and still waits
 	// out a protected turn as any user message does (trySteer). #3131: it
 	// used to queue here and wait ten minutes behind a wake turn.
-	if (a.usageHoldsTrigger("user", false) && !env.usageForce) || env.usageHeldID != "" || env.queuedID != "" || env.restartResume {
+	if (a.usageHoldsTrigger(env.SessionKey, "user", false) && !env.usageForce) || env.usageHeldID != "" || env.queuedID != "" || env.restartResume {
 		a.storeQueuedInput(&env)
 		env.enqSeq = inb.enqSeq.Add(1)
 		select {
@@ -1346,17 +1347,14 @@ func (a *Agent) resolveSessionBackend(ctx context.Context, sk string) (delegator
 	return nil, nil
 }
 
-// LoginGateOrDefault is the re-login gate of this agent's Claude Code
-// account: LoginGate, or relogin.G (the host account's) when unset.
-func (a *Agent) LoginGateOrDefault() *relogin.Gate {
-	if a.LoginGate != nil {
-		return a.LoginGate
-	}
-	return relogin.G
+// loginGate is the gate of the interactive login of sessionKey's account
+// (Account.Login). Never nil.
+func (a *Agent) loginGate(sessionKey string) *relogin.Gate {
+	return a.AccountFor(sessionKey).Login()
 }
 
 // UsesCCLogin reports whether this agent runs on a Claude Code credential
-// that a login gate (LoginGateOrDefault) guards: a delegated agent whose backend declares CapRelogin
+// that a login gate (Account.Login) guards: a delegated agent whose backend declares CapRelogin
 // (ReloginTrigger is set only then). Only these agents are held by a Claude
 // Code login (#3014, Dick 2026-11-10): API agents and the codex and opencode
 // backends do not use that credential, so a CC login neither holds their
@@ -1370,18 +1368,18 @@ func (a *Agent) UsesCCLogin() bool {
 // that uses the CC login (#843/#1932): its account's OAuth credential is dead
 // until it completes, so dispatching now would only 401 again. Other agents
 // are never held (UsesCCLogin).
-func (a *Agent) reloginHoldClosed() bool {
-	return a.UsesCCLogin() && a.LoginGateOrDefault().Active()
+func (a *Agent) reloginHoldClosed(sk string) bool {
+	return a.UsesCCLogin() && a.loginGate(sk).Active()
 }
 
 // reloginPendingAttempt reports, for an agent that uses the CC login, the
 // current re-login attempt number and whether a login is pending (#2384).
 // Other agents: false, so their turns never end the pending state (#3014).
-func (a *Agent) reloginPendingAttempt() (uint64, bool) {
+func (a *Agent) reloginPendingAttempt(sk string) (uint64, bool) {
 	if !a.UsesCCLogin() {
 		return 0, false
 	}
-	return a.LoginGateOrDefault().PendingAttempt()
+	return a.loginGate(sk).PendingAttempt()
 }
 
 // retryReloginAfterUserTurn starts one new login attempt when a user-typed
@@ -1406,11 +1404,11 @@ func (a *Agent) retryReloginAfterUserTurn(env Envelope, attempt uint64) {
 // requestID.
 const reloginHeldBy = "\x00relogin"
 
-// DrainReloginDeferred re-enqueues every injection paused while a CC login was
-// pending, on all of this agent's sessions (#2384). Registered with
-// its login gate's OnComplete by each agent that uses the CC login, on its first
-// paused injection.
-func (a *Agent) DrainReloginDeferred() {
+// DrainReloginDeferred re-enqueues every injection paused while a login of
+// acct was pending, on all of this agent's sessions on acct (#2384).
+// Registered with acct's login gate's OnComplete by each agent that uses the
+// CC login, on its first injection paused for that account.
+func (a *Agent) DrainReloginDeferred(acct *account.Account) {
 	a.inboxesMu.Lock()
 	keys := make([]string, 0, len(a.inboxes))
 	for sk := range a.inboxes {
@@ -1418,7 +1416,9 @@ func (a *Agent) DrainReloginDeferred() {
 	}
 	a.inboxesMu.Unlock()
 	for _, sk := range keys {
-		a.DrainDeferredInjects(sk, reloginHeldBy)
+		if a.AccountFor(sk) == acct {
+			a.DrainDeferredInjects(sk, reloginHeldBy)
+		}
 	}
 }
 
@@ -1431,7 +1431,7 @@ func (a *Agent) waitReloginGate(ctx context.Context, sk string) bool {
 	if !a.UsesCCLogin() {
 		return true
 	}
-	g := a.LoginGateOrDefault()
+	g := a.loginGate(sk)
 	if g.Active() {
 		log.Extra("inbox", "gate_wait sk=%s reason=cc_relogin — holding dispatch until re-login ends (#1932)", sk)
 	}
@@ -1672,18 +1672,18 @@ func (a *Agent) handleDequeued(ctx context.Context, inb *sessionInbox, env Envel
 	// is told — and runs at lift, folded with the session's other held
 	// messages into one turn (releaseUsageHeld). A limit-break message
 	// (#3128) runs now.
-	if !env.usageForce && a.usageHoldsTrigger("user", false) {
+	if !env.usageForce && a.usageHoldsTrigger(inb.sk, "user", false) {
 		a.parkUsageHeld(inb, env)
 		return true
 	}
 	// A login is owed (#2384): if this user turn ends with no new
 	// attempt started, the credential works again, so the pending
 	// state ends and paused injections resume.
-	attempt, loginPending := a.reloginPendingAttempt()
+	attempt, loginPending := a.reloginPendingAttempt(inb.sk)
 	if !a.runUserBatch(ctx, inb, env) {
 		return false
 	}
-	if loginPending && !a.LoginGateOrDefault().ClearPendingIf(attempt) {
+	if loginPending && !a.loginGate(inb.sk).ClearPendingIf(attempt) {
 		a.retryReloginAfterUserTurn(env, attempt)
 	}
 	// Injections the batch's drains pulled off the channel stay on the
@@ -1738,8 +1738,8 @@ func (a *Agent) takeQueuedUsers(inb *sessionInbox) []Envelope {
 // force is set for a batch headed by a limit-break message (#3128): the usage
 // hold does not hold it.
 func (a *Agent) userTurnGatesClosed(sk string, force bool) bool {
-	return a.reloginHoldClosed() ||
-		(!force && a.usageHoldsTrigger("user", false)) ||
+	return a.reloginHoldClosed(sk) ||
+		(!force && a.usageHoldsTrigger(sk, "user", false)) ||
 		(a.IsTurnInFlight(sk) && !a.IsInFlightDelivering(sk)) ||
 		a.IsCompacting(sk)
 }
@@ -1761,11 +1761,16 @@ func (a *Agent) waitUserTurnGates(ctx context.Context, sk string, force bool) bo
 	}
 	// Usage hold (#2491): a user turn (an ask answer, a redelivery, a batch
 	// whose hold closed while it queued) waits for the lift.
-	for !force && a.usageHoldsTrigger("user", false) {
+	for !force {
+		// Taken before the check, so a change between the two is not missed.
+		changed := a.usageHoldChanged()
+		if !a.usageHoldsTrigger(sk, "user", false) {
+			break
+		}
 		select {
 		case <-ctx.Done():
 			return false
-		case <-a.usageHoldChanged():
+		case <-changed:
 		case <-time.After(a.gatePollInterval()):
 		}
 	}
@@ -2146,8 +2151,11 @@ func (a *Agent) runInject(inb *sessionInbox, env Envelope) {
 	// still dead. Running this would 401 and start another attempt with a new
 	// sign-in link. Every injection is paused, control ones included (they
 	// drive the same backend); DrainReloginDeferred resumes them.
-	if g := a.LoginGateOrDefault(); a.UsesCCLogin() && g.Pending() {
-		a.reloginDrainOnce.Do(func() { g.OnComplete(a.DrainReloginDeferred) })
+	if acct := a.AccountFor(inb.sk); a.UsesCCLogin() && acct.Login().Pending() {
+		g := acct.Login()
+		if _, registered := a.reloginDrains.LoadOrStore(acct, true); !registered {
+			g.OnComplete(func() { a.DrainReloginDeferred(acct) })
+		}
 		inb.injMu.Lock()
 		inb.deferredInjects = append(inb.deferredInjects, deferredInject{env: env, heldBy: reloginHeldBy})
 		inb.injMu.Unlock()
@@ -2782,7 +2790,7 @@ func (a *Agent) driveAndDrainOrphans(ctx context.Context, inb *sessionInbox, bat
 		// A usage hold that started during the turn (#2491) holds the
 		// follow-ups: buffered steers are parked as held messages, and the
 		// worker parks what is still queued.
-		if a.usageHoldsTrigger("user", false) {
+		if a.usageHoldsTrigger(inb.sk, "user", false) {
 			for _, env := range buildFollowUp(seed, inb.drainSteer(), nil) {
 				a.parkUsageHeld(inb, env)
 			}

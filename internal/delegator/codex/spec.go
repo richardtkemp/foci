@@ -94,6 +94,7 @@ var spec = delegator.Spec{
 		delegator.CapUsageQuery:               delegator.Yes(),
 		delegator.CapUsageReports:             delegator.Yes(),
 		delegator.CapLimitReset:               delegator.No("Dick 2026-11-11: /limit_reset and the /usage unblock are Claude Code only"),
+		delegator.CapAccounts:                 delegator.No("one login for all the backend's agents"),
 	},
 
 	ModelcapsKey:     modelcaps.BackendCodex,

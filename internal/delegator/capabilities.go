@@ -98,6 +98,7 @@ const (
 	CapUsageQuery
 	CapUsageReports
 	CapLimitReset
+	CapAccounts
 
 	numCapabilities // sentinel: MUST stay last
 )
@@ -192,6 +193,7 @@ var capabilityTable = [numCapabilities]CapabilityInfo{
 	CapUsageQuery:               {Name: "usage_query", Kind: KindData, Requires: []Capability{CapUsageReports}, Doc: "reports plan usage for /mana (Spec.UsageQuery)"},
 	CapUsageReports:             {Name: "usage_reports", Kind: KindInterface, Iface: ifaceOf[UsageReporter](), Doc: "hands every usage figure it receives to the host's usage store (UsageReporter, #3103); usage_query requires it"},
 	CapLimitReset:               {Name: "limit_reset", Kind: KindBehaviour, Requires: []Capability{CapUsageQuery}, Doc: "/limit_reset force-lifts the rate-limit gate and usage hold, and a /usage read that finds usage available lifts them (its UsageQuery reports rate-limit availability)"},
+	CapAccounts:                 {Name: "accounts", Kind: KindInterface, Iface: ifaceOf[AccountAcceptor](), Doc: "an instance runs on one of several logins, each with its own folder (AccountAcceptor, Spec.Account, backend_config.accounts, #3186); without it every agent of the backend shares one login"},
 }
 
 // AllCapabilities returns every capability in declaration order.
@@ -314,22 +316,24 @@ type Spec struct {
 	SpawnSteerNotice string
 
 	TranscriptChecker TranscriptChecker // required iff CapDeliveryTracking
-	// ResumeRetention is the backend's own transcript retention for the agent
-	// whose backend_config.env is agentEnv (it can name the agent's own
-	// config folder, #3104); nil = unknown.
-	ResumeRetention func(agentEnv map[string]string) time.Duration
+	// ResumeRetention is the backend's own transcript retention for a session
+	// whose launch env is launchEnv (the agent's backend_config.env and its
+	// account's part, #3186: the account can name its own config folder);
+	// nil = unknown.
+	ResumeRetention func(launchEnv map[string]string) time.Duration
 	PlanDelivery    PlanDelivery // required iff CapPlanMode
 	UsageQuery      UsageQuery   // required iff CapUsageQuery
-	// UsageAccount names the usage account of an agent whose
-	// backend_config.env is agentEnv (#3104: for Claude Code, its login). Agents
-	// with equal accounts share usage: one usage hold (usagehold, keyed and
-	// stored under this name), one /limit_reset, and one cached UsageQuery read
-	// on one schedule (the spawn reserve check, #2662). Agents on different
-	// accounts never share any of it.
+	// Account describes the login whose folder is folder (one
+	// backend_config.accounts entry; "" = the host's login), #3186. Sessions
+	// on equal accounts (AccountSpec.Key) share everything a login owns: one
+	// interactive login, one usage hold (usagehold, keyed and stored under
+	// the key), one /limit_reset, one usage history and one cached UsageQuery
+	// read on one schedule (the spawn reserve check, #2662). Sessions on
+	// different accounts never share any of it.
 	//
-	// nil: the hold's account is the backend name (codex: every codex agent
-	// is one hold account, as before) and UsageQuery reads are per agent.
-	UsageAccount func(agentEnv map[string]string) (string, error)
+	// nil: the backend has one login for all its agents (codex, opencode),
+	// named after the backend (AccountOf).
+	Account func(folder string) (AccountSpec, error)
 	// UsageReadNotices returns the chat notices one successful UsageQuery
 	// read of agentID's account raises (#3144: Claude Code warns at each of
 	// levels, the live [notify] usage_warning_levels (#3145), sharing the
@@ -456,6 +460,7 @@ func (s Spec) Validate() error {
 	coupled(CapDeliveryTracking, s.TranscriptChecker != nil, "TranscriptChecker")
 	coupled(CapPlanMode, s.PlanDelivery != nil, "PlanDelivery")
 	coupled(CapUsageQuery, s.UsageQuery != nil, "UsageQuery")
+	coupled(CapAccounts, s.Account != nil, "Account")
 	if s.ForkNeedsRunning && !s.Supports(CapBranch) {
 		bad("ForkNeedsRunning without %s", CapBranch)
 	}

@@ -18,8 +18,10 @@ import (
 	"foci/internal/testharness"
 )
 
-// The #3104 phase-1 tests: an agent whose backend_config.env sets its own
-// CLAUDE_CONFIG_DIR ("beta") next to one with no override ("alpha"). cc-stub
+// The #3104 phase-1 tests: an agent on an account of its own ("beta": its
+// backend_config.accounts names a CC config folder, #3186) next to one on the
+// host's account ("alpha"). foci starts beta's CC with that folder as its
+// CLAUDE_CONFIG_DIR. cc-stub
 // writes every consumed message to the transcript under its CLAUDE_CONFIG_DIR
 // (CCSTUB_WRITE_TRANSCRIPT), as real CC does, so the session index rows name
 // files that exist exactly when foci looks in the folder CC uses.
@@ -164,7 +166,7 @@ func TestL2_CCConfigDir_RowsSurviveRestarts(t *testing.T) {
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: alphaUser, ExtraEnv: map[string]string{"CCSTUB_WRITE_TRANSCRIPT": "1"}},
-			{ID: "beta", UserID: betaUser, ExtraEnv: map[string]string{"CCSTUB_WRITE_TRANSCRIPT": "1", "CLAUDE_CONFIG_DIR": ccB}},
+			{ID: "beta", UserID: betaUser, ExtraEnv: map[string]string{"CCSTUB_WRITE_TRANSCRIPT": "1"}, Accounts: []string{ccB}},
 		},
 		ReadyTimeout: 30 * time.Second,
 	})
@@ -246,7 +248,7 @@ func TestL2_CCConfigDir_FoldedSteerNotResentAfterRestart(t *testing.T) {
 	ccB := filepath.Join(t.TempDir(), "ccB")
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
-			{ID: "beta", UserID: userID, ExtraEnv: map[string]string{"CLAUDE_CONFIG_DIR": ccB}},
+			{ID: "beta", UserID: userID, Accounts: []string{ccB}},
 		},
 		ReadyTimeout: 30 * time.Second,
 	})
@@ -308,7 +310,7 @@ func TestL2_CCConfigDir_FoldedSteerNotResentAfterDeath(t *testing.T) {
 	ccB := filepath.Join(t.TempDir(), "ccB")
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
-			{ID: "beta", UserID: userID, ExtraEnv: map[string]string{"CLAUDE_CONFIG_DIR": ccB}},
+			{ID: "beta", UserID: userID, Accounts: []string{ccB}},
 		},
 		ReadyTimeout: 30 * time.Second,
 	})
@@ -345,7 +347,7 @@ func TestL2_CCConfigDir_FoldedSteerNotResentAfterDeath(t *testing.T) {
 
 // TestL2_CCConfigDir_FolderChangeKeepsSessionData (#3104 H3, Dick's 00:23
 // addition): an agent with two chats (two turns each, so each row names its
-// transcript) moves to a new CLAUDE_CONFIG_DIR. One
+// transcript) moves to a new account folder (backend_config.accounts). One
 // chat is used after the move: its resume cannot find the transcript (the
 // stub fails --resume, as real CC does) and it starts fresh. Over two more
 // restarts neither chat's index row, session metadata nor resume history is
@@ -358,7 +360,7 @@ func TestL2_CCConfigDir_FolderChangeKeepsSessionData(t *testing.T) {
 	ccB, ccB2 := filepath.Join(tmp, "ccB"), filepath.Join(tmp, "ccB2")
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
-			{ID: "beta", UserID: userID, ExtraEnv: map[string]string{"CCSTUB_WRITE_TRANSCRIPT": "1", "CLAUDE_CONFIG_DIR": ccB}},
+			{ID: "beta", UserID: userID, ExtraEnv: map[string]string{"CCSTUB_WRITE_TRANSCRIPT": "1"}, Accounts: []string{ccB}},
 		},
 		ReadyTimeout: 30 * time.Second,
 	})
@@ -381,11 +383,12 @@ func TestL2_CCConfigDir_FolderChangeKeepsSessionData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldEnv := fmt.Sprintf("CLAUDE_CONFIG_DIR = %q", ccB)
-	if !strings.Contains(string(cfg), oldEnv) {
-		t.Fatalf("config has no %s:\n%s", oldEnv, cfg)
+	oldAccounts, oldEnv := fmt.Sprintf("accounts = [%q]", ccB), `CCSTUB_WRITE_TRANSCRIPT = "1"`
+	if !strings.Contains(string(cfg), oldAccounts) || !strings.Contains(string(cfg), oldEnv) {
+		t.Fatalf("config has no %s or no %s:\n%s", oldAccounts, oldEnv, cfg)
 	}
-	moved := strings.Replace(string(cfg), oldEnv, fmt.Sprintf("CCSTUB_FAIL_ON_RESUME = \"1\", CLAUDE_CONFIG_DIR = %q", ccB2), 1)
+	moved := strings.Replace(string(cfg), oldAccounts, fmt.Sprintf("accounts = [%q]", ccB2), 1)
+	moved = strings.Replace(moved, oldEnv, oldEnv+`, CCSTUB_FAIL_ON_RESUME = "1"`, 1)
 	if err := os.WriteFile(h.ConfigPath(), []byte(moved), 0o600); err != nil {
 		t.Fatal(err)
 	}

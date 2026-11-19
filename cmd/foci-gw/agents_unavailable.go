@@ -108,14 +108,14 @@ func (w *callerWatch) run() {
 		case <-ticker.C:
 		}
 		now := time.Now()
-		if reason, unavailable := w.targetAg.Unavailable(); unavailable {
+		if reason, unavailable := w.targetAg.Unavailable(w.target); unavailable {
 			// A wait with its own cause is not a stall, however long it lasts.
 			quietSince = now
 			if !w.heldTold && !w.hasStarted() {
 				w.heldTold = true
 				// A caller on the same hold cannot act now, and by the time a
 				// notice could run the reply is on its way.
-				if _, callerHeld := w.callerAg.Unavailable(); !callerHeld {
+				if _, callerHeld := w.callerAg.Unavailable(w.caller); !callerHeld {
 					w.tell(tools.UnavailableHeldNote(w.target, reason, w.replyToCaller))
 				}
 			}
@@ -167,7 +167,7 @@ func (w *callerWatch) options() []injectOption {
 // parked survives the shutdown that refuses it, so there is nothing to tell.
 func (w *callerWatch) refused() {
 	w.finish()
-	if w.targetAg.ShuttingDown() && w.targetAg.UsageHold().Phase != usagehold.Open {
+	if w.targetAg.ShuttingDown() && w.targetAg.UsageHold(w.target).Phase != usagehold.Open {
 		return
 	}
 	w.tell(fmt.Sprintf("Session %s did not take your message, so it was not delivered: its inbox refused it (full, or foci is shutting down). If it still matters, send it again.", w.target))
@@ -198,7 +198,7 @@ func (w *callerWatch) turnEnded(err error, hasReply bool) {
 		w.tell(fmt.Sprintf("Session %s cannot reply now: %s. Your message is queued and runs when the limit resets. The reply will not come to you.", w.target, limited.Error()))
 	default:
 		w.finish()
-		if reason, unavailable := w.targetAg.Unavailable(); unavailable {
+		if reason, unavailable := w.targetAg.Unavailable(w.target); unavailable {
 			w.tell(fmt.Sprintf("Session %s stopped working on your message: %s. It carries on when it is back. The reply then goes to its own chat, not to you.", w.target, reason))
 			return
 		}

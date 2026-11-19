@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"foci/internal/account"
 	"sync"
 	"time"
 
@@ -36,11 +37,12 @@ import (
 // relogin"), by the first agent on it in agentOrder: its backend runs `claude
 // auth status` with that agent's environment and binary, so a logged-out
 // account starts one relogin, for that account only, and a logged-in one
-// reports its own sign-in end date. Agents sharing an account share its gate
-// (Agent.LoginGateOrDefault), which is what groups them here.
+// reports its own sign-in end date. Agents sharing an account share its
+// Account (gwAccounts), which is what groups them here. This caller has no
+// session: it asks each account of each agent's pool (#3186).
 func checkDelegatedReadiness(ctx context.Context, agents map[string]*agentInstance, agentOrder []string) {
 	var wg sync.WaitGroup
-	probed := map[any]bool{}
+	probed := map[*account.Account]bool{}
 	for _, agentID := range agentOrder {
 		inst := agents[agentID]
 		dm := inst.ag.DelegatedManager
@@ -54,32 +56,38 @@ func checkDelegatedReadiness(ctx context.Context, agents map[string]*agentInstan
 		if !dm.Supports(delegator.CapUnstartedReadinessProbe) {
 			continue
 		}
-		if inst.ag.UsesCCLogin() {
-			g := inst.ag.LoginGateOrDefault()
-			if probed[g] {
-				continue // this account is probed by an earlier agent
-			}
-			probed[g] = true
+		// Every account of the agent's pool is probed (an agent with no
+		// pool: once, on no account).
+		accounts := dm.Accounts.Accounts()
+		if len(accounts) == 0 {
+			accounts = []*account.Account{nil}
 		}
-		wg.Add(1)
-		agentID := agentID
-		go func() {
-			defer wg.Done()
-			be, err := dm.NewBackend()
-			if err != nil {
-				mainLog.Warnf("[%s] readiness probe: build backend: %v", agentID, err)
-				return
+		for _, acct := range accounts {
+			if inst.ag.UsesCCLogin() {
+				if probed[acct] {
+					continue // this account is probed by an earlier agent
+				}
+				probed[acct] = true
 			}
-			ready, err := be.CheckReady(ctx)
-			switch {
-			case err != nil:
-				mainLog.Warnf("[%s] readiness check could not be performed: %v", agentID, err)
-			case ready:
-				mainLog.Infof("[%s] backend ready", agentID)
-			default:
-				mainLog.Warnf("[%s] backend not ready — recovery initiated (see relogin logs)", agentID)
-			}
-		}()
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				be, err := dm.NewBackendFor(acct)
+				if err != nil {
+					mainLog.Warnf("[%s] readiness probe: build backend: %v", agentID, err)
+					return
+				}
+				ready, err := be.CheckReady(ctx)
+				switch {
+				case err != nil:
+					mainLog.Warnf("[%s] readiness check could not be performed: %v", agentID, err)
+				case ready:
+					mainLog.Infof("[%s] backend ready", agentID)
+				default:
+					mainLog.Warnf("[%s] backend not ready — recovery initiated (see relogin logs)", agentID)
+				}
+			}()
+		}
 	}
 	wg.Wait()
 }

@@ -57,8 +57,8 @@ func TestInbox_HeldInputKeepsArrivalOrderAtLift(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			a, cancel := startedAgent(t)
 			defer cancel()
-			a.UsageHoldRegistry = usagehold.New()
 			a.DelegatedManager = &DelegatedManager{BackendType: "claude-code"}
+			putOnAccount(a, "", usagehold.New(), nil)
 			a.StartUsageHold()
 			defer a.StopUsageHold()
 
@@ -72,7 +72,7 @@ func TestInbox_HeldInputKeepsArrivalOrderAtLift(t *testing.T) {
 			})
 			d := &recordingDriver{}
 
-			a.ObserveUsage(weekly(0.98))
+			testAcct(a).ObserveUsage(weekly(0.98))
 			for _, item := range tc.order {
 				item := item
 				if strings.HasPrefix(item, "U") {
@@ -94,7 +94,7 @@ func TestInbox_HeldInputKeepsArrivalOrderAtLift(t *testing.T) {
 				t.Fatalf("ran during the hold: %v", got)
 			}
 
-			a.ObserveUsage(weekly(0.50))
+			testAcct(a).ObserveUsage(weekly(0.50))
 			if !waitFor(3*time.Second, func() bool { return len(log.snapshot()) >= len(tc.want) }) {
 				t.Fatalf("at lift ran %v, want %v", log.snapshot(), tc.want)
 			}
@@ -189,14 +189,14 @@ func TestInbox_RemindPassesUsageHeldMessage(t *testing.T) {
 	be := &mockBackendDT{sessionFile: "/tmp/s.jsonl"}
 	a.DelegatedManager = newMockDelegatedManager(t, be)
 	a.DelegatedManager.BackendType = "claude-code"
-	a.UsageHoldRegistry = usagehold.New()
+	putOnAccount(a, "", usagehold.New(), nil)
 	a.StartUsageHold()
 	defer a.StopUsageHold()
 	sk := "test/s"
 
 	log := &arrivalLog{}
 	a.SetTurnObserver(func(_ string, batch []Envelope) { log.add(batch[0].Text) })
-	a.ObserveUsage(weekly(0.98))
+	testAcct(a).ObserveUsage(weekly(0.98))
 	a.Enqueue(Envelope{SessionKey: sk, Text: "U1", Driver: &recordingDriver{}})
 	be.setAwaiting(true)
 	a.Enqueue(Envelope{SessionKey: sk, Inject: &InjectMeta{Trigger: "scheduled_wake", Run: func() { log.add("W1") }}})
@@ -210,7 +210,7 @@ func TestInbox_RemindPassesUsageHeldMessage(t *testing.T) {
 	if got := log.snapshot(); got[0] != "W1" {
 		t.Fatalf("ran %v during the hold, want [W1]", got)
 	}
-	a.ObserveUsage(weekly(0.50))
+	testAcct(a).ObserveUsage(weekly(0.50))
 	if !waitFor(2*time.Second, func() bool { return len(log.snapshot()) == 2 }) {
 		t.Fatalf("U1 did not run at lift; ran %v", log.snapshot())
 	}

@@ -13,9 +13,15 @@ import (
 // onCCLogin marks a test agent as one on the Claude Code login, as
 // configureDelegated does for a backend declaring CapRelogin: only such an
 // agent is held by relogin.G (#3014).
+//
+// Its sessions are on the host's account (login gate relogin.G), unless the
+// test put it on another one first.
 func onCCLogin(a *Agent) {
 	if a.ReloginTrigger == nil {
 		a.ReloginTrigger = func(string, string) bool { return true }
+	}
+	if a.DelegatedManager != nil && a.DelegatedManager.Accounts == nil {
+		putOnAccount(a, "", nil, nil)
 	}
 }
 

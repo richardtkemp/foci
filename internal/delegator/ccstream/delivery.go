@@ -315,9 +315,9 @@ func (b *Backend) transcriptHolds(pending []delegator.PendingInput) (map[string]
 // InputInTranscript implements delegator.TranscriptChecker for claude-code: it
 // reports whether the transcript of sessionID in workDir holds the input id.
 // The transcript is in the CC config folder of the agent whose
-// backend_config.env is agentEnv (#3104).
-func InputInTranscript(agentEnv map[string]string, workDir, sessionID, id string) (bool, error) {
-	path, err := ccTranscriptPath(agentEnv, workDir, sessionID)
+// backend_config.env is launchEnv (#3104).
+func InputInTranscript(launchEnv map[string]string, workDir, sessionID, id string) (bool, error) {
+	path, err := ccTranscriptPath(launchEnv, workDir, sessionID)
 	if err != nil {
 		return false, err
 	}

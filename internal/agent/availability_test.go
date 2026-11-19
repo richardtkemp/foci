@@ -13,20 +13,20 @@ func TestUnavailable(t *testing.T) {
 	reg := usagehold.New()
 	a := holdAgent(reg, "claude-code")
 	onCCLogin(a)
-	if why, un := a.Unavailable(); un {
+	if why, un := a.Unavailable(""); un {
 		t.Fatalf("open account: unavailable %q", why)
 	}
-	a.ObserveUsage(weekly(0.99))
-	if why, un := a.Unavailable(); !un || !strings.Contains(why, "usage hold") {
+	testAcct(a).ObserveUsage(weekly(0.99))
+	if why, un := a.Unavailable(""); !un || !strings.Contains(why, "usage hold") {
 		t.Errorf("in a hold: %q %v, want the hold named", why, un)
 	}
-	a.ObserveUsage(weekly(0.10))
+	testAcct(a).ObserveUsage(weekly(0.10))
 
 	claimRelogin(t)
-	if why, un := a.Unavailable(); !un || !strings.Contains(why, "login") {
+	if why, un := a.Unavailable(""); !un || !strings.Contains(why, "login") {
 		t.Errorf("in a login: %q %v, want the login named", why, un)
 	}
-	if why, un := (&Agent{}).Unavailable(); un {
+	if why, un := (&Agent{}).Unavailable(""); un {
 		t.Errorf("an API agent in a login: unavailable %q, want available", why)
 	}
 }

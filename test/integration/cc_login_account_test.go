@@ -95,8 +95,8 @@ func TestL2_CCLogin_OneGatePerAccount(t *testing.T) {
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: alphaUser},
-			{ID: "beta", UserID: betaUser, ExtraEnv: map[string]string{"CLAUDE_CONFIG_DIR": ccB}},
-			{ID: "beta2", UserID: beta2User, ExtraEnv: map[string]string{"CLAUDE_CONFIG_DIR": ccB}},
+			{ID: "beta", UserID: betaUser, Accounts: []string{ccB}},
+			{ID: "beta2", UserID: beta2User, Accounts: []string{ccB}},
 		},
 		ReadyTimeout: 30 * time.Second,
 	})
@@ -168,7 +168,7 @@ func TestL2_CCLogin_StartupChecksEachAccount(t *testing.T) {
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: alphaUser},
-			{ID: "beta", UserID: betaUser, ExtraEnv: map[string]string{"CLAUDE_CONFIG_DIR": ccB}},
+			{ID: "beta", UserID: betaUser, Accounts: []string{ccB}},
 		},
 		ReadyTimeout: 30 * time.Second,
 	})

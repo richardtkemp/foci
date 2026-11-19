@@ -146,15 +146,15 @@ root.2026-03-13T10-30-00Z.jsonl.gz (gzipped, original deleted)
 
 For the `claude-code` (ccstream) backend the conversation lives in Claude
 Code's own transcript, `<CC config folder>/projects/<cwd-slug>/<sessionID>.jsonl`,
-not a foci `root.jsonl`. The CC config folder is per agent (#3104,
-`ccaccount.ForAgent`): the agent's `[agents.<id>.backend_config] env`
-`CLAUDE_CONFIG_DIR` when set, else a `CLAUDE_CONFIG_DIR` from the operator's
-shell rc file, else the host folder (`~/.claude`, or `<install root>/.claude`
+not a foci `root.jsonl`. The CC config folder is the session's account's (#3104,
+#3186, `ccaccount.ForLaunchEnv`): the folder the agent's
+`[agents.<id>.backend_config] accounts` lists, else a `CLAUDE_CONFIG_DIR` from
+the operator's shell rc file, else the host folder (`~/.claude`, or `<install root>/.claude`
 on a separate-root install). `Backend.SessionFilePath()` derives that path from
 the live session id + workdir (the same construction `ForkSession` uses to
 locate a parent), so the session-index row carries it like any native file. A
 turn records the path only once the file exists; until then (no backend yet,
-or a path CC has not written, as after an agent's folder changes) the row keeps
+or a path CC has not written, as after an agent's account folder changes) the row keeps
 the path it holds. Consequences:
 
 - **ArchiveSweep** gzips a CC transcript once its chat is idle beyond

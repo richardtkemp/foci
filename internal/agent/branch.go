@@ -164,7 +164,7 @@ func (a *Agent) ForkBackendBranch(ctx context.Context, parentKey string, opts se
 	branchKey, err := a.Sessions.CreateBranchWithOptions(parentKey, withOpeningFallback(opts, written))
 	if err != nil {
 		a.taggedLog(opts.BranchType).Errorf("fork branch key create for %s: %v", parentKey, err)
-		_ = a.DelegatedManager.CleanupBackendSession(ctx, forkedID)
+		_ = a.DelegatedManager.CleanupBackendSession(ctx, parentKey, forkedID)
 		return "", false
 	}
 	// Point the branch key at the forked backend session so the next turn on it
@@ -172,7 +172,7 @@ func (a *Agent) ForkBackendBranch(ctx context.Context, parentKey string, opts se
 	if opts.BackendEphemeral() {
 		if err := a.DelegatedManager.markEphemeralSession(branchKey, forkedID); err != nil {
 			a.taggedLog(opts.BranchType).Errorf("mark ephemeral fork %s: %v", branchKey, err)
-			_ = a.DelegatedManager.CleanupBackendSession(ctx, forkedID)
+			_ = a.DelegatedManager.CleanupBackendSession(ctx, parentKey, forkedID)
 			return "", false
 		}
 	}

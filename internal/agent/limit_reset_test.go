@@ -50,19 +50,19 @@ func TestResetLimits_ClearsGateAndHold_SurvivesRestart(t *testing.T) {
 
 	reset := time.Now().Add(2 * time.Hour).Truncate(time.Second)
 	a := boot()
-	a.ObserveUsage(usagehold.Event{Window: "five_hour", Reached: true, ResetAt: reset})
-	a.EngageRateLimit(ratelimit.Signal{Kind: ratelimit.KindUsage, ResetAt: reset})
+	testAcct(a).ObserveUsage(usagehold.Event{Window: "five_hour", Reached: true, ResetAt: reset})
+	a.EngageRateLimit(testAcct(a), ratelimit.Signal{Kind: ratelimit.KindUsage, ResetAt: reset})
 
 	// Restart: both come back closed (the incident's state).
 	a = boot()
-	if a.UsageHold().Phase != usagehold.Stop {
-		t.Fatalf("after restart: hold phase %v, want stop", a.UsageHold().Phase)
+	if a.UsageHold("").Phase != usagehold.Stop {
+		t.Fatalf("after restart: hold phase %v, want stop", a.UsageHold("").Phase)
 	}
 	if lim, _ := a.KeepaliveRateLimited("claude-code-agent/c1"); !lim {
 		t.Fatal("after restart: keepalive not blocked")
 	}
 
-	res := a.ResetLimits("test")
+	res := a.ResetLimits("", "test")
 	if !res.Cleared() || res.HoldFrom != usagehold.Stop || !res.GateUntil.Equal(reset) {
 		t.Fatalf("ResetLimits = %+v, want a stop and a gate until %v cleared", res, reset)
 	}
@@ -72,15 +72,15 @@ func TestResetLimits_ClearsGateAndHold_SurvivesRestart(t *testing.T) {
 
 	// Restart again: the reset survives.
 	a = boot()
-	if a.UsageHold().Phase != usagehold.Open {
-		t.Errorf("after reset + restart: hold phase %v, want open", a.UsageHold().Phase)
+	if a.UsageHold("").Phase != usagehold.Open {
+		t.Errorf("after reset + restart: hold phase %v, want open", a.UsageHold("").Phase)
 	}
 	if lim, reason := a.SessionRateLimited("claude-code-agent/c1"); lim {
 		t.Errorf("after reset + restart: still blocked (%s)", reason)
 	}
 
 	// Nothing blocked: a second reset clears nothing.
-	if res := a.ResetLimits("test"); res.Cleared() {
+	if res := a.ResetLimits("", "test"); res.Cleared() {
 		t.Errorf("ResetLimits on an open agent = %+v, want nothing cleared", res)
 	}
 }
@@ -90,19 +90,19 @@ func TestResetLimits_ClearsGateAndHold_SurvivesRestart(t *testing.T) {
 func TestResetLimits_ReleasesHeldInput(t *testing.T) {
 	a, cancel := startedAgent(t)
 	defer cancel()
-	a.UsageHoldRegistry = usagehold.New()
 	a.DelegatedManager = &DelegatedManager{BackendType: "claude-code"}
+	putOnAccount(a, "", usagehold.New(), nil)
 	a.StartUsageHold()
 	defer a.StopUsageHold()
 	d := &recordingDriver{}
 	a.SetTurnObserver(d.recordBatch)
 
-	a.ObserveUsage(usagehold.Event{Window: "five_hour", Reached: true, ResetAt: time.Now().Add(2 * time.Hour)})
+	testAcct(a).ObserveUsage(usagehold.Event{Window: "five_hour", Reached: true, ResetAt: time.Now().Add(2 * time.Hour)})
 	a.Enqueue(Envelope{SessionKey: "test/s", Text: "M1", Driver: d})
 	if waitFor(300*time.Millisecond, func() bool { return d.NumCalls() > 0 }) {
 		t.Fatalf("a message ran during the stop; calls=%d", d.NumCalls())
 	}
-	a.ResetLimits("test")
+	a.ResetLimits("", "test")
 	if !waitFor(2*time.Second, func() bool { return d.NumCalls() == 1 }) {
 		t.Fatalf("held message did not run after ResetLimits; calls=%d", d.NumCalls())
 	}
@@ -118,11 +118,11 @@ func TestUsageAvailable_UsesHoldThreshold(t *testing.T) {
 		FiveHour:            delegator.UsageWindow{Percent: 96, Reported: true},
 		SevenDay:            delegator.UsageWindow{Percent: 10, Reported: true},
 	}
-	if !a.UsageAvailable(info) {
+	if !a.UsageAvailable("", info) {
 		t.Error("96% at the default 98% threshold: not available, want available")
 	}
 	reg.SetThresholdPercent(95)
-	if a.UsageAvailable(info) {
+	if a.UsageAvailable("", info) {
 		t.Error("96% at a 95% threshold: available, want not")
 	}
 }

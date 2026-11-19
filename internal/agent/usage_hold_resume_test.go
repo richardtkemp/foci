@@ -38,8 +38,8 @@ func TestUsageHold_ResumeLineIsAUserMessage(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			a, cancel := startedAgent(t)
 			defer cancel()
-			a.UsageHoldRegistry = usagehold.New()
 			a.DelegatedManager = &DelegatedManager{BackendType: "claude-code"}
+			putOnAccount(a, "", usagehold.New(), nil)
 			a.StartUsageHold()
 			defer a.StopUsageHold()
 			d := newBlockingDriver()
@@ -56,7 +56,7 @@ func TestUsageHold_ResumeLineIsAUserMessage(t *testing.T) {
 			case <-time.After(2 * time.Second):
 				t.Fatal("the first turn never started")
 			}
-			a.ObserveUsage(weekly(0.98))
+			testAcct(a).ObserveUsage(weekly(0.98))
 			select {
 			case <-d.ended:
 			case <-time.After(2 * time.Second):
@@ -70,7 +70,7 @@ func TestUsageHold_ResumeLineIsAUserMessage(t *testing.T) {
 					t.Fatal("M1 was not held")
 				}
 			}
-			a.ObserveUsage(weekly(0.10))
+			testAcct(a).ObserveUsage(weekly(0.10))
 			if !waitFor(2*time.Second, func() bool { return len(d.Calls()) == 2 }) {
 				t.Fatalf("turns = %d, want the interrupted one and the resume turn", len(d.Calls()))
 			}
@@ -120,7 +120,7 @@ func TestUsageHold_PausedBackgroundSurvivesRestart(t *testing.T) {
 		})
 	}()
 	<-started
-	a1.ObserveUsage(weekly(0.98))
+	testAcct(a1).ObserveUsage(weekly(0.98))
 	if !waitFor(2*time.Second, func() bool { return a1.PausedBackgroundRecorded(pb.Key) }) {
 		t.Fatal("the paused background turn left no record")
 	}
@@ -164,7 +164,7 @@ func TestUsageHold_PausedBackgroundSurvivesRestart(t *testing.T) {
 		t.Fatal("the restored background turn ran during the hold")
 	default:
 	}
-	a2.ObserveUsage(weekly(0.10))
+	testAcct(a2).ObserveUsage(weekly(0.10))
 	select {
 	case <-resumed:
 	case <-time.After(2 * time.Second):

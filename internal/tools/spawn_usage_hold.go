@@ -70,7 +70,7 @@ func spawnHoldColdResult(head, answer string) string {
 // the file comment). A step never starts while the account holds: one
 // restored or resumed then waits for the lift first.
 func (s *Spawner) runSpawnStep(agent SpawnAgent, pauser UsageHoldPauser, runCtx, spawnCtx context.Context, parent, id, branchKey string, texts []string) spawnStep {
-	if pauser != nil && pauser.UsageHoldActive() && !s.waitHoldLift(pauser, spawnCtx, parent, id, branchKey) {
+	if pauser != nil && pauser.UsageHoldActive(branchKey) && !s.waitHoldLift(pauser, spawnCtx, parent, id, branchKey) {
 		return spawnStep{err: context.Cause(spawnCtx)}
 	}
 	turnCtx, holdDone := runCtx, func() bool { return false }
@@ -132,7 +132,7 @@ func (s *Spawner) waitHoldLift(pauser UsageHoldPauser, spawnCtx context.Context,
 	s.deps.Tracker.appendLog(parent, id, "message", "(paused by the usage hold)")
 	pauser.UsageHoldPause(branchKey, "spawn", true)
 	defer pauser.UsageHoldPause(branchKey, "spawn", false)
-	return pauser.WaitUsageLift(spawnCtx)
+	return pauser.WaitUsageLift(spawnCtx, branchKey)
 }
 
 // liveWork reports whether branchKey has work in flight (a turn, queued

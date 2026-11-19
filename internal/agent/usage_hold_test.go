@@ -14,8 +14,9 @@ import (
 
 // holdAgent is a delegated agent of backend on the given registry.
 func holdAgent(reg *usagehold.Registry, backend string) *Agent {
-	a := &Agent{AgentID: backend + "-agent", Endpoint: "ep", UsageHoldRegistry: reg}
+	a := &Agent{AgentID: backend + "-agent", Endpoint: "ep"}
 	a.DelegatedManager = &DelegatedManager{BackendType: backend}
+	putOnAccount(a, "", reg, nil)
 	return a
 }
 
@@ -29,24 +30,24 @@ func weekly(u float64) usagehold.Event {
 func TestUsageHold_AccountWide(t *testing.T) {
 	reg := usagehold.New()
 	a, b, x := holdAgent(reg, "claude-code"), holdAgent(reg, "claude-code"), holdAgent(reg, "codex")
-	a.ObserveUsage(weekly(0.97))
-	if b.UsageHold().Phase != usagehold.Open {
+	testAcct(a).ObserveUsage(weekly(0.97))
+	if b.UsageHold("").Phase != usagehold.Open {
 		t.Fatal("0.97 held the account")
 	}
-	a.ObserveUsage(weekly(0.98))
-	if b.UsageHold().Phase != usagehold.Hold {
-		t.Errorf("B phase = %v after A's 0.98 event, want hold", b.UsageHold().Phase)
+	testAcct(a).ObserveUsage(weekly(0.98))
+	if b.UsageHold("").Phase != usagehold.Hold {
+		t.Errorf("B phase = %v after A's 0.98 event, want hold", b.UsageHold("").Phase)
 	}
-	if x.UsageHold().Phase != usagehold.Open {
-		t.Errorf("codex phase = %v, want open", x.UsageHold().Phase)
+	if x.UsageHold("").Phase != usagehold.Open {
+		t.Errorf("codex phase = %v, want open", x.UsageHold("").Phase)
 	}
-	x.ObserveUsage(usagehold.Event{Window: "codex codex primary", Util: 0.98, HasUtil: true, ResetAt: time.Now().Add(time.Hour)})
-	if x.UsageHold().Phase != usagehold.Hold {
-		t.Errorf("codex at 98%%: phase %v, want hold", x.UsageHold().Phase)
+	testAcct(x).ObserveUsage(usagehold.Event{Window: "codex codex primary", Util: 0.98, HasUtil: true, ResetAt: time.Now().Add(time.Hour)})
+	if x.UsageHold("").Phase != usagehold.Hold {
+		t.Errorf("codex at 98%%: phase %v, want hold", x.UsageHold("").Phase)
 	}
 	// An API agent has no account and is never held.
-	if api := (&Agent{UsageHoldRegistry: reg}); api.UsageAccount() != "" || api.UsageHold().Phase != usagehold.Open {
-		t.Errorf("API agent account = %q, want none", api.UsageAccount())
+	if api := (&Agent{}); api.AccountFor("api/c1") != nil || api.UsageHold("api/c1").Phase != usagehold.Open {
+		t.Errorf("API agent account = %q, want none", api.AccountFor("api/c1").Key())
 	}
 }
 
@@ -55,18 +56,18 @@ func TestUsageHold_AccountWide(t *testing.T) {
 func TestUsageHold_SchedulerGates(t *testing.T) {
 	reg := usagehold.New()
 	a := holdAgent(reg, "claude-code")
-	a.ObserveUsage(weekly(0.98))
+	testAcct(a).ObserveUsage(weekly(0.98))
 	if lim, reason := a.SessionRateLimited("claude-code-agent/c1"); !lim || !strings.Contains(reason, "usage hold") {
 		t.Errorf("SessionRateLimited during a hold = %v %q, want blocked by the usage hold", lim, reason)
 	}
 	if lim, _ := a.KeepaliveRateLimited("claude-code-agent/c1"); lim {
 		t.Error("keepalive blocked during a hold, want it to run")
 	}
-	a.ObserveUsage(usagehold.Event{Window: "seven_day", Reached: true, ResetAt: time.Now().Add(time.Hour)})
+	testAcct(a).ObserveUsage(usagehold.Event{Window: "seven_day", Reached: true, ResetAt: time.Now().Add(time.Hour)})
 	if lim, _ := a.KeepaliveRateLimited("claude-code-agent/c1"); !lim {
 		t.Error("keepalive not blocked during a stop")
 	}
-	if msg := a.UsageHoldRefusal(); msg == "" {
+	if msg := a.UsageHoldRefusal(""); msg == "" {
 		t.Error("no spawn refusal during a stop")
 	}
 }
@@ -89,9 +90,9 @@ func TestUsageHold_NoticePerAgent(t *testing.T) {
 	a := mk("claude-code", "A")
 	mk("claude-code", "B")
 	mk("codex", "X")
-	a.ObserveUsage(weekly(0.98))
-	a.ObserveUsage(weekly(0.99))
-	a.ObserveUsage(weekly(0.10))
+	testAcct(a).ObserveUsage(weekly(0.98))
+	testAcct(a).ObserveUsage(weekly(0.99))
+	testAcct(a).ObserveUsage(weekly(0.10))
 	count := func(id string) int { mu.Lock(); defer mu.Unlock(); return len(notices[id]) }
 	if !waitFor(time.Second, func() bool { return count("A") == 2 && count("B") == 2 }) {
 		t.Fatalf("notices = %v, want 2 each for A and B", notices)
@@ -113,8 +114,8 @@ func TestInbox_UsageHold_HoldsAndFoldsUserMessages(t *testing.T) {
 	a, cancel := startedAgent(t)
 	defer cancel()
 	reg := usagehold.New()
-	a.UsageHoldRegistry = reg
 	a.DelegatedManager = &DelegatedManager{BackendType: "claude-code"}
+	putOnAccount(a, "", reg, nil)
 	a.StartUsageHold()
 	defer a.StopUsageHold()
 	var told atomic.Int32
@@ -126,7 +127,7 @@ func TestInbox_UsageHold_HoldsAndFoldsUserMessages(t *testing.T) {
 	d := &recordingDriver{}
 	a.SetTurnObserver(d.recordBatch)
 
-	a.ObserveUsage(weekly(0.98))
+	testAcct(a).ObserveUsage(weekly(0.98))
 	a.Enqueue(Envelope{SessionKey: "test/s", Text: "M1", Driver: d})
 	a.Enqueue(Envelope{SessionKey: "test/s", Text: "M2", Driver: d})
 	if waitFor(300*time.Millisecond, func() bool { return d.NumCalls() > 0 }) {
@@ -135,7 +136,7 @@ func TestInbox_UsageHold_HoldsAndFoldsUserMessages(t *testing.T) {
 	if !waitFor(time.Second, func() bool { return told.Load() == 2 }) {
 		t.Errorf("sender told %d times, want once per held message", told.Load())
 	}
-	a.ObserveUsage(weekly(0.50))
+	testAcct(a).ObserveUsage(weekly(0.50))
 	if !waitFor(2*time.Second, func() bool { return d.NumCalls() == 1 }) {
 		t.Fatalf("held messages did not run at lift; calls=%d", d.NumCalls())
 	}
@@ -152,12 +153,12 @@ func TestInbox_UsageHold_InjectionsWaitRemindRuns(t *testing.T) {
 	a, cancel := startedAgent(t)
 	defer cancel()
 	reg := usagehold.New()
-	a.UsageHoldRegistry = reg
 	a.DelegatedManager = &DelegatedManager{BackendType: "claude-code"}
+	putOnAccount(a, "", reg, nil)
 	a.StartUsageHold()
 	defer a.StopUsageHold()
 
-	a.ObserveUsage(weekly(0.98))
+	testAcct(a).ObserveUsage(weekly(0.98))
 	var cron, wake, ka atomic.Bool
 	a.Enqueue(Envelope{SessionKey: "test/s", Inject: &InjectMeta{Trigger: "cron", Run: func() { cron.Store(true) }}})
 	a.Enqueue(Envelope{SessionKey: "test/s", Inject: &InjectMeta{Trigger: "scheduled_wake", Run: func() { wake.Store(true) }}})
@@ -169,13 +170,13 @@ func TestInbox_UsageHold_InjectionsWaitRemindRuns(t *testing.T) {
 		t.Fatal("a cron send ran during the hold")
 	}
 
-	a.ObserveUsage(usagehold.Event{Window: "seven_day", Reached: true, ResetAt: time.Now().Add(time.Hour)})
+	testAcct(a).ObserveUsage(usagehold.Event{Window: "seven_day", Reached: true, ResetAt: time.Now().Add(time.Hour)})
 	var wake2 atomic.Bool
 	a.Enqueue(Envelope{SessionKey: "test/s", Inject: &InjectMeta{Trigger: "scheduled_wake", Run: func() { wake2.Store(true) }}})
 	if waitFor(300*time.Millisecond, wake2.Load) {
 		t.Fatal("a remind fire ran during a stop")
 	}
-	a.ObserveUsage(usagehold.Event{Window: "seven_day", Util: 0.2, HasUtil: true})
+	testAcct(a).ObserveUsage(usagehold.Event{Window: "seven_day", Util: 0.2, HasUtil: true})
 	if !waitFor(3*time.Second, func() bool { return cron.Load() && wake2.Load() }) {
 		t.Fatalf("at lift: cron ran=%v wake ran=%v, want both", cron.Load(), wake2.Load())
 	}
@@ -215,9 +216,9 @@ func TestRelogin_PendingBlocksBackgroundWork(t *testing.T) {
 		t.Error("CanFireBackgroundOperation allowed background work while a login is pending")
 	}
 	// The credential is shared: one pending login blocks every CC agent.
-	cc2 := &Agent{AgentID: "helen", Endpoint: "ep", UsageHoldRegistry: reg,
-		DelegatedManager: &DelegatedManager{BackendType: "claude-code"},
-		ReloginTrigger:   func(string, string) bool { return true }}
+	cc2 := holdAgent(reg, "claude-code")
+	cc2.AgentID = "helen"
+	cc2.ReloginTrigger = func(string, string) bool { return true }
 	if lim, _ := cc2.KeepaliveRateLimited("helen/c1"); !lim {
 		t.Error("a second Claude Code agent ran background work while the shared login is pending")
 	}

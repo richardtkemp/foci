@@ -24,6 +24,7 @@ import (
 	"foci/internal/session"
 	"foci/internal/skills"
 	"foci/internal/tools"
+	"foci/internal/usagelog"
 	"foci/internal/workspace"
 )
 
@@ -297,7 +298,14 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	if query, ok := delegator.UsageQueryFor(p.acfg.Backend); ok {
 		// The usage history (#3103): a fresh read is stored, and /mana
 		// cached answers from the stored figures of this agent's account.
-		cmds.Register(command.ManaCommand(query, usageTargetFor(p.cfg, p.acfg), limitReset, usageBindingFor(p.cfg, p.acfg)))
+		// Both are asked per request: /mana in a chat reads and shows the
+		// account of that chat's session (#3186, Dick 2026-11-19: "Only
+		// this chat's account").
+		cmds.Register(command.ManaCommand(query, func(cc command.CommandContext, sessionKey string) delegator.UsageTarget {
+			return usageTarget(p.cfg, p.acfg, cc.Agent.AccountFor(sessionKey))
+		}, limitReset, func(cc command.CommandContext, sessionKey string) *usagelog.Binding {
+			return cc.Agent.AccountFor(sessionKey).Readings(p.acfg.ID)
+		}))
 	}
 	if limitReset {
 		cmds.Register(command.LimitResetCommand())

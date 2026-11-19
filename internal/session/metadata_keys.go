@@ -41,6 +41,10 @@ const (
 	// MetaKeyCCResumeID holds delegated-backend resume ids, written by
 	// DelegatedManager.saveResumeID (agent/delegated_manager.go).
 	MetaKeyCCResumeID = "cc_resume_id"
+	// MetaKeyAccount holds the key of the account a session is on
+	// (account.Pool, #3186), on the session's root key: every descendant of
+	// the root is on the same account.
+	MetaKeyAccount = "account"
 	// MetaKeyBackendEphemeral records that no durable backend resume is possible.
 	MetaKeyBackendEphemeral = "backend_ephemeral"
 	// MetaKeyCCUndelivered holds a session's not-yet-consumed inputs as a
@@ -126,6 +130,7 @@ var SessionMetadataKeys = []SessionMetadataKey{
 	{Key: MetaKeyOrientationConsumed, Unset: "false", BranchOnly: true, Shown: true},
 
 	{Key: MetaKeyThinking},
+	{Key: MetaKeyAccount},
 	{Key: MetaKeySpeed},
 	{Key: MetaKeyShowToolCalls},
 	{Key: MetaKeyStreamOutput},

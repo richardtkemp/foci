@@ -11,9 +11,9 @@ import (
 	"foci/internal/usagehold"
 )
 
-// The #3104 phase-3 agent tests: a Claude Code agent's usage account is its
-// login (UsageAccountKey, set by the gateway from Spec.UsageAccount). alpha is
-// on account A; beta and beta2 are on account B.
+// The #3104 phase-3 agent tests: a Claude Code agent's sessions are on its
+// login's account (the gateway builds it from Spec.Account). alpha is on
+// account A; beta and beta2 are on account B.
 
 const (
 	acctA = "claude-code:file:/host/.claude/.credentials.json"
@@ -24,7 +24,7 @@ const (
 func accountAgent(reg *usagehold.Registry, id, acct string) *Agent {
 	a := holdAgent(reg, "claude-code")
 	a.AgentID = id
-	a.UsageAccountKey = acct
+	putOnAccount(a, acct, reg, &relogin.Gate{})
 	return a
 }
 
@@ -39,26 +39,26 @@ func TestUsageHold_PerAccount(t *testing.T) {
 	reg := usagehold.New()
 	alpha, beta, beta2 := accountAgent(reg, "alpha", acctA), accountAgent(reg, "beta", acctB), accountAgent(reg, "beta2", acctB)
 
-	beta.ObserveUsage(fiveHour(0.99))
-	if beta.UsageHold().Phase != usagehold.Hold || beta2.UsageHold().Phase != usagehold.Hold {
-		t.Errorf("B after beta's 99%% event: beta %v, beta2 %v; want both held", beta.UsageHold().Phase, beta2.UsageHold().Phase)
+	testAcct(beta).ObserveUsage(fiveHour(0.99))
+	if beta.UsageHold("").Phase != usagehold.Hold || beta2.UsageHold("").Phase != usagehold.Hold {
+		t.Errorf("B after beta's 99%% event: beta %v, beta2 %v; want both held", beta.UsageHold("").Phase, beta2.UsageHold("").Phase)
 	}
-	if alpha.UsageHold().Phase != usagehold.Open || alpha.usageHoldsTrigger("user", false) {
-		t.Errorf("alpha (A) phase %v after B's event; want open and its messages running", alpha.UsageHold().Phase)
+	if alpha.UsageHold("").Phase != usagehold.Open || alpha.usageHoldsTrigger("", "user", false) {
+		t.Errorf("alpha (A) phase %v after B's event; want open and its messages running", alpha.UsageHold("").Phase)
 	}
 
-	beta.ObserveUsage(usagehold.Event{Window: "five_hour", Reached: true, ResetAt: time.Now().Add(2 * time.Hour)})
-	if beta2.UsageHold().Phase != usagehold.Stop {
-		t.Errorf("beta2 after B's rejected window: %v, want stop", beta2.UsageHold().Phase)
+	testAcct(beta).ObserveUsage(usagehold.Event{Window: "five_hour", Reached: true, ResetAt: time.Now().Add(2 * time.Hour)})
+	if beta2.UsageHold("").Phase != usagehold.Stop {
+		t.Errorf("beta2 after B's rejected window: %v, want stop", beta2.UsageHold("").Phase)
 	}
-	if blocked, why := alpha.UsageHoldBlocks(true); blocked {
+	if blocked, why := alpha.UsageHoldBlocks("", true); blocked {
 		t.Errorf("alpha's keepalive blocked by B's stop: %s", why)
 	}
-	if blocked, why := alpha.UsageHoldBlocks(false); blocked {
+	if blocked, why := alpha.UsageHoldBlocks("", false); blocked {
 		t.Errorf("alpha's periodic work blocked by B's stop: %s", why)
 	}
-	if alpha.UsageAccount() == beta.UsageAccount() || beta.UsageAccount() != beta2.UsageAccount() {
-		t.Errorf("accounts alpha %q beta %q beta2 %q", alpha.UsageAccount(), beta.UsageAccount(), beta2.UsageAccount())
+	if testAcct(alpha).Key() == testAcct(beta).Key() || testAcct(beta).Key() != testAcct(beta2).Key() {
+		t.Errorf("accounts alpha %q beta %q beta2 %q", testAcct(alpha).Key(), testAcct(beta).Key(), testAcct(beta2).Key())
 	}
 }
 
@@ -68,9 +68,8 @@ func startedAccountAgent(t *testing.T, reg *usagehold.Registry, acct, sk string)
 	t.Helper()
 	a, cancel := startedAgent(t)
 	t.Cleanup(cancel)
-	a.UsageHoldRegistry = reg
 	a.DelegatedManager = &DelegatedManager{BackendType: "claude-code"}
-	a.UsageAccountKey = acct
+	putOnAccount(a, acct, reg, &relogin.Gate{})
 	a.StartUsageHold()
 	t.Cleanup(a.StopUsageHold)
 	d := newBlockingDriver()
@@ -98,7 +97,7 @@ func TestResetLimits_PerAccount(t *testing.T) {
 	beta.StartUsageHold()
 	defer beta.StopUsageHold()
 
-	beta.ResetLimits("/limit_reset")
+	beta.ResetLimits("", "/limit_reset")
 	select {
 	case <-beta2Turn.ended:
 	case <-time.After(2 * time.Second):
@@ -111,24 +110,24 @@ func TestResetLimits_PerAccount(t *testing.T) {
 	}
 
 	alphaGate := time.Now().Add(3 * time.Hour).Truncate(time.Second)
-	alpha.EngageRateLimit(ratelimit.Signal{Kind: ratelimit.KindUsage, ResetAt: alphaGate})
-	alpha.ObserveUsage(fiveHour(0.99))
-	beta.ObserveUsage(fiveHour(0.99))
-	if alpha.UsageHold().Phase != usagehold.Hold || beta2.UsageHold().Phase != usagehold.Hold {
-		t.Fatalf("before the reset: alpha %v, beta2 %v; want both held", alpha.UsageHold().Phase, beta2.UsageHold().Phase)
+	alpha.EngageRateLimit(testAcct(alpha), ratelimit.Signal{Kind: ratelimit.KindUsage, ResetAt: alphaGate})
+	testAcct(alpha).ObserveUsage(fiveHour(0.99))
+	testAcct(beta).ObserveUsage(fiveHour(0.99))
+	if alpha.UsageHold("").Phase != usagehold.Hold || beta2.UsageHold("").Phase != usagehold.Hold {
+		t.Fatalf("before the reset: alpha %v, beta2 %v; want both held", alpha.UsageHold("").Phase, beta2.UsageHold("").Phase)
 	}
 
-	res := beta.ResetLimits("/limit_reset")
+	res := beta.ResetLimits("", "/limit_reset")
 	if res.HoldFrom != usagehold.Hold {
 		t.Errorf("beta's reset: hold was %v, want hold", res.HoldFrom)
 	}
-	if beta.UsageHold().Phase != usagehold.Open || beta2.UsageHold().Phase != usagehold.Open {
-		t.Errorf("B after beta's reset: beta %v, beta2 %v; want open", beta.UsageHold().Phase, beta2.UsageHold().Phase)
+	if beta.UsageHold("").Phase != usagehold.Open || beta2.UsageHold("").Phase != usagehold.Open {
+		t.Errorf("B after beta's reset: beta %v, beta2 %v; want open", beta.UsageHold("").Phase, beta2.UsageHold("").Phase)
 	}
-	if alpha.UsageHold().Phase != usagehold.Hold {
-		t.Errorf("A after beta's reset: %v, want still held", alpha.UsageHold().Phase)
+	if alpha.UsageHold("").Phase != usagehold.Hold {
+		t.Errorf("A after beta's reset: %v, want still held", alpha.UsageHold("").Phase)
 	}
-	if lim, _ := alpha.getOrCreateRateLimitGate(alpha.Endpoint).IsLimited(); !lim {
+	if lim, _ := alpha.rateLimitGate(alpha.Endpoint, testAcct(alpha)).IsLimited(); !lim {
 		t.Error("alpha's rate-limit gate was opened by beta's reset")
 	}
 }
@@ -140,10 +139,8 @@ func TestUsageHold_NoticesNameAccount(t *testing.T) {
 	gate.SetName("/tmp/ccB")
 	beta, cancel := startedAgent(t)
 	defer cancel()
-	beta.UsageHoldRegistry = usagehold.New()
 	beta.DelegatedManager = &DelegatedManager{BackendType: "claude-code"}
-	beta.UsageAccountKey = acctB
-	beta.LoginGate = gate
+	putOnAccount(beta, acctB, usagehold.New(), gate)
 	var mu sync.Mutex
 	var notices, held []string
 	beta.UsageHoldNotifyFunc = func(text string) { mu.Lock(); notices = append(notices, text); mu.Unlock() }
@@ -153,7 +150,7 @@ func TestUsageHold_NoticesNameAccount(t *testing.T) {
 	d := &recordingDriver{}
 	beta.SetTurnObserver(d.recordBatch)
 
-	beta.ObserveUsage(fiveHour(0.99))
+	testAcct(beta).ObserveUsage(fiveHour(0.99))
 	beta.Enqueue(Envelope{SessionKey: "beta/c1", Text: "M1", Driver: d})
 	ok := waitFor(2*time.Second, func() bool { mu.Lock(); defer mu.Unlock(); return len(notices) == 1 && len(held) == 1 })
 	mu.Lock()
@@ -168,16 +165,16 @@ func TestUsageHold_NoticesNameAccount(t *testing.T) {
 		t.Errorf("held reply %q does not name B's account", held[0])
 	}
 	gate.SetEmail("b@example.com")
-	if got := beta.UsageAccountName(); got != "b@example.com" {
+	if got := testAcct(beta).Name(); got != "b@example.com" {
 		t.Errorf("name once the email is known = %q, want the email (Q15)", got)
 	}
 }
 
-// TestUsageAccount_CodexUnchanged (H9): a codex agent (no UsageAccountKey) is
-// on the backend-wide account, unnamed, as before.
+// TestUsageAccount_CodexUnchanged (H9): a codex agent is on the backend-wide
+// account, unnamed, as before.
 func TestUsageAccount_CodexUnchanged(t *testing.T) {
 	x := holdAgent(usagehold.New(), "codex")
-	if x.UsageAccount() != "codex" || x.UsageAccountName() != "" {
-		t.Errorf("codex account %q name %q, want \"codex\" and none", x.UsageAccount(), x.UsageAccountName())
+	if testAcct(x).Key() != "codex" || testAcct(x).Name() != "" {
+		t.Errorf("codex account %q name %q, want \"codex\" and none", testAcct(x).Key(), testAcct(x).Name())
 	}
 }

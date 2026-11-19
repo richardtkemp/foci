@@ -987,6 +987,9 @@ func (a *Agent) ClearSessionState(sessionKey string) {
 		if err := a.SessionIndex.DeleteAllSessionMetadata(sessionKey); err != nil {
 			a.logger().Errorf("clear session metadata %s: %v", sessionKey, err)
 		}
+		// The stored account went with the rest: the session starts again as
+		// a new one (#3186).
+		a.Accounts().Forget(sessionKey)
 		// last_cache_touch is a session_index COLUMN, not session_metadata, so
 		// DeleteAllSessionMetadata leaves it stale. Null it so keepalive treats
 		// the reset session as having no live cache to warm.

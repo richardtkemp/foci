@@ -44,6 +44,11 @@ func registerHookCatcher(name string, caps ...delegator.Capability) *delegator.H
 	}
 	for _, c := range caps {
 		spec.Caps[c] = delegator.Yes()
+		// A backend with the Claude Code login has Claude Code's accounts.
+		if c == delegator.CapRelogin {
+			cc, _ := delegator.SpecFor("claude-code")
+			spec.Account = cc.Account
+		}
 	}
 	delegator.Register(spec)
 	return got
@@ -72,7 +77,7 @@ func TestConfigureDelegated_HostHooksFollowSpec(t *testing.T) {
 			if _, ok := configureDelegated(ag, p, shared, tc.name, config.BackendConfig{}); !ok {
 				t.Fatal("configureDelegated returned ok=false")
 			}
-			if _, err := ag.DelegatedManager.NewBackend(); err != nil {
+			if _, err := ag.DelegatedManager.NewBackendFor(ag.AccountFor("")); err != nil {
 				t.Fatalf("NewBackend: %v", err)
 			}
 			if got.OnAuthFailure == nil || got.OnRateLimitNotice == nil || got.EngageRateLimit == nil {

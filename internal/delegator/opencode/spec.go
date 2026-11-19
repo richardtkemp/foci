@@ -79,6 +79,7 @@ var spec = delegator.Spec{
 		delegator.CapUsageQuery:               delegator.No("no plan usage to report"),
 		delegator.CapUsageReports:             delegator.No("no usage figures to report"),
 		delegator.CapLimitReset:               delegator.No("no usage hold or plan usage to reset"),
+		delegator.CapAccounts:                 delegator.No("one login for all the backend's agents"),
 	},
 
 	// DefaultModel is empty: opencode takes its model from opencode.json

@@ -117,11 +117,10 @@ func TestSkipHolds_UsageHoldStillHolds(t *testing.T) {
 	be := &mockBackendDT{}
 	be.setTurnInFlight(true)
 	a.DelegatedManager = newMockDelegatedManager(t, be)
-	a.UsageAccountKey = "acct-3114"
-	a.UsageHoldRegistry = usagehold.New()
-	a.ObserveUsage(weekly(0.98))
-	if a.UsageHold().Phase != usagehold.Hold {
-		t.Fatalf("setup: phase %v, want hold", a.UsageHold().Phase)
+	putOnAccount(a, "acct-3114", usagehold.New(), nil)
+	testAcct(a).ObserveUsage(weekly(0.98))
+	if a.UsageHold("").Phase != usagehold.Hold {
+		t.Fatalf("setup: phase %v, want hold", a.UsageHold("").Phase)
 	}
 
 	a.Enqueue(skipHoldsInject("test/s", "msg", func() {}, func() { t.Error("steered during a usage hold") }))

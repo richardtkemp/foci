@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/account"
+	"foci/internal/account/accounttest"
 	"foci/internal/agent"
 	"foci/internal/ccaccount"
 	"foci/internal/config"
@@ -46,9 +48,9 @@ func isolateHostCC(t *testing.T) string {
 		}
 		procx.SetOperatorEnv(m)
 	})
-	prevAccounts := gwLoginAccounts
-	gwLoginAccounts = &loginAccounts{}
-	t.Cleanup(func() { gwLoginAccounts = prevAccounts })
+	prevAccounts := gwAccounts
+	gwAccounts = &account.Registry{History: currentUsageHistory}
+	t.Cleanup(func() { gwAccounts = prevAccounts })
 	return home
 }
 
@@ -82,13 +84,16 @@ func captureRelogin(t *testing.T) func() []relogin.Config {
 }
 
 // loginAgent is one agent configured by the real configureDelegated on a
-// test backend with the Claude Code login, and the HostHooks its backends get.
+// test backend with the Claude Code login (and Claude Code's accounts), and
+// the HostHooks a backend on its account gets.
 type loginAgent struct {
 	ag    *agent.Agent
 	hooks *delegator.HostHooks
 }
 
-func setupLoginAgent(t *testing.T, backend, id string, env map[string]string) loginAgent {
+// folder is the agent's one backend_config.accounts entry ("" = none: the
+// host's account).
+func setupLoginAgent(t *testing.T, backend, id, folder string) loginAgent {
 	t.Helper()
 	hooks := registerHookCatcher(backend, delegator.CapHostHooks, delegator.CapRelogin)
 	p, shared := wiringFixture(t)
@@ -96,10 +101,14 @@ func setupLoginAgent(t *testing.T, backend, id string, env map[string]string) lo
 	p.acfg.Backend = backend
 	p.cfg.DataDir = t.TempDir()
 	ag := &agent.Agent{AgentID: id}
-	if _, ok := configureDelegated(ag, p, shared, backend, config.BackendConfig{Env: env}); !ok {
+	var bc config.BackendConfig
+	if folder != "" {
+		bc.Accounts = []string{folder}
+	}
+	if _, ok := configureDelegated(ag, p, shared, backend, bc); !ok {
 		t.Fatal("configureDelegated returned ok=false")
 	}
-	if _, err := ag.DelegatedManager.NewBackend(); err != nil {
+	if _, err := ag.DelegatedManager.NewBackendFor(ag.AccountFor("")); err != nil {
 		t.Fatal(err)
 	}
 	h := *hooks
@@ -112,24 +121,24 @@ func setupLoginAgent(t *testing.T, backend, id string, env map[string]string) lo
 func TestLoginWiring_GatePerAccount(t *testing.T) {
 	isolateHostCC(t)
 	ccB, ccC := filepath.Join(t.TempDir(), "ccB"), filepath.Join(t.TempDir(), "ccC")
-	alpha := setupLoginAgent(t, "test-login-acct-a", "alpha", nil)
-	beta := setupLoginAgent(t, "test-login-acct-b", "beta", map[string]string{"CLAUDE_CONFIG_DIR": ccB})
-	beta2 := setupLoginAgent(t, "test-login-acct-b2", "beta2", map[string]string{"CLAUDE_CONFIG_DIR": ccB + "/"})
-	gamma := setupLoginAgent(t, "test-login-acct-c", "gamma", map[string]string{"CLAUDE_CONFIG_DIR": ccC})
-	if alpha.ag.LoginGateOrDefault() != relogin.G {
+	alpha := setupLoginAgent(t, "test-login-acct-a", "alpha", "")
+	beta := setupLoginAgent(t, "test-login-acct-b", "beta", ccB)
+	beta2 := setupLoginAgent(t, "test-login-acct-b2", "beta2", ccB+"/")
+	gamma := setupLoginAgent(t, "test-login-acct-c", "gamma", ccC)
+	if alpha.ag.AccountFor("").Login() != relogin.G {
 		t.Error("alpha (no override) is not on relogin.G")
 	}
-	if beta.ag.LoginGate == nil || beta.ag.LoginGate == relogin.G || beta.ag.LoginGate != beta2.ag.LoginGate {
+	if beta.ag.AccountFor("") != beta2.ag.AccountFor("") || beta.ag.AccountFor("").Login() == relogin.G || beta.ag.AccountFor("").Login() != beta2.ag.AccountFor("").Login() {
 		t.Error("beta and beta2 (one folder) do not share a gate of their own")
 	}
-	if gamma.ag.LoginGate == beta.ag.LoginGate || gamma.ag.LoginGate == relogin.G {
+	if gamma.ag.AccountFor("").Login() == beta.ag.AccountFor("").Login() || gamma.ag.AccountFor("").Login() == relogin.G {
 		t.Error("gamma (another folder) shares a gate")
 	}
-	if got := beta.ag.LoginGate.Name(); got != ccB {
+	if got := beta.ag.AccountFor("").Login().Name(); got != ccB {
 		t.Errorf("beta's account named %q, want its folder %q until the email is known", got, ccB)
 	}
 	beta.hooks.OnLoginEmail("b@example.com")
-	if got := beta2.ag.LoginGate.Name(); got != "b@example.com" {
+	if got := beta2.ag.AccountFor("").Login().Name(); got != "b@example.com" {
 		t.Errorf("beta2's account named %q after the probe's email, want b@example.com", got)
 	}
 	if relogin.G.Name() == "b@example.com" {
@@ -144,8 +153,8 @@ func TestLoginWiring_GatePerAccount(t *testing.T) {
 func TestLoginWiring_PaneEnvAndSession(t *testing.T) {
 	isolateHostCC(t)
 	ccB := filepath.Join(t.TempDir(), "ccB")
-	alpha := setupLoginAgent(t, "test-login-pane-a", "alpha", nil)
-	beta := setupLoginAgent(t, "test-login-pane-b", "beta", map[string]string{"CLAUDE_CONFIG_DIR": ccB})
+	alpha := setupLoginAgent(t, "test-login-pane-a", "alpha", "")
+	beta := setupLoginAgent(t, "test-login-pane-b", "beta", ccB)
 
 	runs := captureRelogin(t)
 	beta.hooks.OnAuthFailure("Failed to authenticate. API Error: 401")
@@ -154,8 +163,8 @@ func TestLoginWiring_PaneEnvAndSession(t *testing.T) {
 		t.Fatalf("beta's 401 started %d logins, want 1", len(got))
 	}
 	c := got[0]
-	if c.Gate != beta.ag.LoginGate || c.Session == relogin.DefaultSession || !strings.HasPrefix(c.Session, relogin.DefaultSession+"-") {
-		t.Errorf("beta's login: gate %p (want %p), session %q", c.Gate, beta.ag.LoginGate, c.Session)
+	if c.Gate != beta.ag.AccountFor("").Login() || c.Session == relogin.DefaultSession || !strings.HasPrefix(c.Session, relogin.DefaultSession+"-") {
+		t.Errorf("beta's login: gate %p (want %p), session %q", c.Gate, beta.ag.AccountFor("").Login(), c.Session)
 	}
 	if !slices.Contains(c.Env, "CLAUDE_CONFIG_DIR="+ccB) {
 		t.Errorf("beta's login pane env %q lacks its folder", c.Env)
@@ -165,7 +174,7 @@ func TestLoginWiring_PaneEnvAndSession(t *testing.T) {
 	if !beta.ag.ReloginTrigger("/login", "app/beta") {
 		t.Fatal("/login in beta's chat started nothing")
 	}
-	if got := runs(); len(got) != 1 || !slices.Contains(got[0].Env, "CLAUDE_CONFIG_DIR="+ccB) || got[0].Gate != beta.ag.LoginGate {
+	if got := runs(); len(got) != 1 || !slices.Contains(got[0].Env, "CLAUDE_CONFIG_DIR="+ccB) || got[0].Gate != beta.ag.AccountFor("").Login() {
 		t.Errorf("/login in beta's chat: %+v", got)
 	}
 
@@ -181,8 +190,9 @@ func TestLoginWiring_PaneEnvAndSession(t *testing.T) {
 
 // TestLoginWiring_MacSeparateRoot (H1, requirement 1, Q12): on a simulated
 // separate-root install, beta's login pane unsets the gateway's empty
-// CLAUDE_SECURESTORAGE_CONFIG_DIR; alpha's keeps it; gamma's own empty value
-// is kept.
+// CLAUDE_SECURESTORAGE_CONFIG_DIR; alpha's keeps it. (Until #3186 an agent
+// could also set that variable itself in backend_config.env; an account is
+// now a folder, and the variable is not accepted there.)
 func TestLoginWiring_MacSeparateRoot(t *testing.T) {
 	isolateHostCC(t)
 	t.Setenv(fociroot.EnvVar, filepath.Join(t.TempDir(), "foci"))
@@ -190,15 +200,14 @@ func TestLoginWiring_MacSeparateRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range []struct {
-		id   string
-		env  map[string]string
-		want string
+		id     string
+		folder string
+		want   string
 	}{
-		{"alpha", nil, fociroot.CCSecureStorageEnv + "="},
-		{"beta", map[string]string{"CLAUDE_CONFIG_DIR": "/x"}, fociroot.CCSecureStorageEnv},
-		{"gamma", map[string]string{"CLAUDE_CONFIG_DIR": "/y", "CLAUDE_SECURESTORAGE_CONFIG_DIR": ""}, fociroot.CCSecureStorageEnv + "="},
+		{"alpha", "", fociroot.CCSecureStorageEnv + "="},
+		{"beta", "/x", fociroot.CCSecureStorageEnv},
 	} {
-		a := setupLoginAgent(t, "test-login-mac-"+c.id, c.id, c.env)
+		a := setupLoginAgent(t, "test-login-mac-"+c.id, c.id, c.folder)
 		runs := captureRelogin(t)
 		a.ag.ReloginTrigger("/login", "app/"+c.id)
 		got := runs()
@@ -239,14 +248,15 @@ func TestCheckDelegatedReadiness_OncePerAccount(t *testing.T) {
 	spec := delegator.Spec{Caps: map[delegator.Capability]delegator.Support{delegator.CapUnstartedReadinessProbe: delegator.Yes()}}
 	var mu sync.Mutex
 	var calls []string
-	gateB, gateC := &relogin.Gate{}, &relogin.Gate{}
+	acctA, acctB, acctC := accounttest.One("cc", "", nil, nil), accounttest.One("cc", "B", nil, &relogin.Gate{}), accounttest.One("cc", "C", nil, &relogin.Gate{})
 	agents := map[string]*agentInstance{}
 	order := []string{"alpha", "beta", "beta2", "gamma"}
-	for id, g := range map[string]*relogin.Gate{"alpha": nil, "beta": gateB, "beta2": gateB, "gamma": gateC} {
-		ag := &agent.Agent{AgentID: id, LoginGate: g}
+	for id, acct := range map[string]*account.Account{"alpha": acctA, "beta": acctB, "beta2": acctB, "gamma": acctC} {
+		ag := &agent.Agent{AgentID: id}
 		ag.ReloginTrigger = func(string, string) bool { return true }
 		ag.DelegatedManager = &agent.DelegatedManager{
 			Spec:       spec,
+			Accounts:   account.NewPool(nil, acct),
 			NewBackend: func() (delegator.Delegator, error) { return &readyCounter{mu: &mu, calls: &calls, id: id}, nil },
 		}
 		agents[id] = &agentInstance{id: id, ag: ag}
@@ -273,42 +283,37 @@ func TestLoginAccounts_ExpiryPerAccount(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(data, "cc-login-expiry.json"), legacy, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	host, err := gwLoginAccounts.forAgent(cfg, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	spec, _ := delegator.SpecFor("claude-code")
 	ccB := filepath.Join(t.TempDir(), "ccB")
-	b, err := gwLoginAccounts.forAgent(cfg, map[string]string{"CLAUDE_CONFIG_DIR": ccB})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if host.gate != relogin.G || host.warner == b.warner || b.gate == relogin.G {
+	accts := agentAccounts(cfg, spec, "alpha", []string{"", ccB})
+	host, b := accts[0], accts[1]
+	if host.Login() != relogin.G || host.ExpiryWarner() == b.ExpiryWarner() || b.Login() == relogin.G {
 		t.Fatal("host and B share login state")
 	}
 	var sent []string
 	send := func(n string) bool { sent = append(sent, n); return true }
-	host.warner.Observe(hostDate, now, send)
+	host.ExpiryWarner().Observe(hostDate, now, send)
 	if len(sent) != 0 {
 		t.Errorf("upgrade re-sent a stage main recorded: %q", sent)
 	}
-	b.warner.Observe(now.Add(2*24*time.Hour), now, send)
+	b.ExpiryWarner().Observe(now.Add(2*24*time.Hour), now, send)
 	if len(sent) != 1 || !strings.Contains(sent[0], "(account: "+ccB+")") {
 		t.Errorf("B's notice %q, want one naming %s", sent, ccB)
 	}
-	if _, err := os.Stat(filepath.Join(data, "cc-login-expiry-"+b.account.ShortKey()+".json")); err != nil {
+	if _, err := os.Stat(filepath.Join(data, "cc-login-expiry-"+b.Spec().ID+".json")); err != nil {
 		t.Errorf("B's state is not in its own file: %v", err)
 	}
-	if got := masterOnAccount(cfg, host.account); got != "alpha" {
+	if got := masterOnAccount(cfg, host); got != "alpha" {
 		t.Errorf("master on the host account: %q, want alpha", got)
 	}
-	if got := masterOnAccount(cfg, b.account); got != "" {
+	if got := masterOnAccount(cfg, b); got != "" {
 		t.Errorf("master for account B: %q, want none (B's notice goes to an agent on B)", got)
 	}
-	if got := loginExpiryTarget(masterOnAccount(cfg, b.account), "beta"); got != "beta" {
+	if got := loginExpiryTarget(masterOnAccount(cfg, b), "beta"); got != "beta" {
 		t.Errorf("B's notice target %q, want beta", got)
 	}
 	_ = home
-	if acct, _ := ccaccount.ForAgent(nil); acct.Account != host.account {
-		t.Errorf("host account %+v, ForAgent(nil) %+v", host.account, acct.Account)
+	if loc, _ := ccaccount.Host(); host.Key() != "claude-code:"+loc.Account.Key() || host.Dir() != loc.Dir {
+		t.Errorf("host account %q in %q, want the host location %+v", host.Key(), host.Dir(), loc)
 	}
 }

@@ -22,34 +22,54 @@ import (
 	"foci/internal/log"
 )
 
-// agentEnv is this agent's backend_config.env (cfg["env"]): the per-agent
-// layer of the CC process's environment, and so the part of it that can give
-// the agent its own CC config folder (CLAUDE_CONFIG_DIR, #3104). A Backend made
-// by NewBackend has it before any Start, so file operations that start no CC
-// process (fork, cleanup, transcript reads) see the same folder CC does.
-func (b *Backend) agentEnv() map[string]string {
+// launchEnv is the launch env of this backend's sessions before any Start:
+// the agent's backend_config.env (cfg["env"]) with its account's part on top
+// (SetAccount, #3186). The account's part names the CC config folder, so file
+// operations that start no CC process (fork, cleanup, transcript reads) see
+// the same folder the CC process does.
+func (b *Backend) launchEnv() map[string]string {
+	var base map[string]string
 	switch e := b.cfg["env"].(type) {
 	case map[string]string:
-		return e
+		base = e
 	case map[string]any:
-		out := make(map[string]string, len(e))
+		base = make(map[string]string, len(e))
 		for k, v := range e {
 			if s, ok := v.(string); ok {
-				out[k] = s
+				base[k] = s
 			}
 		}
-		return out
 	}
-	return nil
+	return b.withAccountEnv(base)
 }
 
-// ccLocation resolves this agent's CC config folder and account
-// (ccaccount.ForAgent): <folder>/projects/<cwd-slug>/<uuid>.jsonl holds its
-// transcripts. With no CLAUDE_CONFIG_DIR of its own, that is the host's
-// folder: ~/.claude on a single-home install, the install root's own .claude
-// when foci runs with a separate FOCI_HOME (#2580).
+// withAccountEnv is env with the account's part on top (env is not changed).
+func (b *Backend) withAccountEnv(env map[string]string) map[string]string {
+	if len(b.account.Env) == 0 {
+		return env
+	}
+	out := make(map[string]string, len(env)+len(b.account.Env))
+	for k, v := range env {
+		out[k] = v
+	}
+	for k, v := range b.account.Env {
+		out[k] = v
+	}
+	return out
+}
+
+// SetAccount implements delegator.AccountAcceptor: the login this instance
+// runs on. Called once, before any other use.
+func (b *Backend) SetAccount(a delegator.AccountSpec) { b.account = a }
+
+// ccLocation resolves the CC config folder and login location of this
+// backend's sessions (ccaccount.ForLaunchEnv):
+// <folder>/projects/<cwd-slug>/<uuid>.jsonl holds their transcripts. On the
+// host's account that is the host's folder: ~/.claude on a single-home
+// install, the install root's own .claude when foci runs with a separate
+// FOCI_HOME (#2580).
 func (b *Backend) ccLocation() (ccaccount.Location, error) {
-	return ccaccount.ForAgent(b.agentEnv())
+	return ccaccount.ForLaunchEnv(b.launchEnv())
 }
 
 // projectSlug converts a workspace path to Claude Code's project directory

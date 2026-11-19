@@ -27,10 +27,10 @@ import (
 // multiple turns.
 
 // ccTranscriptPath is where CC keeps the transcript of sessionID for a process
-// run in workDir by an agent whose backend_config.env is agentEnv:
+// run in workDir by an agent whose launch env is launchEnv:
 // <that agent's CC config dir>/projects/<slug>/<sessionID>.jsonl (#3104).
-func ccTranscriptPath(agentEnv map[string]string, workDir, sessionID string) (string, error) {
-	loc, err := ccaccount.ForAgent(agentEnv)
+func ccTranscriptPath(launchEnv map[string]string, workDir, sessionID string) (string, error) {
+	loc, err := ccaccount.ForLaunchEnv(launchEnv)
 	if err != nil {
 		return "", err
 	}
@@ -39,7 +39,7 @@ func ccTranscriptPath(agentEnv map[string]string, workDir, sessionID string) (st
 
 // transcriptPath is ccTranscriptPath for this backend's agent.
 func (b *Backend) transcriptPath(workDir, sessionID string) (string, error) {
-	return ccTranscriptPath(b.agentEnv(), workDir, sessionID)
+	return ccTranscriptPath(b.launchEnv(), workDir, sessionID)
 }
 
 // costStateEntry is the transcript record CC writes as it shuts down (type

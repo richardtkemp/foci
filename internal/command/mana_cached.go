@@ -67,14 +67,14 @@ type manaCachedWindowJ struct {
 }
 
 // manaCached answers /mana cached [json] from hist.
-func manaCached(hist *usagelog.Binding, args string, cc CommandContext) Response {
+func manaCached(hist *usagelog.Binding, args string, cc CommandContext, sessionKey string) Response {
 	cur, now, err := hist.Current()
 	if err != nil {
 		return Response{Text: "Could not read the stored usage figures: " + err.Error()}
 	}
 	name := ""
 	if cc.Agent != nil {
-		name = cc.Agent.UsageAccountName()
+		name = cc.Agent.AccountFor(sessionKey).Name()
 	}
 	if strings.EqualFold(strings.TrimSpace(args), "json") {
 		return Response{Text: manaCachedJSON(cur, name, now)}

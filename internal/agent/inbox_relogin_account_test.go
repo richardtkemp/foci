@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -8,9 +9,9 @@ import (
 )
 
 // The #3104 phase-2 agent tests: each agent consults the login gate of its own
-// Claude Code account (LoginGate; nil = relogin.G, the host account's). alpha
+// Claude Code account (Account.Login; the host account's is relogin.G). alpha
 // is on the host account; beta and beta2 share account B; gamma is on C. The
-// tests drive each agent's login through LoginGateOrDefault, the way the
+// tests drive each agent's login through its session's account, the way the
 // gateway does, so code that sent every agent to one gate fails them.
 
 // accountAgents builds started agents alpha (host), beta and beta2 (account
@@ -23,15 +24,17 @@ func accountAgents(t *testing.T) (alpha, beta, beta2, gamma *Agent) {
 		t.Cleanup(cancel)
 		a.AgentID = id
 		a.DelegatedManager = &DelegatedManager{}
+		if g != nil {
+			putOnAccount(a, fmt.Sprintf("account-%p", g), nil, g)
+		}
 		onCCLogin(a)
-		a.LoginGate = g
 		return a
 	}
 	alpha, beta, beta2, gamma = mk("alpha", nil), mk("beta", gateB), mk("beta2", gateB), mk("gamma", gateC)
 	t.Cleanup(func() {
 		for _, a := range []*Agent{beta, gamma} {
-			a.LoginGateOrDefault().Release()
-			a.LoginGateOrDefault().Complete()
+			a.loginGate("").Release()
+			a.loginGate("").Complete()
 		}
 	})
 	return alpha, beta, beta2, gamma
@@ -44,10 +47,10 @@ func accountAgents(t *testing.T) (alpha, beta, beta2, gamma *Agent) {
 // messages run.
 func TestRelogin_PerAccount_HoldsOnlyThatAccount(t *testing.T) {
 	alpha, beta, beta2, _ := accountAgents(t)
-	if beta.LoginGateOrDefault() != beta2.LoginGateOrDefault() || beta.LoginGateOrDefault() == alpha.LoginGateOrDefault() {
+	if beta.loginGate("") != beta2.loginGate("") || beta.loginGate("") == alpha.loginGate("") {
 		t.Fatal("test setup: beta and beta2 must share a gate apart from alpha's")
 	}
-	if !beta.LoginGateOrDefault().Start() {
+	if !beta.loginGate("").Start() {
 		t.Fatal("B's gate already active")
 	}
 	ds := map[*Agent]*recordingDriver{}
@@ -62,25 +65,25 @@ func TestRelogin_PerAccount_HoldsOnlyThatAccount(t *testing.T) {
 	if !waitFor(time.Second, func() bool { return ds[alpha].NumCalls() == 1 }) {
 		t.Fatal("alpha (another account) was held by B's login")
 	}
-	if why, un := alpha.Unavailable(); un {
+	if why, un := alpha.Unavailable(""); un {
 		t.Errorf("alpha reported unavailable during B's login: %s", why)
 	}
-	if blocked, why := alpha.reloginBlocksBackground(); blocked {
+	if blocked, why := alpha.reloginBlocksBackground(""); blocked {
 		t.Errorf("alpha's background work blocked by B's login: %s", why)
 	}
 	for _, a := range []*Agent{beta, beta2} {
 		if waitFor(200*time.Millisecond, func() bool { return ds[a].NumCalls() > 0 }) {
 			t.Errorf("%s (account B) dispatched during B's login", a.AgentID)
 		}
-		if _, un := a.Unavailable(); !un {
+		if _, un := a.Unavailable(""); !un {
 			t.Errorf("%s not unavailable during B's login", a.AgentID)
 		}
-		if blocked, _ := a.reloginBlocksBackground(); !blocked {
+		if blocked, _ := a.reloginBlocksBackground(""); !blocked {
 			t.Errorf("%s's background work not blocked during B's login", a.AgentID)
 		}
 	}
-	beta.LoginGateOrDefault().Complete()
-	beta.LoginGateOrDefault().Release()
+	beta.loginGate("").Complete()
+	beta.loginGate("").Release()
 	for _, a := range []*Agent{beta, beta2} {
 		if !waitFor(time.Second, func() bool { return ds[a].NumCalls() == 1 }) {
 			t.Errorf("%s's held message did not run after B's login completed", a.AgentID)
@@ -94,7 +97,7 @@ func TestRelogin_PerAccount_HoldsOnlyThatAccount(t *testing.T) {
 // second automatic attempt. B's paused injections stay paused.
 func TestRelogin_PerAccount_NoCrossClear(t *testing.T) {
 	alpha, beta, _, _ := accountAgents(t)
-	gB := beta.LoginGateOrDefault()
+	gB := beta.loginGate("")
 	if !gB.StartAuto() {
 		t.Fatal("B's first automatic attempt")
 	}
@@ -135,7 +138,7 @@ func TestRelogin_PerAccount_CodeGoesToItsLogin(t *testing.T) {
 	for _, a := range []*Agent{alpha, beta, gamma} {
 		a.ReloginLinkTarget = rec.target
 	}
-	gB, gC := beta.LoginGateOrDefault(), gamma.LoginGateOrDefault()
+	gB, gC := beta.loginGate(""), gamma.loginGate("")
 	if !gB.Start() || !gC.Start() {
 		t.Fatal("start B and C")
 	}

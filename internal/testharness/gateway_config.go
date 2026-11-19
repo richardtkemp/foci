@@ -190,6 +190,17 @@ model = "stub"
 			sb.WriteString("}\n")
 		}
 
+		if len(a.Accounts) > 0 {
+			sb.WriteString("accounts = [")
+			for i, dir := range a.Accounts {
+				if i > 0 {
+					sb.WriteString(", ")
+				}
+				fmt.Fprintf(&sb, "%q", dir)
+			}
+			sb.WriteString("]\n")
+		}
+
 		// Per-agent binary override beats [cc_backend].binary. Only emitted
 		// when the spec sets it — empty falls through to the global (which
 		// writeTestConfig points at the auto-built cc-stub). Emits the

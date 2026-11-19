@@ -131,7 +131,7 @@ func TestCCStateFollowsAgentConfigDir(t *testing.T) {
 }
 
 // TestBuildEnvFolderMatchesCCAccount guards the one definition: the folder
-// ccaccount.ForAgent resolves for an agent is the folder named by the
+// ccaccount.ForLaunchEnv resolves for a launch env is the folder named by the
 // environment buildEnv actually hands CC, with and without an agent override
 // and with the operator's shell overlay setting CLAUDE_CONFIG_DIR (F14).
 func TestBuildEnvFolderMatchesCCAccount(t *testing.T) {
@@ -139,7 +139,7 @@ func TestBuildEnvFolderMatchesCCAccount(t *testing.T) {
 	for _, overlay := range []map[string]string{nil, {"CLAUDE_CONFIG_DIR": "/o"}} {
 		procx.SetOperatorEnv(overlay)
 		for _, extra := range []map[string]string{nil, {"CLAUDE_CONFIG_DIR": "/x", "CLAUDE_SECURESTORAGE_CONFIG_DIR": "/s"}} {
-			want, err := ccaccount.ForAgent(extra)
+			want, err := ccaccount.ForLaunchEnv(extra)
 			if err != nil {
 				t.Fatal(err)
 			}

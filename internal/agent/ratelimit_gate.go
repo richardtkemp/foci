@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/account"
 	"foci/internal/procx"
 	"foci/internal/ratelimit"
 	"foci/internal/session"
@@ -122,23 +123,36 @@ func (g *RateLimitGate) DrainQueue() []QueuedItem {
 	return items
 }
 
+// rateLimitGateKey names one of the agent's gates: the endpoint that limited
+// and, for a delegated agent, the account it limited (#3186: a hard limit a
+// backend reports is its account's, so each account of the pool has its own
+// gate). account is "" for an API agent, whose limits are the endpoint's.
+type rateLimitGateKey struct {
+	endpoint string
+	account  string
+}
+
+// String names the gate for a log line and a refusal.
+func (k rateLimitGateKey) String() string { return k.endpoint }
+
 // DrainRateLimitQueue checks if any rate limit gates have opened, and replays
 // queued messages through HandleMessage. Called from keepalive tick.
 func (a *Agent) DrainRateLimitQueue(ctx context.Context) {
 	// Expire usage-hold windows past their reset (#2491), so a hold lifts at
 	// its reset time even when no usage event arrives.
-	if a.UsageAccount() != "" {
-		a.usageRegistry().Tick(time.Now())
+	for _, acct := range a.Accounts().Accounts() {
+		acct.Hold()
 	}
 	a.rateLimitGatesMu.RLock()
-	gates := make(map[string]*RateLimitGate, len(a.rateLimitGates))
-	for endpoint, gate := range a.rateLimitGates {
-		gates[endpoint] = gate
+	gates := make(map[rateLimitGateKey]*RateLimitGate, len(a.rateLimitGates))
+	for key, gate := range a.rateLimitGates {
+		gates[key] = gate
 	}
 	a.rateLimitGatesMu.RUnlock()
 
-	// Drain each endpoint's queue
-	for endpoint, gate := range gates {
+	// Drain each gate's queue
+	for key, gate := range gates {
+		endpoint := key.endpoint
 		items := gate.DrainQueue()
 		if len(items) == 0 {
 			continue
@@ -162,16 +176,31 @@ func (a *Agent) DrainRateLimitQueue(ctx context.Context) {
 	}
 }
 
-// getOrCreateRateLimitGate returns the rate limit gate for the given endpoint,
-// creating it if it doesn't exist yet. Thread-safe.
+// getOrCreateRateLimitGate returns the gate of endpoint for a session with
+// no account (an API agent's), creating it if it doesn't exist yet.
+// Thread-safe.
 func (a *Agent) getOrCreateRateLimitGate(endpoint string) *RateLimitGate {
+	return a.rateLimitGate(endpoint, nil)
+}
+
+// sessionRateLimitGate returns the gate sessionKey's turns answer to: its
+// endpoint's, for its account.
+func (a *Agent) sessionRateLimitGate(sessionKey string) (*RateLimitGate, string) {
+	endpoint := a.resolveEndpoint(sessionKey)
+	return a.rateLimitGate(endpoint, a.AccountFor(sessionKey)), endpoint
+}
+
+// rateLimitGate returns the gate of endpoint ("" = the agent's default) for
+// acct (nil = no account), creating it if it doesn't exist yet. Thread-safe.
+func (a *Agent) rateLimitGate(endpoint string, acct *account.Account) *RateLimitGate {
 	if endpoint == "" {
 		endpoint = a.Endpoint
 	}
+	key := rateLimitGateKey{endpoint: endpoint, account: acct.Key()}
 
 	// Fast path: read lock
 	a.rateLimitGatesMu.RLock()
-	if gate, ok := a.rateLimitGates[endpoint]; ok {
+	if gate, ok := a.rateLimitGates[key]; ok {
 		a.rateLimitGatesMu.RUnlock()
 		return gate
 	}
@@ -182,13 +211,13 @@ func (a *Agent) getOrCreateRateLimitGate(endpoint string) *RateLimitGate {
 	defer a.rateLimitGatesMu.Unlock()
 
 	// Double-check (another goroutine might have created it)
-	if gate, ok := a.rateLimitGates[endpoint]; ok {
+	if gate, ok := a.rateLimitGates[key]; ok {
 		return gate
 	}
 
 	// Lazy init map
 	if a.rateLimitGates == nil {
-		a.rateLimitGates = make(map[string]*RateLimitGate)
+		a.rateLimitGates = make(map[rateLimitGateKey]*RateLimitGate)
 	}
 
 	// Create new gate, reopening at a deadline a previous process persisted
@@ -196,27 +225,47 @@ func (a *Agent) getOrCreateRateLimitGate(endpoint string) *RateLimitGate {
 	// restart until one of them trips it again. A past deadline is harmless:
 	// IsLimited treats it as open.
 	gate := &RateLimitGate{}
-	if until, ok := a.rateLimitDeadline(endpoint).Load(); ok {
+	if until, ok := a.loadRateLimitDeadline(key); ok {
 		gate.until = until
 	}
-	a.rateLimitGates[endpoint] = gate
+	a.rateLimitGates[key] = gate
 	return gate
 }
 
-// rateLimitDeadline is the persisted close-deadline of one endpoint's gate.
-// Only the deadline survives a restart; the replay queue and the missing-hint
-// backoff streak are process-scoped.
-func (a *Agent) rateLimitDeadline(endpoint string) session.PersistedTime {
-	if endpoint == "" {
-		endpoint = a.Endpoint // same default as getOrCreateRateLimitGate
+// rateLimitDeadline is the persisted close-deadline of one gate. Only the
+// deadline survives a restart; the replay queue and the missing-hint backoff
+// streak are process-scoped.
+func (a *Agent) rateLimitDeadline(key rateLimitGateKey) session.PersistedTime {
+	name := "ratelimit_until:" + key.endpoint
+	if key.account != "" {
+		name += "@" + key.account
 	}
-	return a.SessionIndex.PersistedTime(a.AgentID, "ratelimit_until:"+endpoint)
+	return a.SessionIndex.PersistedTime(a.AgentID, name)
 }
 
-// persistRateLimitDeadline saves (or, for zero, clears) an endpoint's deadline.
-func (a *Agent) persistRateLimitDeadline(endpoint string, until time.Time) {
-	if err := a.rateLimitDeadline(endpoint).Save(until); err != nil {
-		a.logger().Warnf("persist rate limit deadline (%s): %v", endpoint, err)
+// loadRateLimitDeadline reads key's persisted deadline. A delegated agent's
+// deadline stored before gates were per account (under the endpoint alone)
+// is moved to the first account that asks, so a gate closed at the upgrade
+// stays closed (#3186).
+func (a *Agent) loadRateLimitDeadline(key rateLimitGateKey) (time.Time, bool) {
+	if until, ok := a.rateLimitDeadline(key).Load(); ok || key.account == "" {
+		return until, ok
+	}
+	old := a.rateLimitDeadline(rateLimitGateKey{endpoint: key.endpoint})
+	until, ok := old.Load()
+	if !ok {
+		return time.Time{}, false
+	}
+	if err := a.rateLimitDeadline(key).Save(until); err == nil {
+		_ = old.Save(time.Time{})
+	}
+	return until, true
+}
+
+// persistRateLimitDeadline saves (or, for zero, clears) a gate's deadline.
+func (a *Agent) persistRateLimitDeadline(key rateLimitGateKey, until time.Time) {
+	if err := a.rateLimitDeadline(key).Save(until); err != nil {
+		a.logger().Warnf("persist rate limit deadline (%s): %v", key.endpoint, err)
 	}
 }
 
@@ -240,34 +289,33 @@ func (a *Agent) SessionRateLimited(sessionKey string) (limited bool, reason stri
 	if sessionKey == "" {
 		return true, "no session key"
 	}
-	endpoint := a.resolveEndpoint(sessionKey)
-	gate := a.getOrCreateRateLimitGate(endpoint)
+	gate, endpoint := a.sessionRateLimitGate(sessionKey)
 	if lim, until := gate.IsLimited(); lim {
 		return true, rateLimitedText(endpoint, until)
 	}
 	// The account-wide usage hold (#2491): no periodic work but keepalive
 	// during a hold, nothing during a stop.
-	if blocked, reason := a.UsageHoldBlocks(false); blocked {
+	if blocked, reason := a.UsageHoldBlocks(sessionKey, false); blocked {
 		return true, reason
 	}
-	if blocked, reason := a.reloginBlocksBackground(); blocked {
+	if blocked, reason := a.reloginBlocksBackground(sessionKey); blocked {
 		return true, reason
 	}
 	return false, ""
 }
 
-// reloginBlocksBackground reports whether a Claude Code login is owed on an
-// agent that uses it (#3006): an attempt is running, or one failed and
+// reloginBlocksBackground reports whether a Claude Code login is owed on
+// sessionKey's account, for an agent that uses it (#3006): an attempt is running, or one failed and
 // nothing has worked since. Background work then does not run, keepalive
 // included: on the dead credential each run would only 401 (#2384 pauses
 // injections the same way; periodic work forks its own backend and passed
 // that pause). It resumes when the login completes. Agents on other backends
 // do not use the login (UsesCCLogin).
-func (a *Agent) reloginBlocksBackground() (bool, string) {
+func (a *Agent) reloginBlocksBackground(sessionKey string) (bool, string) {
 	if !a.UsesCCLogin() {
 		return false, ""
 	}
-	if g := a.LoginGateOrDefault(); g.Active() || g.Pending() {
+	if g := a.loginGate(sessionKey); g.Active() || g.Pending() {
 		return true, "Claude Code login pending (send /login)"
 	}
 	return false, ""
@@ -280,25 +328,28 @@ func (a *Agent) KeepaliveRateLimited(sessionKey string) (limited bool, reason st
 	if sessionKey == "" {
 		return true, "no session key"
 	}
-	endpoint := a.resolveEndpoint(sessionKey)
-	if lim, until := a.getOrCreateRateLimitGate(endpoint).IsLimited(); lim {
+	gate, endpoint := a.sessionRateLimitGate(sessionKey)
+	if lim, until := gate.IsLimited(); lim {
 		return true, rateLimitedText(endpoint, until)
 	}
-	if blocked, reason := a.UsageHoldBlocks(true); blocked {
+	if blocked, reason := a.UsageHoldBlocks(sessionKey, true); blocked {
 		return true, reason
 	}
-	return a.reloginBlocksBackground()
+	return a.reloginBlocksBackground(sessionKey)
 }
 
 // engageRateLimit is the single gate-closing path for API and delegated
 // backends. The source supplies a neutral signal; the endpoint gate applies
 // shared reset/fallback policy. notify controls whether proactive hooks fire —
 // user API turns already receive the returned RateLimitedError directly.
-func (a *Agent) engageRateLimit(endpoint string, signal ratelimit.Signal, notify bool) time.Time {
-	gate := a.getOrCreateRateLimitGate(endpoint)
+func (a *Agent) engageRateLimit(endpoint string, acct *account.Account, signal ratelimit.Signal, notify bool) time.Time {
+	if endpoint == "" {
+		endpoint = a.Endpoint
+	}
+	gate := a.rateLimitGate(endpoint, acct)
 	wasLimited, prev := gate.IsLimited()
 	until := gate.CloseFor(signal)
-	a.persistRateLimitDeadline(endpoint, until)
+	a.persistRateLimitDeadline(rateLimitGateKey{endpoint: endpoint, account: acct.Key()}, until)
 	// A backend repeats a rejection while it retries (CC's rate_limit_event,
 	// #2488): re-closing to the same deadline is not news, so it neither
 	// re-logs at INFO nor re-notifies.
@@ -315,19 +366,23 @@ func (a *Agent) engageRateLimit(endpoint string, signal ratelimit.Signal, notify
 	return until
 }
 
-// EngageRateLimit engages the default-endpoint gate for a delegated backend
-// signal and fires the standard notification hooks. User-triggered delegated
-// turns still run through their coding agent and may probe the limit.
-func (a *Agent) EngageRateLimit(signal ratelimit.Signal) {
-	a.engageRateLimit(a.Endpoint, signal, true)
+// EngageRateLimit engages acct's default-endpoint gate for a signal from a
+// delegated backend running on acct, and fires the standard notification
+// hooks. User-triggered delegated turns still run through their coding agent
+// and may probe the limit.
+func (a *Agent) EngageRateLimit(acct *account.Account, signal ratelimit.Signal) {
+	a.engageRateLimit(a.Endpoint, acct, signal, true)
 }
 
 // releaseRateLimit opens an endpoint gate after a successful API response.
 // Queued system work remains queued until the normal drain tick replays it.
 func (a *Agent) releaseRateLimit(endpoint string) {
+	if endpoint == "" {
+		endpoint = a.Endpoint
+	}
 	gate := a.getOrCreateRateLimitGate(endpoint)
 	if gate.Open() {
-		a.persistRateLimitDeadline(endpoint, time.Time{})
+		a.persistRateLimitDeadline(rateLimitGateKey{endpoint: endpoint}, time.Time{})
 		a.logger().Infof("rate limit gate (%s) released early after successful probe", endpoint)
 	}
 }

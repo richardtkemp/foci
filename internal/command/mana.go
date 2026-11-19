@@ -15,7 +15,7 @@ import (
 // (Spec.UsageQuery): for Claude Code, that agent's own login, read with its
 // environment and binary (#3104, Dick 2026-11-14 Q20: the calling agent's
 // account only). The reply names the account when it has a name
-// (Agent.UsageAccountName, Q15). Only a backend with a usage source has one, so only its
+// (account.Account.Name, Q15). Only a backend with a usage source has one, so only its
 // agents get the command, and each reports only its own account (#1543):
 //
 //   - Claude Code (ccstream.QueryUsage): session (5h) and weekly (7d)
@@ -40,18 +40,21 @@ import (
 // a fresh read is stored there, and /mana cached (/usage cached) answers
 // from it alone (manaCached). Without it, /mana cached says no figures are
 // stored.
-func ManaCommand(query delegator.UsageQuery, target delegator.UsageTarget, liftOnAvailable bool, history ...*usagelog.Binding) *Command {
-	var hist *usagelog.Binding
+//
+// target and history are asked per request, with the session the command
+// came from: both belong to that session's account (#3186).
+func ManaCommand(query delegator.UsageQuery, target ManaTarget, liftOnAvailable bool, history ...ManaHistory) *Command {
+	hist := func(CommandContext, string) *usagelog.Binding { return nil }
 	if len(history) > 0 {
 		hist = history[0]
 	}
-	fresh := func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
-		info, err := query(ctx, target)
+	fresh := func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+		info, err := query(ctx, target(cc, req.SessionKey))
 		if err != nil {
 			return Response{}, fmt.Errorf("query usage: %w", err)
 		}
-		hist.RecordRead(info, delegator.UsageSourceMana)
-		return manaFreshReply(info, cc, liftOnAvailable), nil
+		hist(cc, req.SessionKey).RecordRead(info, delegator.UsageSourceMana)
+		return manaFreshReply(info, cc, req.SessionKey, liftOnAvailable), nil
 	}
 	cmd := &Command{
 		Name:        "mana",
@@ -63,7 +66,7 @@ func ManaCommand(query delegator.UsageQuery, target delegator.UsageTarget, liftO
 			Name:        "cached",
 			Description: "Answer at once from the usage figures foci already holds, with their age (no fresh read). Add json for a script.",
 			Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
-				return manaCached(hist, req.Args, cc), nil
+				return manaCached(hist(cc, req.SessionKey), req.Args, cc, req.SessionKey), nil
 			},
 		}},
 		DefaultExecute: fresh,
@@ -74,17 +77,25 @@ func ManaCommand(query delegator.UsageQuery, target delegator.UsageTarget, liftO
 	return cmd
 }
 
+// ManaTarget is what a usage read asked for in sessionKey reads (the launch
+// env of that session's account), and ManaHistory the usage history of that
+// account.
+type (
+	ManaTarget  func(cc CommandContext, sessionKey string) delegator.UsageTarget
+	ManaHistory func(cc CommandContext, sessionKey string) *usagelog.Binding
+)
+
 // manaFreshReply is the reply to plain /mana and /usage: the fresh read, the
 // account's name, and the #3043 lift when the read shows usage available.
-func manaFreshReply(info *delegator.UsageInfo, cc CommandContext, liftOnAvailable bool) Response {
+func manaFreshReply(info *delegator.UsageInfo, cc CommandContext, sessionKey string, liftOnAvailable bool) Response {
 	text := formatUsage(info)
 	if cc.Agent != nil {
-		if name := cc.Agent.UsageAccountName(); name != "" {
+		if name := cc.Agent.AccountFor(sessionKey).Name(); name != "" {
 			text += "\n\nAccount: " + name
 		}
 	}
-	if liftOnAvailable && cc.Agent != nil && cc.Agent.UsageAvailable(info) {
-		if res := cc.Agent.ResetLimits("/usage found usage available"); res.Cleared() {
+	if liftOnAvailable && cc.Agent != nil && cc.Agent.UsageAvailable(sessionKey, info) {
+		if res := cc.Agent.ResetLimits(sessionKey, "/usage found usage available"); res.Cleared() {
 			text += "\n\n▶️ Usage is available. " + res.Summary()
 		}
 	}

@@ -59,22 +59,29 @@ func TestQueryUsage_AgentEnvAndBinary(t *testing.T) {
 	}
 }
 
-// TestUsageAccount_PerLogin (requirement 1, Q11): the usage account is the
-// login location: one folder spelled two ways is one account, another folder
-// another, and an agent with no override is on the host login.
+// TestUsageAccount_PerLogin (requirement 1, Q11): an account is the login
+// location: one folder spelled two ways is one account, another folder
+// another, and no folder is the host login. The account of a folder carries
+// that folder in its launch env; the host's adds nothing (#3186).
 func TestUsageAccount_PerLogin(t *testing.T) {
 	isolateCCEnv(t)
 	ccB := filepath.Join(t.TempDir(), "ccB")
-	acct := func(env map[string]string) string {
+	spec := func(folder string) delegator.AccountSpec {
 		t.Helper()
-		a, err := UsageAccount(env)
+		a, err := Account(folder)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return a
 	}
-	alpha, beta, beta2 := acct(nil), acct(map[string]string{fociroot.CCConfigDirEnv: ccB}), acct(map[string]string{fociroot.CCConfigDirEnv: ccB + "/"})
-	host, err := ccaccount.ForAgent(nil)
+	alpha, beta, beta2 := spec("").Key, spec(ccB).Key, spec(ccB+"/").Key
+	if b := spec(ccB); b.Host || b.Dir != ccB || b.Env[fociroot.CCConfigDirEnv] != ccB || b.ID == "" {
+		t.Errorf("account of %s = %+v, want its folder in Dir and Env and a short id", ccB, b)
+	}
+	if h := spec(""); !h.Host || len(h.Env) != 0 {
+		t.Errorf("the host account = %+v, want Host and no launch env", h)
+	}
+	host, err := ccaccount.ForLaunchEnv(nil)
 	if err != nil {
 		t.Fatal(err)
 	}

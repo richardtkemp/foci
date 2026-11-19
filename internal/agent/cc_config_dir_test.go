@@ -122,7 +122,7 @@ func TestSpecHooksGetAgentEnv(t *testing.T) {
 	if checkedEnv["CLAUDE_CONFIG_DIR"] != "/agent/cc" {
 		t.Errorf("TranscriptChecker got env %v, want the agent's", checkedEnv)
 	}
-	if got := mgr.resumeRetention(); got != time.Hour || retentionEnv["CLAUDE_CONFIG_DIR"] != "/agent/cc" {
+	if got := mgr.resumeRetention(""); got != time.Hour || retentionEnv["CLAUDE_CONFIG_DIR"] != "/agent/cc" {
 		t.Errorf("resumeRetention = %v with env %v, want the agent's env", got, retentionEnv)
 	}
 }

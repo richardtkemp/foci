@@ -79,7 +79,7 @@ func (s *Spawner) send(ctx context.Context, idOrBranch, message string) (ToolRes
 		return ToolResult{}, fmt.Errorf("spawn_send: agent not available")
 	}
 
-	if msg := usageHoldRefusal(agent); msg != "" {
+	if msg := usageHoldRefusal(agent, snap.BranchKey); msg != "" {
 		return ToolResult{}, fmt.Errorf("NOT delivered to spawn %s: %s", snap.ID, msg)
 	}
 	if snap.Running {

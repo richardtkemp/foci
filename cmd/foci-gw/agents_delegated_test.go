@@ -440,7 +440,7 @@ func TestConfigureDelegated_FoldsGlobalDefaultPermissionIntoBackendConfig(t *tes
 			if _, ok := configureDelegated(ag, p, shared, tc.backend, config.BackendConfig{DefaultPermission: tc.perAgent}); !ok {
 				t.Fatal("configureDelegated returned ok=false")
 			}
-			if _, err := ag.DelegatedManager.NewBackend(); err != nil {
+			if _, err := ag.DelegatedManager.NewBackendFor(ag.AccountFor("")); err != nil {
 				t.Fatalf("NewBackend: %v", err)
 			}
 			if rec.got == nil {
@@ -469,7 +469,7 @@ func TestConfigureDelegated_WritableRoots(t *testing.T) {
 	if _, ok := configureDelegated(ag, p, shared, "test-sandbox-roots", config.BackendConfig{}); !ok {
 		t.Fatal("configureDelegated failed")
 	}
-	if _, err := ag.DelegatedManager.NewBackend(); err != nil {
+	if _, err := ag.DelegatedManager.NewBackendFor(ag.AccountFor("")); err != nil {
 		t.Fatal(err)
 	}
 	got, ok := rec.got["writable_roots"].([]string)

@@ -20,7 +20,6 @@ func forceAgent(t *testing.T) (*Agent, *atomic.Int32) {
 	t.Helper()
 	a, cancel := startedAgent(t)
 	t.Cleanup(cancel)
-	a.UsageHoldRegistry = usagehold.New()
 	// A backend to resolve, as production always has: since #3131 a /lb
 	// message arriving mid-turn takes the normal routing (plan-cancel, ask
 	// capture, steer), which looks the session's backend up.
@@ -30,6 +29,7 @@ func forceAgent(t *testing.T) (*Agent, *atomic.Int32) {
 		NewBackend:  func() (delegator.Delegator, error) { return be, nil },
 		Spec:        mockSpecFor(be),
 	}
+	putOnAccount(a, "", usagehold.New(), nil)
 	a.StartUsageHold()
 	t.Cleanup(a.StopUsageHold)
 	told := &atomic.Int32{}
@@ -59,7 +59,7 @@ func TestLimitBreak_RunsOneMessagePastTheHold(t *testing.T) {
 	a.SetTurnObserver(d.recordBatch)
 	const sk = "test/s"
 
-	a.ObserveUsage(weekly(0.98))
+	testAcct(a).ObserveUsage(weekly(0.98))
 	a.Enqueue(Envelope{SessionKey: sk, Text: "M1", Driver: d})
 	if !waitFor(2*time.Second, func() bool { return told.Load() == 1 }) {
 		t.Fatalf("M1 was not held (told %d)", told.Load())
@@ -71,8 +71,8 @@ func TestLimitBreak_RunsOneMessagePastTheHold(t *testing.T) {
 	if got := texts(d.Calls()[0]); len(got) != 1 || got[0] != "hey one last thing" {
 		t.Fatalf("/lb turn = %q, want only %q", got, "hey one last thing")
 	}
-	if a.UsageHold().Phase != usagehold.Hold {
-		t.Fatalf("phase after /lb = %v, want the hold still on", a.UsageHold().Phase)
+	if a.UsageHold("").Phase != usagehold.Hold {
+		t.Fatalf("phase after /lb = %v, want the hold still on", a.UsageHold("").Phase)
 	}
 
 	a.Enqueue(Envelope{SessionKey: sk, Text: "M3", Driver: d})
@@ -83,7 +83,7 @@ func TestLimitBreak_RunsOneMessagePastTheHold(t *testing.T) {
 		t.Fatalf("a held message ran a turn: %d calls", d.NumCalls())
 	}
 
-	a.ObserveUsage(weekly(0.10))
+	testAcct(a).ObserveUsage(weekly(0.10))
 	if !waitFor(2*time.Second, func() bool { return d.NumCalls() == 2 }) {
 		t.Fatalf("held messages did not run at lift; calls=%d", d.NumCalls())
 	}
@@ -98,9 +98,9 @@ func TestLimitBreak_StopPhase(t *testing.T) {
 	a, _ := forceAgent(t)
 	d := &recordingDriver{}
 	a.SetTurnObserver(d.recordBatch)
-	a.ObserveUsage(usagehold.Event{Window: "seven_day", Reached: true, ResetAt: time.Now().Add(time.Hour)})
-	if a.UsageHold().Phase != usagehold.Stop {
-		t.Fatalf("phase = %v, want stop", a.UsageHold().Phase)
+	testAcct(a).ObserveUsage(usagehold.Event{Window: "seven_day", Reached: true, ResetAt: time.Now().Add(time.Hour)})
+	if a.UsageHold("").Phase != usagehold.Stop {
+		t.Fatalf("phase = %v, want stop", a.UsageHold("").Phase)
 	}
 	a.Enqueue(Envelope{SessionKey: "test/s", Text: "/limit_break go", Driver: d})
 	if !waitFor(2*time.Second, func() bool { return d.NumCalls() == 1 }) {
@@ -203,9 +203,9 @@ func TestLimitBreak_NotInterruptedByHoldStart(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("the /lb turn never started")
 	}
-	a.ObserveUsage(weekly(0.98))
-	if a.UsageHold().Phase != usagehold.Hold {
-		t.Fatalf("phase = %v, want hold", a.UsageHold().Phase)
+	testAcct(a).ObserveUsage(weekly(0.98))
+	if a.UsageHold("").Phase != usagehold.Hold {
+		t.Fatalf("phase = %v, want hold", a.UsageHold("").Phase)
 	}
 	// The hold's interrupt runs synchronously in ObserveUsage (the phase
 	// change): it cancels the turn's context and marks the resume line
@@ -242,7 +242,7 @@ func TestLimitBreak_PlainMessagesDoNotJoin(t *testing.T) {
 	d := newGateDriver()
 	a.SetTurnObserver(d.recordBatch)
 	const sk = "test/c1"
-	a.ObserveUsage(weekly(0.98))
+	testAcct(a).ObserveUsage(weekly(0.98))
 
 	// The first /lb turn blocks, so the next two queue behind it.
 	a.Enqueue(Envelope{SessionKey: sk, Text: "/lb first", Driver: d})

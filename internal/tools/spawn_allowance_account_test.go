@@ -32,10 +32,10 @@ func TestSpawnUsageReader_PerAccount(t *testing.T) {
 			envB := map[string]string{"CLAUDE_CONFIG_DIR": "/tmp/ccB"}
 			register := map[string]func() UsageReader{
 				"alpha": func() UsageReader {
-					return SpawnUsageReader("claude-code", delegator.UsageTarget{AgentID: "alpha"}, q, acctA, nil)
+					return SpawnUsageReader(acctA, delegator.UsageTarget{AgentID: "alpha"}, q, nil)
 				},
 				"beta": func() UsageReader {
-					return SpawnUsageReader("claude-code", delegator.UsageTarget{AgentID: "beta", Env: envB}, q, acctB, nil)
+					return SpawnUsageReader(acctB, delegator.UsageTarget{AgentID: "beta", Env: envB}, q, nil)
 				},
 			}
 			first, second := "alpha", "beta"
@@ -43,7 +43,7 @@ func TestSpawnUsageReader_PerAccount(t *testing.T) {
 				first, second = second, first
 			}
 			readers := map[string]UsageReader{first: register[first](), second: register[second]()}
-			beta2 := SpawnUsageReader("claude-code", delegator.UsageTarget{AgentID: "beta2", Env: envB}, q, acctB, nil)
+			beta2 := SpawnUsageReader(acctB, delegator.UsageTarget{AgentID: "beta2", Env: envB}, q, nil)
 
 			pct := func(r UsageReader) string {
 				got := r(context.Background())

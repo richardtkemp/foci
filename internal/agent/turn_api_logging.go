@@ -217,7 +217,7 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 			RetryAfter: time.Duration(apiErr.RetryAfterSeconds()) * time.Second,
 			Detail:     apiErr.Body,
 		}
-		resetTime := a.engageRateLimit(endpoint, signal, !isUserTrigger(TriggerFromContext(ctx)))
+		resetTime := a.engageRateLimit(endpoint, nil, signal, !isUserTrigger(TriggerFromContext(ctx)))
 		a.logger().Infof("session=%s API rate limit recorded for %s", sessionKey, endpoint)
 		// The user-facing error names the endpoint whose gate closed — the
 		// one that answered 429 (a fallback hop's when a hop limited).

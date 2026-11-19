@@ -761,16 +761,16 @@ func TestUsageCacheSchedule(t *testing.T) {
 	}
 }
 
-// Agents on one usage account (Claude Code: one login, #3104) share one cache
-// entry (and one scheduled read); a per-agent backend (codex) keeps one per
-// agent.
+// Agents on one account share one cache entry (and one scheduled read):
+// Claude Code agents on one login (#3104), and all codex agents, whose
+// backend has one login (#3186; until then codex kept one entry per agent).
 func TestSpawnUsageReaderAccountKey(t *testing.T) {
 	t.Parallel()
 	q := func(context.Context, delegator.UsageTarget) (*delegator.UsageInfo, error) { return nil, nil }
-	SpawnUsageReader("xacct-cc", delegator.UsageTarget{AgentID: "a"}, q, "xacct-cc", nil)
-	SpawnUsageReader("xacct-cc", delegator.UsageTarget{AgentID: "b"}, q, "xacct-cc", nil)
-	SpawnUsageReader("xacct-codex", delegator.UsageTarget{AgentID: "a"}, q, "", nil)
-	SpawnUsageReader("xacct-codex", delegator.UsageTarget{AgentID: "b"}, q, "", nil)
+	SpawnUsageReader("xacct-cc", delegator.UsageTarget{AgentID: "a"}, q, nil)
+	SpawnUsageReader("xacct-cc", delegator.UsageTarget{AgentID: "b"}, q, nil)
+	SpawnUsageReader("xacct-codex", delegator.UsageTarget{AgentID: "a"}, q, nil)
+	SpawnUsageReader("xacct-codex", delegator.UsageTarget{AgentID: "b"}, q, nil)
 	spawnUsage.mu.Lock()
 	defer spawnUsage.mu.Unlock()
 	var keys []string
@@ -780,7 +780,7 @@ func TestSpawnUsageReaderAccountKey(t *testing.T) {
 		}
 	}
 	slices.Sort(keys)
-	if want := []string{"xacct-cc", "xacct-codex/a", "xacct-codex/b"}; !slices.Equal(keys, want) {
+	if want := []string{"xacct-cc", "xacct-codex"}; !slices.Equal(keys, want) {
 		t.Errorf("usage keys = %v, want %v", keys, want)
 	}
 }

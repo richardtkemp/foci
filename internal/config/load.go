@@ -389,8 +389,9 @@ func decodeConfig(data []byte, path string, knownBackends []string) (*Config, er
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
-	// A relative CLAUDE_CONFIG_DIR is ignored, with one warning (#3104).
-	for _, w := range DropRelativeCCConfigDirs(&cfg) {
+	// backend_config.accounts is the only way to name a Claude Code account;
+	// each problem is one warning (#3186).
+	for _, w := range NormalizeAccounts(&cfg) {
 		configLog.Warnf("%s", w)
 	}
 

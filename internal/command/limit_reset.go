@@ -19,11 +19,11 @@ func LimitResetCommand() *Command {
 		Description: "Force-lift the rate-limit gate and usage hold (after the account's limit was reset)",
 		Category:    "operations",
 		Requires:    RequiresBackend,
-		Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
+		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
 			if cc.Agent == nil {
 				return Response{Text: "No agent to reset."}, nil
 			}
-			res := cc.Agent.ResetLimits("/limit_reset")
+			res := cc.Agent.ResetLimits(req.SessionKey, "/limit_reset")
 			if !res.Cleared() {
 				return Response{Text: res.Summary()}, nil
 			}

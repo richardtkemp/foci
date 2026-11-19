@@ -50,7 +50,7 @@ func markUsageForce(env *Envelope) {
 // else only the limit-break messages, the rest being parked on the session's
 // held list as the worker would park them. Worker-confined.
 func (a *Agent) keepForcedOnly(inb *sessionInbox, batch []Envelope) []Envelope {
-	if len(batch) == 0 || !a.usageHoldsTrigger("user", false) {
+	if len(batch) == 0 || !a.usageHoldsTrigger(inb.sk, "user", false) {
 		return batch
 	}
 	kept := batch[:0:0]

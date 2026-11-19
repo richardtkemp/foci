@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"foci/internal/account"
 	"foci/internal/agent"
 	"foci/internal/app"
 	"foci/internal/config"
@@ -769,37 +770,57 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 		// routing, the API tool-loop budgets) stay unset (#spawn-oneshot).
 		spec, _ := delegator.SpecFor(acfg.Backend)
 		if q, ok := delegator.UsageQueryFor(acfg.Backend); ok {
-			// #2662: cached per usage account and read on a 4-14 min
-			// schedule (one Claude Code read is a throwaway CC process and
-			// ~25-60 s); the Claude Code agents on one login share one
-			// account (#3104), and agents on other logins have their own.
-			// The schedule skips while the reserve is 0 (the check is off).
-			// Each successful read is stored in the usage history (#3103).
-			hist := usageBindingFor(d.p.cfg, acfg)
-			account := usageAccountFor(acfg.ID, acfg.Backend, acfg.BackendConfig.Env)
-			// #3151: after each stored read the app's roster carries the
-			// new figures (re-sent only when they changed). One record hook
-			// runs per account read, so one check per read.
-			spawnDeps.Usage = tools.SpawnUsageReader(acfg.Backend, usageTargetFor(d.p.cfg, acfg), q,
-				account,
-				func() bool { return live.Load().Tools.SpawnReservePercent > 0 },
-				func(info *delegator.UsageInfo, source string) {
-					hist.RecordRead(info, source)
-					app.AgentUsageChanged()
-				})
-			// #3151: the app's new-conversation picker shows the agent's
-			// allowance from its stored figures.
-			app.SetAgentUsageSource(acfg.ID, appUsageFromBinding(hist))
-			// #3144: a Claude Code agent is told of each usage warning level
-			// ([notify] usage_warning_levels, #3145) its account's reads
-			// reach, as the stream's notices are.
-			if spec.UsageReadNotices != nil {
-				tools.OnSpawnUsageRead(acfg.Backend, acfg.ID, account,
-					usageReadAlerter(d.connMgr, acfg.ID, spec.UsageReadNotices,
-						func() string { return live.Load().Notify.RateLimitNotifyTo },
-						func() []int { return live.Load().Notify.UsageWarningLevels },
-						app.OpenSessionsForAgent, hist))
+			// #2662: cached per account and read on a 4-14 min schedule (one
+			// Claude Code read is a throwaway CC process and ~25-60 s); the
+			// agents on one login share one account (#3104), and agents on
+			// other logins have their own. The schedule skips while the
+			// reserve is 0 (the check is off). Each successful read is
+			// stored in the account's usage history (#3103). The agent
+			// registers for every account of its pool (#3186).
+			accounts := agentAccounts(d.p.cfg, spec, acfg.ID, acfg.BackendConfig.Accounts)
+			readers := make(map[*account.Account]tools.UsageReader, len(accounts))
+			for _, acct := range accounts {
+				hist := acct.Readings(acfg.ID)
+				// #3151: after each stored read the app's roster carries
+				// the new figures (re-sent only when they changed). One
+				// record hook runs per account read, so one check per read.
+				readers[acct] = tools.SpawnUsageReader(acct.Key(), usageTarget(d.p.cfg, acfg, acct), q,
+					func() bool { return live.Load().Tools.SpawnReservePercent > 0 },
+					func(info *delegator.UsageInfo, source string) {
+						hist.RecordRead(info, source)
+						app.AgentUsageChanged()
+					})
+				// #3144: a Claude Code agent is told of each usage warning
+				// level ([notify] usage_warning_levels, #3145) its account's
+				// reads reach, as the stream's notices are.
+				if spec.UsageReadNotices != nil {
+					tools.OnSpawnUsageRead(acct.Key(), acfg.ID,
+						usageReadAlerter(d.connMgr, acfg.ID, spec.UsageReadNotices,
+							func() string { return live.Load().Notify.RateLimitNotifyTo },
+							func() []int { return live.Load().Notify.UsageWarningLevels },
+							app.OpenSessionsForAgent, hist))
+				}
 			}
+			// A spawn runs on its spawner's account, so the check reads the
+			// account of the session that asks.
+			spawnDeps.Usage = func(ctx context.Context) tools.UsageRead {
+				var acct *account.Account
+				if d.agLazy != nil {
+					if ag := d.agLazy(); ag != nil {
+						acct = ag.AccountFor(tools.SessionKeyFromContext(ctx))
+					}
+				}
+				read := readers[acct]
+				if read == nil {
+					return tools.UsageRead{Err: errors.New("the asking session is on no account of this agent")}
+				}
+				return read(ctx)
+			}
+			// #3151: the app's new-conversation picker shows the agent's
+			// allowance from its stored figures. A conversation that does
+			// not exist yet has no session to ask: it shows the account a
+			// new session starts on, the pool's first.
+			app.SetAgentUsageSource(acfg.ID, appUsageFromBinding(accounts[0].Readings(acfg.ID)))
 		}
 		spawnDeps.Delegated = &tools.DelegatedSpawn{
 			Spec: spec,

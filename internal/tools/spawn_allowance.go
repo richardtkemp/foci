@@ -30,11 +30,11 @@ import (
 // with none, the check waits at most usageWait and otherwise lets the spawn
 // run unchecked.
 //
-// The account: a Claude Code agent's usage is its login's (Spec.UsageAccount,
-// #3104), so the agents on one login share ONE cache entry and one scheduled
-// read, not one throwaway CC process each, and agents on different logins
-// have different entries, whichever registered first. codex reads per agent
-// (its own app-server's rate-limit state).
+// The account (account.Account, #3104, #3186): the sessions on one login
+// share ONE cache entry and one scheduled read, not one throwaway CC process
+// each, and sessions on different logins have different entries, whichever
+// registered first. codex has one login for all its agents, so they share
+// one entry; its read is the first registered agent's app-server state.
 
 // defaultSpawnReservePercent is the reserve when the config gives none.
 const defaultSpawnReservePercent = 10
@@ -136,41 +136,31 @@ var spawnUsage = NewUsageCache()
 // build spawn deps never do, so they start no usage reads.
 func StartSpawnUsageRefresh(ctx context.Context) { spawnUsage.Start(ctx) }
 
-// SpawnUsageReader is the UsageReader of target's agent on backend: query
-// through the process-wide cache, keyed by the usage account (account, the
-// Spec.UsageAccount name, when not ""; else backend and agent: a per-agent
-// read). The query reads with target (the agent's env and binary), and every
-// registrant of one account reads the same login, so the first
-// registration's query serves them all. enabled gates the scheduled reads of
-// that account (the first registration's is kept). Nil query = nil reader
-// (no usage source). record, when given, stores each successful read of the
-// account in the usage history (#3103); like the query, the first
-// registration's is kept.
-func SpawnUsageReader(backend string, target delegator.UsageTarget, query delegator.UsageQuery, account string, enabled func() bool, record ...UsageRecorder) UsageReader {
+// SpawnUsageReader is the UsageReader of account (an account.Account.Key):
+// query through the process-wide cache, keyed by the account. The query
+// reads with target (a launch env on the account, and the registering
+// agent's id and binary), and every registrant of one account reads the same
+// login, so the first registration's query serves them all. enabled gates
+// the scheduled reads of that account (the first registration's is kept).
+// Nil query = nil reader (no usage source). record, when given, stores each
+// successful read of the account in the usage history (#3103); like the
+// query, the first registration's is kept.
+func SpawnUsageReader(account string, target delegator.UsageTarget, query delegator.UsageQuery, enabled func() bool, record ...UsageRecorder) UsageReader {
 	if query == nil {
 		return nil
 	}
-	return spawnUsage.Register(spawnUsageKey(backend, target.AgentID, account), func(ctx context.Context) (*delegator.UsageInfo, error) {
+	return spawnUsage.Register(account, func(ctx context.Context) (*delegator.UsageInfo, error) {
 		return query(ctx, target)
 	}, enabled, record...)
 }
 
-// spawnUsageKey is the cache key of agentID's usage on backend: account
-// (Spec.UsageAccount) when not "", else backend and agent.
-func spawnUsageKey(backend, agentID, account string) string {
-	if account != "" {
-		return account
-	}
-	return backend + "/" + agentID
-}
-
-// OnSpawnUsageRead subscribes agentID to every successful read of its usage
-// account (keyed as SpawnUsageReader keys it), scheduled or started by a
-// spawn's check (#3144: the usage alerts). Every agent of one account
-// subscribes for itself, so each hears the account's one read. fn runs on
-// the reading goroutine before the read counts as ended: it must not block.
-func OnSpawnUsageRead(backend, agentID, account string, fn UsageRecorder) {
-	spawnUsage.OnRead(spawnUsageKey(backend, agentID, account), agentID, fn)
+// OnSpawnUsageRead subscribes agentID to every successful read of account
+// (keyed as SpawnUsageReader keys it), scheduled or started by a spawn's
+// check (#3144: the usage alerts). Every agent with the account subscribes
+// for itself, so each hears the account's one read. fn runs on the reading
+// goroutine before the read counts as ended: it must not block.
+func OnSpawnUsageRead(account, agentID string, fn UsageRecorder) {
+	spawnUsage.OnRead(account, agentID, fn)
 }
 
 // OnRead subscribes fn, as id, to every successful read of key (before or

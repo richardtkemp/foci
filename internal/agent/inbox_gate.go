@@ -180,7 +180,7 @@ func (a *Agent) injectHeld(env Envelope) bool {
 	}
 	// The usage hold (#2491) holds every system inject but a keepalive, a
 	// foci_remind fire and the hold's own turns; a stop holds them all.
-	if a.usageHoldsTrigger(env.Inject.Trigger, env.Inject.HoldPermit) {
+	if a.usageHoldsTrigger(env.SessionKey, env.Inject.Trigger, env.Inject.HoldPermit) {
 		return true
 	}
 	// A keepalive is never held by background work (#2233), and no other
@@ -228,7 +228,7 @@ func (a *Agent) waitHeldGate(ctx context.Context, env Envelope) bool {
 			return a.injectHeld(env) && !a.peerSteerTarget(env)
 		})
 	}
-	if !isKeepaliveTrigger(env.Inject.Trigger) && !a.usageHoldsTrigger(env.Inject.Trigger, env.Inject.HoldPermit) {
+	if !isKeepaliveTrigger(env.Inject.Trigger) && !a.usageHoldsTrigger(env.SessionKey, env.Inject.Trigger, env.Inject.HoldPermit) {
 		// The full hold, but only until this inject's pending-work limit
 		// runs out (#2792): the poll backstop sees the limit pass.
 		return a.gateWaitLoop(ctx, env.SessionKey, "autonomous_or_pending", func() bool {
@@ -409,7 +409,7 @@ func (a *Agent) dispatchInject(ctx context.Context, inb *sessionInbox, env Envel
 	if injectGateApplies(env.Inject) && (a.injectHeld(env) || (pinned && !a.usageHoldPassesPast(env))) {
 		// An injection a usage hold parks is stored when it has a
 		// serialisable form, so it survives a restart (#2491).
-		if env.Inject.Durable != nil && a.usageHoldPhase() != usagehold.Open {
+		if env.Inject.Durable != nil && a.usageHoldPhase(inb.sk) != usagehold.Open {
 			a.storeUsageHeld(&env)
 		}
 		if env.heldSince.IsZero() {
@@ -577,7 +577,7 @@ func (a *Agent) releaseHeldInArrivalOrder(ctx context.Context, inb *sessionInbox
 		if len(inb.usageHeld) == 0 {
 			return a.releaseHeld(ctx, inb)
 		}
-		bound := &heldBound{seq: inb.usageHeld[0].enqSeq, phase: a.usageHoldPhase()}
+		bound := &heldBound{seq: inb.usageHeld[0].enqSeq, phase: a.usageHoldPhase(inb.sk)}
 		if !a.releaseHeldBefore(ctx, inb, bound) {
 			return false
 		}

@@ -67,10 +67,10 @@ type SpawnCacheReporter interface {
 }
 
 // UsageHoldRefuser is the optional agent side of the usage hold (#2491): a
-// non-empty reason while the agent's account holds or stops, when no spawn
-// may start and spawn_send may not reach one. *agent.Agent implements it.
+// non-empty reason while the account of sessionKey holds or stops, when it
+// may start no spawn and spawn_send may not reach one of its spawns. *agent.Agent implements it.
 type UsageHoldRefuser interface {
-	UsageHoldRefusal() string
+	UsageHoldRefusal(sessionKey string) string
 }
 
 // UsageHoldPauser is the optional agent side of a spawn's pause in a usage
@@ -79,10 +79,10 @@ type UsageHoldPauser interface {
 	// UsageHoldTurn registers one turn on key that a hold start interrupts
 	// (key then enters the paused set as kind); done reports whether it did.
 	UsageHoldTurn(ctx context.Context, key, kind string) (context.Context, func() (interrupted bool))
-	// UsageHoldActive reports whether the account holds or stops now.
-	UsageHoldActive() bool
-	// WaitUsageLift blocks until the account is open (false: ctx ended).
-	WaitUsageLift(ctx context.Context) bool
+	// UsageHoldActive reports whether key's account holds or stops now.
+	UsageHoldActive(key string) bool
+	// WaitUsageLift blocks until key's account is open (false: ctx ended).
+	WaitUsageLift(ctx context.Context, key string) bool
 	// UsageHoldPause adds key to (on) or removes it from the paused set the
 	// keepalive warm set reads.
 	UsageHoldPause(key, kind string, on bool)
@@ -96,10 +96,11 @@ func (s *Spawner) agentOrNil() SpawnAgent {
 	return s.agentFn()
 }
 
-// usageHoldRefusal is agent's hold reason, "" when it may spawn.
-func usageHoldRefusal(agent SpawnAgent) string {
+// usageHoldRefusal is the hold reason of sessionKey on agent, "" when it may
+// spawn.
+func usageHoldRefusal(agent SpawnAgent, sessionKey string) string {
 	if r, ok := agent.(UsageHoldRefuser); ok && agent != nil {
-		return r.UsageHoldRefusal()
+		return r.UsageHoldRefusal(sessionKey)
 	}
 	return ""
 }
@@ -677,7 +678,7 @@ func (s *Spawner) SpawnTool() *Tool {
 				return ToolResult{}, err
 			}
 			// The usage hold (#2491): no new spawn while the account holds.
-			if msg := usageHoldRefusal(host.agentOrNil()); msg != "" {
+			if msg := usageHoldRefusal(host.agentOrNil(), SessionKeyFromContext(ctx)); msg != "" {
 				return ToolResult{}, fmt.Errorf("NOT started: %s", msg)
 			}
 			background := p.Context == spawnModeClone || p.Background

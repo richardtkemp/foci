@@ -97,6 +97,7 @@ var spec = delegator.Spec{
 		delegator.CapUsageQuery:               delegator.Yes(),
 		delegator.CapUsageReports:             delegator.Yes(),
 		delegator.CapLimitReset:               delegator.Yes(),
+		delegator.CapAccounts:                 delegator.Yes(),
 	},
 
 	DefaultModel:       "opus",
@@ -108,7 +109,8 @@ var spec = delegator.Spec{
 	CacheTTL:                 ccStreamCacheTTL,
 	ConfigFamily:             delegator.ConfigFamilyClaudeCode,
 	// "env": besides StartOptions.Env, the backend reads its agent's env from
-	// cfg to find that agent's CC config folder without a running CC (#3104).
+	// cfg, so that with its account's part (SetAccount) it finds the CC
+	// config folder without a running CC (#3104, #3186).
 	ConfigKeys: []string{"allowed_tools", "binary", "skip_permissions", "env"},
 	StartFields: []string{
 		"WorkDir", "SystemPrompt", "Model", "AgentID", "Label", "ResumeSessionID", "SessionKey",
@@ -119,7 +121,7 @@ var spec = delegator.Spec{
 	ResumeRetention:   CleanupPeriod,
 	PlanDelivery:      planDelivery,
 	UsageQuery:        QueryUsage,
-	UsageAccount:      UsageAccount,
+	Account:           Account,
 	UsageReadNotices:  AnnounceUsageRead,
 }
 

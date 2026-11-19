@@ -50,7 +50,7 @@ func setupUsageHold(cfg *config.Config, idx *session.SessionIndex) {
 }
 
 // migrateUsageHoldKeys renames the stored hold of every backend whose usage
-// is per account (Spec.UsageAccount: Claude Code, #3104) from the old
+// is per account (Spec.Account: Claude Code, #3104) from the old
 // backend-wide key (usage_hold:<backend>, e.g. usage_hold:claude-code) to the
 // key of the account that agents with no override use (Dick 2026-11-14, Q21:
 // "Rename all, migrate once"). A hold or stop in force before the upgrade is
@@ -62,14 +62,15 @@ func setupUsageHold(cfg *config.Config, idx *session.SessionIndex) {
 func migrateUsageHoldKeys(idx *session.SessionIndex) {
 	store := usageHoldStore{idx: idx}
 	for _, spec := range delegator.Specs() {
-		if spec.UsageAccount == nil {
+		if spec.Account == nil {
 			continue
 		}
 		old, ok := store.LoadUsageHold(spec.Name)
 		if !ok {
 			continue
 		}
-		acct, err := spec.UsageAccount(nil)
+		as, err := spec.Account("")
+		acct := as.Key
 		if err != nil || acct == "" || acct == spec.Name {
 			mainLog.Warnf("usage hold: cannot rename the stored %q hold to its account (%v); left as it is", spec.Name, err)
 			continue

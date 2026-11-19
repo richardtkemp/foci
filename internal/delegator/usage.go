@@ -119,21 +119,24 @@ type AllowanceWindow struct {
 	ResetsAt time.Time
 }
 
-// UsageTarget is the agent a usage read is for (#3104): its id and the parts
-// of its backend config that decide which account a read reaches and how.
+// UsageTarget is what a usage read is for (#3104, #3186): the agent that
+// reads, and the launch env and binary that decide which account the read
+// reaches and how.
 type UsageTarget struct {
 	AgentID string
-	// Env is the agent's backend_config.env (nil for none). For Claude Code it
-	// can name the agent's own config folder, and so its own account.
+	// Env is the launch env of a session on the account to read: the agent's
+	// backend_config.env with the account's part on top (nil for none). For
+	// Claude Code the account's part names its config folder, and so its
+	// login.
 	Env map[string]string
 	// Binary is the agent's backend_config.binary ("" = the backend's
 	// default).
 	Binary string
 }
 
-// UsageQuery fetches the plan usage of the account t's agent runs under:
-// Claude Code reads the agent's own login (its env and binary), codex reads
-// the agent's own process.
+// UsageQuery fetches the plan usage of the account t names: Claude Code
+// reads the login of t's launch env with t's binary, codex reads the agent's
+// own process.
 type UsageQuery func(ctx context.Context, t UsageTarget) (*UsageInfo, error)
 
 // UsageQueryFor returns the usage query of a backend (Spec.UsageQuery), and

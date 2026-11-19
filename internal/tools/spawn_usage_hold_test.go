@@ -75,9 +75,20 @@ func (h *holdSpawnAgent) liftHold() {
 	close(h.lift)
 }
 
-func (h *holdSpawnAgent) UsageHoldActive() bool { h.mu.Lock(); defer h.mu.Unlock(); return h.holding }
+func (h *holdSpawnAgent) UsageHoldActive(string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.holding
+}
 
-func (h *holdSpawnAgent) WaitUsageLift(ctx context.Context) bool {
+// The fakes implement the optional interfaces the spawner type-asserts, so a
+// signature change must break the build here, not the tests' behaviour.
+var (
+	_ UsageHoldPauser  = (*holdSpawnAgent)(nil)
+	_ UsageHoldRefuser = (*heldSpawnAgent)(nil)
+)
+
+func (h *holdSpawnAgent) WaitUsageLift(ctx context.Context, _ string) bool {
 	h.mu.Lock()
 	lift, holding := h.lift, h.holding
 	h.mu.Unlock()
@@ -225,7 +236,7 @@ type heldSpawnAgent struct {
 	refusal string
 }
 
-func (a *heldSpawnAgent) UsageHoldRefusal() string {
+func (a *heldSpawnAgent) UsageHoldRefusal(string) string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.refusal

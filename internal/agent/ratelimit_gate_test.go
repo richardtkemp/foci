@@ -55,7 +55,7 @@ func TestEngageRateLimit(t *testing.T) {
 		RateLimitFunc: HookList[func(time.Time)]{func(resetTime time.Time) { got = resetTime }},
 	}
 	until := time.Now().Add(2 * time.Hour)
-	ag.EngageRateLimit(ratelimit.Signal{Kind: ratelimit.KindUsage, ResetAt: until})
+	ag.EngageRateLimit(testAcct(ag), ratelimit.Signal{Kind: ratelimit.KindUsage, ResetAt: until})
 
 	if limited, u := ag.getOrCreateRateLimitGate("test-endpoint").IsLimited(); !limited || !u.Equal(until) {
 		t.Errorf("gate limited=%v until=%v, want true %v", limited, u, until)
@@ -75,7 +75,7 @@ func TestEngageRateLimit_UsageFallback(t *testing.T) {
 		RateLimitFunc: HookList[func(time.Time)]{func(until time.Time) { got = until }},
 	}
 	before := time.Now().Add(59 * time.Minute)
-	ag.EngageRateLimit(ratelimit.Signal{Kind: ratelimit.KindUsage})
+	ag.EngageRateLimit(testAcct(ag), ratelimit.Signal{Kind: ratelimit.KindUsage})
 	after := time.Now().Add(61 * time.Minute)
 	if limited, until := ag.getOrCreateRateLimitGate("e").IsLimited(); !limited || until.Before(before) || until.After(after) {
 		t.Errorf("fallback gate limited=%v until=%v, want approximately one hour", limited, until)
@@ -93,7 +93,7 @@ func TestEngageRateLimitClosesOneAgentWideGate(t *testing.T) {
 	// key, so no per-session gate can exist. Spec ruling: document, change
 	// nothing.
 	ag := &Agent{Endpoint: "be-endpoint"}
-	ag.EngageRateLimit(ratelimit.Signal{Kind: ratelimit.KindUsage, ResetAt: time.Now().Add(1 * time.Hour)})
+	ag.EngageRateLimit(testAcct(ag), ratelimit.Signal{Kind: ratelimit.KindUsage, ResetAt: time.Now().Add(1 * time.Hour)})
 
 	if limited, _ := ag.getOrCreateRateLimitGate("be-endpoint").IsLimited(); !limited {
 		t.Error(`agent endpoint gate open after EngageRateLimit, want closed`)

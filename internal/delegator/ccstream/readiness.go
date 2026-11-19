@@ -90,7 +90,7 @@ func (b *Backend) queryAuthStatus(ctx context.Context) (authStatus, error) {
 
 	// Operator: same binary and credentials as the session spawn.
 	cmd := procx.Spawn(pctx, procx.Operator, claudeBin, "auth", "status")
-	cmd.Env = buildEnv(b.agentEnv(), nil)
+	cmd.Env = buildEnv(b.launchEnv(), nil)
 	cmd.WaitDelay = authStatusWaitDelay
 	if b.workDir != "" {
 		cmd.Dir = b.workDir

@@ -209,14 +209,14 @@ func TestAgentsNewBare_HTTPRefusalPointsAtOneStepForm(t *testing.T) {
 }
 
 // stuartBC is the ticket's own case: the agent's Claude Code account.
-const stuartBC = `'{env = {CLAUDE_CONFIG_DIR = "/Users/x/.claude-stuart"}}'`
+const stuartBC = `'{accounts = ["/Users/x/.claude-stuart"]}'`
 
 func TestParseAgentNew_BackendConfig(t *testing.T) {
 	a, err := parseAgentNew("Greek Tutor --backend-config " + stuartBC + " --model opus")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Name != "Greek Tutor" || a.Model != "opus" || a.BackendConfig != `{env = {CLAUDE_CONFIG_DIR = "/Users/x/.claude-stuart"}}` {
+	if a.Name != "Greek Tutor" || a.Model != "opus" || a.BackendConfig != `{accounts = ["/Users/x/.claude-stuart"]}` {
 		t.Errorf("parsed %+v", a)
 	}
 	// Unquoted, with spaces, and the --flag=value form keep the table whole.
@@ -270,9 +270,9 @@ func TestAgentsNewDirect_BackendConfigWrittenBeforeStart(t *testing.T) {
 		t.Fatalf("config at start does not hold one agent (%v):\n%s", err, atStart)
 	}
 	bc := doc.Agents[0].BackendConfig
-	env, _ := bc["env"].(map[string]any)
-	if env["CLAUDE_CONFIG_DIR"] != "/Users/x/.claude-stuart" || bc["model"] != "opus" {
-		t.Errorf("backend_config at start = %v, want the env and model opus", bc)
+	accounts, _ := bc["accounts"].([]any)
+	if len(accounts) != 1 || accounts[0] != "/Users/x/.claude-stuart" || bc["model"] != "opus" {
+		t.Errorf("backend_config at start = %v, want the account and model opus", bc)
 	}
 }
 
@@ -281,16 +281,16 @@ func TestAgentsNewDirect_BackendConfigGoesThroughConfigCheck(t *testing.T) {
 	var checked string
 	deps.CheckConfig = func(content string) error {
 		checked = content
-		if strings.Contains(content, "CLAUDE_CONFIG_DIR") {
-			return errors.New("bad env")
+		if strings.Contains(content, ".claude-stuart") {
+			return errors.New("bad account")
 		}
 		return nil
 	}
 	reply := runAgents(t, &deps, "new Stuart --chars blank --backend-config "+stuartBC, "app")
-	if !strings.Contains(reply, "bad env") || !strings.Contains(reply, "nothing written") {
+	if !strings.Contains(reply, "bad account") || !strings.Contains(reply, "nothing written") {
 		t.Errorf("reply = %q, want the config check's refusal", reply)
 	}
-	if !strings.Contains(checked, "CLAUDE_CONFIG_DIR") {
+	if !strings.Contains(checked, ".claude-stuart") {
 		t.Errorf("the config check never saw the extras:\n%s", checked)
 	}
 	if cfg, _ := os.ReadFile(deps.ConfigPath); string(cfg) != "# existing\n" {
@@ -308,7 +308,7 @@ func TestAgentsNewDirect_BackendConfigInApprovalPrompt(t *testing.T) {
 	runAgents(t, &deps, "new Stuart --model opus --backend-config "+stuartBC, SourceHTTP)
 	// Inside the fenced [[agents]] block, not just somewhere in the text.
 	block := sub.Detail[strings.Index(sub.Detail, "```toml"):]
-	if !strings.Contains(block, `backend_config = {env = {CLAUDE_CONFIG_DIR = "/Users/x/.claude-stuart"}, model = "opus"}`) {
+	if !strings.Contains(block, `backend_config = {accounts = ["/Users/x/.claude-stuart"], model = "opus"}`) {
 		t.Errorf("prompt block misses the backend_config:\n%s", sub.Detail)
 	}
 }

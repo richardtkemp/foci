@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"foci/internal/account/accounttest"
 	"strings"
 	"testing"
 	"time"
@@ -12,9 +13,9 @@ import (
 )
 
 func stoppedCCAgent() *agent.Agent {
-	a := &agent.Agent{AgentID: "cam", UsageHoldRegistry: usagehold.New()}
-	a.DelegatedManager = &agent.DelegatedManager{BackendType: "claude-code"}
-	a.ObserveUsage(usagehold.Event{Window: "five_hour", Reached: true, ResetAt: time.Now().Add(2 * time.Hour)})
+	a := &agent.Agent{AgentID: "cam"}
+	a.DelegatedManager = &agent.DelegatedManager{BackendType: "claude-code", Accounts: accounttest.Pool("claude-code", "", usagehold.New(), nil)}
+	a.AccountFor("").ObserveUsage(usagehold.Event{Window: "five_hour", Reached: true, ResetAt: time.Now().Add(2 * time.Hour)})
 	return a
 }
 
@@ -24,8 +25,8 @@ func TestLimitResetCommand_LiftsHold(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.UsageHold().Phase != usagehold.Open {
-		t.Errorf("phase after /limit_reset = %v, want open", a.UsageHold().Phase)
+	if a.UsageHold("").Phase != usagehold.Open {
+		t.Errorf("phase after /limit_reset = %v, want open", a.UsageHold("").Phase)
 	}
 	if !strings.Contains(resp.Text, "Lifted") || !strings.Contains(resp.Text, "stop") {
 		t.Errorf("reply = %q, want it to name the lifted stop", resp.Text)
@@ -56,26 +57,26 @@ func TestManaCommand_LiftsOnlyWhenAvailable(t *testing.T) {
 	}
 
 	a := stoppedCCAgent()
-	resp, err := ManaCommand(read(100, 40), delegator.UsageTarget{AgentID: "cam"}, true).Execute(context.Background(), Request{}, CommandContext{Agent: a})
+	resp, err := ManaCommand(read(100, 40), fixedTarget(delegator.UsageTarget{AgentID: "cam"}), true).Execute(context.Background(), Request{}, CommandContext{Agent: a})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.UsageHold().Phase != usagehold.Stop || strings.Contains(resp.Text, "Lifted") {
-		t.Errorf("a read at 100%%: phase %v, reply %q; want the stop kept and no lift", a.UsageHold().Phase, resp.Text)
+	if a.UsageHold("").Phase != usagehold.Stop || strings.Contains(resp.Text, "Lifted") {
+		t.Errorf("a read at 100%%: phase %v, reply %q; want the stop kept and no lift", a.UsageHold("").Phase, resp.Text)
 	}
 
-	if _, err := ManaCommand(read(3, 40), delegator.UsageTarget{AgentID: "cam"}, false).Execute(context.Background(), Request{}, CommandContext{Agent: a}); err != nil {
+	if _, err := ManaCommand(read(3, 40), fixedTarget(delegator.UsageTarget{AgentID: "cam"}), false).Execute(context.Background(), Request{}, CommandContext{Agent: a}); err != nil {
 		t.Fatal(err)
 	}
-	if a.UsageHold().Phase != usagehold.Stop {
-		t.Errorf("without the lift: phase %v, want the stop kept", a.UsageHold().Phase)
+	if a.UsageHold("").Phase != usagehold.Stop {
+		t.Errorf("without the lift: phase %v, want the stop kept", a.UsageHold("").Phase)
 	}
 
-	resp, err = ManaCommand(read(3, 40), delegator.UsageTarget{AgentID: "cam"}, true).Execute(context.Background(), Request{}, CommandContext{Agent: a})
+	resp, err = ManaCommand(read(3, 40), fixedTarget(delegator.UsageTarget{AgentID: "cam"}), true).Execute(context.Background(), Request{}, CommandContext{Agent: a})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.UsageHold().Phase != usagehold.Open || !strings.Contains(resp.Text, "Usage is available") {
-		t.Errorf("a read at 3%%: phase %v, reply %q; want open and the lift named", a.UsageHold().Phase, resp.Text)
+	if a.UsageHold("").Phase != usagehold.Open || !strings.Contains(resp.Text, "Usage is available") {
+		t.Errorf("a read at 3%%: phase %v, reply %q; want open and the lift named", a.UsageHold("").Phase, resp.Text)
 	}
 }

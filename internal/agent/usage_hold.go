@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"foci/internal/account"
 	"foci/internal/delegator"
 	"foci/internal/tools"
 	"foci/internal/usagehold"
@@ -16,34 +17,38 @@ import (
 
 // The account-wide usage hold, agent side (#2491, internal/usagehold).
 //
-// A delegated agent on Claude Code belongs to its login's account (#3104), a
-// codex agent to the codex account (UsageAccount).
-// Its backend reports usage windows (HostHooks.OnUsageWindow → ObserveUsage);
-// the registry decides the account's phase; every agent on the account sees
-// each phase change (StartUsageHold's subscription) and:
+// Every session of a delegated agent is on one account (#3186,
+// Agent.AccountFor): a Claude Code login, or the one login of codex or
+// opencode. The session's backend reports usage windows to that account
+// (HostHooks.OnUsageWindow → Account.ObserveUsage); the account's hold
+// decides its phase; every agent with the account in its pool sees each phase
+// change (StartUsageHold's subscription) and:
 //   - posts one notice in its own default chat (UsageHoldNotifyFunc);
 //   - while the account HOLDS, runs only keepalives and foci_remind fires
-//     (scheduled_wake): user messages, cron sends, webhooks, agent messages
-//     and every other injection wait in the inbox, and the periodic
-//     schedulers other than keepalive see the session as rate-limited;
-//   - while the account STOPS, runs nothing, keepalives and reminders
+//     (scheduled_wake) on its sessions on that account: user messages, cron
+//     sends, webhooks, agent messages and every other injection wait in the
+//     inbox, and the periodic schedulers other than keepalive see the session
+//     as rate-limited;
+//   - while the account STOPS, runs nothing on them, keepalives and reminders
 //     included;
 //   - at lift, releases what waited: each session's held user messages run as
 //     ONE turn (they are re-queued together, and the inbox batches them).
 
-// usageHoldState is an agent's view of the hold.
+// usageHoldState is an agent's view of its accounts' holds.
 type usageHoldState struct {
 	// storeMu serialises read-modify-write of the stored held lists.
 	storeMu sync.Mutex
 	mu      sync.Mutex
-	unsub   func()
-	// unsubReset ends the account's reset subscription (onAccountLimitReset);
-	// resetting is set while this agent's own ResetLimits clears the account,
-	// so its subscriber leaves the work to ResetLimits (#3044).
-	unsubReset func()
-	resetting  atomic.Bool
-	// lifted is closed and replaced on every phase change, so an inbox worker
-	// can wait for the next one.
+	// unsubs end the subscriptions StartUsageHold made, one pair per account
+	// of the pool (phase changes, limit resets); started is set once it ran.
+	unsubs  []func()
+	started bool
+	// resetting is set while this agent's own ResetLimits clears an account,
+	// so its reset subscriber leaves the work to ResetLimits (#3044).
+	resetting atomic.Bool
+	// changed is closed and replaced on every phase change of any account of
+	// the pool, so an inbox worker can wait for the next one and then ask
+	// about its own session again.
 	changed chan struct{}
 	// notices wait to be posted, in order; posting is true while a goroutine
 	// posts them.
@@ -61,110 +66,65 @@ type usageHoldState struct {
 	heldBySession map[string]int
 }
 
-// usageRegistry is the registry this agent reports to: UsageHoldRegistry when
-// set (tests), else the process's usagehold.Default.
-func (a *Agent) usageRegistry() *usagehold.Registry {
-	if a.UsageHoldRegistry != nil {
-		return a.UsageHoldRegistry
+// Accounts is the agent's pool of accounts (nil for an API agent, or no
+// agent).
+func (a *Agent) Accounts() *account.Pool {
+	if a == nil || a.DelegatedManager == nil {
+		return nil
 	}
-	return usagehold.Default
+	return a.DelegatedManager.Accounts
 }
 
-// UsageAccount is the account this agent's usage counts against, "" for an
-// API agent. A Claude Code agent's is its login (UsageAccountKey, set from
-// Spec.UsageAccount at setup, #3104): agents on one login share it, agents on
-// another login have another. Any other delegated agent's is its backend
-// family (Dick 2026-11-02: the same backend is the same account), as is a
-// Claude Code agent's when setup could not resolve its login. Only a backend
-// that reports usage windows (HostHooks.OnUsageWindow: Claude Code and codex)
-// ever holds its account; opencode reports none, so its account stays open.
-func (a *Agent) UsageAccount() string {
-	if a.DelegatedManager == nil {
-		return ""
-	}
-	if a.UsageAccountKey != "" {
-		return a.UsageAccountKey
-	}
-	return a.DelegatedManager.BackendType
+// AccountFor is the account sessionKey is on (#3186): the one its backend
+// runs on, whose hold, rate-limit gate, login and files are the session's.
+// Nil for a session of an agent with no account (an API agent); a nil
+// account is always open and owes no login.
+func (a *Agent) AccountFor(sessionKey string) *account.Account {
+	return a.Accounts().For(sessionKey)
 }
 
-// UsageAccountName names this agent's usage account for a person (Dick
-// 2026-11-14, Q15: the email, else the login's path), or "" when it has no
-// per-login account (codex, opencode, API agents) or no name is known. A
-// Claude Code account's name is its login gate's (relogin.Gate.Name), which
-// learns the email from the startup probe.
-func (a *Agent) UsageAccountName() string {
-	if a.UsageAccountKey == "" {
-		return ""
-	}
-	return a.LoginGateOrDefault().Name()
+// UsageHold is the hold state of sessionKey's account now (Phase Open with
+// no account).
+func (a *Agent) UsageHold(sessionKey string) usagehold.State {
+	return a.AccountFor(sessionKey).Hold()
 }
 
-// withUsageAccountName appends " (account: <name>)" to text when the agent's
-// usage account has a name, as the login notices do (#3104 phase 2).
-func (a *Agent) withUsageAccountName(text string) string {
-	if name := a.UsageAccountName(); name != "" {
-		return text + " (account: " + name + ")"
-	}
-	return text
-}
-
-// ObserveUsage is HostHooks.OnUsageWindow: one usage report of this agent's
-// account.
-func (a *Agent) ObserveUsage(ev usagehold.Event) {
-	acct := a.UsageAccount()
-	if acct == "" {
-		return
-	}
-	a.usageRegistry().Observe(acct, ev, time.Now())
-}
-
-// UsageHold is the account's state now (Phase Open for an agent with no
-// account).
-func (a *Agent) UsageHold() usagehold.State {
-	acct := a.UsageAccount()
-	if acct == "" {
-		return usagehold.State{}
-	}
-	return a.usageRegistry().State(acct, time.Now())
-}
-
-// StartUsageHold subscribes the agent to its account's phase changes. Call it
-// once the DelegatedManager is set; a no-op for an agent with no account.
+// StartUsageHold subscribes the agent to the phase changes and limit resets
+// of every account in its pool. Call it once the DelegatedManager is set; a
+// no-op for an agent with no account.
 func (a *Agent) StartUsageHold() {
-	acct := a.UsageAccount()
-	if acct == "" {
-		return
-	}
 	a.usageHold.mu.Lock()
-	if a.usageHold.unsub != nil {
+	if a.usageHold.started {
 		a.usageHold.mu.Unlock()
 		return
 	}
-	a.usageHold.unsub = a.usageRegistry().Subscribe(acct, a.onUsageHoldChange)
-	a.usageHold.unsubReset = a.usageRegistry().SubscribeReset(acct, a.onAccountLimitReset)
+	a.usageHold.started = true
+	for _, acct := range a.Accounts().Accounts() {
+		a.usageHold.unsubs = append(a.usageHold.unsubs,
+			acct.OnHoldChange(func(c usagehold.Change) { a.onUsageHoldChange(acct, c) }),
+			acct.OnLimitReset(func() { a.onAccountLimitReset(acct) }))
+	}
 	a.usageHold.mu.Unlock()
-	if st := a.UsageHold(); st.Phase != usagehold.Open {
-		a.logger().Infof("usage hold (%s) restored: %s until %s", acct, st.Phase, formatLift(st.LiftAt))
+	for _, acct := range a.Accounts().Accounts() {
+		if st := acct.Hold(); st.Phase != usagehold.Open {
+			a.logger().Infof("usage hold (%s) restored: %s until %s", acct.Key(), st.Phase, formatLift(st.LiftAt))
+		}
 	}
 }
 
-// StopUsageHold ends the subscription (agent stop).
+// StopUsageHold ends the subscriptions (agent stop).
 func (a *Agent) StopUsageHold() {
 	a.usageHold.mu.Lock()
 	defer a.usageHold.mu.Unlock()
-	if a.usageHold.unsub != nil {
-		a.usageHold.unsub()
-		a.usageHold.unsub = nil
+	for _, unsub := range a.usageHold.unsubs {
+		unsub()
 	}
-	if a.usageHold.unsubReset != nil {
-		a.usageHold.unsubReset()
-		a.usageHold.unsubReset = nil
-	}
+	a.usageHold.unsubs = nil
+	a.usageHold.started = false
 }
 
-// usageHoldChanged returns a channel closed at the account's next phase
-// change.
+// usageHoldChanged returns a channel closed at the next phase change of any
+// account of the pool. A waiter then asks about its own session again.
 func (a *Agent) usageHoldChanged() <-chan struct{} {
 	a.usageHold.mu.Lock()
 	defer a.usageHold.mu.Unlock()
@@ -174,8 +134,8 @@ func (a *Agent) usageHoldChanged() <-chan struct{} {
 	return a.usageHold.changed
 }
 
-// onUsageHoldChange is the agent's reaction to one phase change.
-func (a *Agent) onUsageHoldChange(c usagehold.Change) {
+// onUsageHoldChange is the agent's reaction to one phase change of acct.
+func (a *Agent) onUsageHoldChange(acct *account.Account, c usagehold.Change) {
 	a.usageHold.mu.Lock()
 	if a.usageHold.changed != nil {
 		close(a.usageHold.changed)
@@ -185,14 +145,14 @@ func (a *Agent) onUsageHoldChange(c usagehold.Change) {
 
 	a.logger().Infof("usage hold (%s): %s -> %s (lifts %s)", c.Account, c.From, c.To.Phase, formatLift(c.To.LiftAt))
 	if fn := a.UsageHoldNotifyFunc; fn != nil {
-		a.queueUsageHoldNotice(fn, a.withUsageAccountName(UsageHoldNotice(c)))
+		a.queueUsageHoldNotice(fn, acct.WithName(UsageHoldNotice(c)))
 	}
-	// The work running at a hold start is interrupted or left to finish
-	// (usage_hold_interrupt.go), before the reactions below: the hold's
-	// compaction reads the paused set it records. Its backend interrupts run
-	// off this goroutine, which may be that backend's reader.
+	// The work running on the account at a hold start is interrupted or left
+	// to finish (usage_hold_interrupt.go), before the reactions below: the
+	// hold's compaction reads the paused set it records. Its backend
+	// interrupts run off this goroutine, which may be that backend's reader.
 	if c.From == usagehold.Open && c.To.Phase != usagehold.Open {
-		a.interruptForUsageHold()
+		a.interruptForUsageHold(acct)
 	}
 	for _, fn := range a.UsageHoldChangeFunc {
 		fn(c)
@@ -258,16 +218,17 @@ func formatLift(t time.Time) string {
 	return t.Local().Format("Mon 2 Jan 15:04")
 }
 
-// usageHoldPhase is the account phase now (Open with no account).
-func (a *Agent) usageHoldPhase() usagehold.Phase {
-	return a.UsageHold().Phase
+// usageHoldPhase is the phase of sessionKey's account now (Open with no
+// account).
+func (a *Agent) usageHoldPhase(sessionKey string) usagehold.Phase {
+	return a.UsageHold(sessionKey).Phase
 }
 
-// usageHoldsTrigger reports whether a turn with trigger must wait now:
-// during a hold everything but keepalives, foci_remind fires and the turns
-// the hold itself starts (holdPermit); during a stop everything.
-func (a *Agent) usageHoldsTrigger(trigger string, holdPermit bool) bool {
-	return usageHoldsTriggerIn(a.usageHoldPhase(), trigger, holdPermit)
+// usageHoldsTrigger reports whether a turn with trigger on sessionKey must
+// wait now: during a hold everything but keepalives, foci_remind fires and
+// the turns the hold itself starts (holdPermit); during a stop everything.
+func (a *Agent) usageHoldsTrigger(sessionKey, trigger string, holdPermit bool) bool {
+	return usageHoldsTriggerIn(a.usageHoldPhase(sessionKey), trigger, holdPermit)
 }
 
 // usageHoldsTriggerIn is usageHoldsTrigger for a given phase (a snapshot a
@@ -283,11 +244,12 @@ func usageHoldsTriggerIn(phase usagehold.Phase, trigger string, holdPermit bool)
 	}
 }
 
-// UsageHoldBlocks is the periodic schedulers' view (BackgroundAgent): a
-// non-keepalive scheduler may not fire during a hold or a stop; keepalive may
-// fire during a hold, not during a stop. reason names the hold.
-func (a *Agent) UsageHoldBlocks(keepalive bool) (blocked bool, reason string) {
-	st := a.UsageHold()
+// UsageHoldBlocks is the periodic schedulers' view of sessionKey
+// (BackgroundAgent): a non-keepalive scheduler may not fire on it during a
+// hold or a stop of its account; keepalive may fire during a hold, not
+// during a stop. reason names the hold.
+func (a *Agent) UsageHoldBlocks(sessionKey string, keepalive bool) (blocked bool, reason string) {
+	st := a.UsageHold(sessionKey)
 	switch {
 	case st.Phase == usagehold.Stop:
 		return true, "usage limit reached (lifts " + formatLift(st.LiftAt) + ")"
@@ -301,7 +263,7 @@ func (a *Agent) UsageHoldBlocks(keepalive bool) (blocked bool, reason string) {
 // parked on the held list: during a usage hold a foci_remind fire runs while
 // the cron sends and webhooks parked ahead of it wait (#2491 requirement 6).
 func (a *Agent) usageHoldPassesPast(env Envelope) bool {
-	return env.Inject != nil && env.Inject.Trigger == "scheduled_wake" && a.usageHoldPhase() == usagehold.Hold
+	return env.Inject != nil && env.Inject.Trigger == "scheduled_wake" && a.usageHoldPhase(env.SessionKey) == usagehold.Hold
 }
 
 // parkUsageHeld parks a user message the usage hold must hold, stores it so
@@ -327,10 +289,10 @@ func (a *Agent) parkUsageHeld(inb *sessionInbox, env Envelope) {
 		inb.usageHeld = append(inb.usageHeld, env)
 	}
 	a.syncUsageHeldMirror(inb)
-	st := a.UsageHold()
+	st := a.UsageHold(inb.sk)
 	a.logger().Infof("inbox: usage hold (%s) holds a message sk=%s (%dB, resume=%v, %d held)", st.Phase, env.SessionKey, len(env.Text), env.usageResume, len(inb.usageHeld))
 	if fn := a.TurnQueuedNotifyFunc; fn != nil && !env.Automated && !env.usageResume && !restored {
-		text := a.withUsageAccountName("⏸️ Held: usage is at the hold limit, so this message waits until " + formatLift(st.LiftAt) + ", then runs.")
+		text := a.AccountFor(inb.sk).WithName("⏸️ Held: usage is at the hold limit, so this message waits until " + formatLift(st.LiftAt) + ", then runs.")
 		go fn(env.SessionKey, text)
 	}
 }
@@ -342,7 +304,7 @@ func (a *Agent) parkUsageHeld(inb *sessionInbox, env Envelope) {
 // real messages takes their driver and sender, so the turn renders where they
 // came from. Returns false when the worker must stop.
 func (a *Agent) releaseUsageHeld(ctx context.Context, inb *sessionInbox) bool {
-	if len(inb.usageHeld) == 0 || a.usageHoldsTrigger("user", false) {
+	if len(inb.usageHeld) == 0 || a.usageHoldsTrigger(inb.sk, "user", false) {
 		return true
 	}
 	held := inb.usageHeld
@@ -355,7 +317,7 @@ func (a *Agent) releaseUsageHeld(ctx context.Context, inb *sessionInbox) bool {
 	}
 	if held[0].usageResume {
 		// A session idle too long asks instead of resuming (#3155).
-		if limit := a.usageRegistry().ResumeMaxIdle(); limit > 0 {
+		if limit := a.AccountFor(inb.sk).HoldSettings().ResumeMaxIdle(); limit > 0 {
 			if idle := usageResumeIdle(held, time.Now()); idle > limit {
 				a.logger().Infof("inbox: usage hold lifted after %s idle on %s (limit %s): the agent asks the user instead of resuming", idle.Round(time.Second), inb.sk, limit)
 				held[0].Text = usageResumeAskLine(idle)
@@ -375,10 +337,11 @@ func (inb *sessionInbox) takeUsageRelease() []Envelope {
 	return out
 }
 
-// UsageHoldRefusal is tools.UsageHoldRefuser: why no spawn may start (and
-// spawn_send may not reach one) now, or "" when the account is open.
-func (a *Agent) UsageHoldRefusal() string {
-	st := a.UsageHold()
+// UsageHoldRefusal is tools.UsageHoldRefuser: why sessionKey may start no
+// spawn (and spawn_send may not reach one of its spawns) now, or "" when its
+// account is open. A spawn runs on its spawner's account.
+func (a *Agent) UsageHoldRefusal(sessionKey string) string {
+	st := a.UsageHold(sessionKey)
 	switch st.Phase {
 	case usagehold.Hold:
 		return "the usage hold is on (only keepalives and reminders run) until " + formatLift(st.LiftAt) + "."
@@ -438,7 +401,7 @@ var usageHoldPeriodic = map[string]bool{
 // permit (usagehold.WithPermit), a resume of an interrupted background turn
 // never meets it (it runs after the lift); during a stop no keepalive starts.
 func (a *Agent) usageHoldRefusesTurn(ts *TurnState) error {
-	phase := a.usageHoldPhase()
+	phase := a.usageHoldPhase(ts.SessionKey)
 	switch {
 	case phase == usagehold.Open:
 		return nil

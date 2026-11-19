@@ -211,8 +211,13 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		// nor on an agent on a CC login while its login is pending (#2384):
 		// the turn would 401 and start another attempt. Warnings stay queued.
 		// Agents on other backends do not use the login (#3014).
+		// The dispatch goes to the default session, so its account's login
+		// is the one asked.
 		HoldFn: func() bool {
-			return inst.ag.ShuttingDown() || (inst.ag.UsesCCLogin() && inst.ag.LoginGateOrDefault().Pending())
+			if inst.ag.ShuttingDown() {
+				return true
+			}
+			return inst.ag.UsesCCLogin() && inst.ag.AccountFor(defaultSessionKeyFor(inst.ag, agentID)).Login().Pending()
 		},
 		FormatFn: func(body string) string {
 			return prompts.FormatInjectedMessage("PROACTIVE WARNINGS", time.Now(), body)
@@ -235,15 +240,17 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	// Once the login succeeds, the held re-login abort errors are moot: drop
 	// them, and let every other held warning dispatch as normal (Dick's
 	// ruling on #2384). Only agents on the CC login hold, so only they
-	// register (#3014), each with its own account's gate (#3104).
+	// register (#3014), with the gate of each account in their pool (#3104).
 	if inst.ag.UsesCCLogin() {
-		inst.ag.LoginGateOrDefault().OnComplete(func() {
-			if q := inst.ag.Warnings(); q != nil {
-				if n := q.DropComponent(relogin.LogComponent); n > 0 {
-					warningLog.Infof("[%s] dropped %d held re-login warning(s): login completed", agentID, n)
+		for _, acct := range inst.ag.Accounts().Accounts() {
+			acct.Login().OnComplete(func() {
+				if q := inst.ag.Warnings(); q != nil {
+					if n := q.DropComponent(relogin.LogComponent); n > 0 {
+						warningLog.Infof("[%s] dropped %d held re-login warning(s): login completed", agentID, n)
+					}
 				}
-			}
-		})
+			})
+		}
 	}
 
 	// Chat warning dispatcher (platform notifications).

@@ -21,12 +21,12 @@ func heldWorkTurnAgent(t *testing.T) (*Agent, *typingBackendDT) {
 	t.Helper()
 	a, be, _ := newTypingTestAgent(t)
 	a.DelegatedManager.BackendType = "claude-code"
-	a.UsageHoldRegistry = usagehold.New()
+	putOnAccount(a, "", usagehold.New(), nil)
 	a.StartUsageHold()
 	t.Cleanup(a.StopUsageHold)
-	a.ObserveUsage(weekly(0.98))
-	if a.UsageHold().Phase != usagehold.Hold {
-		t.Fatalf("phase = %v, want hold", a.UsageHold().Phase)
+	testAcct(a).ObserveUsage(weekly(0.98))
+	if a.UsageHold("").Phase != usagehold.Hold {
+		t.Fatalf("phase = %v, want hold", a.UsageHold("").Phase)
 	}
 	runTypingTurn(t, a, deliveringCtx(), "scheduled_wake")
 	be.setTurnInFlight(true) // the wake's turn is still running

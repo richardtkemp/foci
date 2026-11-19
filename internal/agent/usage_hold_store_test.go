@@ -19,8 +19,8 @@ func heldStoreAgent(t *testing.T, reg *usagehold.Registry, idx *session.SessionI
 	a, cancel := startedAgent(t)
 	a.AgentID = "test"
 	a.SessionIndex = idx
-	a.UsageHoldRegistry = reg
 	a.DelegatedManager = &DelegatedManager{BackendType: "claude-code"}
+	putOnAccount(a, "", reg, nil)
 	a.StartUsageHold()
 	return a, func() { a.StopUsageHold(); cancel() }
 }
@@ -42,7 +42,7 @@ func TestUsageHold_HeldInputSurvivesRestart(t *testing.T) {
 	a1, stop1 := heldStoreAgent(t, reg, idx)
 	d1 := &recordingDriver{}
 	a1.SetTurnObserver(d1.recordBatch)
-	a1.ObserveUsage(weekly(0.98))
+	testAcct(a1).ObserveUsage(weekly(0.98))
 	a1.Enqueue(Envelope{SessionKey: sk, Text: "M1", Attachments: []platform.Attachment{pic}, UserID: "u1", SenderName: "Dick", Driver: d1})
 	a1.Enqueue(Envelope{SessionKey: sk, Text: "M2", UserID: "u1", Driver: d1})
 	stored := func() int {
@@ -69,7 +69,7 @@ func TestUsageHold_HeldInputSurvivesRestart(t *testing.T) {
 		t.Fatal("a restored message ran while the hold is still on")
 	}
 
-	a2.ObserveUsage(weekly(0.10))
+	testAcct(a2).ObserveUsage(weekly(0.10))
 	if !waitFor(2*time.Second, func() bool { return d2.NumCalls() == 1 }) {
 		t.Fatalf("restored messages did not run at lift; turns=%d", d2.NumCalls())
 	}
@@ -104,7 +104,7 @@ func TestUsageHold_DurableInjectionSurvivesRestart(t *testing.T) {
 	const sk = "test/c1"
 
 	a1, stop1 := heldStoreAgent(t, reg, idx)
-	a1.ObserveUsage(weekly(0.98))
+	testAcct(a1).ObserveUsage(weekly(0.98))
 	durable := &DurableInject{Kind: "session_chat", Trigger: "agent", Text: "hello from B"}
 	a1.Enqueue(Envelope{SessionKey: sk, Inject: &InjectMeta{Trigger: "agent", Durable: durable, Run: func() {}}})
 	stored := func(a *Agent) []usageHeldRecord {
@@ -139,7 +139,7 @@ func TestUsageHold_DurableInjectionSurvivesRestart(t *testing.T) {
 	if got := stored(a2); len(got) != 1 {
 		t.Errorf("parked again after restore: stored %d records, want 1 (no duplicate)", len(got))
 	}
-	a2.ObserveUsage(weekly(0.10))
+	testAcct(a2).ObserveUsage(weekly(0.10))
 	if !waitFor(2*time.Second, func() bool { mu.Lock(); defer mu.Unlock(); return ran }) {
 		t.Fatal("the restored injection did not run at lift")
 	}

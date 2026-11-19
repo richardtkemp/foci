@@ -115,10 +115,10 @@ func TestForAgent_MacSeparateRootOwnLogin(t *testing.T) {
 func TestForAgent_ShellOverlay(t *testing.T) {
 	isolate(t)
 	procx.SetOperatorEnv(map[string]string{"CLAUDE_CONFIG_DIR": "/o"})
-	if loc, err := ForAgent(nil); err != nil || loc.Dir != "/o" {
+	if loc, err := ForLaunchEnv(nil); err != nil || loc.Dir != "/o" {
 		t.Errorf("no override: %+v, %v; want the overlay's /o", loc, err)
 	}
-	if loc, err := ForAgent(map[string]string{"CLAUDE_CONFIG_DIR": "/x"}); err != nil || loc.Dir != "/x" {
+	if loc, err := ForLaunchEnv(map[string]string{"CLAUDE_CONFIG_DIR": "/x"}); err != nil || loc.Dir != "/x" {
 		t.Errorf("override /x: %+v, %v; want /x", loc, err)
 	}
 }
@@ -135,7 +135,7 @@ func TestForAgent_NoOverrideIsToday(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		loc, err := ForAgent(nil)
+		loc, err := ForLaunchEnv(nil)
 		if err != nil {
 			t.Fatal(err)
 		}

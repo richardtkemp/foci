@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strings"
 	"time"
 
 	"foci/internal/delegator"
@@ -293,9 +292,10 @@ func ReportFromRead(info *delegator.UsageInfo, source string) (delegator.UsageRe
 	return delegator.UsageReport{Source: source, Windows: info.ReportWindows(), Payload: info.Raw}, true
 }
 
-// Binding is one agent's view of the store: the account its figures are
-// stored under, its backend and the agent id. The gateway builds one per
-// agent; a nil Store makes every method a no-op.
+// Binding is one agent's view of one account in the store: the account the
+// figures are stored under (account.Account.Key), its backend and the agent
+// that receives them (account.Account.Readings). A nil Binding or Store makes
+// every method a no-op.
 type Binding struct {
 	Store   *Store
 	Backend string // Spec.Name
@@ -346,14 +346,30 @@ func (b *Binding) Current() (Current, time.Time, error) {
 	return c, now, err
 }
 
-// AccountKey is the account a usage report of agentID on backend is stored
-// under: the backend's usage account (Spec.UsageAccount, #3104: a Claude
-// Code login) when it has one, else the backend and agent (codex reads per
-// agent). Two agents on one Claude Code login share a key; agents on
-// different logins, and different codex agents, never do.
-func AccountKey(backend, agentID, usageAccount string) string {
-	if usageAccount != "" {
-		return usageAccount
+// MergeAgentAccounts moves every report stored under "<backend>/<agent id>"
+// to the account backend (#3186): a backend with one login for all its
+// agents (codex) used to store each agent's figures under a key of its own,
+// and stores them under its one account now. Each row keeps its agent_id. It
+// returns how many reports moved; a store with none is not written.
+func (s *Store) MergeAgentAccounts(backend string) (int64, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("usagelog: begin: %w", err)
 	}
-	return backend + "/" + strings.TrimSpace(agentID)
+	defer func() { _ = tx.Rollback() }()
+	// substr, not LIKE: a backend name is not a pattern.
+	const where = ` WHERE substr(account, 1, ?) = ?`
+	prefix := backend + "/"
+	res, err := tx.Exec(`UPDATE usage_reports SET account = ?`+where, backend, len(prefix), prefix)
+	if err != nil {
+		return 0, fmt.Errorf("usagelog: merge reports: %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE usage_windows SET account = ?`+where, backend, len(prefix), prefix); err != nil {
+		return 0, fmt.Errorf("usagelog: merge windows: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return 0, nil
+	}
+	return n, tx.Commit()
 }

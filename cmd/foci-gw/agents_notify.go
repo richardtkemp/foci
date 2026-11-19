@@ -238,7 +238,7 @@ func newAsyncNotifier(
 		if idx := targetAg.SessionIndex; idx != nil && idx.SessionArchived(targetSession) {
 			return "", &session.ArchivedSessionError{SessionKey: targetSession}
 		}
-		reason, _ := targetAg.Unavailable()
+		reason, _ := targetAg.Unavailable(targetSession)
 		return reason, nil
 	})
 }

@@ -95,10 +95,10 @@ func TestUnavailable_OtherBackendDuringLogin(t *testing.T) {
 	other := holdAgent(reg, "codex")
 
 	claimRelogin(t)
-	if why, un := other.Unavailable(); un {
+	if why, un := other.Unavailable(""); un {
 		t.Errorf("a codex agent in a CC login: unavailable %q, want available", why)
 	}
-	if _, un := cc.Unavailable(); !un {
+	if _, un := cc.Unavailable(""); !un {
 		t.Error("a CC agent in a CC login: available, want unavailable")
 	}
 }

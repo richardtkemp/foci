@@ -56,6 +56,11 @@ type AgentSpec struct {
 	// in the TOML output is sorted by key for stable test snapshots.
 	ExtraEnv map[string]string
 
+	// Accounts populates [agents.backend_config] accounts: the agent's
+	// Claude Code config folders, one per account (#3186). Empty = the
+	// host's folder and account.
+	Accounts []string
+
 	// PreStartFiles maps workspace-relative paths to file contents that
 	// are written into the agent's workspace AFTER writeWorkspaces but
 	// BEFORE foci-gw spawns. Use for tests that need foci to discover

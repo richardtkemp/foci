@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"foci/internal/account"
 	"strings"
 	"time"
 
@@ -71,29 +72,29 @@ func (r LimitReset) Summary() string {
 	return "Lifted " + strings.Join(parts, " and ") + ". Waiting work runs now." + woken
 }
 
-// ResetLimits force-opens this agent's rate-limit gates and clears its
-// account's usage hold, in memory and in the stored state. Held input and
+// ResetLimits force-opens the rate-limit gates of sessionKey's account on
+// this agent and clears that account's usage hold, in memory and in the stored state. Held input and
 // paused work proceed as at a natural lift: the hold's subscribers see the
 // change to Open (usageHoldChanged wakes the inboxes, releaseUsageHeld runs
 // the held input), and the next periodic tick replays the gate's queued work
 // (DrainRateLimitQueue). A turn asleep in a rate-limit retry is interrupted
 // and resumed (#3044, wakeRateLimitRetries). The clear reaches every agent on
-// the account (onAccountLimitReset): each opens its own gates and wakes its
-// own sleeping turns. why is logged.
-func (a *Agent) ResetLimits(why string) LimitReset {
+// the account (onAccountLimitReset): each opens its own gates of the account
+// and wakes its own sleeping turns on it. why is logged.
+func (a *Agent) ResetLimits(sessionKey, why string) LimitReset {
 	var res LimitReset
-	now := time.Now()
-	if acct := a.UsageAccount(); acct != "" {
-		before := a.usageRegistry().State(acct, now)
+	acct := a.AccountFor(sessionKey)
+	if acct != nil {
+		before := acct.Hold()
 		// The other agents on the account react through their reset
 		// subscription; this one does its part below, for the report.
 		a.usageHold.resetting.Store(true)
-		from, _ := a.usageRegistry().Clear(acct, now)
+		from, _ := acct.ClearHold()
 		a.usageHold.resetting.Store(false)
 		res.HoldFrom = from
 		res.HoldLiftAt = before.LiftAt
 	}
-	res.GateUntil, res.Woken = a.applyLimitReset()
+	res.GateUntil, res.Woken = a.applyLimitReset(acct)
 
 	gate := "open"
 	if !res.GateUntil.IsZero() {
@@ -104,29 +105,32 @@ func (a *Agent) ResetLimits(why string) LimitReset {
 }
 
 // onAccountLimitReset is the agent's reset subscription: another agent's
-// ResetLimits cleared the account (the account's limit was reset), so this
-// one opens its gates and wakes its sleeping turns too.
-func (a *Agent) onAccountLimitReset() {
+// ResetLimits cleared acct (the account's limit was reset), so this one opens
+// its gates of acct and wakes its sleeping turns on it too.
+func (a *Agent) onAccountLimitReset(acct *account.Account) {
 	if a.usageHold.resetting.Load() {
 		return
 	}
-	until, woken := a.applyLimitReset()
+	until, woken := a.applyLimitReset(acct)
 	if !until.IsZero() || woken > 0 {
 		a.logger().Infof("limit reset on the account: rate-limit gate opened (was until %s), %d turn(s) woken from a rate-limit retry", formatLift(until), woken)
 	}
 }
 
-// applyLimitReset is one agent's part of a limit reset: open every gate
-// (returning the latest deadline it had) and wake the turns asleep in a
+// applyLimitReset is one agent's part of a limit reset of acct (nil: the
+// limits of an agent with no account): open every gate of acct (returning
+// the latest deadline it had) and wake the turns on acct asleep in a
 // rate-limit retry (returning how many).
-func (a *Agent) applyLimitReset() (gateUntil time.Time, woken int) {
+func (a *Agent) applyLimitReset(acct *account.Account) (gateUntil time.Time, woken int) {
 	// The gates: the default endpoint's (restored from its stored deadline if
-	// this process has not built it yet) and every gate built so far.
-	a.getOrCreateRateLimitGate(a.Endpoint)
+	// this process has not built it yet) and every gate of acct built so far.
+	a.rateLimitGate(a.Endpoint, acct)
 	a.rateLimitGatesMu.RLock()
-	gates := make(map[string]*RateLimitGate, len(a.rateLimitGates))
-	for ep, g := range a.rateLimitGates {
-		gates[ep] = g
+	gates := make(map[rateLimitGateKey]*RateLimitGate, len(a.rateLimitGates))
+	for key, g := range a.rateLimitGates {
+		if key.account == acct.Key() {
+			gates[key] = g
+		}
 	}
 	a.rateLimitGatesMu.RUnlock()
 	for ep, g := range gates {
@@ -139,7 +143,7 @@ func (a *Agent) applyLimitReset() (gateUntil time.Time, woken int) {
 		// would close the gate again at the next start.
 		a.persistRateLimitDeadline(ep, time.Time{})
 	}
-	return gateUntil, a.wakeRateLimitRetries()
+	return gateUntil, a.wakeRateLimitRetries(acct)
 }
 
 // wakeRateLimitRetries interrupts every turn asleep in a rate-limit retry and
@@ -147,12 +151,12 @@ func (a *Agent) applyLimitReset() (gateUntil time.Time, woken int) {
 // turn (#3044, Dick 2026-11-11: "Stop only turns that are sleeping in a
 // rate-limit retry, then send the hidden resume line"). The backend's own
 // retry does not see foci's reset: CC slept ~2h in one on 2026-11-11.
-func (a *Agent) wakeRateLimitRetries() int {
+func (a *Agent) wakeRateLimitRetries(acct *account.Account) int {
 	sleeping := a.rateLimitRetrySessions()
 	if len(sleeping) == 0 {
 		return 0
 	}
-	return a.interruptTurns(func(key string) bool { return sleeping[key] }, true)
+	return a.interruptTurns(func(key string) bool { return sleeping[key] && a.AccountFor(key) == acct }, true)
 }
 
 // noteBackendRetry records a retry the backend reports on sk (OnAPIRetry):
@@ -205,9 +209,9 @@ func (a *Agent) rateLimitRetrySessions() map[string]bool {
 	return out
 }
 
-// UsageAvailable reports whether a usage read shows usage available on this
-// agent's account: the read carries rate-limit windows, and each one it
+// UsageAvailable reports whether a usage read of sessionKey's account shows
+// usage available: the read carries rate-limit windows, and each one it
 // reports is under the usage-hold threshold (so none is reached).
-func (a *Agent) UsageAvailable(info *delegator.UsageInfo) bool {
-	return info.Available(a.usageRegistry().ThresholdPercent())
+func (a *Agent) UsageAvailable(sessionKey string, info *delegator.UsageInfo) bool {
+	return info.Available(a.AccountFor(sessionKey).HoldSettings().ThresholdPercent())
 }

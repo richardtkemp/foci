@@ -32,8 +32,8 @@ func TestUsageHold_StaleResumeAsks(t *testing.T) {
 			defer cancel()
 			reg := usagehold.New()
 			reg.SetResumeMaxIdle(tc.maxIdle)
-			a.UsageHoldRegistry = reg
 			a.DelegatedManager = &DelegatedManager{BackendType: "claude-code"}
+			putOnAccount(a, "", reg, nil)
 			a.StartUsageHold()
 			defer a.StopUsageHold()
 			d := newBlockingDriver()
@@ -47,7 +47,7 @@ func TestUsageHold_StaleResumeAsks(t *testing.T) {
 			case <-time.After(2 * time.Second):
 				t.Fatal("the first turn never started")
 			}
-			a.ObserveUsage(weekly(0.98))
+			testAcct(a).ObserveUsage(weekly(0.98))
 			select {
 			case <-d.ended:
 			case <-time.After(2 * time.Second):
@@ -66,7 +66,7 @@ func TestUsageHold_StaleResumeAsks(t *testing.T) {
 					t.Fatal("M1 was not held")
 				}
 			}
-			a.ObserveUsage(weekly(0.10))
+			testAcct(a).ObserveUsage(weekly(0.10))
 			if !waitFor(2*time.Second, func() bool { return len(d.Calls()) == 2 }) {
 				t.Fatalf("turns = %d, want the interrupted one and one at lift", len(d.Calls()))
 			}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"foci/internal/account"
 	"foci/internal/delegator"
 	"foci/internal/platform"
 	"foci/internal/session"
@@ -95,24 +96,29 @@ func (a *Agent) UsageHoldTurn(ctx context.Context, key, kind string) (context.Co
 	}
 }
 
-// UsageHoldActive reports whether the agent's account holds or stops now.
-func (a *Agent) UsageHoldActive() bool { return a.usageHoldPhase() != usagehold.Open }
+// UsageHoldActive reports whether sessionKey's account holds or stops now.
+func (a *Agent) UsageHoldActive(sessionKey string) bool {
+	return a.usageHoldPhase(sessionKey) != usagehold.Open
+}
 
-// WaitUsageLift blocks until the agent's account is open, or ctx ends
+// WaitUsageLift blocks until sessionKey's account is open, or ctx ends
 // (false).
-func (a *Agent) WaitUsageLift(ctx context.Context) bool {
-	for a.UsageHoldActive() {
+func (a *Agent) WaitUsageLift(ctx context.Context, sessionKey string) bool {
+	for {
+		// Taken before the check, so a change between the two is not missed.
+		changed := a.usageHoldChanged()
+		if !a.UsageHoldActive(sessionKey) {
+			return true
+		}
 		select {
 		case <-ctx.Done():
 			return false
-		case <-a.usageHoldChanged():
+		case <-changed:
 		case <-time.After(a.gatePollInterval()):
-			// Backstop: Tick (the keepalive tick) expires a window at its
-			// reset; poll so a reset with no event still lifts this wait.
-			a.usageRegistry().Tick(time.Now())
+			// Backstop: asking again (Account.Hold) expires a window at its
+			// reset, so a reset with no event still lifts this wait.
 		}
 	}
-	return true
 }
 
 // UsageHoldPause records key as paused by the hold (kind "spawn" or
@@ -142,13 +148,14 @@ func (a *Agent) UsageHoldPaused() map[string]string {
 	return out
 }
 
-// interruptForUsageHold interrupts the work running at a hold start (see the
+// interruptForUsageHold interrupts the work running on acct at a hold start
+// of acct (see the
 // file comment). It runs in the goroutine of the phase change and is quick:
 // it cancels contexts, sets resume marks and records the paused sessions
 // before the agent's other reactions (the hold's compaction) run; only the
 // backend interrupts, which write to a backend, go on in the background.
-func (a *Agent) interruptForUsageHold() {
-	a.interruptTurns(nil, false)
+func (a *Agent) interruptForUsageHold(acct *account.Account) {
+	a.interruptTurns(func(key string) bool { return a.AccountFor(key) == acct }, false)
 }
 
 // interruptTurns sorts and interrupts the running turns as a hold start does

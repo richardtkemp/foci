@@ -193,20 +193,12 @@ type Agent struct {
 	ReloadSystemFn                func() ([]provider.SystemBlock, int)    // reloads skills/extra blocks; returns new blocks + count; nil = no-op
 	TurnLimit                     *TurnLimiter                            // per-agent cap on concurrent user turns across all its sessions; nil = unlimited (#2281)
 	GlobalTurnLimit               *TurnLimiter                            // gateway-wide cap shared by every agent (one pointer, built once in main); nil = unlimited
-	UsageHoldRegistry             *usagehold.Registry                     // account-wide usage hold (#2491); nil = usagehold.Default
-	UsageAccountKey               string                                  // the usage account (Spec.UsageAccount, #3104: a Claude Code login); "" = the backend name (UsageAccount)
 	UsageHoldNotifyFunc           func(text string)                       // posts a usage-hold start/end notice in the agent's default chat (#2491); nil = none
 	UsageHoldChangeFunc           []func(usagehold.Change)                // further reactions to a usage-hold phase change (#2491)
 	usageHold                     usageHoldState
 	// waitInputsChanged is the app's stay-busy hook (SetOnWaitInputsChanged,
 	// #3112); nil = none.
 	waitInputsChanged atomic.Pointer[func(sessionKey string)]
-
-	// LoginGate is the re-login gate of this agent's Claude Code account
-	// (#3104 Q13): agents on one account share it, agents on another account
-	// have another. nil = relogin.G, the host account's. Set at setup, before
-	// the agent runs; read through LoginGateOrDefault.
-	LoginGate *relogin.Gate
 
 	// ReloginLinkTarget is set with ReloginTrigger: where a sign-in link
 	// repeated in one of this agent's sessions goes (#3011). nil: the agent
@@ -216,7 +208,7 @@ type Agent struct {
 	// ReloginRetry is set with ReloginTrigger: after a user-typed turn in
 	// sessionKey met an auth failure while a login was pending, it starts one
 	// new attempt whose link goes to that chat (#3015), through
-	// StartAfterUserFailure(attempt) on its LoginGate. Reports whether it started.
+	// StartAfterUserFailure(attempt) on the login gate of the session's account. Reports whether it started.
 	ReloginRetry func(sessionKey string, attempt uint64) bool
 
 	// Restart restore of held input (#2491, usage_hold_store.go).
@@ -260,19 +252,19 @@ type Agent struct {
 	platforms  map[string]platform.Sender // per-agent platforms (telegram, discord, etc.); key = platform name
 	platformMu sync.RWMutex               // protects platforms map access
 
-	rateLimitGates     map[string]*RateLimitGate // per-endpoint gates; key = endpoint name, lazy-init
-	rateLimitGatesMu   sync.RWMutex              // protects rateLimitGates map access
-	modelBlocks        sync.Map                  // session key → backend refusal text: the session's model needs usage credits (#3106, model_block.go)
-	inFlightMu         sync.Mutex                // protects inFlight + inFlightDelivering + inFlightChanged + lastTurnEndAt map access
-	inFlight           map[string]int32          // per-session count of in-flight OrchestrateFullTurn calls — see IsTurnInFlight
-	inFlightDelivering map[string]int32          // per-session-base count of in-flight turns whose sink reports DeliversToPlatform=true — see IsInFlightDelivering
-	inFlightChanged    map[string]chan struct{}  // per-session-base close-and-replace channel; closes on each state change so waiters wake — see InFlightWaitCh
-	lastTurnEndAt      map[string]time.Time      // per-session-base wall-clock moment the last turn ended (inFlight→0) — see LastTurnEnd; in-memory turn-END activity signal; last_cache_touch is the durable warmth signal (model-response evidence, #2509)
-	unattendedTurns    map[string]int32          // per-session count of in-flight turns that are unattended (turnUnattended) — see TurnUnattended; under inFlightMu
-	rateLimitRetry     map[string]time.Time      // per-session end of the rate-limit (429) retry sleep its backend reported last, cleared by progress or the turn's end — see InRateLimitRetry (#3044); under inFlightMu
-	injectGatePoll     time.Duration             // test seam: the inject gate's poll backstop; zero = injectGatePollInterval (#2537)
-	pendingHoldMax     time.Duration             // test seam: how long background work may hold a system inject; zero = maxPendingHold (#2792)
-	askHoldMax         time.Duration             // test seam: how long an open foci_ask may hold a system inject; zero = maxAskHold (#2828)
+	rateLimitGates     map[rateLimitGateKey]*RateLimitGate // gates by endpoint and account, lazy-init
+	rateLimitGatesMu   sync.RWMutex                        // protects rateLimitGates map access
+	modelBlocks        sync.Map                            // session key → backend refusal text: the session's model needs usage credits (#3106, model_block.go)
+	inFlightMu         sync.Mutex                          // protects inFlight + inFlightDelivering + inFlightChanged + lastTurnEndAt map access
+	inFlight           map[string]int32                    // per-session count of in-flight OrchestrateFullTurn calls — see IsTurnInFlight
+	inFlightDelivering map[string]int32                    // per-session-base count of in-flight turns whose sink reports DeliversToPlatform=true — see IsInFlightDelivering
+	inFlightChanged    map[string]chan struct{}            // per-session-base close-and-replace channel; closes on each state change so waiters wake — see InFlightWaitCh
+	lastTurnEndAt      map[string]time.Time                // per-session-base wall-clock moment the last turn ended (inFlight→0) — see LastTurnEnd; in-memory turn-END activity signal; last_cache_touch is the durable warmth signal (model-response evidence, #2509)
+	unattendedTurns    map[string]int32                    // per-session count of in-flight turns that are unattended (turnUnattended) — see TurnUnattended; under inFlightMu
+	rateLimitRetry     map[string]time.Time                // per-session end of the rate-limit (429) retry sleep its backend reported last, cleared by progress or the turn's end — see InRateLimitRetry (#3044); under inFlightMu
+	injectGatePoll     time.Duration                       // test seam: the inject gate's poll backstop; zero = injectGatePollInterval (#2537)
+	pendingHoldMax     time.Duration                       // test seam: how long background work may hold a system inject; zero = maxPendingHold (#2792)
+	askHoldMax         time.Duration                       // test seam: how long an open foci_ask may hold a system inject; zero = maxAskHold (#2828)
 	turnDetailsMu      sync.Mutex
 	turnDetails        map[uint64]*TurnDetail // keyed by unique turn ID
 	turnIDCounter      uint64                 // atomic: monotonic turn ID
@@ -316,7 +308,7 @@ type Agent struct {
 	enqueueFoundHook      func(sk string)                                                   // test seam: runs after Enqueue finds the inbox, before it pins it
 	turnLockFetchedHook   func(sk string)                                                   // test seam: runs after lockTurn fetches the mutex, before it locks it
 	inboxStarted          bool                                                              // true once StartInbox has been called
-	reloginDrainOnce      sync.Once                                                         // registers DrainReloginDeferred with its login gate once, on the first paused injection (#2384)
+	reloginDrains         sync.Map                                                          // *account.Account → true: DrainReloginDeferred is registered with that account's login gate, on the first injection paused for it (#2384)
 	inboxCtx              context.Context                                                   //nolint:containedctx // parent ctx for session worker goroutines
 	inboxCancel           context.CancelFunc                                                // ends inboxCtx (StopInbox, #2787)
 	inboxSteerMode        bool                                                              // urgent-steer dispatch enabled

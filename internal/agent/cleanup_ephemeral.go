@@ -83,7 +83,7 @@ func (a *Agent) CleanupEphemeralSessions(ctx context.Context, retentionDays int)
 				a.SessionIndex.MarkResumeSwept(key, id)
 				continue
 			}
-			if err := a.DelegatedManager.CleanupBackendSession(ctx, id); err != nil {
+			if err := a.DelegatedManager.CleanupBackendSession(ctx, key, id); err != nil {
 				a.taggedLog("ephemeral-cleanup").Warnf("delete %s (%s): %v", key, id, err)
 				continue
 			}

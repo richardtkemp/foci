@@ -60,11 +60,11 @@ func (a *Agent) peerSteerAllowed(env Envelope) bool {
 	if m == nil || !m.SkipHolds || env.Text == "" || !a.backendSteersMidTurn() {
 		return false
 	}
-	if a.usageHoldsTrigger(m.Trigger, m.HoldPermit) {
+	if a.usageHoldsTrigger(env.SessionKey, m.Trigger, m.HoldPermit) {
 		return false
 	}
 	if a.UsesCCLogin() {
-		if g := a.LoginGateOrDefault(); g.Active() || g.Pending() {
+		if g := a.loginGate(env.SessionKey); g.Active() || g.Pending() {
 			return false
 		}
 	}

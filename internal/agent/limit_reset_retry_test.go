@@ -62,8 +62,8 @@ func TestResetLimits_WakesRateLimitRetries(t *testing.T) {
 
 	b, cancel := startedAgent(t)
 	defer cancel()
-	b.UsageHoldRegistry = reg
 	b.DelegatedManager = &DelegatedManager{BackendType: "claude-code"}
+	putOnAccount(b, "", reg, nil)
 	b.StartUsageHold()
 	defer b.StopUsageHold()
 	sleeping, busy := newBlockingDriver(), newBlockingDriver()
@@ -92,7 +92,7 @@ func TestResetLimits_WakesRateLimitRetries(t *testing.T) {
 	}
 	b.noteBackendRetry("test/sleeping", rateLimitRetry(2*time.Hour))
 
-	res := a.ResetLimits("test")
+	res := a.ResetLimits("", "test")
 	if res.Woken != 0 {
 		t.Errorf("A woke %d of its own turns, want 0 (B's turn is B's)", res.Woken)
 	}
@@ -119,8 +119,8 @@ func TestResetLimits_WakesRateLimitRetries(t *testing.T) {
 func TestResetLimits_ReportsOwnWoken(t *testing.T) {
 	a, cancel := startedAgent(t)
 	defer cancel()
-	a.UsageHoldRegistry = usagehold.New()
 	a.DelegatedManager = &DelegatedManager{BackendType: "claude-code"}
+	putOnAccount(a, "", usagehold.New(), nil)
 	a.StartUsageHold()
 	defer a.StopUsageHold()
 	d := newBlockingDriver()
@@ -134,7 +134,7 @@ func TestResetLimits_ReportsOwnWoken(t *testing.T) {
 		t.Fatal("the first turn never started")
 	}
 	a.noteBackendRetry("test/s", rateLimitRetry(time.Hour))
-	res := a.ResetLimits("test")
+	res := a.ResetLimits("", "test")
 	if res.Woken != 1 || !res.Cleared() {
 		t.Fatalf("ResetLimits = %+v, want one woken turn", res)
 	}

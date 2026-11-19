@@ -17,7 +17,7 @@ import (
 //	/agents new <name> [--backend <b>] [--model <m>] [--backend-config '<inline table>'] [--chars defaults|openclaw|blank] [--copy <agent-id>] [--wait <duration>]
 //
 // --backend-config adds keys to the agent's backend_config (e.g. the Claude
-// Code account: '{env = {CLAUDE_CONFIG_DIR = "/home/x/.claude-stuart"}}').
+// Code account: '{accounts = ["/home/x/.claude-stuart"]}').
 // They are in the [[agents]] block the config check judges, the approval
 // prompt shows, and the live start reads.
 //
@@ -48,7 +48,7 @@ type agentNewArgs struct {
 const agentNewUsage = "Usage: /agents new <name> [--backend <backend>] [--model <model>] [--backend-config '<TOML inline table>'] [--chars defaults|openclaw|blank] [--copy <agent-id>] [--wait <duration>]\n" +
 	"Creates the agent in one step (bare /agents new starts the wizard instead). " +
 	"Defaults: the default backend, model sonnet, character files from defaults. " +
-	"--backend-config adds backend_config keys, e.g. '{env = {CLAUDE_CONFIG_DIR = \"/path\"}}'. " +
+	"--backend-config adds backend_config keys, e.g. '{accounts = [\"/path\"]}'. " +
 	"Over the HTTP API (foci command) it asks the user to approve first; --wait is how long they have (default 10m)."
 
 // parseAgentNew parses the arguments after "new". Words that are not flags

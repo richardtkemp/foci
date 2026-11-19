@@ -257,16 +257,32 @@ func parseUsageBehaviorWindow(w usageBehaviorWindow) delegator.UsageBehaviorWind
 	}
 }
 
-// UsageAccount is the Spec's UsageAccount (#3104): the usage account of a
-// Claude Code agent is its login location (ccaccount.Account, Dick
-// 2026-11-14 Q11), so agents on one login share one usage hold and one
-// cached usage read, and agents on different logins never share them. The
-// name is the backend followed by the account's Key, and it is also the
-// stored hold's key (usage_hold:<name>, Q21).
-func UsageAccount(agentEnv map[string]string) (string, error) {
-	loc, err := ccaccount.ForAgent(agentEnv)
+// Account is the Spec's Account (#3186): the Claude Code login whose config
+// folder is folder ("" = the host's). A login is a login location
+// (ccaccount.Account, Dick 2026-11-14 Q11), so sessions on one location
+// share one usage hold and one cached usage read, and sessions on different
+// locations never share them. Its key is the backend followed by the
+// location's Key, and it is also the stored hold's key (usage_hold:<key>,
+// Q21).
+func Account(folder string) (delegator.AccountSpec, error) {
+	host, err := ccaccount.Host()
 	if err != nil {
-		return "", err
+		return delegator.AccountSpec{}, err
 	}
-	return backendName + ":" + loc.Account.Key(), nil
+	loc, err := ccaccount.ForFolder(folder)
+	if err != nil {
+		return delegator.AccountSpec{}, err
+	}
+	spec := delegator.AccountSpec{
+		Key:  backendName + ":" + loc.Account.Key(),
+		Host: loc == host,
+		Name: loc.Account.String(),
+		Dir:  loc.Dir,
+	}
+	if !spec.Host {
+		spec.ID = loc.Account.ShortKey()
+		spec.Env = ccaccount.FolderEnv(loc.Dir)
+	}
+	spec.LoginEnv = ccaccount.LoginEnv(spec.Env)
+	return spec, nil
 }

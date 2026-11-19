@@ -166,25 +166,26 @@ func (rn *runner) runBackup() error {
 	return takeBackup(rn.ctx, rn.backup, rn.man, rn.dbList, rn.cfg.SourcePath, filepath.Join(rn.p.SessionsDir, rn.o.Old))
 }
 
-// workspaceStep moves the workspace and the Claude Code project folder of its cwd.
+// workspaceStep moves the workspace and the Claude Code project folder of
+// its cwd, in the config folder of every account of the agent.
 func (rn *runner) workspaceStep() step {
-	ccFrom := filepath.Join(rn.p.CCProjects, ccSlug(rn.p.OldWS))
-	ccTo := filepath.Join(rn.p.CCProjects, ccSlug(rn.p.NewWS))
-	st := step{id: stepWorkspace, closeDBs: true, title: "workspace " + rn.p.OldWS + " → " + rn.p.NewWS}
-	if _, err := os.Stat(rn.p.OldWS); err == nil {
-		st.n++
-		st.detail = append(st.detail, "move "+rn.p.OldWS+" → "+rn.p.NewWS)
+	moves := [][2]string{{rn.p.OldWS, rn.p.NewWS}}
+	for _, dir := range rn.p.CCProjects {
+		moves = append(moves, [2]string{filepath.Join(dir, ccSlug(rn.p.OldWS)), filepath.Join(dir, ccSlug(rn.p.NewWS))})
 	}
-	if _, err := os.Stat(ccFrom); err == nil {
-		st.n++
-		st.detail = append(st.detail, "move "+ccFrom+" → "+ccTo)
+	st := step{id: stepWorkspace, closeDBs: true, title: "workspace " + rn.p.OldWS + " → " + rn.p.NewWS}
+	for _, mv := range moves {
+		if _, err := os.Stat(mv[0]); err == nil {
+			st.n++
+			st.detail = append(st.detail, "move "+mv[0]+" → "+mv[1])
+		}
 	}
 	st.detail = append(st.detail,
 		"WARNING: Claude Code, opencode and codex resume a session by its id AND its working directory.",
 		"         The CC project folder, opencode session.directory and codex threads.cwd follow the move,",
 		"         but a backend that cannot find a moved session starts a fresh one (its context is lost).")
 	st.run = func() error {
-		for _, mv := range [][2]string{{rn.p.OldWS, rn.p.NewWS}, {ccFrom, ccTo}} {
+		for _, mv := range moves {
 			if _, err := os.Stat(mv[0]); errors.Is(err, fs.ErrNotExist) {
 				continue // done already (resume) or never existed
 			}

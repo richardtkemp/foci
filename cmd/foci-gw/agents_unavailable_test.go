@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"foci/internal/account/accounttest"
 	"strings"
 	"sync"
 	"testing"
@@ -62,10 +63,9 @@ func expectNoCallerTurn(t *testing.T, f *chitFixture, why string) {
 // putOnHold makes ag a delegated-account agent whose account holds.
 func putOnHold(t *testing.T, ag *agent.Agent, reached bool) {
 	t.Helper()
-	ag.UsageHoldRegistry = usagehold.New()
-	ag.DelegatedManager = &agent.DelegatedManager{BackendType: "claude-code"}
-	ag.ObserveUsage(usagehold.Event{Window: "seven_day", Util: 0.99, HasUtil: true, Reached: reached, ResetAt: time.Now().Add(time.Hour)})
-	if ag.UsageHold().Phase == usagehold.Open {
+	ag.DelegatedManager = &agent.DelegatedManager{BackendType: "claude-code", Accounts: accounttest.Pool("claude-code", "", usagehold.New(), nil)}
+	ag.AccountFor("").ObserveUsage(usagehold.Event{Window: "seven_day", Util: 0.99, HasUtil: true, Reached: reached, ResetAt: time.Now().Add(time.Hour)})
+	if ag.UsageHold("").Phase == usagehold.Open {
 		t.Fatal("the fixture's account did not hold")
 	}
 }
@@ -175,7 +175,7 @@ func TestRelay_HoldAtSend_ToolToldNoTurnAndDeliveredAtLift(t *testing.T) {
 	if got := f.rec.snapshot(); len(got) != 0 {
 		t.Fatalf("chits %v during the hold: the message ran", got)
 	}
-	f.target.ObserveUsage(usagehold.Event{Window: "seven_day", Util: 0.1, HasUtil: true, ResetAt: time.Now().Add(time.Hour)})
+	f.target.AccountFor("").ObserveUsage(usagehold.Event{Window: "seven_day", Util: 0.1, HasUtil: true, ResetAt: time.Now().Add(time.Hour)})
 	if !waitCond(10*time.Second, func() bool { return len(f.rec.snapshot()) > 0 }) {
 		t.Fatal("the held message did not run at lift")
 	}
@@ -186,8 +186,7 @@ func TestRelay_HoldAtSend_ToolToldNoTurnAndDeliveredAtLift(t *testing.T) {
 func TestRelay_HoldAfterSend_CallerTold(t *testing.T) {
 	defer setCallerWatchTiming(10*time.Millisecond, time.Hour)()
 	f := unavailableFixture(t)
-	f.target.UsageHoldRegistry = usagehold.New()
-	f.target.DelegatedManager = &agent.DelegatedManager{BackendType: "claude-code"}
+	f.target.DelegatedManager = &agent.DelegatedManager{BackendType: "claude-code", Accounts: accounttest.Pool("claude-code", "", usagehold.New(), nil)}
 	release, running := make(chan struct{}), make(chan struct{})
 	defer close(release)
 	f.target.Enqueue(agent.Envelope{SessionKey: "scout/c42", Inject: &agent.InjectMeta{Trigger: "probe", Run: func() {
@@ -197,7 +196,7 @@ func TestRelay_HoldAfterSend_CallerTold(t *testing.T) {
 	<-running
 	n := newAsyncNotifier(func() *agent.Agent { return f.caller }, "clutch", f.resolver, f.ctx, f.cm, f.rec.deliver)
 	n.InjectAgentMessage("scout/c42", "body", "clutch/c1", callerOrigin("hello?"))
-	f.target.ObserveUsage(usagehold.Event{Window: "seven_day", Reached: true, ResetAt: time.Now().Add(time.Hour)})
+	f.target.AccountFor("").ObserveUsage(usagehold.Event{Window: "seven_day", Reached: true, ResetAt: time.Now().Add(time.Hour)})
 	got := waitCallerNotice(t, f)
 	if !strings.Contains(got, "usage limit reached") || !strings.Contains(got, "delivered when") {
 		t.Errorf("caller told %q, want the limit named and the delivery promise", got)

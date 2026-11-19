@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"foci/internal/account"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -73,10 +74,16 @@ func TestCommand_ManaCached(t *testing.T) {
 		}
 		return nil, context.Canceled
 	}
-	mana := command.ManaCommand(block, delegator.UsageTarget{AgentID: "test"}, true,
-		&usagelog.Binding{Store: st, Backend: "claude-code", Account: "claude-code:A", AgentID: "test"})
-	empty := command.ManaCommand(block, delegator.UsageTarget{AgentID: "test"}, true,
-		&usagelog.Binding{Store: st, Backend: "claude-code", Account: "claude-code:none", AgentID: "test"})
+	target := func(command.CommandContext, string) delegator.UsageTarget {
+		return delegator.UsageTarget{AgentID: "test"}
+	}
+	history := func(account string) command.ManaHistory {
+		return func(command.CommandContext, string) *usagelog.Binding {
+			return &usagelog.Binding{Store: st, Backend: "claude-code", Account: account, AgentID: "test"}
+		}
+	}
+	mana := command.ManaCommand(block, target, true, history("claude-code:A"))
+	empty := command.ManaCommand(block, target, true, history("claude-code:none"))
 	empty.Name, empty.Aliases = "mana_empty", nil
 	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{mana, empty}})
 	srv := httptest.NewServer(newTestMux(d))
@@ -134,6 +141,10 @@ type usageSinkCatcher struct {
 
 func (u *usageSinkCatcher) SetUsageSink(s delegator.UsageSink) { *u.sink = s }
 
+// SetAccount: the backend's logins are Claude Code's (Spec.Account), so it
+// takes the account each instance runs on (CapAccounts).
+func (u *usageSinkCatcher) SetAccount(delegator.AccountSpec) {}
+
 // registerUsageSinkCatcher registers a usage-capable test backend whose
 // usage account comes from the real Claude Code Spec.
 func registerUsageSinkCatcher(t *testing.T, name string) *delegator.UsageSink {
@@ -152,9 +163,9 @@ func registerUsageSinkCatcher(t *testing.T, name string) *delegator.UsageSink {
 		New: func(map[string]any) (delegator.Delegator, error) {
 			return &usageSinkCatcher{hookCatcher: hookCatcher{hooks: hooks}, sink: got}, nil
 		},
-		Prototype:    (*usageSinkCatcher)(nil),
-		Caps:         map[delegator.Capability]delegator.Support{},
-		UsageAccount: cc.UsageAccount,
+		Prototype: (*usageSinkCatcher)(nil),
+		Caps:      map[delegator.Capability]delegator.Support{},
+		Account:   cc.Account,
 		UsageQuery: func(context.Context, delegator.UsageTarget) (*delegator.UsageInfo, error) {
 			return nil, context.Canceled
 		},
@@ -165,6 +176,7 @@ func registerUsageSinkCatcher(t *testing.T, name string) *delegator.UsageSink {
 	spec.Caps[delegator.CapHostHooks] = delegator.Yes()
 	spec.Caps[delegator.CapUsageQuery] = delegator.Yes()
 	spec.Caps[delegator.CapUsageReports] = delegator.Yes()
+	spec.Caps[delegator.CapAccounts] = delegator.Yes()
 	if err := spec.Validate(); err != nil {
 		t.Fatalf("test Spec invalid: %v", err)
 	}
@@ -186,18 +198,22 @@ func TestUsageWiring_BackendReportsStoredPerAccount(t *testing.T) {
 	setUsageHistory(st)
 	t.Cleanup(func() { setUsageHistory(nil) })
 
-	setup := func(id string, env map[string]string) (*agent.Agent, *delegator.UsageSink) {
+	setup := func(id, folder string) (*agent.Agent, *delegator.UsageSink) {
 		backend := "test-usage-sink-" + id
 		sink := registerUsageSinkCatcher(t, backend)
 		p, shared := wiringFixture(t)
 		p.acfg.ID, p.acfg.Backend = id, backend
 		p.cfg.DataDir = t.TempDir()
-		ag := &agent.Agent{AgentID: id, UsageHoldRegistry: usagehold.New()}
-		if _, ok := configureDelegated(ag, p, shared, backend, config.BackendConfig{Env: env}); !ok {
+		ag := &agent.Agent{AgentID: id}
+		var bc config.BackendConfig
+		if folder != "" {
+			bc.Accounts = []string{folder}
+		}
+		if _, ok := configureDelegated(ag, p, shared, backend, bc); !ok {
 			t.Fatal("configureDelegated returned ok=false")
 		}
 		t.Cleanup(ag.StopUsageHold)
-		if _, err := ag.DelegatedManager.NewBackend(); err != nil {
+		if _, err := ag.DelegatedManager.NewBackendFor(ag.AccountFor("")); err != nil {
 			t.Fatal(err)
 		}
 		if *sink == nil {
@@ -205,10 +221,11 @@ func TestUsageWiring_BackendReportsStoredPerAccount(t *testing.T) {
 		}
 		return ag, sink
 	}
-	alpha, sinkA := setup("alpha", nil)
-	beta, sinkB := setup("beta", map[string]string{"CLAUDE_CONFIG_DIR": filepath.Join(t.TempDir(), "ccB")})
-	if alpha.UsageAccount() == beta.UsageAccount() {
-		t.Fatalf("alpha and beta share account %q", alpha.UsageAccount())
+	gwAccounts = &account.Registry{Holds: usagehold.New(), History: currentUsageHistory}
+	alpha, sinkA := setup("alpha", "")
+	beta, sinkB := setup("beta", filepath.Join(t.TempDir(), "ccB"))
+	if alpha.AccountFor("").Key() == beta.AccountFor("").Key() {
+		t.Fatalf("alpha and beta share account %q", alpha.AccountFor("").Key())
 	}
 
 	payload := json.RawMessage(`{"type":"rate_limit_event"}`)
@@ -221,7 +238,7 @@ func TestUsageWiring_BackendReportsStoredPerAccount(t *testing.T) {
 		ag   *agent.Agent
 		want float64
 	}{{alpha, 11}, {beta, 77}} {
-		reps, err := st.Reports(tc.ag.UsageAccount())
+		reps, err := st.Reports(tc.ag.AccountFor("").Key())
 		if err != nil {
 			t.Fatal(err)
 		}

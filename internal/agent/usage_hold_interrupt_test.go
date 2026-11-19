@@ -62,8 +62,8 @@ func (d *blockingDriver) Calls() [][]Envelope {
 func TestUsageHold_InterruptAndFold(t *testing.T) {
 	a, cancel := startedAgent(t)
 	defer cancel()
-	a.UsageHoldRegistry = usagehold.New()
 	a.DelegatedManager = &DelegatedManager{BackendType: "claude-code"}
+	putOnAccount(a, "", usagehold.New(), nil)
 	a.StartUsageHold()
 	defer a.StopUsageHold()
 	d := newBlockingDriver()
@@ -81,7 +81,7 @@ func TestUsageHold_InterruptAndFold(t *testing.T) {
 		t.Fatal("the first turn never started")
 	}
 
-	a.ObserveUsage(weekly(0.98))
+	testAcct(a).ObserveUsage(weekly(0.98))
 	select {
 	case err := <-d.ended:
 		if err == nil {
@@ -99,7 +99,7 @@ func TestUsageHold_InterruptAndFold(t *testing.T) {
 		t.Errorf("sender told %q, want one held notice per message (none for the resume line)", told)
 	}
 
-	a.ObserveUsage(weekly(0.10))
+	testAcct(a).ObserveUsage(weekly(0.10))
 	if !waitFor(2*time.Second, func() bool { return len(d.Calls()) == 2 }) {
 		t.Fatalf("turns after lift = %d, want exactly one more", len(d.Calls())-1)
 	}
@@ -125,8 +125,8 @@ func TestUsageHold_InterruptAndFold(t *testing.T) {
 func TestUsageHold_ResumeOnlyTurn(t *testing.T) {
 	a, cancel := startedAgent(t)
 	defer cancel()
-	a.UsageHoldRegistry = usagehold.New()
 	a.DelegatedManager = &DelegatedManager{BackendType: "claude-code"}
+	putOnAccount(a, "", usagehold.New(), nil)
 	a.StartUsageHold()
 	defer a.StopUsageHold()
 	d := newBlockingDriver()
@@ -139,13 +139,13 @@ func TestUsageHold_ResumeOnlyTurn(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("the first turn never started")
 	}
-	a.ObserveUsage(weekly(0.98))
+	testAcct(a).ObserveUsage(weekly(0.98))
 	select {
 	case <-d.ended:
 	case <-time.After(2 * time.Second):
 		t.Fatal("the turn in flight was not interrupted by the hold")
 	}
-	a.ObserveUsage(weekly(0.10))
+	testAcct(a).ObserveUsage(weekly(0.10))
 	if !waitFor(2*time.Second, func() bool { return len(d.Calls()) == 2 }) {
 		t.Fatalf("turns = %d, want the interrupted one and its resume", len(d.Calls()))
 	}
@@ -171,7 +171,7 @@ func TestUsageHold_TurnRegistry(t *testing.T) {
 	}
 
 	ctx, done := a.UsageHoldTurn(context.Background(), "test/c2/b1", "spawn")
-	a.ObserveUsage(weekly(0.98))
+	testAcct(a).ObserveUsage(weekly(0.98))
 	select {
 	case <-ctx.Done():
 	case <-time.After(2 * time.Second):
@@ -185,17 +185,17 @@ func TestUsageHold_TurnRegistry(t *testing.T) {
 	}
 
 	late, doneLate := a.UsageHoldTurn(context.Background(), "test/c3", "spawn")
-	a.ObserveUsage(weekly(0.99)) // still holding: no new start
+	testAcct(a).ObserveUsage(weekly(0.99)) // still holding: no new start
 	time.Sleep(50 * time.Millisecond)
 	if late.Err() != nil || doneLate() {
 		t.Error("a usage event during the hold interrupted a turn")
 	}
 
-	if a.WaitUsageLift(canceledCtx()) {
+	if a.WaitUsageLift(canceledCtx(), "") {
 		t.Error("WaitUsageLift returned true while held")
 	}
-	a.ObserveUsage(weekly(0.10))
-	if !a.WaitUsageLift(context.Background()) {
+	testAcct(a).ObserveUsage(weekly(0.10))
+	if !a.WaitUsageLift(context.Background(), "") {
 		t.Error("WaitUsageLift returned false after the lift")
 	}
 }
@@ -252,7 +252,7 @@ func TestUsageHold_OrchestratorBackstop(t *testing.T) {
 			t.Errorf("open account: %s refused: %v", tr, err)
 		}
 	}
-	a.ObserveUsage(weekly(0.98))
+	testAcct(a).ObserveUsage(weekly(0.98))
 	for _, tr := range []string{"reflection", "consolidation", "background"} {
 		if !errors.Is(turn(tr, false), ErrUsageHeld) {
 			t.Errorf("hold: %s without the permit started", tr)
@@ -267,7 +267,7 @@ func TestUsageHold_OrchestratorBackstop(t *testing.T) {
 	if err := turn("app", false); err != nil {
 		t.Errorf("hold: a user turn refused by the backstop (the inbox holds it): %v", err)
 	}
-	a.ObserveUsage(usagehold.Event{Window: "seven_day", Reached: true, ResetAt: time.Now().Add(time.Hour)})
+	testAcct(a).ObserveUsage(usagehold.Event{Window: "seven_day", Reached: true, ResetAt: time.Now().Add(time.Hour)})
 	if !errors.Is(turn("keepalive", false), ErrUsageHeld) {
 		t.Error("stop: a keepalive started")
 	}
@@ -282,15 +282,15 @@ func TestUsageHold_OrchestratorBackstop(t *testing.T) {
 func TestUsageHold_RemindRunsWithoutHeldMessage(t *testing.T) {
 	a, cancel := startedAgent(t)
 	defer cancel()
-	a.UsageHoldRegistry = usagehold.New()
 	a.DelegatedManager = &DelegatedManager{BackendType: "claude-code"}
+	putOnAccount(a, "", usagehold.New(), nil)
 	a.StartUsageHold()
 	defer a.StopUsageHold()
 	d := &recordingDriver{}
 	a.SetTurnObserver(d.recordBatch)
 
 	const sk = "test/c1"
-	a.ObserveUsage(weekly(0.98))
+	testAcct(a).ObserveUsage(weekly(0.98))
 	a.Enqueue(Envelope{SessionKey: sk, Text: "M1", Driver: d})
 	var wake sync.WaitGroup
 	wake.Add(1)
@@ -305,7 +305,7 @@ func TestUsageHold_RemindRunsWithoutHeldMessage(t *testing.T) {
 	if n := d.NumCalls(); n != 0 {
 		t.Fatalf("the held message ran with or beside the remind fire: %d user turns", n)
 	}
-	a.ObserveUsage(weekly(0.10))
+	testAcct(a).ObserveUsage(weekly(0.10))
 	if !waitFor(2*time.Second, func() bool { return d.NumCalls() == 1 }) {
 		t.Fatalf("M1 did not run at lift; turns=%d", d.NumCalls())
 	}

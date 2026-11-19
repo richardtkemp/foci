@@ -1,23 +1,23 @@
-// Package ccaccount answers, for one agent, two questions about the Claude
-// Code process foci starts for it (#3104):
+// Package ccaccount answers two questions about a Claude Code process foci
+// starts (#3104, #3186):
 //
 //   - its CC config folder: where that CC keeps transcripts (projects/),
 //     settings.json and, on Linux, its login;
-//   - its account: where that CC reads its login.
+//   - its login location: where that CC reads its login.
 //
 // Both come from the FINAL environment foci hands the CC process: the
 // operator population (the daemon env overlaid with the operator's captured
-// shell env, procx.Operator), then the agent's backend_config.env, later
-// values winning, as in ccstream's buildEnv. So an agent that sets
-// CLAUDE_CONFIG_DIR in its backend_config.env gets that folder, an agent with
-// no override gets the host's folder exactly as before (fociroot.CCConfigDir),
-// and a CLAUDE_CONFIG_DIR exported by the operator's shell rc file applies,
-// because that is the folder CC is given.
+// shell env, procx.Operator), then the launch env of the session (the agent's
+// backend_config.env and the env of the session's account, FolderEnv), later
+// values winning, as in ccstream's buildEnv. A session on the host's account
+// adds no folder, so it gets the host's folder (fociroot.CCConfigDir, or a
+// CLAUDE_CONFIG_DIR exported by the operator's shell rc file, because that is
+// the folder CC is given). A session on an account with its own folder
+// (backend_config.accounts) gets that folder.
 //
-// This is the one definition. Every reader of an agent's CC on-disk state
-// (ccstream's transcript paths, fork and cleanup, retention, the session
-// index path, rename-agent) resolves through ForAgent; login and limits work
-// keyed on the account (phases 2 and 3 of #3104) uses the Account it returns.
+// This is the one definition. An account's location is ForFolder; ccstream
+// resolves the location of the process it runs with ForLaunchEnv, and the two
+// agree because the account's FolderEnv is part of that launch env.
 package ccaccount
 
 import (
@@ -96,10 +96,41 @@ func (a Account) String() string {
 	return filepath.Dir(a.Path)
 }
 
-// ForAgent resolves the CC folder and account of an agent whose
-// backend_config.env is agentEnv (nil for no overrides), on this host.
-func ForAgent(agentEnv map[string]string) (Location, error) {
-	return FromEnv(Env(agentEnv), runtime.GOOS)
+// Host is the location of the host's Claude Code account: the folder and
+// login of a CC process started with no folder of its own.
+func Host() (Location, error) { return ForLaunchEnv(nil) }
+
+// ForFolder is the location of the account whose CC config folder is dir
+// (one backend_config.accounts entry). "" and the host's own folder are the
+// host's account, so listing the host's folder never makes a second login of
+// it.
+func ForFolder(dir string) (Location, error) {
+	host, err := Host()
+	if err != nil || dir == "" {
+		return host, err
+	}
+	loc, err := ForLaunchEnv(FolderEnv(dir))
+	if err != nil {
+		return Location{}, err
+	}
+	if loc.Dir == host.Dir {
+		return host, nil
+	}
+	return loc, nil
+}
+
+// FolderEnv is what a CC process must be given, on top of the operator's
+// environment, to run on the account whose folder is dir: the account's part
+// of a session's launch env.
+func FolderEnv(dir string) map[string]string {
+	return map[string]string{fociroot.CCConfigDirEnv: dir}
+}
+
+// ForLaunchEnv resolves the CC folder and login location of a CC process
+// whose launch env (what foci adds to the operator's environment) is
+// launchEnv, nil for none, on this host.
+func ForLaunchEnv(launchEnv map[string]string) (Location, error) {
+	return FromEnv(Env(launchEnv), runtime.GOOS)
 }
 
 // Env is the part of the CC process's environment that decides its folder
@@ -117,7 +148,7 @@ func Env(agentEnv map[string]string) []string {
 	return OwnLogin(env, agentEnv)
 }
 
-// OwnLogin gives an agent with its own config folder its own login (Dick
+// OwnLogin gives an account with its own config folder its own login (Dick
 // 2026-11-14, #3104 Q12, "Its own login"). On a separate-root install the
 // gateway exports CLAUDE_SECURESTORAGE_CONFIG_DIR="" (fociroot.EnsureCCConfigEnv)
 // so that foci's CC keeps the user's default Keychain login, and every CC
