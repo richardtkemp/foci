@@ -30,6 +30,9 @@ Capture important memories from this session to today's daily file (`memory/YYYY
 - Aim for 2-5k characters on a typical day, proportional to actual activity. A massive day with 9 deploys will be bigger than a quiet one — that's fine.
 - If nothing notable happened since last write, do nothing
 
+### How to write
+Append with a quoted heredoc (`cat >> memory/YYYY-MM-DD.md <<'EOF'` … `EOF`), or use the Edit or Write tool, or `echo "text" >> memory/YYYY-MM-DD.md`. Never generate memory text with a script (python, sed, awk): foci keeps track of which notes this session already has from the text of your write call, and a generated write hides it.
+
 ### Do NOT edit MEMORY.md
 Daily files only. MEMORY.md curation is handled by the consolidation job.
 
