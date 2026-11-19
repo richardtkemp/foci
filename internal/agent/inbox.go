@@ -2630,6 +2630,7 @@ func (a *Agent) AttachDelivery(be delegator.Delegator, sk string) {
 				// Not through the router: activity for the app's Stop view
 				// (#2960), never a message.
 				a.noteSubagentActivity(sk, groupKey, "tool", subagentToolLine(name, input))
+				a.OwnMemory.Observe(sk, input)
 			},
 			OnSubagentEnd: func(groupKey string, runIndex int) {
 				a.noteSubagentActivity(sk, groupKey, "end", "")
@@ -2653,10 +2654,14 @@ func (a *Agent) AttachDelivery(be delegator.Delegator, sk string) {
 				a.noteBackendProgress(sk)
 				a.noteCutTurnOutput(sk)
 				tally.start(id, name)
+				a.OwnMemory.Observe(sk, input)
 				router.Emit(context.Background(), turnevent.ToolCall{ID: id, Name: name, Args: []byte(input)})
 			},
 			OnToolEnd: func(id, name, output string, isError bool) {
 				tally.end(id, name)
+				if !isError {
+					a.OwnMemory.Observe(sk, output)
+				}
 				router.Emit(context.Background(), turnevent.ToolResult{ID: id, Name: name, Output: output, IsError: isError})
 			},
 			OnAPIRetry: func(r delegator.APIRetry) {

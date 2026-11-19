@@ -11,8 +11,15 @@ import (
 	"time"
 
 	"foci/internal/memory"
+	"foci/internal/memsearch"
 	"foci/internal/sqlite"
 )
+
+// NewMemorySearchTool builds the tool on a shared search with no
+// own-material index: the asking session's own rows are excluded whole.
+func NewMemorySearchTool(backends map[string]memory.Searcher, defaultBackend func() string, convReader *memory.ConversationReader) *Tool {
+	return NewSharedMemorySearchTool(&memsearch.Searcher{Backends: backends, DefaultBackend: defaultBackend, Conv: convReader})
+}
 
 // pollMemorySearch repeatedly executes tool with params until the result
 // text contains want, or a generous deadline elapses, then returns the last
@@ -756,5 +763,43 @@ func TestFormatSearchResultLabelsFileTime(t *testing.T) {
 	formatSearchResult(&conv, memory.Result{Source: "conversation", Path: "sess", RowID: 7, Snippet: "s", Time: ts}, "")
 	if want := "[conversation 2026-10-28 19:56] sess#7: s\n"; conv.String() != want {
 		t.Errorf("conversation hit header = %q, want %q", conv.String(), want)
+	}
+}
+
+// ownTestBackend returns fixed results.
+type ownTestBackend []memory.Result
+
+func (b ownTestBackend) Search(string, string, *memory.SearchOptions) ([]memory.Result, error) {
+	return b, nil
+}
+
+// The tool applies the shared own-material rules (#3185, Q124 "Same rules
+// for both"): a row of the caller's family (here its reflection branch) inside
+// the window is left out, another chat's row stays, and a non-delivered row
+// of another chat stays (labelled, not dropped).
+func TestMemorySearchSharedOwnFamilyRules(t *testing.T) {
+	x, err := memsearch.OpenIndex(filepath.Join(t.TempDir(), "own.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = x.Close() }()
+	now := time.Now()
+	be := ownTestBackend{
+		{Path: "a/c1/b1795000000", Source: "conversation", RowID: 1, Time: now, Snippet: "own branch row"},
+		{Path: "a/c2/b1795000000", Source: "conversation", RowID: 2, Time: now, Snippet: "other chat's branch row"},
+		{Path: "a/c2", Source: "conversation", RowID: 3, Time: now, Snippet: "other chat row"},
+	}
+	tool := NewSharedMemorySearchTool(&memsearch.Searcher{Backends: map[string]memory.Searcher{"b": be},
+		DefaultBackend: func() string { return "b" }, Own: x, Window: func() int { return 3 }})
+	ctx := WithSessionKey(context.Background(), "a/c1")
+	res, err := tool.Execute(ctx, json.RawMessage(`{"query":"row"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(res.Text, "own branch row") {
+		t.Fatalf("own family row returned:\n%s", res.Text)
+	}
+	if !strings.Contains(res.Text, "other chat's branch row") || !strings.Contains(res.Text, "other chat row") {
+		t.Fatalf("other chat's rows missing:\n%s", res.Text)
 	}
 }

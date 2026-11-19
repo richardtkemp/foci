@@ -1,4 +1,4 @@
-package jitmemory
+package memsearch
 
 import (
 	"fmt"

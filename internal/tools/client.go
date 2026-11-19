@@ -22,6 +22,7 @@ var (
 	remindLog          = log.NewComponentLogger("remind")
 	send_to_sessionLog = log.NewComponentLogger("send_to_session")
 	spawnLog           = log.NewComponentLogger("spawn")
+	memory_searchLog   = log.NewComponentLogger("memory_search")
 	summaryLog         = log.NewComponentLogger("summary")
 	web_fetchLog       = log.NewComponentLogger("web_fetch")
 	web_searchLog      = log.NewComponentLogger("web_search")

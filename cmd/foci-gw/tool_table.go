@@ -293,8 +293,7 @@ var toolTable = []toolEntry{
 
 	{name: "memory_search", paths: pathBoth, enabled: func(d *toolDeps) bool { return len(d.p.memBackends) > 0 },
 		build: func(d *toolDeps) *tools.Tool {
-			live := d.p.resolvedLive
-			return tools.NewMemorySearchTool(d.p.memBackends, func() string { return live.Load().MemorySearch.SearchBackend }, d.p.convReader)
+			return tools.NewSharedMemorySearchTool(newMemSearcher(d.p))
 		}},
 
 	{name: "scratchpad", paths: pathAPI, enabled: func(d *toolDeps) bool { return d.p.scratchpadStore != nil },

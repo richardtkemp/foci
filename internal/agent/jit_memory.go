@@ -284,10 +284,19 @@ func (a *Agent) jitAgentMessageRuns(sk, text string, delivers bool, trigger stri
 }
 
 // noteJITCompaction counts a compaction of sk for the dedupe lifetime
-// ([jit_memory] dedupe_compactions). Counted whether or not the feature is
-// on now, so turning it on later starts from the true count.
+// ([jit_memory] dedupe_compactions) and for the own-material window of the
+// shared memory search (#3185; it also prunes the family's tool lines older
+// than the window). Counted whether or not the feature is on now, so turning
+// it on later starts from the true count.
 func (a *Agent) noteJITCompaction(sk string) {
 	if a.JIT != nil {
 		a.JIT.NoteCompaction(sk)
+	}
+	if a.OwnMemory != nil {
+		keep := 0
+		if a.LiveConfigFn != nil {
+			keep = a.LiveConfigFn().JITMemory.DedupeCompactions
+		}
+		a.OwnMemory.NoteCompaction(sk, keep)
 	}
 }

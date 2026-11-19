@@ -21,6 +21,9 @@ type ConversationMessage struct {
 	// Kind is convo.RowKind for the row: "" for ordinary conversation, else
 	// the non-delivered turn kind and/or "subagent" (#2060).
 	Kind string
+	// Direction is the row's direction column: "recv" (from the user to the
+	// agent) or "sent" (the agent's), so a reader can name the speaker.
+	Direction string
 }
 
 // ConversationRef names one conversation row: the session key it was logged
@@ -79,12 +82,12 @@ func (cr *ConversationReader) dbPathFor(agentID string) (string, bool) {
 // subagent_group: "" is the main thread). Total = lines.
 const threadContextQuery = `
 	SELECT * FROM (
-		SELECT id, ts, text, content_type, turn_kind FROM messages
+		SELECT id, ts, text, content_type, turn_kind, direction FROM messages
 		WHERE session = ? AND id < ? AND COALESCE(subagent_group, '') = ? ORDER BY id DESC LIMIT ?
 	)
 	UNION ALL
 	SELECT * FROM (
-		SELECT id, ts, text, content_type, turn_kind FROM messages
+		SELECT id, ts, text, content_type, turn_kind, direction FROM messages
 		WHERE session = ? AND id >= ? AND COALESCE(subagent_group, '') = ? ORDER BY id ASC LIMIT ?
 	)
 	ORDER BY id`
@@ -93,11 +96,11 @@ const threadContextQuery = `
 // columns: the same window, unscoped, with no kinds.
 const legacyContextQuery = `
 	SELECT * FROM (
-		SELECT id, ts, text, '', NULL FROM messages WHERE session = ? AND id < ? ORDER BY id DESC LIMIT ?
+		SELECT id, ts, text, '', NULL, direction FROM messages WHERE session = ? AND id < ? ORDER BY id DESC LIMIT ?
 	)
 	UNION ALL
 	SELECT * FROM (
-		SELECT id, ts, text, '', NULL FROM messages WHERE session = ? AND id >= ? ORDER BY id ASC LIMIT ?
+		SELECT id, ts, text, '', NULL, direction FROM messages WHERE session = ? AND id >= ? ORDER BY id ASC LIMIT ?
 	)
 	ORDER BY id`
 
@@ -145,7 +148,7 @@ func (cr *ConversationReader) ReadContext(session string, rowID int64, lines int
 		var m ConversationMessage
 		var ts, contentType string
 		var turnKind sql.NullString
-		if err := rows.Scan(&m.RowID, &ts, &m.Text, &contentType, &turnKind); err != nil {
+		if err := rows.Scan(&m.RowID, &ts, &m.Text, &contentType, &turnKind, &m.Direction); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {

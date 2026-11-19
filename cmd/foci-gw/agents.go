@@ -16,6 +16,7 @@ import (
 	"foci/internal/log"
 	mcpkg "foci/internal/mcp"
 	"foci/internal/memory"
+	"foci/internal/memsearch"
 	"foci/internal/periodic"
 	"foci/internal/platform"
 	"foci/internal/provider"
@@ -116,6 +117,7 @@ type setupParams struct {
 	bwStore         *bitwarden.Store
 	memBackends     map[string]memory.Searcher
 	convReader      *memory.ConversationReader
+	ownIndex        *memsearch.Index // own-material index (#3185); nil = the memory search excludes the asking session's own rows whole
 	reminderStore   *memory.ReminderStore
 	scratchpadStore *memory.Scratchpad
 	todoStore       *memory.TodoStore

@@ -89,6 +89,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, td *TurnDetail, turnClient
 
 		a.logger().Debugf("session=%s tool_use: %s (%d bytes)", sessionKey, block.Name, len(block.Input))
 		emitToolCall(ctx, block.Name, block.ID, block.Input)
+		a.OwnMemory.Observe(sessionKey, string(block.Input))
 		td.ToolName = block.Name
 		result, err := tool.Call(toolCtx, block.Input)
 		td.ToolName = ""
@@ -117,6 +118,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, td *TurnDetail, turnClient
 			block.ID, guardedResult, false,
 		))
 		toolResults = append(toolResults, result.ExtraBlocks...)
+		a.OwnMemory.Observe(sessionKey, guardedResult)
 		emitToolResult(ctx, block.Name, block.ID, guardedResult, false)
 		emitActivity(ctx)
 	}

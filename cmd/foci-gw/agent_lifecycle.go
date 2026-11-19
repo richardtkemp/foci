@@ -105,6 +105,7 @@ func (e *agentEnv) buildAgent(acfg config.AgentConfig) *agentInstance {
 		bwStore:         e.sec.bwStore,
 		memBackends:     am.backends,
 		convReader:      e.mem.convReader,
+		ownIndex:        e.mem.ownIndex,
 		reminderStore:   am.reminders,
 		scratchpadStore: am.scratchpad,
 		todoStore:       am.todos,

@@ -105,6 +105,17 @@ func (idx *Index) SetSearchLimit(n int) {
 	}
 }
 
+// ReturnLimit is how many results Search returns without SearchOptions.Limit
+// (memory.ReturnLimiter).
+func (idx *Index) ReturnLimit() int {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	if idx.searchLimit > 0 {
+		return idx.searchLimit
+	}
+	return memorySearchReturn
+}
+
 // SetTemporalDecay overrides the recency-boost settings from [memory] config
 // (#352). evergreen may be nil to keep the defaults. Call once after construction.
 func (idx *Index) SetTemporalDecay(enabled bool, halfLifeDays, boost float64, evergreen []string) {
@@ -380,6 +391,9 @@ func (idx *Index) Search(query string, sort string, opts *SearchOptions) ([]Resu
 	limit := idx.searchLimit
 	if limit <= 0 {
 		limit = memorySearchReturn
+	}
+	if opts != nil && opts.Limit > 0 {
+		limit = opts.Limit
 	}
 
 	var extraFilter string

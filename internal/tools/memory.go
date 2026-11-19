@@ -9,17 +9,21 @@ import (
 	"time"
 
 	"foci/internal/memory"
+	"foci/internal/memsearch"
 )
 
-// NewMemorySearchTool creates the memory_search tool backed by one or more search backends.
-// backends maps backend names (e.g. "fts5", "bleve") to their Searcher implementation.
-// defaultBackend returns the preferred backend name, read fresh on each call so a
-// live config edit takes effect immediately; the initial value also orders the
-// schema's "backend" enum (fixed at construction — only the enum default label
-// is illustrative, not authoritative). If only one backend exists, the
-// "backend" parameter is hidden from the tool schema.
-// convReader provides conversation context lookup (may be nil).
-func NewMemorySearchTool(backends map[string]memory.Searcher, defaultBackend func() string, convReader *memory.ConversationReader) *Tool {
+// NewSharedMemorySearchTool creates the memory_search tool on ms, the agent's
+// shared memory search (#3185): the one JIT memory uses, with the same
+// own-material rules. ms.Backends maps backend names (e.g. "fts5", "bleve")
+// to their Searcher; ms.DefaultBackend returns the preferred one, read fresh
+// on each call so a live config edit takes effect immediately (the initial
+// value also orders the schema's "backend" enum, fixed at construction). If
+// only one backend exists, the "backend" parameter is hidden from the tool
+// schema. ms.Conv provides conversation context lookup (may be nil). Hits of the asking session's family (its root and
+// branches) within the last N compactions are dropped, each drop logged;
+// non-delivered conversation rows stay, labelled with their kind.
+func NewSharedMemorySearchTool(ms *memsearch.Searcher) *Tool {
+	backends, defaultBackend, convReader := ms.Backends, ms.DefaultBackend, ms.Conv
 	// Build ordered name list: default first, then others.
 	initial := defaultBackend()
 	names := make([]string, 0, len(backends))
@@ -41,14 +45,14 @@ func NewMemorySearchTool(backends map[string]memory.Searcher, defaultBackend fun
 		ExecExport:  true,
 		Positional:  []string{"query"},
 		JSONOutput:  memorySearchJSONOutput,
-		Description: "Search memory files and conversation history using full-text search. Supports natural language queries with stemming (e.g., 'programming' matches 'program', 'programmer'). Memory files are ranked higher than conversation history. Sort by relevance (default), newest, or oldest. To retrieve conversation context around a specific result, use the session#rowID shown in results as the query (e.g., 'agent/c123#42'). Conversation hits written by a subagent, or by a turn that was never delivered to chat (reflection, background, consolidation, /branch), are labelled with that kind, e.g. [conversation/subagent ...] or [conversation/reflection ...].",
+		Description: "Search memory files and conversation history using full-text search. Supports natural language queries with stemming (e.g., 'programming' matches 'program', 'programmer'). Memory files are ranked higher than conversation history. Sort by relevance (default), newest, or oldest. To retrieve conversation context around a specific result, use the session#rowID shown in results as the query (e.g., 'agent/c123#42'). Conversation hits written by a subagent, or by a turn that was never delivered to chat (reflection, background, consolidation, /branch), are labelled with that kind, e.g. [conversation/subagent ...] or [conversation/reflection ...]. Your own session's recent material (its conversation, and notes it or its reflection wrote, since its last few compactions) is left out: you already have it.",
 		Parameters:  schema,
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			def := defaultBackend()
 			if _, ok := backends[def]; !ok {
 				def = fallback
 			}
-			return memorySearch(ctx, params, backends, def, convReader)
+			return memorySearch(ctx, params, ms, def, convReader)
 		},
 	}
 }
@@ -142,7 +146,7 @@ func parseConversationRef(query string) (session string, rowID int64, ok bool) {
 	return session, id, true
 }
 
-func memorySearch(ctx context.Context, params json.RawMessage, backends map[string]memory.Searcher, defaultBackend string, convReader *memory.ConversationReader) (ToolResult, error) {
+func memorySearch(ctx context.Context, params json.RawMessage, ms *memsearch.Searcher, defaultBackend string, convReader *memory.ConversationReader) (ToolResult, error) {
 	p, err := UnmarshalParams[struct {
 		Query    string `json:"query"`
 		Sort     string `json:"sort"`
@@ -165,62 +169,48 @@ func memorySearch(ctx context.Context, params json.RawMessage, backends map[stri
 		backendName = defaultBackend
 	}
 
-	searcher, ok := backends[backendName]
-	if !ok {
+	if _, ok := ms.Backends[backendName]; !ok {
 		return ToolResult{}, fmt.Errorf("unknown search backend %q", backendName)
 	}
 
-	var opts *memory.SearchOptions
-
-	// Exclude the current session's conversation entries from results —
-	// finding your own earlier messages is circular and wastes result slots.
-	sessionKey := SessionKeyFromContext(ctx)
-	if sessionKey != "" {
-		if opts == nil {
-			opts = &memory.SearchOptions{}
+	req := memsearch.Request{Query: p.Query, Sort: p.Sort, Backend: backendName, SessionKey: SessionKeyFromContext(ctx)}
+	if p.DateFrom != "" {
+		t, err := time.Parse("2006-01-02", p.DateFrom)
+		if err != nil {
+			return ToolResult{}, fmt.Errorf("invalid date_from format (use YYYY-MM-DD): %w", err)
 		}
-		opts.ExcludePath = sessionKey
+		req.DateFrom = &t
+	}
+	if p.DateTo != "" {
+		t, err := time.Parse("2006-01-02", p.DateTo)
+		if err != nil {
+			return ToolResult{}, fmt.Errorf("invalid date_to format (use YYYY-MM-DD): %w", err)
+		}
+		// Exclusive upper bound: start of the next day
+		nextDay := t.AddDate(0, 0, 1)
+		req.DateTo = &nextDay
 	}
 
-	if p.DateFrom != "" || p.DateTo != "" {
-		if opts == nil {
-			opts = &memory.SearchOptions{}
-		}
-		if p.DateFrom != "" {
-			t, err := time.Parse("2006-01-02", p.DateFrom)
-			if err != nil {
-				return ToolResult{}, fmt.Errorf("invalid date_from format (use YYYY-MM-DD): %w", err)
-			}
-			opts.DateFrom = &t
-		}
-		if p.DateTo != "" {
-			t, err := time.Parse("2006-01-02", p.DateTo)
-			if err != nil {
-				return ToolResult{}, fmt.Errorf("invalid date_to format (use YYYY-MM-DD): %w", err)
-			}
-			// Exclusive upper bound: start of the next day
-			nextDay := t.AddDate(0, 0, 1)
-			opts.DateTo = &nextDay
-		}
-	}
-
-	results, err := searcher.Search(p.Query, p.Sort, opts)
+	res, err := ms.Search(req)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("search: %w", err)
+	}
+	if len(res.Dropped) > 0 {
+		memory_searchLog.Infof("session=%s query=%q: dropped %d hits: %s",
+			req.SessionKey, truncate(p.Query, 80), len(res.Dropped), memsearch.DropSummary(res.Dropped))
+	}
+	results := make([]memory.Result, len(res.Hits))
+	kinds := make(map[memory.ConversationRef]string)
+	for i, h := range res.Hits {
+		results[i] = h.Result
+		if h.Kind != "" {
+			kinds[memory.ConversationRef{Session: h.Path, RowID: h.RowID}] = h.Kind
+		}
 	}
 
 	if len(results) == 0 && !WantsJSON(ctx) {
 		return TextResult("No matches found."), nil
 	}
-
-	// Label subagent and non-delivered-turn hits (#2060) so they don't read as chat.
-	var refs []memory.ConversationRef
-	for _, r := range results {
-		if r.Source == "conversation" && r.RowID > 0 {
-			refs = append(refs, memory.ConversationRef{Session: r.Path, RowID: r.RowID})
-		}
-	}
-	kinds := convReader.Kinds(refs)
 
 	if WantsJSON(ctx) {
 		return memorySearchJSON(results, kinds, convReader, p.Lines)

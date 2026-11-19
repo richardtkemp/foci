@@ -14,13 +14,19 @@
 //     Settings.ContextMessages messages of the chat (both sides) as context;
 //  3. make the queries (Settings.QueryStrategy): the raw message, 1-3
 //     keyword queries the fast model writes, or both;
-//  4. search the agent's own memory index with each query, top
-//     Settings.TopN per query; drop conversation hits, hits in files of the
-//     agent's system prompt, and hits already sent to the judge in this
-//     session less than Settings.DedupeCompactions compactions ago;
-//  5. read the section of the file around each hit and give the message,
-//     its context and the sections to the judge (the fast model), which
-//     names the relevant ones (possibly none);
+//  4. search with each query through the agent's shared memory search
+//     (internal/memsearch, the one foci_memory_search uses, #3185), top
+//     Settings.TopN kept hits per query. The shared search drops the asking
+//     session family's own recent material (its conversation rows and the
+//     notes it wrote or read, within Settings.DedupeCompactions
+//     compactions) and, for JIT, conversation rows that never reached a
+//     chat. JIT then drops hits in files of the agent's system prompt and
+//     hits already sent to the judge in this session less than
+//     Settings.DedupeCompactions compactions ago;
+//  5. give the message, its context and, for each hit, the section of the
+//     file around it or the conversation around the row (speaker, time) to
+//     the judge (the fast model), which names the relevant ones (possibly
+//     none);
 //  6. format the relevant sections, within Settings.InjectMaxChars.
 //
 // Every run is logged to the Store, for the evaluation Dick asked for. A
@@ -40,7 +46,7 @@ import (
 	"unicode/utf8"
 
 	"foci/internal/log"
-	"foci/internal/memory"
+	"foci/internal/memsearch"
 )
 
 var jitLog = log.NewComponentLogger("jit-memory")
@@ -93,11 +99,10 @@ type ModelFunc func(ctx context.Context, what, model, system, user string, maxTo
 // run, so a reindex or a reloaded system prompt is seen.
 type Deps struct {
 	AgentID string
-	// Search runs one relevance-sorted query on the agent's memory index.
-	Search func(query string) ([]memory.Result, error)
-	// SourceDirs maps a memory source name to its directory, to read the
-	// file behind a hit.
-	SourceDirs func() map[string]string
+	// Search runs one search through the agent's shared memory search
+	// (memsearch.Searcher.Search, #3185): the one foci_memory_search uses,
+	// with the same own-material rules.
+	Search func(req memsearch.Request) (memsearch.Outcome, error)
 	// SystemPromptFiles lists the absolute paths of the files in the
 	// agent's system prompt: hits in them are never offered.
 	SystemPromptFiles func() []string
@@ -233,17 +238,21 @@ func (e *Engine) Observe(sk string, role Role, text string) {
 
 // Hit is one candidate memory section.
 type Hit struct {
-	Key     string `json:"key"` // path#section, the dedupe identity
+	Key     string `json:"key"` // path#section (a file) or session#row (a conversation row), the dedupe identity
 	Source  string `json:"source"`
-	Path    string `json:"path"`    // relative to the source dir
-	Section string `json:"section"` // the heading, or "L<line>"
-	Query   int    `json:"query"`   // index of the first query that found it
-	Rank    int    `json:"rank"`    // its position in that query's results
-	ModTime int64  `json:"mtime"`   // the file's mtime (unix), to tell this session's own notes apart
+	Path    string `json:"path"`          // relative to the source dir; the session key for a conversation row
+	RowID   int64  `json:"row,omitempty"` // a conversation row's id
+	Section string `json:"section"`       // the heading, or "L<line>"; a conversation row's time
+	Query   int    `json:"query"`         // index of the first query that found it
+	Rank    int    `json:"rank"`          // its position among that query's kept results (0 = dropped)
+	ModTime int64  `json:"mtime"`         // the file's mtime, or the row's time (unix)
 	// Verdict: judged_relevant, judged_irrelevant, seen (deduped), excluded
-	// (system prompt file), unreadable.
+	// (system prompt file), unreadable, or a memsearch drop reason
+	// (own_conversation, own_note, non_delivered; #3185).
 	Verdict string `json:"verdict"`
-	text    string
+	// Detail says why a dropped hit was dropped (the window, the matches).
+	Detail string `json:"detail,omitempty"`
+	text   string
 }
 
 // Run runs one message. It is safe to call from many goroutines. ctx bounds
@@ -365,17 +374,28 @@ func (e *Engine) Run(ctx context.Context, req Request) Outcome {
 	return finish(Outcome{Injection: FormatInjection(relevant, s.InjectMaxChars)})
 }
 
+// label names a hit for the judge and the injection: its path, or for a
+// conversation row session#row (a memory_search query reads more of it).
+func (h *Hit) label() string {
+	if h.RowID > 0 {
+		return fmt.Sprintf("%s#%d", h.Path, h.RowID)
+	}
+	return h.Path
+}
+
 // rawQueryMaxRunes caps the raw-message query: a long agent reply searched
 // whole is all common words.
 const rawQueryMaxRunes = 600
 
-// collect runs every query and returns the merged hits, each with its
-// verdict set when it is not a candidate (seen, excluded, unreadable).
+// conversationContextLines is how many messages around a conversation hit the
+// judge sees (#3185 requirement 5: role, time and a few surrounding lines).
+const conversationContextLines = 5
+
+// collect runs every query through the shared memory search and returns the
+// merged hits, each with its verdict set when it is not a candidate (seen,
+// excluded, unreadable, or dropped by the shared search's own-material and
+// non-delivered rules, which are logged when they ranked within top_n).
 func (e *Engine) collect(sk string, queries []string, s Settings) ([]Hit, error) {
-	dirs := map[string]string{}
-	if e.deps.SourceDirs != nil {
-		dirs = e.deps.SourceDirs()
-	}
 	excluded := map[string]bool{}
 	if e.deps.SystemPromptFiles != nil {
 		for _, p := range e.deps.SystemPromptFiles() {
@@ -386,48 +406,59 @@ func (e *Engine) collect(sk string, queries []string, s Settings) ([]Hit, error)
 	}
 	byKey := map[string]bool{}
 	var hits []Hit
+	add := func(h Hit) {
+		if byKey[h.Key] {
+			return
+		}
+		byKey[h.Key] = true
+		hits = append(hits, h)
+	}
 	var lastErr error
 	ok := 0
 	for qi, q := range queries {
-		res, err := e.deps.Search(q)
+		out, err := e.deps.Search(memsearch.Request{Query: q, Sort: "relevance", SessionKey: sk, DropNonDelivered: true,
+			Sections: true, SectionMaxChars: s.SectionMaxChars, ContextLines: conversationContextLines})
 		if err != nil {
 			lastErr = err
 			continue
 		}
 		ok++
-		rank := 0
-		for _, r := range res {
-			if r.Source == "conversation" {
-				continue // memory files only: a chat row is not a note
+		// The cut: the backend position of the TopN-th kept hit. A drop
+		// ranked before it would have been offered; one after it would not,
+		// so only the first are logged.
+		cut := int(^uint(0) >> 1)
+		if len(out.Hits) >= s.TopN && s.TopN > 0 {
+			cut = out.Hits[s.TopN-1].Pos
+		}
+		for _, d := range out.Dropped {
+			if d.Pos > cut {
+				continue
 			}
+			h := baseHit(d.Hit, qi)
+			h.Verdict, h.Detail = d.Reason, d.Detail
+			add(h)
+		}
+		for rank, r := range out.Hits {
 			if rank >= s.TopN {
 				break
 			}
-			rank++
-			dir, known := dirs[r.Source]
-			abs := r.Path
-			if known && !filepath.IsAbs(abs) {
-				abs = filepath.Join(dir, r.Path)
-			}
-			h := Hit{Source: r.Source, Path: r.Path, Query: qi, Rank: rank}
-			if !r.Time.IsZero() {
-				h.ModTime = r.Time.Unix()
-			}
-			if isExcluded(abs, excluded) {
+			h := baseHit(r, qi)
+			h.Rank = rank + 1
+			switch {
+			case r.Source == memsearch.ConversationSource:
+				h.Section = conversationLabel(r)
+				h.text = conversationText(r)
+			case r.Abs != "" && isExcluded(r.Abs, excluded):
 				h.Key = r.Path
 				h.Verdict = "excluded"
-			} else if sec, err := ReadSection(abs, r.Snippet, s.SectionMaxChars); err != nil || !known {
+			case r.Section == nil:
 				h.Key = r.Path
 				h.Verdict = "unreadable"
-			} else {
-				h.Section, h.text = sec.Heading, sec.Text
-				h.Key = r.Path + "#" + sec.Heading
+			default:
+				h.Section, h.text = r.Section.Heading, r.Section.Text
+				h.Key = r.Path + "#" + r.Section.Heading
 			}
-			if byKey[h.Key] {
-				continue
-			}
-			byKey[h.Key] = true
-			hits = append(hits, h)
+			add(h)
 		}
 	}
 	if ok == 0 && lastErr != nil {
@@ -446,6 +477,53 @@ func (e *Engine) collect(sk string, queries []string, s Settings) ([]Hit, error)
 	}
 	e.mu.Unlock()
 	return hits, nil
+}
+
+// baseHit is the logged identity of a search hit found by query qi.
+func baseHit(r memsearch.Hit, qi int) Hit {
+	h := Hit{Source: r.Source, Path: r.Path, Query: qi, Key: r.Path}
+	if r.Source == memsearch.ConversationSource {
+		h.RowID = r.RowID
+		h.Key = fmt.Sprintf("%s#%d", r.Path, r.RowID)
+	}
+	if !r.Time.IsZero() {
+		h.ModTime = r.Time.Unix()
+	}
+	return h
+}
+
+// conversationLabel names a conversation hit for the judge and the
+// injection: its time.
+func conversationLabel(r memsearch.Hit) string {
+	if r.Time.IsZero() {
+		return "conversation"
+	}
+	return "conversation " + r.Time.UTC().Format("2006-01-02 15:04 UTC")
+}
+
+// conversationText renders a conversation hit for the judge: the messages
+// around it, each with its speaker and time, the hit marked "»". Without
+// context (no row id, or no conversation reader) it is the snippet.
+func conversationText(r memsearch.Hit) string {
+	if len(r.Context) == 0 {
+		return strings.TrimSpace(strings.NewReplacer(">", "", "<", "").Replace(r.Snippet))
+	}
+	var b strings.Builder
+	for _, m := range r.Context {
+		marker := "  "
+		if m.RowID == r.RowID {
+			marker = "» "
+		}
+		who := "user"
+		if m.Direction == "sent" {
+			who = "assistant"
+		}
+		if m.Kind != "" {
+			who += " (" + m.Kind + ")"
+		}
+		fmt.Fprintf(&b, "%s%s %s: %s\n", marker, who, m.Time.UTC().Format("15:04"), headRunes(strings.TrimSpace(m.Text), 400))
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // markSeen records that cands went to the judge in this session.
@@ -502,6 +580,7 @@ const noneAnswer = "NONE"
 
 // judgeSystemPrompt asks for the numbers of the useful notes.
 const judgeSystemPrompt = "You decide which memory notes would be useful extra context for an AI assistant handling a chat message. " +
+	"A note is a section of the assistant's memory files, or an excerpt of an earlier conversation (each line: speaker, time, text; the matching line marked »). " +
 	"A note is useful only if it is specifically about the subject of the message and would help the assistant answer or act. " +
 	"A note that merely shares common words is not useful. " +
 	"Judge against the CURRENT message only: earlier messages are background, and a note about an earlier topic the current message is not about is not useful. " +
@@ -535,7 +614,7 @@ func judgePrompt(msg string, cands []*Hit) string {
 	b.WriteString(msg)
 	b.WriteString("\nMemory notes:\n")
 	for i, c := range cands {
-		fmt.Fprintf(&b, "\n[%d] %s — %s\n%s\n", i+1, c.Path, c.Section, c.text)
+		fmt.Fprintf(&b, "\n[%d] %s — %s\n%s\n", i+1, c.label(), c.Section, c.text)
 	}
 	return b.String()
 }
@@ -599,7 +678,7 @@ func ParseVerdict(answer string, n int) map[int]bool {
 
 // InjectionHeader opens every injection: the agent can tell it from the
 // user's own words, and knows it need not answer it.
-const InjectionHeader = "[foci JIT memory: notes from your memory files that a fast model judged relevant to this message. " +
+const InjectionHeader = "[foci JIT memory: notes from your memory files and past conversations that a fast model judged relevant to this message. " +
 	"Auto-injected for your consideration; no response necessary.]"
 
 // FormatInjection renders the relevant sections within maxChars (runes; 0 =
@@ -611,7 +690,7 @@ func FormatInjection(hits []*Hit, maxChars int) string {
 	used := utf8.RuneCountInString(InjectionHeader)
 	n := 0
 	for _, h := range hits {
-		block := fmt.Sprintf("\n\n--- %s § %s\n%s", h.Path, h.Section, h.text)
+		block := fmt.Sprintf("\n\n--- %s § %s\n%s", h.label(), h.Section, h.text)
 		size := utf8.RuneCountInString(block)
 		if maxChars > 0 && used+size > maxChars {
 			if n > 0 {

@@ -12,6 +12,7 @@ import (
 	"foci/internal/convo"
 	"foci/internal/log"
 	"foci/internal/memory"
+	"foci/internal/memsearch"
 )
 
 // AgentMemoryBoost is the weight added to agent-specific memory sources.
@@ -77,6 +78,7 @@ type memorySystem struct {
 	sharedFTS5     *memory.Index              // shared mode
 	sharedBleve    *memory.BleveIndex         // shared mode
 	convReader     *memory.ConversationReader // nil when memory search is off
+	ownIndex       *memsearch.Index           // own-material index (#3185); nil when memory search is off or it failed to open
 
 	// mu guards everything below. convo.Hook reads agentFTS5/agentBleve on
 	// every logged conversation entry, from any goroutine, while a hot-add
@@ -571,6 +573,15 @@ func initMemorySystem(cfg *config.Config) *memorySystem {
 		convDBPaths[acfg.ID] = config.AgentDataPath(acfg.Workspace, "conversation.db")
 	}
 	m.convReader = memory.NewConversationReader(convDBPaths)
+
+	// The own-material index (#3185): every agent's tool lines and its
+	// families' compaction times, for the memory search's own rules.
+	if x, err := memsearch.OpenIndex(cfg.DataPath("own_memory.db")); err != nil {
+		mainLog.Warnf("own-memory index: %v; the memory search excludes the asking session's own rows whole", err)
+	} else {
+		m.ownIndex = x
+		m.closers = append(m.closers, x)
+	}
 
 	// Backfill historical conversations into the indices, in the background.
 	// Per-agent: each agent's own indices rebuild from its own conversation

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"foci/internal/memory"
+	"foci/internal/memsearch"
 )
 
 func TestParseQueries_StripsPreambleAndMarkers(t *testing.T) {
@@ -83,49 +84,6 @@ func writeNote(t *testing.T, dir, name, body string) string {
 	return p
 }
 
-func TestReadSection_FindsHeadingAroundSnippet(t *testing.T) {
-	p := writeNote(t, t.TempDir(), "n.md", sampleNote)
-	sec, err := ReadSection(p, "…Working domain from the >NUC<: annas-archive.pk…", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sec.Heading != "Anna's Archive working domain" {
-		t.Fatalf("heading = %q", sec.Heading)
-	}
-	if !strings.Contains(sec.Text, "sub detail") {
-		t.Errorf("a deeper sub-heading belongs to the section: %q", sec.Text)
-	}
-	if strings.Contains(sec.Text, "unrelated") {
-		t.Errorf("section ran past the next same-level heading: %q", sec.Text)
-	}
-}
-
-func TestReadSection_FallsBackToHighlightedTerm(t *testing.T) {
-	p := writeNote(t, t.TempDir(), "n.md", sampleNote)
-	sec, err := ReadSection(p, "snippet text not in file >unrelated< x", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sec.Heading != "Other topic" {
-		t.Fatalf("heading = %q", sec.Heading)
-	}
-}
-
-func TestReadSection_CapsLongSectionAroundHit(t *testing.T) {
-	body := "## Big\n" + strings.Repeat("filler words ", 400) + "NEEDLE here " + strings.Repeat("more words ", 400)
-	p := writeNote(t, t.TempDir(), "n.md", body)
-	sec, err := ReadSection(p, ">NEEDLE< here", 300)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(sec.Text, "NEEDLE") {
-		t.Fatalf("window lost the hit: %q", sec.Text)
-	}
-	if n := len([]rune(sec.Text)); n > 310 {
-		t.Fatalf("section %d runes, cap 300", n)
-	}
-}
-
 // fakeModel answers the query and judge calls and records them.
 type fakeModel struct {
 	mu       sync.Mutex
@@ -153,8 +111,16 @@ type fixture struct {
 	model   *fakeModel
 	engine  *Engine
 	store   *Store
+	own     *memsearch.Index
 	results map[string][]memory.Result
 	queries []string
+}
+
+// fakeBackend is a memory search backend answering from a func.
+type fakeBackend func(q string) ([]memory.Result, error)
+
+func (f fakeBackend) Search(q, _ string, _ *memory.SearchOptions) ([]memory.Result, error) {
+	return f(q)
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -168,16 +134,27 @@ func newFixture(t *testing.T) *fixture {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	f.store = store
-	f.engine = New(Deps{
-		AgentID: "clutch",
-		Search: func(q string) ([]memory.Result, error) {
+	own, err := memsearch.OpenIndex(filepath.Join(t.TempDir(), "own.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = own.Close() })
+	f.own = own
+	ms := &memsearch.Searcher{
+		Backends: map[string]memory.Searcher{"x": fakeBackend(func(q string) ([]memory.Result, error) {
 			f.queries = append(f.queries, q)
 			if r, ok := f.results[q]; ok {
 				return r, nil
 			}
 			return f.results["*"], nil
-		},
-		SourceDirs:        func() map[string]string { return map[string]string{"clutch": f.dir} },
+		})},
+		SourceDirs: func() map[string]string { return map[string]string{"clutch": f.dir} },
+		Own:        own,
+		Window:     func() int { return 3 },
+	}
+	f.engine = New(Deps{
+		AgentID:           "clutch",
+		Search:            ms.Search,
 		SystemPromptFiles: func() []string { return []string{filepath.Join(f.dir, "MEMORY.md")} },
 		Model:             f.model.call,
 		Store:             func() *Store { return store },
@@ -199,7 +176,9 @@ func TestRun_InjectsJudgedSectionAndLogs(t *testing.T) {
 	f.model.queries = "Here are the queries:\nAnna archive link"
 	f.results["*"] = []memory.Result{
 		annaHit(),
-		{Path: "conv", Source: "conversation", Snippet: "x"},
+		// The asking session's own row and its branch's: dropped (#3185).
+		{Path: "clutch/c1", Source: "conversation", Snippet: "own row", RowID: 7, Time: time.Now()},
+		{Path: "clutch/c5/b1795000000", Source: "conversation", Snippet: "a branch row", RowID: 8, Time: time.Now()},
 		{Path: "MEMORY.md", Source: "clutch", Snippet: ">Anna's< Archive is in the system prompt"},
 	}
 	out := f.engine.Run(context.Background(), Request{SessionKey: "clutch/c1", Role: RoleUser,
@@ -224,8 +203,10 @@ func TestRun_InjectsJudgedSectionAndLogs(t *testing.T) {
 	if err := f.store.db.QueryRow(`SELECT hits, judge_answer FROM runs WHERE id = ?`, out.RunID).Scan(&hits, &verdicts); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(hits, `"verdict":"judged_relevant"`) || !strings.Contains(hits, `"verdict":"excluded"`) {
-		t.Fatalf("logged hits = %s", hits)
+	for _, v := range []string{"judged_relevant", "excluded", "own_conversation", "non_delivered"} {
+		if !strings.Contains(hits, `"verdict":"`+v+`"`) {
+			t.Fatalf("logged hits lack verdict %s: %s", v, hits)
+		}
 	}
 	f.engine.SetDelivery(out.RunID, DeliveryAttached)
 	var delivery string
@@ -263,7 +244,7 @@ func TestRun_DedupeUntilNCompactions(t *testing.T) {
 		t.Fatalf("other session deduped: %+v", o)
 	}
 	// The set survives a restart (a new engine on the same store).
-	f2 := New(Deps{AgentID: "clutch", Search: f.engine.deps.Search, SourceDirs: f.engine.deps.SourceDirs,
+	f2 := New(Deps{AgentID: "clutch", Search: f.engine.deps.Search,
 		Model: f.model.call, Store: func() *Store { return f.store }})
 	if o := f2.Run(context.Background(), Request{SessionKey: "clutch/c1", Role: RoleUser, Text: "Anna's archive link please", Settings: s}); o.Injection != "" {
 		t.Fatalf("restarted engine re-offered a seen hit: %+v", o)
@@ -407,5 +388,51 @@ func TestMessageBlock_LabelsContextAsBackground(t *testing.T) {
 		if !strings.Contains(p, "CURRENT") {
 			t.Errorf("prompt does not name the CURRENT message: %q", p)
 		}
+	}
+}
+
+// A note the asking session's family wrote through its tools (here: its
+// reflection branch's heredoc) within the window is not offered to that
+// session's judge; another session still gets it (#3185).
+func TestRun_DropsOwnFamilyNote(t *testing.T) {
+	f := newFixture(t)
+	f.results["*"] = []memory.Result{annaHit()}
+	s := settings()
+	s.QueryStrategy = QueryRaw
+	// A Claude Code Bash input, as OnToolStart carries it: JSON, the
+	// heredoc body in the command string.
+	f.own.Observe("clutch/c1/b1795000000", `{"command":"cat >> memory/a.md <<'EOF'\n## Anna's Archive working domain\n\nWorking domain from the NUC: annas-archive.pk (14:50).\nThe .org one is dead.\nEOF"}`)
+	f.own.Flush()
+	o := f.engine.Run(context.Background(), Request{SessionKey: "clutch/c1", Role: RoleUser, Text: "Anna's archive link please", Settings: s})
+	if o.Injection != "" || o.Skipped != "no new hits" {
+		t.Fatalf("own note offered: %+v", o)
+	}
+	var hits string
+	if err := f.store.db.QueryRow(`SELECT hits FROM runs WHERE id = ?`, o.RunID).Scan(&hits); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(hits, `"verdict":"own_note"`) {
+		t.Fatalf("drop not logged: %s", hits)
+	}
+	if o := f.engine.Run(context.Background(), Request{SessionKey: "clutch/c2", Role: RoleUser, Text: "Anna's archive link please", Settings: s}); o.Injection == "" {
+		t.Fatalf("another session lost the note: %+v", o)
+	}
+}
+
+// Another session's conversation row is a candidate: the judge sees it
+// labelled with its session, row and time.
+func TestRun_ConversationHitIsJudged(t *testing.T) {
+	f := newFixture(t)
+	at := time.Date(2026, 11, 19, 14, 2, 0, 0, time.UTC)
+	f.results["*"] = []memory.Result{{Path: "clutch/c2", Source: "conversation", RowID: 45, Time: at,
+		Snippet: "the >annas-archive< mirror is annas-archive.pk"}}
+	s := settings()
+	s.QueryStrategy = QueryRaw
+	o := f.engine.Run(context.Background(), Request{SessionKey: "clutch/c1", Role: RoleUser, Text: "Anna's archive link please", Settings: s})
+	if o.Injection == "" || !strings.Contains(o.Injection, "clutch/c2#45") {
+		t.Fatalf("outcome = %+v", o)
+	}
+	if j := f.model.judged[0]; !strings.Contains(j, "[1] clutch/c2#45 — conversation 2026-11-19 14:02 UTC") || !strings.Contains(j, "annas-archive.pk") {
+		t.Fatalf("judge prompt:\n%s", j)
 	}
 }

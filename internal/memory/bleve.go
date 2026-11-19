@@ -192,6 +192,14 @@ func (b *BleveIndex) SetSearchLimit(n int) {
 	}
 }
 
+// ReturnLimit is how many results Search returns without SearchOptions.Limit
+// (memory.ReturnLimiter).
+func (b *BleveIndex) ReturnLimit() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.searchLimitLocked()
+}
+
 // searchLimitLocked reads the limit; callers already hold b.mu (Search locks it).
 func (b *BleveIndex) searchLimitLocked() int {
 	if b.searchLimit > 0 {
@@ -900,6 +908,10 @@ func (b *BleveIndex) Search(queryStr string, sortOrder string, opts *SearchOptio
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	limit := b.searchLimitLocked()
+	if opts != nil && opts.Limit > 0 {
+		limit = opts.Limit
+	}
 
 	// Build the main query
 	mainQuery := bleve.NewQueryStringQuery(sanitizeBleveQuery(queryStr))
@@ -944,7 +956,7 @@ func (b *BleveIndex) Search(queryStr string, sortOrder string, opts *SearchOptio
 	}
 
 	req := bleve.NewSearchRequest(finalQuery)
-	req.Size = b.searchLimitLocked()
+	req.Size = limit
 	req.Fields = []string{"path", "source", "mtime"}
 
 	// Highlight content field for snippets
@@ -959,7 +971,7 @@ func (b *BleveIndex) Search(queryStr string, sortOrder string, opts *SearchOptio
 	default:
 		// relevance: over-fetch so the recency re-rank (#352) can promote a recent
 		// item into the returned set; truncated back to the return limit after.
-		req.Size = b.searchLimitLocked() * 2
+		req.Size = limit * 2
 		req.SortBy([]string{"-_score"})
 	}
 
@@ -1015,7 +1027,7 @@ func (b *BleveIndex) Search(queryStr string, sortOrder string, opts *SearchOptio
 		if b.temporalDecay {
 			hl, boost = b.decayHalfLifeDays, b.decayBoost
 		}
-		results = rerankByRecency(results, time.Now(), hl, boost, b.evergreenPatterns, b.searchLimitLocked(), true /* bleve rank: higher is better */)
+		results = rerankByRecency(results, time.Now(), hl, boost, b.evergreenPatterns, limit, true /* bleve rank: higher is better */)
 		// Mild phrase boost (#2327), after the cut: the returned set is
 		// exactly the unboosted one; only the order within it can change.
 		b.applyPhraseBoost(queryStr, results)

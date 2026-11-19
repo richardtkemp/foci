@@ -13,6 +13,11 @@ type SearchOptions struct {
 	DateFrom    *time.Time // Only include results from this date onwards (inclusive)
 	DateTo      *time.Time // Only include results before this date (exclusive upper bound; typically start of next day)
 	ExcludePath string     // Exclude results whose path equals this value (used to filter out the current session's conversation entries)
+	// Limit overrides how many results Search returns (0 = the backend's
+	// configured limit, ReturnLimit). The shared search (internal/memsearch)
+	// over-fetches with it when it filters hits after the search, so the
+	// filtered list still fills the normal limit (#3185).
+	Limit int
 }
 
 // Searcher is the interface that memory search backends implement.
@@ -22,6 +27,12 @@ type Searcher interface {
 	// sort controls result ordering: "relevance" (default), "newest", or "oldest".
 	// opts provides optional filtering parameters (may be nil).
 	Search(query, sort string, opts *SearchOptions) ([]Result, error)
+}
+
+// ReturnLimiter is a Searcher that reports how many results Search returns
+// when SearchOptions.Limit is not set. Both backends implement it.
+type ReturnLimiter interface {
+	ReturnLimit() int
 }
 
 // isRelevanceSort reports whether sort selects relevance order ("" or

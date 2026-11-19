@@ -12,6 +12,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/jitmemory"
 	"foci/internal/memory"
+	"foci/internal/memsearch"
 	"foci/internal/sqlite"
 	"foci/internal/turnevent"
 )
@@ -92,13 +93,15 @@ func newJITHarness(t *testing.T, steers bool, wait time.Duration) *jitHarness {
 	h.a.JIT = jitmemory.New(jitmemory.Deps{
 		AgentID: "test",
 		Store:   func() *jitmemory.Store { return store },
-		Search: func(string) ([]memory.Result, error) {
-			h.mu.Lock()
-			h.runs++
-			h.mu.Unlock()
-			return []memory.Result{{Path: "n.md", Source: "s", Snippet: ">Plex2Shell< notes"}}, nil
-		},
-		SourceDirs: func() map[string]string { return map[string]string{"s": dir} },
+		Search: (&memsearch.Searcher{
+			Backends: map[string]memory.Searcher{"x": jitTestBackend(func() []memory.Result {
+				h.mu.Lock()
+				h.runs++
+				h.mu.Unlock()
+				return []memory.Result{{Path: "n.md", Source: "s", Snippet: ">Plex2Shell< notes"}}
+			})},
+			SourceDirs: func() map[string]string { return map[string]string{"s": dir} },
+		}).Search,
 		Model: func(ctx context.Context, what, model, system, user string, _ int) (string, jitmemory.CallReport, error) {
 			select {
 			case <-h.release:
@@ -307,4 +310,11 @@ func TestJIT_AgentMessage_DelegatedSinkPath(t *testing.T) {
 	if !waitFor(5*time.Second, func() bool { return len(h.deliveries()) == 1 }) {
 		t.Fatalf("a delegated agent message did not run: deliveries=%v runs=%v", h.deliveries(), h.rows(t))
 	}
+}
+
+// jitTestBackend is a memory search backend answering every query from a func.
+type jitTestBackend func() []memory.Result
+
+func (f jitTestBackend) Search(string, string, *memory.SearchOptions) ([]memory.Result, error) {
+	return f(), nil
 }

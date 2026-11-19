@@ -9,7 +9,7 @@ import (
 	"foci/internal/app"
 	"foci/internal/config"
 	"foci/internal/jitmemory"
-	"foci/internal/memory"
+	"foci/internal/memsearch"
 	"foci/internal/workspace"
 )
 
@@ -50,18 +50,19 @@ func jitSourceDirs(cfg *config.Config, acfg config.AgentConfig) map[string]strin
 	return dirs
 }
 
-// jitSearch runs one query on the agent's default memory backend (the one
-// memory_search uses), else any it has.
-func jitSearch(backends map[string]memory.Searcher, rc func() *config.ResolvedAgentConfig) func(string) ([]memory.Result, error) {
-	return func(q string) ([]memory.Result, error) {
-		s, ok := backends[rc().MemorySearch.SearchBackend]
-		if !ok {
-			for _, b := range backends {
-				s = b
-				break
-			}
-		}
-		return s.Search(q, "relevance", nil)
+// newMemSearcher is the agent's shared memory search (#3185): the one
+// memory_search and JIT memory both call, with the own-material rules. Its
+// window is [jit_memory] dedupe_compactions, read live.
+func newMemSearcher(p setupParams) *memsearch.Searcher {
+	rc := p.resolvedLive
+	dirs := jitSourceDirs(p.cfg, p.acfg)
+	return &memsearch.Searcher{
+		Backends:       p.memBackends,
+		DefaultBackend: func() string { return rc.Load().MemorySearch.SearchBackend },
+		Conv:           p.convReader,
+		Own:            p.ownIndex,
+		SourceDirs:     func() map[string]string { return dirs },
+		Window:         func() int { return rc.Load().JITMemory.DedupeCompactions },
 	}
 }
 
@@ -78,7 +79,7 @@ func jitFastModel(agentID string) jitmemory.ModelFunc {
 }
 
 // wireJITMemory gives ag its JIT memory engine and the delivery of its
-// results (#3175). Wired for every agent with a memory index; the feature
+// results (#3175), and the own-material index its tool events feed (#3185). Wired for every agent with a memory index; the feature
 // itself is gated per message by [jit_memory] enabled, so turning it on is a
 // live config edit.
 func wireJITMemory(ag *agent.Agent, p setupParams) {
@@ -86,12 +87,10 @@ func wireJITMemory(ag *agent.Agent, p setupParams) {
 		return
 	}
 	acfg, cfg := p.acfg, p.cfg
-	rc := p.resolvedLive.Load
-	dirs := jitSourceDirs(cfg, acfg)
+	ag.OwnMemory = p.ownIndex
 	ag.JIT = jitmemory.New(jitmemory.Deps{
-		AgentID:    acfg.ID,
-		Search:     jitSearch(p.memBackends, rc),
-		SourceDirs: func() map[string]string { return dirs },
+		AgentID: acfg.ID,
+		Search:  newMemSearcher(p).Search,
 		SystemPromptFiles: func() []string {
 			if ag.Bootstrap != nil {
 				return ag.Bootstrap.FilePaths()
