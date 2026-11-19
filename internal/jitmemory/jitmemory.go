@@ -304,6 +304,10 @@ func (e *Engine) Run(ctx context.Context, req Request) Outcome {
 			if strategy == QueryModel {
 				return finish(Outcome{Err: fmt.Errorf("query model: %w", err)})
 			}
+		} else if SaysNone(answer) {
+			// The query writer judged that the message needs no notes: no
+			// search at all, the raw query included.
+			return finish(Outcome{Skipped: "query model: none"})
 		} else {
 			queries = append(queries, ParseQueries(answer)...)
 		}
@@ -480,30 +484,41 @@ func isExcluded(abs string, excluded map[string]bool) bool {
 	return false
 }
 
-// querySystemPrompt asks for keyword queries only. The model's answer is
+// querySystemPrompt asks for keyword queries only, or NONE when the message
+// needs no notes (Dick 2026-11-19: the query writer may say "don't search").
+// Earlier messages are background, not the topic (Dick 2026-11-19: "earlier
+// messages are context, not (necessarily) the current topic"). The answer is
 // still filtered (ParseQueries): Llama 3.1 8B adds a preamble line.
 const querySystemPrompt = "You write search queries for an AI assistant's memory notes. " +
-	"Given a chat message (and maybe the messages before it), write 1 to 3 short keyword search queries, 2 to 5 words each, " +
-	"that would find notes relevant to it: names of systems, tickets, tools, people, places. " +
-	"Reply with the queries only, one per line. No numbering, no quotes, no preamble, no explanation."
+	"You get the CURRENT chat message and maybe some earlier messages. " +
+	"The earlier messages are background only: use them just to understand what the current message refers to (for example 'it', 'that', 'the new layout'). " +
+	"They are often about a different topic. Never write a query about an earlier topic unless the current message is about it. " +
+	"Write 1 to 3 short keyword search queries, 2 to 5 words each, for the subject of the CURRENT message: names of systems, tickets, tools, people, places. " +
+	"If the current message needs no notes from memory (an acknowledgement, a yes/no answer, small talk, or a request fully clear without any history), reply with the single word " + noneAnswer + ". " +
+	"Otherwise reply with the queries only, one per line. No numbering, no quotes, no preamble, no explanation."
+
+// noneAnswer is the query model's "don't search" reply.
+const noneAnswer = "NONE"
 
 // judgeSystemPrompt asks for the numbers of the useful notes.
 const judgeSystemPrompt = "You decide which memory notes would be useful extra context for an AI assistant handling a chat message. " +
 	"A note is useful only if it is specifically about the subject of the message and would help the assistant answer or act. " +
-	"A note that merely shares common words is not useful. Most messages need no notes. " +
+	"A note that merely shares common words is not useful. " +
+	"Judge against the CURRENT message only: earlier messages are background, and a note about an earlier topic the current message is not about is not useful. " +
+	"Most messages need no notes. " +
 	"Reply with the numbers of the useful notes, comma-separated (for example: 2, 5), or the word none. Nothing else."
 
 // messageBlock renders the message and its context for the models.
 func messageBlock(role Role, text string, ctxMsgs []Msg) string {
 	var b strings.Builder
 	if len(ctxMsgs) > 0 {
-		b.WriteString("Earlier messages, oldest first:\n")
+		b.WriteString("Earlier messages, oldest first (background only; they may be about a different topic):\n")
 		for _, m := range ctxMsgs {
 			fmt.Fprintf(&b, "[%s] %s\n", roleName(m.Role), headRunes(m.Text, 600))
 		}
 		b.WriteString("\n")
 	}
-	fmt.Fprintf(&b, "The message (from the %s):\n%s\n", roleName(role), headRunes(text, 3000))
+	fmt.Fprintf(&b, "CURRENT message (from the %s):\n%s\n", roleName(role), headRunes(text, 3000))
 	return b.String()
 }
 
@@ -527,6 +542,13 @@ func judgePrompt(msg string, cands []*Hit) string {
 
 // listMarker matches a leading list marker: "1.", "2)", "-", "*", "•".
 var listMarker = regexp.MustCompile(`^\s*(?:\d+[.)]|[-*•])\s*`)
+
+// SaysNone reports whether the query model answered "don't search": its
+// answer, trimmed of punctuation and quotes, is the single word NONE.
+func SaysNone(answer string) bool {
+	a := strings.Trim(strings.TrimSpace(answer), "\"'`.!“”‘’ ")
+	return strings.EqualFold(a, noneAnswer)
+}
 
 // ParseQueries reads the query model's answer: one query per line, list
 // markers and quotes removed, and every line that is not a query dropped (a

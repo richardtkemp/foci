@@ -366,3 +366,46 @@ func TestFormatInjection_Cap(t *testing.T) {
 		t.Fatalf("first section not cut to the cap: %d runes", n)
 	}
 }
+
+func TestSaysNone(t *testing.T) {
+	for _, a := range []string{"NONE", "none", " None.\n", "\"NONE\""} {
+		if !SaysNone(a) {
+			t.Errorf("SaysNone(%q) = false", a)
+		}
+	}
+	for _, a := range []string{"none of the above\nfoo", "android client install", "NONE\nandroid client", ""} {
+		if SaysNone(a) {
+			t.Errorf("SaysNone(%q) = true", a)
+		}
+	}
+}
+
+// The query writer may say "don't search" (Dick 2026-11-19): a NONE answer
+// skips the whole run, the raw-message search and the judge included.
+func TestRun_QueryModelNoneSkipsSearchAndJudge(t *testing.T) {
+	f := newFixture(t)
+	f.model.queries = "NONE"
+	f.results["*"] = []memory.Result{annaHit()}
+	o := f.engine.Run(context.Background(), Request{SessionKey: "clutch/c1", Role: RoleUser,
+		Text: "Thanks, that looks good to me", Settings: settings()})
+	if o.Skipped != "query model: none" || o.Injection != "" {
+		t.Fatalf("outcome = %+v", o)
+	}
+	if len(f.queries) != 0 || len(f.model.judged) != 0 {
+		t.Fatalf("searched %q, judged %d times; want neither", f.queries, len(f.model.judged))
+	}
+}
+
+// Earlier messages are labelled as background, and the current message as
+// CURRENT, so the models do not take an earlier topic for the subject.
+func TestMessageBlock_LabelsContextAsBackground(t *testing.T) {
+	b := messageBlock(RoleUser, "install the latest client", []Msg{{Role: RoleAgent, Text: "the obsidian vault skill"}})
+	if !strings.Contains(b, "background only") || !strings.Contains(b, "CURRENT message (from the user):\ninstall the latest client") {
+		t.Fatalf("block:\n%s", b)
+	}
+	for _, p := range []string{querySystemPrompt, judgeSystemPrompt} {
+		if !strings.Contains(p, "CURRENT") {
+			t.Errorf("prompt does not name the CURRENT message: %q", p)
+		}
+	}
+}
