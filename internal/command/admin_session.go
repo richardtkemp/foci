@@ -125,6 +125,10 @@ func stopTurn(ctx context.Context, cc CommandContext, cancelQuestion bool) (Resp
 		// Claude Code's interrupt takes its subagents: the app shows spawns
 		// as subagents and labels this "Stop turn and subagents" (#2139).
 		tools.Spawns.Stop(sk)
+		// A compaction waiting now is reported as stopped, whatever its
+		// backend reads in the gap before CancelSession ends the wait
+		// (#3172).
+		cc.Agent.MarkCompactionStopping(sk)
 		if err := cc.Agent.DelegatedManager.StopSession(ctx, sk); err != nil {
 			return Response{}, fmt.Errorf("stop delegated: %w", err)
 		}
@@ -382,6 +386,13 @@ func CompactCommand() *Command {
 				return Response{}, nil
 			}
 			return Response{Text: "Nothing to compact — session too short."}, nil
+		}
+		if errors.Is(err, delegator.ErrCompactionStopped) {
+			// /stop ended it (#3172): told by the ⏹️ notice where it shows.
+			if noticeTold {
+				return Response{}, nil
+			}
+			return Response{Text: "Compaction stopped."}, nil
 		}
 		if err != nil {
 			if noticeTold {

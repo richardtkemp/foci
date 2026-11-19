@@ -156,9 +156,16 @@ type Backend struct {
 	itemMu    sync.Mutex
 	itemCache map[string]itemEnvelope
 
-	// Compaction
+	// Compaction. compactDoneCh is the armed wait's one-shot outcome
+	// (buffered 1, first outcome wins): nil when the contextCompaction item
+	// completes, an error when the compaction turn ends without it (#3172).
+	// compactSent is set once thread/compact/start goes out for the armed
+	// wait; compactTurnID is the codex turn running that compaction, so a
+	// turn/completed for any other turn cannot release the wait.
 	compactMu     sync.Mutex
-	compactDoneCh chan struct{}
+	compactDoneCh chan error
+	compactSent   bool
+	compactTurnID string
 
 	// Pending control overrides (set by ControlSender, applied on next turn/start)
 	pendingModel string

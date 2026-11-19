@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -433,6 +434,8 @@ func (b *Backend) onReaderStopped(err error) {
 			f.completeTurn(&delegator.TurnResult{Text: text,
 				Interrupted: delegator.TurnInterrupted(cause)})
 		}
+		// No contextCompaction item can arrive now (#3172).
+		f.failCompactionWait(errors.New("codex connection ended during compaction"))
 	}
 
 	// No thread can be registered any more: report the unclaimed ones now.

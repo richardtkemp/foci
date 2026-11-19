@@ -292,6 +292,12 @@ type Agent struct {
 	// compaction brackets in compaction.go; read via IsCompacting (#725).
 	compacting sync.Map
 
+	// compactRuns maps session key → *compactionRun for the delegated
+	// compaction waiting now, so /stop can end that wait (#3172). Set and
+	// removed by runDelegatedCompact; read by MarkCompactionStopping and
+	// CancelSession.
+	compactRuns sync.Map
+
 	// Inbox subsystem (Phase 6 — TODO #739): per-session message queue
 	// + worker. Bot calls Enqueue(envelope) after filtering; agent owns
 	// queueing, batching, steer dispatch, and turn execution via the

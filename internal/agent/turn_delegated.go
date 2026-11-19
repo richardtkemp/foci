@@ -1175,6 +1175,12 @@ func (t *DelegatedTransport) RunCompaction(ts *TurnState) {
 			a.logger().Debugf("session=%s auto-compaction declined by backend (no boundary)", ts.SessionKey)
 			return
 		}
+		if errors.Is(err, delegator.ErrCompactionStopped) {
+			// /stop ended it: not a failure (#3172). The threshold check
+			// runs again after the next turn, as today.
+			a.logger().Infof("session=%s auto-compaction stopped: %v", ts.SessionKey, err)
+			return
+		}
 		a.logger().Warnf("session=%s delegated compaction failed: %v", ts.SessionKey, err)
 		return
 	}

@@ -244,6 +244,13 @@ type VoiceModer interface {
 // "compacted" notification. See ccstream idle handling + #1267.
 var ErrCompactionNoBoundary = errors.New("delegator: compaction produced no boundary (backend declined to compact)")
 
+// ErrCompactionStopped is returned by WaitForCompaction (and by the agent's
+// compaction primitive) when the compaction was stopped before it finished:
+// the backend reports its compaction turn interrupted, or the user's /stop
+// ended foci's wait (#3172). It is not a failure and not a timeout; callers
+// release held input at once and say "stopped", never "did not finish".
+var ErrCompactionStopped = errors.New("delegator: compaction stopped before it finished")
+
 // CompactionWaiter is optionally implemented by backends that can signal
 // when CC-initiated compaction has completed. ArmCompactionWait must be
 // called before the /compact command is sent so that the compact_boundary

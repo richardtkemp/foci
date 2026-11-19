@@ -2514,11 +2514,16 @@ func (a *Agent) SetOnAliasChanged(fn func(agentID, platform string, chatID int64
 // Replaces the old per-bot cancelTurn() which was a single field for all
 // sessions on a shared bot — TODO #743's per-session /stop precision.
 func (a *Agent) CancelSession(sk string) bool {
+	// A compaction wait is not a turn: the auto path runs it in the
+	// post-turn phase under context.Background, so no turn cancel reaches
+	// it. End it here too, or the session holds its input until the
+	// compaction timeout (#3172).
+	stoppedCompaction := a.stopCompaction(sk)
 	a.inboxesMu.Lock()
 	inb, ok := a.inboxes[sk]
 	a.inboxesMu.Unlock()
 	if !ok {
-		return false
+		return stoppedCompaction
 	}
 	inb.cancelMu.Lock()
 	waitCancel := inb.waitCancel
@@ -2542,7 +2547,7 @@ func (a *Agent) CancelSession(sk string) bool {
 		injCancel := inb.injectCancel
 		inb.cancelMu.Unlock()
 		if injCancel == nil {
-			return false
+			return stoppedCompaction
 		}
 		a.logger().Infof("CancelSession sk=%s firing injected-turn cancel", sk)
 		injCancel()

@@ -59,6 +59,7 @@ func (b *Backend) onTurnStarted(turnID string) {
 		b.turnID = turnID
 		b.turnMu.Unlock()
 	}
+	b.noteCompactionTurn(turnID, false)
 	b.itemMu.Lock()
 	if b.itemCache != nil {
 		b.itemCache = make(map[string]itemEnvelope)
@@ -103,6 +104,10 @@ func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
 		b.lastTurnError = ""
 	}
 	b.mu.Unlock()
+
+	// The compaction's own turn ending releases a wait the
+	// contextCompaction item never did: a /stop interrupts it (#3172).
+	b.onCompactionTurnEnded(params.Turn.ID, params.Turn.Status, failMsg)
 
 	errText := ""
 	if failMsg != "" {
@@ -185,6 +190,7 @@ func (b *Backend) onItemStarted(params *itemStartedParams) {
 			se.OnToolStart(item.ID, "image_gen", "")
 		}
 	case "contextCompaction":
+		b.noteCompactionTurn(params.TurnID, true)
 		if se != nil && se.OnToolStart != nil {
 			se.OnToolStart(item.ID, delegator.CompactionToolName, "")
 		}
@@ -335,10 +341,7 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 		// the ledger no longer reports the pre-compaction fill as current.
 		b.bookCompaction(time.Now().UTC())
 		b.compactMu.Lock()
-		if b.compactDoneCh != nil {
-			close(b.compactDoneCh)
-			b.compactDoneCh = nil
-		}
+		b.resolveCompactionLocked(nil)
 		b.compactMu.Unlock()
 		if se != nil && se.OnToolEnd != nil {
 			se.OnToolEnd(item.ID, delegator.CompactionToolName, "", false)

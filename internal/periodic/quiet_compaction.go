@@ -305,6 +305,8 @@ func (r *Runner) runQuietCompact(ctx context.Context, t quietTarget, now time.Ti
 	switch {
 	case errors.Is(err, delegator.ErrCompactionNoBoundary):
 		r.log.Debugf("quiet compaction: %s declined by the backend (no boundary) — not retried this window", t.sessionKey)
+	case errors.Is(err, delegator.ErrCompactionStopped):
+		r.log.Infof("quiet compaction: %s stopped by /stop — not retried this window", t.sessionKey)
 	case err != nil:
 		r.log.Warnf("quiet compaction: %s failed: %v", t.sessionKey, err)
 	default:

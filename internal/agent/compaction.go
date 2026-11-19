@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"foci/internal/config"
@@ -149,6 +150,11 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 
 	cctx, cancel := context.WithTimeout(ctx, delegatedCompactTimeout)
 	defer cancel()
+	// /stop ends this wait through CancelSession, whatever ctx the caller
+	// passed: the auto path passes context.Background, which nothing else
+	// can cancel (#3172).
+	cctx, run := a.registerCompactionRun(cctx, sessionKey)
+	defer a.unregisterCompactionRun(sessionKey, run)
 
 	// Arm waiters before sending so stream events are never missed.
 	if cw, ok := delegator.As[delegator.CompactionWaiter](be); ok {
@@ -162,6 +168,12 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 		Source: delegator.SourceCompact,
 		Text:   fmt.Sprintf("/compact %s", summaryPrompt),
 	}); err != nil {
+		// opencode compacts inside this call (a synchronous /summarize), so
+		// a /stop lands here. No ⏳ is out yet: nothing to resolve.
+		if run.stopped(cctx) {
+			a.logger().Infof("session=%s delegated compaction stopped before it started: %v", sessionKey, err)
+			return fmt.Errorf("send /compact: %w", delegator.ErrCompactionStopped)
+		}
 		return fmt.Errorf("send /compact: %w", err)
 	}
 
@@ -181,6 +193,16 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 		waitErr = cw.WaitForCompaction(cctx)
 	} else {
 		waitErr = be.WaitForTurn(cctx)
+	}
+	if waitErr != nil && (errors.Is(waitErr, delegator.ErrCompactionStopped) || run.stopped(cctx)) {
+		// Stopped, by the backend's report or by /stop ending the wait: not
+		// a timeout and not a failure (#3172). Checked before the decline:
+		// an interrupted compaction can read as one (CC goes idle without a
+		// boundary). The threshold check runs again after the next turn, as
+		// for any compaction that did not run.
+		a.logger().Infof("session=%s delegated compaction stopped: %v", sessionKey, waitErr)
+		a.resolveCompactionNotice(sessionKey, compactionStoppedNotice(waitErr))
+		return &CompactionNoticeShownError{Err: fmt.Errorf("wait for compaction: %w", delegator.ErrCompactionStopped)}
 	}
 	if errors.Is(waitErr, delegator.ErrCompactionNoBoundary) {
 		// The backend declined to compact (e.g. too few messages). Benign
@@ -286,6 +308,77 @@ func compactionWaitFailedNotice(err error) string {
 	default:
 		return fmt.Sprintf("❌ Compaction failed: %v", err)
 	}
+}
+
+// compactionStoppedNotice is the ⏹️ text for a stopped compaction. When the
+// backend itself reported the compaction turn interrupted, the context is
+// known to be unchanged; when only foci's wait ended, the backend may still
+// finish, so the text claims no more than that.
+func compactionStoppedNotice(err error) string {
+	if errors.Is(err, delegator.ErrCompactionStopped) {
+		return "⏹️ Compaction stopped. The context was not compacted."
+	}
+	return "⏹️ Compaction stopped; foci stopped waiting. The backend may still complete it."
+}
+
+// errCompactionStopRequested is the cancel cause /stop gives a compaction
+// wait (CancelSession → stopCompaction).
+var errCompactionStopRequested = errors.New("compaction stopped by /stop")
+
+// compactionRun is one delegated compaction's wait, registered so /stop can
+// end it (#3172).
+type compactionRun struct {
+	cancel context.CancelCauseFunc
+	// stopping is set by MarkCompactionStopping before /stop interrupts the
+	// backend. A backend can settle the wait in the gap before CancelSession
+	// cancels it (CC goes idle without a boundary), and that outcome is a
+	// stop, not a decline.
+	stopping atomic.Bool
+}
+
+// stopped reports whether /stop asked to end this compaction.
+func (r *compactionRun) stopped(ctx context.Context) bool {
+	return r.stopping.Load() || errors.Is(context.Cause(ctx), errCompactionStopRequested)
+}
+
+func (a *Agent) registerCompactionRun(ctx context.Context, sessionKey string) (context.Context, *compactionRun) {
+	cctx, cancel := context.WithCancelCause(ctx)
+	run := &compactionRun{cancel: cancel}
+	a.compactRuns.Store(sessionKey, run)
+	return cctx, run
+}
+
+func (a *Agent) unregisterCompactionRun(sessionKey string, run *compactionRun) {
+	a.compactRuns.CompareAndDelete(sessionKey, run)
+	run.cancel(nil)
+}
+
+// MarkCompactionStopping records that /stop is about to interrupt sk's
+// backend, so whatever the in-flight compaction wait then reads is reported
+// as a stop. It does not end the wait: CancelSession does, after the
+// backend has been told to stop. Reports whether a compaction was waiting.
+func (a *Agent) MarkCompactionStopping(sk string) bool {
+	v, ok := a.compactRuns.Load(sk)
+	if !ok {
+		return false
+	}
+	v.(*compactionRun).stopping.Store(true)
+	return true
+}
+
+// stopCompaction ends sk's in-flight compaction wait, if any, so the
+// session's held input is released at once (#3172). Reports whether one was
+// waiting.
+func (a *Agent) stopCompaction(sk string) bool {
+	v, ok := a.compactRuns.Load(sk)
+	if !ok {
+		return false
+	}
+	run := v.(*compactionRun)
+	run.stopping.Store(true)
+	run.cancel(errCompactionStopRequested)
+	a.logger().Infof("session=%s /stop ended the compaction wait", sk)
+	return true
 }
 
 // compactionResumePrompt is the self-injected nudge sent after a compaction

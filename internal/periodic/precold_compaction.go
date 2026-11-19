@@ -244,6 +244,8 @@ func (r *Runner) runPrecoldCompact(ctx context.Context, t precoldTarget) {
 	switch {
 	case errors.Is(err, delegator.ErrCompactionNoBoundary):
 		r.log.Debugf("pre-cold compaction: %s declined by the backend (no boundary) — not retried this idle period", t.sessionKey)
+	case errors.Is(err, delegator.ErrCompactionStopped):
+		r.log.Infof("pre-cold compaction: %s stopped by /stop — not retried this idle period", t.sessionKey)
 	case err != nil:
 		r.log.Warnf("pre-cold compaction: %s failed: %v", t.sessionKey, err)
 	default:

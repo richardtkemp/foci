@@ -128,6 +128,9 @@ func (a *Agent) runRequestedCompaction(ts *TurnState) bool {
 	case errors.Is(err, delegator.ErrCompactionNoBoundary):
 		a.logger().Infof("session=%s agent-requested compaction declined by backend (no boundary)", ts.SessionKey)
 		status = "Compaction did not run: the backend found nothing to compact. Your context is unchanged."
+	case errors.Is(err, delegator.ErrCompactionStopped):
+		a.logger().Infof("session=%s agent-requested compaction stopped: %v", ts.SessionKey, err)
+		status = "Compaction stopped by /stop before it finished. Your context may be unchanged."
 	case err != nil:
 		a.logger().Warnf("session=%s agent-requested compaction failed: %v", ts.SessionKey, err)
 		status = fmt.Sprintf("Compaction failed: %v. Your context may be unchanged.", err)

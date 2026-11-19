@@ -732,11 +732,18 @@ func (b *Backend) prepareConfiguredModel(ctx context.Context, resumed bool) erro
 func (b *Backend) ArmCompactionWait() {
 	b.compactMu.Lock()
 	defer b.compactMu.Unlock()
-	b.compactDoneCh = make(chan struct{})
+	b.compactDoneCh = make(chan error, 1)
+	b.compactSent = false
+	b.compactTurnID = ""
 }
 
-// WaitForCompaction blocks until the contextCompaction item lifecycle
-// completes (item/completed with type "contextCompaction"), or ctx expires.
+// WaitForCompaction blocks until the armed compaction settles or ctx
+// expires. It returns nil when the contextCompaction item completes,
+// delegator.ErrCompactionStopped when codex reports the compaction turn
+// interrupted (a /stop), and another error when that turn fails, ends
+// without compacting, or the connection drops (#3172). Before #3172 only the
+// item released it, so an interrupted compaction held the session's input
+// for the whole delegatedCompactTimeout.
 func (b *Backend) WaitForCompaction(ctx context.Context) error {
 	b.compactMu.Lock()
 	ch := b.compactDoneCh
@@ -745,11 +752,80 @@ func (b *Backend) WaitForCompaction(ctx context.Context) error {
 		return nil // not armed
 	}
 	select {
-	case <-ch:
-		return nil
+	case err := <-ch:
+		b.compactMu.Lock()
+		if b.compactDoneCh == ch {
+			b.compactDoneCh = nil
+			b.compactSent = false
+			b.compactTurnID = ""
+		}
+		b.compactMu.Unlock()
+		return err
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// resolveCompactionLocked records the armed wait's outcome. The first
+// outcome wins: a contextCompaction item that completed before its turn's
+// turn/completed keeps its nil. Caller holds compactMu.
+func (b *Backend) resolveCompactionLocked(err error) {
+	if b.compactDoneCh == nil {
+		return
+	}
+	select {
+	case b.compactDoneCh <- err:
+	default:
+	}
+}
+
+// noteCompactionTurn records turnID as the armed compaction's turn: the
+// first turn to start after thread/compact/start went out. An explicit
+// contextCompaction item/started (override=true) names it authoritatively.
+func (b *Backend) noteCompactionTurn(turnID string, override bool) {
+	if turnID == "" {
+		return
+	}
+	b.compactMu.Lock()
+	defer b.compactMu.Unlock()
+	if b.compactDoneCh == nil || !b.compactSent {
+		return
+	}
+	if b.compactTurnID == "" || override {
+		b.compactTurnID = turnID
+	}
+}
+
+// onCompactionTurnEnded releases the armed wait when the compaction's own
+// turn ends. A contextCompaction item that completed first has already
+// resolved it with success, so this changes nothing then. Otherwise the turn
+// ended without compacting: interrupted means stopped (codex's turn_aborted
+// on a /stop), failed carries codex's error, and a completed turn with no
+// compaction item is reported as such rather than waited on.
+func (b *Backend) onCompactionTurnEnded(turnID, status, failMsg string) {
+	b.compactMu.Lock()
+	defer b.compactMu.Unlock()
+	if b.compactDoneCh == nil || b.compactTurnID == "" || turnID != b.compactTurnID {
+		return
+	}
+	var err error
+	switch status {
+	case "interrupted":
+		err = delegator.ErrCompactionStopped
+	case "failed":
+		err = fmt.Errorf("codex compaction turn failed: %s", failMsg)
+	default:
+		err = fmt.Errorf("codex compaction turn ended (%s) without a contextCompaction item", status)
+	}
+	b.resolveCompactionLocked(err)
+}
+
+// failCompactionWait releases an armed wait that can no longer complete
+// (the app-server connection ended).
+func (b *Backend) failCompactionWait(err error) {
+	b.compactMu.Lock()
+	defer b.compactMu.Unlock()
+	b.resolveCompactionLocked(err)
 }
 
 // triggerCompaction sends thread/compact/start to the app-server. The
@@ -766,6 +842,15 @@ func (b *Backend) triggerCompaction() error {
 	// that global-config write leaked foci's prompt into the user's own codex
 	// CLI and raced concurrent agents (#1327 sub-issue 2). thread/compact/start
 	// consumes the process-local override.
+	//
+	// compactSent is set before the request: codex can send the compaction
+	// turn's turn/started before this request's reply arrives.
+	b.compactMu.Lock()
+	if b.compactDoneCh != nil {
+		b.compactSent = true
+		b.compactTurnID = ""
+	}
+	b.compactMu.Unlock()
 	_, err := b.sendAndWait("thread/compact/start", compactStartParams{ThreadID: threadID})
 	return err
 }
