@@ -506,7 +506,7 @@ main
  ├── slack         → agent, chatmeta, config, log, netretry, platform, session, turn, turnevent, usercmd
  │                  (Slack Socket Mode provider — see Slack Bot section; registers via init() like telegram/discord; blank-imported in main.go)
  ├── app           → agent, chatmeta, clock, turnevent, command, config, delegator, delegator/accounting, dispatch, epdispatch, fap, fastload, log, memory, mermaid, modelinfo, platform, provider, question, ratelimit, secrets, session, skills, sqlite, telemetry, tempdir, toolformat, tools, turn, voice, usercmd (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
- ├── netretry      → log (startup-connect retry shared by telegram + discord + slack: Backoff schedule, Do loop, PermanentMarkers auth/transient split)
+ ├── netretry      → clock, log (startup-connect retry shared by telegram + discord + slack: Backoff schedule, Do loop, PermanentMarkers auth/transient split; a retried attempt logs INFO, one WARN only on give-up or after Policy.WarnAfter, #3189)
  ├── askgw         → clock, log, peercred, question (opt-in ask-gateway for external Apps — see Ask Gateway section)
  ├── telemetry     → turnevent, delegator/accounting, log, modelinfo, provider, session, go.opentelemetry.io/otel (+ sdk, otlptracehttp) — OpenTelemetry export of every turn to an OTLP/HTTP collector (Langfuse) plus scores/score configs over its REST API; wired from cmd/foci-gw (init), agent (turn spans), tools + cmd/foci-gw (cross-agent links). See "Tracing".
  └── evals         → log, fsnotify, yaml.v3 — rubric registry (scoring axes as files, watched); consumed by cmd/foci-gw (/score validation, score-config mirroring). See "Tracing" → "Scores and rubrics".
@@ -2540,9 +2540,12 @@ observation, name, source, user): scores are upsertable, so a re-grade overwrite
 The axes are **rubrics** — `<name>.md` files with YAML front matter in `[evals]
 rubrics_dir` (default `<home>/shared/evals`), loaded by `evals.Load`, followed by
 fsnotify (`Registry.Watch`, 500 ms debounce) and mirrored to Langfuse score configs
-on every load that adds/changes one (`cmd/foci-gw/evals_init.go mirrorScoreConfigs`
-→ `telemetry.EnsureScoreConfig`, which creates but never modifies — drift is a
-logged warning). Three kinds: `human` (graded by a person), `derive` (from trace
+on every load that adds/changes one (`cmd/foci-gw/evals_mirror.go
+scoreConfigMirror.Enqueue` → `telemetry.EnsureScoreConfig`, which creates but never
+modifies — drift is a logged warning). A rubric whose mirror fails (Langfuse not up
+at boot) stays pending and is retried every minute until it mirrors, then gets its
+`ConfigID`; failures are INFO, one WARN after 5 minutes still failing. One mirror per
+process: a reload enqueues into its loop, never starts a second (#3189). Three kinds: `human` (graded by a person), `derive` (from trace
 metadata), `judge` (an LLM against the body prompt); only `human` is *acted on* in
 phase 1–2 — the other two are validated at load so a runner never meets a bad file.
 Entry points: `POST /score` (`cmd/foci-gw/http_score.go scoreTurn` — resolves the

@@ -8,6 +8,13 @@
 // 27.5h of silence) and #1954 (Discord, the same boot window on the same host).
 // Every platform's startup connect goes through Do so the next one inherits
 // the fix instead of rediscovering the bug.
+//
+// Logging (#3189, Dick's ruling 2026-11-19): a failed attempt that will be
+// retried logs at INFO, because a boot-time DNS gap fails every bot's first
+// few attempts and those WARNs reported nothing an operator should act on. A
+// WARN appears only when retrying has not worked: once when the last attempt
+// of a bounded schedule fails, or once when an unbounded schedule is still
+// failing Policy.WarnAfter after its first attempt.
 package netretry
 
 import (
@@ -16,8 +23,15 @@ import (
 	"strings"
 	"time"
 
+	"foci/internal/clock"
 	"foci/internal/log"
 )
+
+// DefaultWarnAfter is how long an unbounded retry may keep failing before Do
+// logs its one WARN. Long enough to cover the boot-time DNS gap (seconds, the
+// first three or four attempts of StartupBackoff), short enough that a real
+// outage is visible within minutes.
+const DefaultWarnAfter = 2 * time.Minute
 
 // Backoff describes a retry schedule.
 //
@@ -84,8 +98,16 @@ type Policy struct {
 	// Redact scrubs secrets from error text before it is logged or returned.
 	// nil leaves the text unchanged.
 	Redact func(string) string
-	// Log receives the per-attempt warnings and the recovery line. May be nil.
+	// Log receives the per-attempt lines (INFO), the one WARN and the
+	// recovery line. May be nil.
 	Log *log.ComponentLogger
+	// WarnAfter is how long an unbounded schedule (MaxAttempts == 0) may keep
+	// failing before the one WARN. 0 means DefaultWarnAfter. Ignored for a
+	// bounded schedule, which WARNs when its last attempt fails.
+	WarnAfter time.Duration
+	// Clock reads the time for WarnAfter. nil means clock.Real(); tests pass
+	// a *clock.Fake.
+	Clock clock.Clock
 }
 
 // Do calls fn until it succeeds, returns a permanent error, exhausts
@@ -100,6 +122,16 @@ func Do(ctx context.Context, p Policy, fn func() error) error {
 	if redact == nil {
 		redact = func(s string) string { return s }
 	}
+	clk := p.Clock
+	if clk == nil {
+		clk = clock.Real()
+	}
+	warnAfter := p.WarnAfter
+	if warnAfter <= 0 {
+		warnAfter = DefaultWarnAfter
+	}
+	start := clk.Now()
+	warned := false
 	var lastErr error
 	for attempt := 1; ; attempt++ {
 		if delay := p.Backoff.NextDelay(attempt); delay > 0 {
@@ -126,12 +158,24 @@ func Do(ctx context.Context, p Policy, fn func() error) error {
 			return fmt.Errorf("%s: %s", p.Name, redact(err.Error()))
 		}
 
-		if p.Log != nil {
-			p.Log.Warnf("attempt %d failed (transient, will retry): %s", attempt, redact(err.Error()))
+		if p.Backoff.MaxAttempts > 0 && attempt >= p.Backoff.MaxAttempts {
+			if p.Log != nil {
+				p.Log.Warnf("attempt %d failed, all %d attempts failed (giving up): %s", attempt, p.Backoff.MaxAttempts, redact(err.Error()))
+			}
+			break
 		}
 
-		if p.Backoff.MaxAttempts > 0 && attempt >= p.Backoff.MaxAttempts {
-			break
+		if p.Log != nil {
+			// The INFO line keeps its text: the L2 platform-connect test
+			// and operators grep for "(transient, will retry)".
+			p.Log.Infof("attempt %d failed (transient, will retry): %s", attempt, redact(err.Error()))
+			if !warned && p.Backoff.MaxAttempts == 0 {
+				if elapsed := clk.Now().Sub(start); elapsed >= warnAfter {
+					warned = true
+					p.Log.Warnf("still failing after %s (%d attempts, will keep retrying): %s",
+						elapsed.Round(time.Second), attempt, redact(err.Error()))
+				}
+			}
 		}
 	}
 	return fmt.Errorf("%s: gave up after %d attempts: %s", p.Name, p.Backoff.MaxAttempts, redact(lastErr.Error()))

@@ -1,10 +1,9 @@
 package main
 
 import (
-	"context"
 	"path/filepath"
-	"time"
 
+	"foci/internal/clock"
 	"foci/internal/config"
 	"foci/internal/evals"
 	"foci/internal/log"
@@ -30,38 +29,28 @@ func initEvals(cfg *config.Config) (*evals.Registry, func()) {
 		evalsInitLog.Errorf("rubrics disabled: %v", err)
 		return nil, func() {}
 	}
-	reg.OnChange = func(changed []*evals.Rubric) { mirrorScoreConfigs(reg, changed) }
+	// One mirror for the process: a reload enqueues into it and joins its
+	// retry loop rather than starting another (#3189). Drift between a
+	// rubric and an already-existing config is logged, never repaired — the
+	// API cannot update a config, and silently posting against a
+	// differently-shaped one would be worse than a warning.
+	mirror := newScoreConfigMirror(reg, telemetry.EnsureScoreConfig, clock.Real(), evalsInitLog)
+	enqueue := func(rs []*evals.Rubric) {
+		if telemetry.ScoringAvailable() {
+			mirror.Enqueue(rs)
+		}
+	}
+	reg.OnChange = enqueue
 	if err := reg.Watch(); err != nil {
 		evalsInitLog.Warnf("rubrics dir %s not watched (edits need a restart): %v", dir, err)
 	}
-	mirrorScoreConfigs(reg, reg.List())
+	enqueue(reg.List())
 	if n := len(reg.List()); n > 0 || len(reg.Errors()) > 0 {
 		evalsInitLog.Infof("%d rubric(s) from %s (%d bad file(s))", n, dir, len(reg.Errors()))
 	}
-	return reg, reg.Close
-}
-
-// mirrorScoreConfigs ensures a Langfuse score config exists for each rubric
-// and records its id for scores. Drift between a rubric and an already-
-// existing config is logged, never repaired — the API cannot update a
-// config, and silently posting against a differently-shaped one would be
-// worse than a warning.
-func mirrorScoreConfigs(reg *evals.Registry, rs []*evals.Rubric) {
-	if !telemetry.ScoringAvailable() || len(rs) == 0 {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	for _, rb := range rs {
-		id, warn, err := telemetry.EnsureScoreConfig(ctx, scoreConfigFor(rb))
-		if err != nil {
-			evalsInitLog.Warnf("rubric %s: score config not mirrored: %v", rb.Name, err)
-			continue
-		}
-		if warn != "" {
-			evalsInitLog.Warnf("rubric %s: %s", rb.Name, warn)
-		}
-		reg.SetConfigID(rb.Name, id)
+	return reg, func() {
+		reg.Close()
+		mirror.Close()
 	}
 }
 

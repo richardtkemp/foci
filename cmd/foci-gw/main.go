@@ -616,9 +616,10 @@ Subcommands:
 			for _, backend := range []string{modelcaps.BackendCCStream, modelcaps.BackendAPI} {
 				modelcaps.SetFetcher(backend, fetcher)
 				go func(b string) {
-					if err := modelcaps.Refresh(context.Background(), b); err != nil {
-						modelcapsLog.Warnf("[%s] initial catalogue fetch failed (using static registry until next refresh): %v", b, err)
-					}
+					// A failed fetch is already logged once, by modelcaps
+					// itself ("catalogue refresh failed"); a second WARN here
+					// doubled every boot-time DNS failure (#3189).
+					_ = modelcaps.Refresh(context.Background(), b)
 				}(backend)
 			}
 		}

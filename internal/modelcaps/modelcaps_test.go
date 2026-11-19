@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"foci/internal/log"
 )
 
 // tb is the backend key used by these tests.
@@ -314,5 +317,35 @@ func TestBackendKeySeparatesConfiguredBackends(t *testing.T) {
 		if got := BackendKey(configured); got != want {
 			t.Errorf("BackendKey(%q) = %q, want %q", configured, got, want)
 		}
+	}
+}
+
+// TestRefreshFailureLogsOneWarn pins that Refresh logs its own failure, once.
+// The gateway's startup seed relies on that and logs nothing itself: it used
+// to add a second WARN, doubling every boot-time fetch failure (#3189).
+func TestRefreshFailureLogsOneWarn(t *testing.T) {
+	reset()
+	const backend = "test-3189-warn"
+	var mu sync.Mutex
+	var warns []string
+	remove := log.AddTap(log.WARN, func(level log.Level, comp, msg string) {
+		if level != log.WARN || !strings.Contains(msg, "["+backend+"]") {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		warns = append(warns, msg)
+	})
+	defer remove()
+	SetFetcher(backend, func(_ context.Context) (map[string]Caps, error) {
+		return nil, fmt.Errorf("lookup api.anthropic.com: i/o timeout")
+	})
+	if err := Refresh(context.Background(), backend); err == nil {
+		t.Fatal("Refresh = nil, want the fetch error")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(warns) != 1 || !strings.Contains(warns[0], "catalogue refresh failed") {
+		t.Errorf("WARN lines = %q, want exactly one 'catalogue refresh failed'", warns)
 	}
 }

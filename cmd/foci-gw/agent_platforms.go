@@ -35,7 +35,6 @@ var (
 	keepaliveLog = log.NewComponentLogger("keepalive")
 	ledgerLog    = log.NewComponentLogger("ledger")
 	mainLog      = log.NewComponentLogger("main")
-	modelcapsLog = log.NewComponentLogger("modelcaps")
 	modelinfoLog = log.NewComponentLogger("modelinfo")
 	nudgeLog     = log.NewComponentLogger("nudge")
 	remindLog    = log.NewComponentLogger("remind")

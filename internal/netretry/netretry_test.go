@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"foci/internal/clock"
+	"foci/internal/log"
 )
 
 // TestNextDelay_ExponentialAndCapped verifies the production backoff
@@ -131,5 +135,110 @@ func TestPermanentMarkers(t *testing.T) {
 	_ = PermanentMarkers("a", "b", "c", "d", "e", "f", "g")
 	if PermanentMarkers()(errors.New("close 4004")) {
 		t.Error("extra markers leaked into a different classifier")
+	}
+}
+
+// tapLines records every event the component logs at or above INFO, by level.
+// The component name is unique per test, so parallel tests' lines never mix.
+func tapLines(t *testing.T, component string) func(lvl log.Level) []string {
+	t.Helper()
+	var mu sync.Mutex
+	byLevel := map[log.Level][]string{}
+	remove := log.AddTap(log.INFO, func(level log.Level, comp, msg string) {
+		if comp != component {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		byLevel[level] = append(byLevel[level], msg)
+	})
+	t.Cleanup(remove)
+	return func(lvl log.Level) []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), byLevel[lvl]...)
+	}
+}
+
+// TestDo_TransientThenSuccessLogsNoWarn is the boot-time DNS gap (#3189):
+// three attempts fail, the fourth connects. Every failed attempt is INFO and
+// nothing is WARN, because retrying worked.
+func TestDo_TransientThenSuccessLogsNoWarn(t *testing.T) {
+	const comp = "netretry-test-transient"
+	lines := tapLines(t, comp)
+	calls := 0
+	err := Do(context.Background(), Policy{
+		Name:    "x",
+		Backoff: fast, // unbounded, like StartupBackoff
+		Log:     log.NewComponentLogger(comp),
+	}, failing(3, errors.New("lookup api.telegram.org: i/o timeout"), &calls))
+	if err != nil {
+		t.Fatalf("Do = %v, want nil", err)
+	}
+	if w := lines(log.WARN); len(w) != 0 {
+		t.Errorf("WARN lines = %q, want none", w)
+	}
+	info := strings.Join(lines(log.INFO), "\n")
+	if n := strings.Count(info, "(transient, will retry)"); n != 3 {
+		t.Errorf("INFO retry lines = %d, want 3; INFO:\n%s", n, info)
+	}
+	if !strings.Contains(info, "connected on attempt 4") {
+		t.Errorf("no recovery line; INFO:\n%s", info)
+	}
+}
+
+// TestDo_BoundedAllFailWarnsOnce: when every attempt of a bounded schedule
+// fails, exactly one WARN reports it, and the earlier attempts stay INFO.
+func TestDo_BoundedAllFailWarnsOnce(t *testing.T) {
+	const comp = "netretry-test-bounded"
+	lines := tapLines(t, comp)
+	calls := 0
+	bo := fast
+	bo.MaxAttempts = 3
+	err := Do(context.Background(), Policy{
+		Name:    "x",
+		Backoff: bo,
+		Log:     log.NewComponentLogger(comp),
+	}, failing(99, errors.New("connection refused"), &calls))
+	if err == nil {
+		t.Fatal("Do = nil, want the give-up error")
+	}
+	w := lines(log.WARN)
+	if len(w) != 1 || !strings.Contains(w[0], "all 3 attempts failed") {
+		t.Errorf("WARN lines = %q, want exactly one 'all 3 attempts failed'", w)
+	}
+	if n := len(lines(log.INFO)); n != 2 {
+		t.Errorf("INFO lines = %d, want 2 (attempts 1 and 2)", n)
+	}
+}
+
+// TestDo_UnboundedWarnsOnceAfterWarnAfter: an unbounded schedule has no last
+// attempt, so the WARN fires once the outage has lasted WarnAfter, and never
+// again however long it continues.
+func TestDo_UnboundedWarnsOnceAfterWarnAfter(t *testing.T) {
+	const comp = "netretry-test-unbounded"
+	lines := tapLines(t, comp)
+	clk := clock.NewFake()
+	calls := 0
+	err := Do(context.Background(), Policy{
+		Name:      "x",
+		Backoff:   fast,
+		Log:       log.NewComponentLogger(comp),
+		WarnAfter: 2 * time.Minute,
+		Clock:     clk,
+	}, func() error {
+		calls++
+		clk.Advance(time.Minute) // each attempt "takes" a minute of outage
+		if calls <= 6 {
+			return errors.New("connection refused")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Do = %v, want nil", err)
+	}
+	w := lines(log.WARN)
+	if len(w) != 1 || !strings.Contains(w[0], "still failing after 2m0s (2 attempts") {
+		t.Errorf("WARN lines = %q, want exactly one 'still failing after 2m0s (2 attempts'", w)
 	}
 }
