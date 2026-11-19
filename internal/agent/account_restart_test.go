@@ -65,7 +65,7 @@ func TestSessionAccountSurvivesRestart_PruneKeepsRow(t *testing.T) {
 	if got := a.AccountFor(key).Key(); got != "b" {
 		t.Fatalf("session on account %q after the restart, want b", got)
 	}
-	if env := mgr.LaunchEnv(key); env["CLAUDE_CONFIG_DIR"] != dirB {
+	if env, err := mgr.LaunchEnv(key); err != nil || env["CLAUDE_CONFIG_DIR"] != dirB {
 		t.Errorf("launch env %v, want account b's folder", env)
 	}
 	if _, err := mgr.Get(context.Background(), key); err != nil {

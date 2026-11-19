@@ -106,7 +106,7 @@ Sign-in expiry warnings (the claude.ai sign-in end date) are kept per account to
 
 To run some agents on a different Claude account from the others, on the same host and at the same time:
 
-1. List one absolute Claude Code config folder in each such agent's `backend_config.accounts`, e.g. `accounts = ["/home/foci/.claude-b"]`. foci starts that agent's Claude Code with the folder as its `CLAUDE_CONFIG_DIR`. A relative path is ignored with a startup warning. Agents with the same folder share the account. One folder per agent for now: a longer list uses its first entry, with a startup warning.
+1. List one absolute Claude Code config folder in each such agent's `backend_config.accounts`, e.g. `accounts = ["/home/foci/.claude-b"]`. foci starts that agent's Claude Code with the folder as its `CLAUDE_CONFIG_DIR`. A relative path is ignored with a startup warning, and a folder listed twice is used once. Agents with the same folder share the account. An agent may list several folders: see [Several accounts for one agent](#several-accounts-for-one-agent).
 2. Restart foci. `backend_config.accounts` is read only at startup.
 3. Do the one-time sign-in: send `/login` in one of those agents' chats (or let the startup check start it) and paste the code. Sign in with the account you want there.
 4. Claude Code creates its own working files in the new folder, but not your settings. If the agent should share them, copy by hand from the host folder (`~/.claude`): `settings.json` (for example `defaultMode`, deny rules, `additionalDirectories`, `model`, plugins) and `skills/`. foci copies nothing.
@@ -114,6 +114,22 @@ To run some agents on a different Claude account from the others, on the same ho
 Usage limits and holds are per account: one account at its limit holds only its own agents.
 
 On macOS the account gets its own Keychain item, named after its folder: on a separate-root install foci does not force the default item onto an account with a folder of its own. The agent's existing chats do not move with it: their transcripts stay in the old folder, so they start fresh.
+
+## Several accounts for one agent
+
+An agent may list several folders, one per account (#3186): `accounts = ["/home/foci/.claude", "/home/foci/.claude-b"]`. Each **new** chat or session takes the account with the most usage left, and keeps it for its whole life, resumes and restarts included; its branches, forks and spawns are on the same account. A session never moves to another account (it is for load balancing).
+
+How the account of a new session is chosen:
+
+1. An account that needs a new login is passed over while another one works. When every account needs one, the first in the list is taken and its login starts as for any session.
+2. An account on a usage hold or stop is passed over while another is open. When every account is held, the one whose hold lifts first is taken.
+3. Of the open accounts, the least used wins: an account's use is its fullest usage window (5-hour or 7-day), from the last figures its sessions reported (no fresh read). An account with no figure yet counts as unused. A tie goes to the first in the list.
+
+Each account keeps its own login, sign-in expiry warnings, usage hold, rate-limit gate and usage figures: a hold on one account holds only the sessions on it, and its start and end notices go only to the chats whose session is on it (the default chat and the open app chats). `/usage`, `/mana`, `/login` and `/limit_reset` in a chat act on that chat's account.
+
+**The host's account in the list.** To keep the login an agent has today and add another, list the host's Claude Code folder first. It is the host's account (no new login): foci starts its sessions exactly as an agent with no list. The host's folder is the one in the startup log line `Claude Code runs with CLAUDE_CONFIG_DIR=...` on a separate-root install (`<install root>/.claude`, e.g. `/Users/me/foci/.claude`), else `~/.claude`. On macOS any other folder, `~/.claude` on a separate-root install included, is an account of its own: Claude Code names its Keychain item after that folder, so it needs its own sign-in.
+
+**Adding accounts to an agent that has chats.** A chat made before the agent had a list is recorded at startup on the FIRST account in the list, so list the folder the agent used until now first. A chat stored on an account that is no longer in the list starts fresh on the chosen account, and its chat is told once.
 
 `backend_config.accounts` is the only way to give an agent an account (#3186). `CLAUDE_CONFIG_DIR` and `CLAUDE_SECURESTORAGE_CONFIG_DIR` in `backend_config.env` are ignored, with one startup warning that says what to write instead. To move an agent configured the old way, replace
 

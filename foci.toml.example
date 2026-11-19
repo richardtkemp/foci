@@ -195,7 +195,7 @@ id = "myagent"
 # batch_model = "haiku"                   #   model for foci's own small background jobs, as the backend names it (wins over the global)
 # claude_ai_skills = false                #   Claude Code only: list the claude.ai account's skills (default false = hidden)
 # add_dirs = ["/srv/shared"]              #   Claude Code only: extra working directories, each passed as --add-dir (absolute paths)
-# accounts = ["/home/foci/.claude-b"]     #   Claude Code only: the agent's account, as its CC config folder (absolute; default: the host's). One entry for now
+# accounts = ["/home/foci/.claude-b"]     #   Claude Code only: the agent's accounts, one CC config folder each (absolute; default: the host's). Several: each new session takes the one with the most usage left (docs/AUTH.md)
 # [agents.backend_config.env]             #   environment variables for the backend subprocess
 # CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS = "1"
 # [agents.skills]

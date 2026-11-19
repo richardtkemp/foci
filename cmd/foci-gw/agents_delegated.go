@@ -382,7 +382,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			cfgMap[delegator.FociVersionConfigKey] = version
 			return delegator.New(backendName, cfgMap)
 		},
-		Accounts:    account.NewPool(accountBindings(p.sessionIndex), accounts...),
+		Accounts:    agentPool(p.sessionIndex, agentID, accounts),
 		BindAccount: bindAccount,
 		StartOpts: delegator.StartOptions{
 			WorkDir:      p.acfg.Workspace,
@@ -519,6 +519,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			}
 		},
 	}
+	// A session stored on an account the agent no longer lists starts fresh
+	// on the pick, and its chat is told (#3186).
+	ag.DelegatedManager.Accounts.OnLeft = ag.DelegatedManager.AccountLeft
 	// The account-wide usage hold (#2491): this agent follows its usage
 	// account from now on (its Claude Code login, #3104).
 	wireUsageHeldRestore(ag, p.ctx, connMgr, agentID, p.agentResolverFn, app.DeliverAgentMessage)

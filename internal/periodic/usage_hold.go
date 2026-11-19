@@ -48,12 +48,13 @@ const defaultHoldIdleTimeout = 2 * time.Minute
 
 // UsageHoldStarted runs the reflection and compaction of a hold start in the
 // background. liftAt is when the hold lifts (zero: unknown, so nothing is
-// compacted).
-func (r *Runner) UsageHoldStarted(liftAt time.Time) {
+// compacted); onAccount reports whether a session is on the held account
+// (#3186): only those are candidates.
+func (r *Runner) UsageHoldStarted(liftAt time.Time, onAccount func(sessionKey string) bool) {
 	if r == nil || r.agent == nil {
 		return
 	}
-	go r.holdCompaction(context.Background(), liftAt)
+	go r.holdCompaction(context.Background(), liftAt, onAccount)
 }
 
 // holdCompaction is UsageHoldStarted's body. The candidates are fixed at the
@@ -63,9 +64,9 @@ func (r *Runner) UsageHoldStarted(liftAt time.Time) {
 // Claude Code reports, and judged before it the fill was measured against the
 // model's catalogue window (1M where the account's is 600k), so a session over
 // half its real trigger was skipped. A target is then reflected and compacted.
-func (r *Runner) holdCompaction(ctx context.Context, liftAt time.Time) {
+func (r *Runner) holdCompaction(ctx context.Context, liftAt time.Time, onAccount func(string) bool) {
 	pctx := usagehold.WithPermit(ctx)
-	keys, paused := r.holdCompactionCandidateKeys(liftAt)
+	keys, paused := r.holdCompactionCandidateKeys(liftAt, onAccount)
 	for _, sk := range keys {
 		r.waitHoldTargetIdle(ctx, sk)
 		r.learnContextLimit(ctx, sk)
@@ -127,24 +128,28 @@ func (r *Runner) holdCompactionCandidates() (chats []string, paused map[string]b
 	return chats, paused
 }
 
-// holdCompactionCandidateKeys are the sessions a hold that lifts at liftAt
-// considers compacting (worked example A; holdCompactionSkip judges each),
-// and which of them it paused. None when the lift time is unknown.
-func (r *Runner) holdCompactionCandidateKeys(liftAt time.Time) (keys []string, paused map[string]bool) {
+// holdCompactionCandidateKeys are the sessions on the held account
+// (onAccount) a hold that lifts at liftAt considers compacting (worked
+// example A; holdCompactionSkip judges each), and which of them it paused.
+// None when the lift time is unknown.
+func (r *Runner) holdCompactionCandidateKeys(liftAt time.Time, onAccount func(string) bool) (keys []string, paused map[string]bool) {
 	if liftAt.IsZero() {
 		r.log.Infof("usage hold: no lift time known — no compaction at the hold")
 		return nil, nil
 	}
 	chats, paused := r.holdCompactionCandidates()
-	keys = append([]string(nil), chats...)
 	seen := map[string]bool{}
 	for _, sk := range chats {
+		if !seen[sk] && onAccount(sk) {
+			keys = append(keys, sk)
+		}
 		seen[sk] = true
 	}
 	for sk := range paused {
-		if !seen[sk] {
+		if !seen[sk] && onAccount(sk) {
 			keys = append(keys, sk)
 		}
+		seen[sk] = true
 	}
 	return keys, paused
 }

@@ -135,7 +135,11 @@ func (m *DelegatedManager) consumedBeforeRestart(sk string, p delegator.PendingI
 	if check == nil || sid == "" || p.WorkDir == "" {
 		return false
 	}
-	found, err := check(m.LaunchEnv(sk), p.WorkDir, sid, p.ID)
+	env, err := m.LaunchEnv(sk)
+	found := false
+	if err == nil {
+		found, err = check(env, p.WorkDir, sid, p.ID)
+	}
 	switch {
 	case err != nil:
 		m.logger().Warnf("session %s: input %s transcript unreadable (%v) — redelivering (at-least-once)", sk, p.ID, err)

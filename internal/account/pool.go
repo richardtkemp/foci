@@ -2,9 +2,11 @@ package account
 
 import (
 	"sync"
+	"time"
 
 	"foci/internal/log"
 	"foci/internal/session"
+	"foci/internal/usagehold"
 )
 
 // BindingStore is where a Pool keeps which account each session is on
@@ -18,18 +20,29 @@ type BindingStore interface {
 //
 // A session's account is fixed the first time the session is asked about
 // (For) and stored with it (session.MetaKeyAccount), so a restart and a
-// resume find the same account. It is bound to the session's ROOT key: a
-// child key (<root>/b<ts>, <root>/i<ts>) names its root, so every descendant
-// of a session is on that session's account without a record of its own. A
-// session stored before accounts existed has no record, and takes the pick.
+// resume find the same account (Dick 2026-11-19: "one session is tied to one
+// account"). A new top-level session takes the pick (pick: the account with
+// the most usage left). A child session (a branch, fork, spawn or batch: a
+// child key <root>/b<ts> or <root>/i<ts>) takes its root's account the first
+// time it is asked about, and stores it with itself: a child made before its
+// root was reset stays on the account its files are in when the reset root
+// moves to a new pick.
+//
+// A session stored before accounts existed has no record; the gateway records
+// the pool's first account on those at startup (session.SessionIndex
+// BackfillSessionMetadata), so only a new session takes the pick.
 //
 // A nil *Pool is the pool of an agent with no account: For returns nil.
 type Pool struct {
 	accounts []*Account
 	store    BindingStore
+	// OnLeft is told when a session stored on an account the agent no
+	// longer has is moved to the pick (its files are out of reach, so it
+	// starts again on now). Set before the first For; nil = log only.
+	OnLeft func(sessionKey, was string, now *Account)
 
 	mu    sync.Mutex
-	bound map[string]*Account // by root session key
+	bound map[string]*Account // by session key
 }
 
 // NewPool returns the pool of accounts (in the agent's configured order),
@@ -47,41 +60,159 @@ func (p *Pool) Accounts() []*Account {
 }
 
 // For returns the account sessionKey is on, binding the session first when
-// it is on none (or on one that left the pool: its files are then out of
-// reach, and it starts on the pick as a new session would).
+// it is on none (see Pool). It is nil when the pool is nil or empty, and
+// when the session's stored account cannot be read: the session is then on
+// no known account for this call (open, no login owed) and nothing is bound
+// or stored, so the next call reads again. Code that reaches a session's
+// files or starts its backend uses Resolve, which returns that error.
 func (p *Pool) For(sessionKey string) *Account {
-	if p == nil || len(p.accounts) == 0 {
-		return nil
+	a, err := p.Resolve(sessionKey)
+	if err != nil {
+		poolLog.Warnf("read the account of session %s: %v", sessionKey, err)
 	}
-	root := rootKey(sessionKey)
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if a := p.bound[root]; a != nil {
-		return a
-	}
-	stored := ""
-	if p.store != nil && root != "" {
-		stored, _ = p.store.GetSessionMetadata(root, session.MetaKeyAccount)
-	}
-	a := p.byKey(stored)
-	if a == nil {
-		a = p.pick()
-		if stored != "" {
-			poolLog.Infof("session %s was on account %s, which the agent no longer has: it is now on %s", root, stored, a.Key())
-		}
-		if p.store != nil && root != "" {
-			if err := p.store.SetSessionMetadata(root, session.MetaKeyAccount, a.Key()); err != nil {
-				poolLog.Warnf("store the account of session %s: %v", root, err)
-			}
-		}
-	}
-	p.bound[root] = a
 	return a
 }
 
-// pick chooses the account of a new session: the pool's first. (#3186 phase
-// 2 puts the usage rule here.)
-func (p *Pool) pick() *Account { return p.accounts[0] }
+// Resolve is For with the read error returned: an account is never picked
+// for a session whose stored account could not be read, since that would
+// move it off its transcript.
+func (p *Pool) Resolve(sessionKey string) (*Account, error) {
+	if p == nil || len(p.accounts) == 0 {
+		return nil, nil
+	}
+	p.mu.Lock()
+	a := p.bound[sessionKey]
+	p.mu.Unlock()
+	if a != nil {
+		return a, nil
+	}
+	stored := ""
+	if p.store != nil && sessionKey != "" {
+		var err error
+		if stored, err = p.store.GetSessionMetadata(sessionKey, session.MetaKeyAccount); err != nil {
+			return nil, err
+		}
+	}
+	if a = p.byKey(stored); a != nil {
+		return p.bind(sessionKey, a, false), nil
+	}
+	if parent := parentKey(sessionKey); parent != "" {
+		pa, err := p.Resolve(parent)
+		if err != nil || pa == nil {
+			return pa, err
+		}
+		a = pa
+	} else {
+		// Asked outside every lock: an account's hold state can call its
+		// subscribers, which ask this pool about their sessions.
+		a = p.pick(time.Now())
+	}
+	a = p.bind(sessionKey, a, true)
+	if stored != "" && a.Key() != stored {
+		poolLog.Infof("session %s was on account %s, which the agent no longer has: it is now on %s", sessionKey, stored, a.Key())
+		if p.OnLeft != nil {
+			p.OnLeft(sessionKey, stored, a)
+		}
+	}
+	return a, nil
+}
+
+// bind binds sessionKey to a unless a concurrent call bound it first, stores
+// a new binding when store is set, and returns the session's account.
+func (p *Pool) bind(sessionKey string, a *Account, store bool) *Account {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if prev := p.bound[sessionKey]; prev != nil {
+		return prev
+	}
+	p.bound[sessionKey] = a
+	if store && p.store != nil && sessionKey != "" {
+		if err := p.store.SetSessionMetadata(sessionKey, session.MetaKeyAccount, a.Key()); err != nil {
+			poolLog.Warnf("store the account of session %s: %v", sessionKey, err)
+		}
+	}
+	return a
+}
+
+// Next is the account a new top-level session would take now (the pick),
+// without binding anything; nil for a nil or empty pool.
+func (p *Pool) Next() *Account {
+	if p == nil || len(p.accounts) == 0 {
+		return nil
+	}
+	return p.pick(time.Now())
+}
+
+// pick chooses the account of a new top-level session (#3186, Dick
+// 2026-11-19: "each new session chooses the account with the most usage
+// remaining"):
+//
+//   - an account that owes a login is passed over while another does not;
+//     when every account owes one, the first is taken (its login starts as
+//     for any session, RULINGS 4 Q7);
+//   - of the rest, an account that holds or stops is passed over while
+//     another is open; of the open ones the least used wins (Account.Used,
+//     the last figures its sessions reported, RULINGS 3 Q2 and Q3; an
+//     account with no figure counts as unused);
+//   - when every one holds or stops, the one whose hold lifts first wins
+//     (Q4; a hold with no known lift time comes last);
+//   - a tie goes to the first in the agent's list.
+func (p *Pool) pick(now time.Time) *Account {
+	if len(p.accounts) == 1 {
+		return p.accounts[0]
+	}
+	var cands []*Account
+	for _, a := range p.accounts {
+		if !a.Login().Pending() {
+			cands = append(cands, a)
+		}
+	}
+	if len(cands) == 0 {
+		return p.accounts[0]
+	}
+	var (
+		best     *Account
+		bestOpen bool
+		bestUsed float64
+		bestLift time.Time
+	)
+	for _, a := range cands {
+		st := a.Hold()
+		open := st.Phase == usagehold.Open
+		var used float64
+		if open {
+			used, _ = a.Used(now)
+		}
+		if best != nil {
+			switch {
+			case open != bestOpen:
+				if !open {
+					continue
+				}
+			case open:
+				if used >= bestUsed {
+					continue
+				}
+			case !liftsBefore(st.LiftAt, bestLift):
+				continue
+			}
+		}
+		best, bestOpen, bestUsed, bestLift = a, open, used, st.LiftAt
+	}
+	return best
+}
+
+// liftsBefore reports whether a hold lifting at x lifts strictly before one
+// lifting at y; a zero time (unknown) lifts after every known one.
+func liftsBefore(x, y time.Time) bool {
+	switch {
+	case x.IsZero():
+		return false
+	case y.IsZero():
+		return true
+	}
+	return x.Before(y)
+}
 
 func (p *Pool) byKey(key string) *Account {
 	for _, a := range p.accounts {
@@ -92,10 +223,11 @@ func (p *Pool) byKey(key string) *Account {
 	return nil
 }
 
-// Forget ends the binding of sessionKey when it is a root key whose stored
-// state was cleared (a reset): the next For binds it as a new session.
+// Forget ends the binding of sessionKey whose stored state was cleared (a
+// reset of a top-level session): the next For binds it as a new session, on
+// the pick. Its children keep the accounts they are on.
 func (p *Pool) Forget(sessionKey string) {
-	if p == nil || rootKey(sessionKey) != sessionKey {
+	if p == nil {
 		return
 	}
 	p.mu.Lock()
@@ -105,34 +237,30 @@ func (p *Pool) Forget(sessionKey string) {
 
 // Moved carries the binding of oldKey over to newKey when a session is
 // re-keyed (DelegatedManager.RemapSession), so the session stays on its
-// account. A no-op when both keys have one root.
+// account.
 func (p *Pool) Moved(oldKey, newKey string) {
-	if p == nil || len(p.accounts) == 0 {
+	if p == nil || len(p.accounts) == 0 || oldKey == newKey {
 		return
 	}
-	a := p.For(oldKey)
-	from, to := rootKey(oldKey), rootKey(newKey)
-	if from == to {
+	a, err := p.Resolve(oldKey)
+	if err != nil || a == nil {
+		poolLog.Warnf("carry the account of session %s over to %s: %v", oldKey, newKey, err)
 		return
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.bound[to] = a
-	if p.store != nil && to != "" {
-		if err := p.store.SetSessionMetadata(to, session.MetaKeyAccount, a.Key()); err != nil {
-			poolLog.Warnf("store the account of session %s: %v", to, err)
-		}
-	}
+	delete(p.bound, newKey)
+	p.mu.Unlock()
+	p.bind(newKey, a, true)
 }
 
 var poolLog = log.NewComponentLogger("account")
 
-// rootKey is the key a session's account is bound to: its root, or the key
-// itself when it does not parse as a session key.
-func rootKey(sessionKey string) string {
+// parentKey is the key of the session sessionKey is a child of (its root),
+// or "" when it is a top-level session or does not parse as a session key.
+func parentKey(sessionKey string) string {
 	sk, err := session.ParseSessionKey(sessionKey)
-	if err != nil {
-		return sessionKey
+	if err != nil || sk.IsRoot() {
+		return ""
 	}
 	return sk.Root().String()
 }

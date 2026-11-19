@@ -143,7 +143,8 @@ func TestUsageHold_NoticesNameAccount(t *testing.T) {
 	putOnAccount(beta, acctB, usagehold.New(), gate)
 	var mu sync.Mutex
 	var notices, held []string
-	beta.UsageHoldNotifyFunc = func(text string) { mu.Lock(); notices = append(notices, text); mu.Unlock() }
+	beta.UsageHoldNotifyFunc = func(_, text string) { mu.Lock(); notices = append(notices, text); mu.Unlock() }
+	beta.ChatSessionsFunc = func() []string { return []string{"beta/c1"} }
 	beta.TurnQueuedNotifyFunc = func(_, text string) { mu.Lock(); held = append(held, text); mu.Unlock() }
 	beta.StartUsageHold()
 	defer beta.StopUsageHold()

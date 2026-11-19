@@ -81,6 +81,12 @@ func TestUsageAccount_PerLogin(t *testing.T) {
 	if h := spec(""); !h.Host || len(h.Env) != 0 {
 		t.Errorf("the host account = %+v, want Host and no launch env", h)
 	}
+	// #3186 F11: the host's folder listed beside another (a pool of two) is
+	// the host's account, with no launch env of its own, so CC keeps the
+	// host's login; the other folder keeps its own.
+	if h := spec(spec("").Dir); !h.Host || len(h.Env) != 0 || h.Key != spec("").Key {
+		t.Errorf("the host's folder listed = %+v, want the host account (Host, no launch env)", h)
+	}
 	host, err := ccaccount.ForLaunchEnv(nil)
 	if err != nil {
 		t.Fatal(err)

@@ -271,3 +271,45 @@ func TestAccount_KeyAndString(t *testing.T) {
 		}
 	}
 }
+
+// TestForFolder_MacHostFolderListed (#3186 F11): on a separate-root Mac
+// install (the work Mac: FOCI_HOME=<root>, the gateway exports
+// CLAUDE_CONFIG_DIR=<root>/.claude and CLAUDE_SECURESTORAGE_CONFIG_DIR=""),
+// listing the host's folder in backend_config.accounts, by its path or a
+// symlink to it, is the host's account: the default Keychain item, so no new
+// login. HOME/.claude is NOT the host's folder there: listed, it is an
+// account of its own whose Keychain item is named after it (empty until
+// someone logs in to it).
+func TestForFolder_MacHostFolderListed(t *testing.T) {
+	home := isolate(t)
+	root := filepath.Join(home, "foci")
+	hostDir := filepath.Join(root, ".claude")
+	if err := os.MkdirAll(hostDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(fociroot.EnvVar, root)
+	t.Setenv(fociroot.CCConfigDirEnv, hostDir)
+	t.Setenv(fociroot.CCSecureStorageEnv, "")
+	link := filepath.Join(home, "host-link")
+	if err := os.Symlink(hostDir, link); err != nil {
+		t.Fatal(err)
+	}
+	want := Location{Dir: hostDir, Account: Account{Keychain: true}}
+	for _, dir := range []string{"", hostDir, hostDir + "/", link} {
+		loc, err := forFolder(dir, "darwin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if loc != want {
+			t.Errorf("folder %q = %+v, want the host's account %+v (default Keychain item)", dir, loc, want)
+		}
+	}
+	other := filepath.Join(home, ".claude")
+	loc, err := forFolder(other, "darwin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loc.Account != (Account{Keychain: true, Path: other}) {
+		t.Errorf("HOME/.claude = %+v, want an account of its own (its folder's Keychain item)", loc)
+	}
+}

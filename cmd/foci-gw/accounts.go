@@ -29,10 +29,12 @@ var gwAccounts = &account.Registry{History: currentUsageHistory}
 
 // agentAccounts returns the accounts of an agent on spec's backend whose
 // backend_config.accounts is folders, in order: one per folder, or the
-// host's when it lists none. A folder whose account cannot be resolved is
+// host's when it lists none. A backend with one login for all its agents
+// (no Spec.Account: codex, opencode) has that one; the config check warns that
+// it ignores the list. A folder whose account cannot be resolved is
 // logged and replaced by the login named after the backend.
 func agentAccounts(cfg *config.Config, spec delegator.Spec, agentID string, folders []string) []*account.Account {
-	if len(folders) == 0 {
+	if len(folders) == 0 || spec.Account == nil {
 		folders = []string{""}
 	}
 	out := make([]*account.Account, 0, len(folders))
@@ -65,13 +67,27 @@ func accountFor(cfg *config.Config, spec delegator.Spec, as delegator.AccountSpe
 	return gwAccounts.Get(o)
 }
 
-// accountBindings is where an agent's pool stores which account each session
-// is on: idx's session metadata, or nothing (memory only) with no index.
-func accountBindings(idx *session.SessionIndex) account.BindingStore {
+// agentPool is the pool of agentID's accounts, keeping which session is on
+// which in idx's session metadata (memory only with no index). Every session
+// of the agent with a backend session (a resume id) and no account stored is
+// first recorded on the first account: it was made before sessions had
+// accounts, when the agent had one, which an agent that adds accounts lists
+// first (docs/AUTH.md). Without that, its files would be looked for on
+// whatever account a new session would take.
+func agentPool(idx *session.SessionIndex, agentID string, accounts []*account.Account) *account.Pool {
 	if idx == nil {
-		return nil
+		return account.NewPool(nil, accounts...)
 	}
-	return idx
+	if len(accounts) > 0 {
+		n, err := idx.BackfillSessionMetadata(agentID, session.MetaKeyCCResumeID, session.MetaKeyAccount, accounts[0].Key())
+		switch {
+		case err != nil:
+			log.NewComponentLogger("account/"+agentID).Warnf("record the account of the sessions made before accounts: %v", err)
+		case n > 0:
+			log.NewComponentLogger("account/"+agentID).Infof("recorded %d session(s) made before accounts on account %s", n, accounts[0].Key())
+		}
+	}
+	return account.NewPool(idx, accounts...)
 }
 
 // masterOnAccount returns cfg's master agent when acct is one of its

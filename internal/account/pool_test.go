@@ -44,8 +44,10 @@ func TestPool_SessionAndChildrenShareTheStoredAccount(t *testing.T) {
 			t.Errorf("child %s on %v, want its root's account", child, got.Key())
 		}
 	}
-	if len(st) != 1 {
-		t.Errorf("store holds %v, want the root's binding only", st)
+	for _, child := range []string{root + "/b1709596800", root + "/i1709596801"} {
+		if v := st[child+"\x00"+session.MetaKeyAccount]; v != "a" {
+			t.Errorf("child %s stored on %q, want a (each session's account is stored with it)", child, v)
+		}
 	}
 }
 

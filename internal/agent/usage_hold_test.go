@@ -82,7 +82,8 @@ func TestUsageHold_NoticePerAgent(t *testing.T) {
 	mk := func(backend, id string) *Agent {
 		a := holdAgent(reg, backend)
 		a.AgentID = id
-		a.UsageHoldNotifyFunc = func(text string) { mu.Lock(); notices[id] = append(notices[id], text); mu.Unlock() }
+		a.UsageHoldNotifyFunc = func(_, text string) { mu.Lock(); notices[id] = append(notices[id], text); mu.Unlock() }
+		a.ChatSessionsFunc = func() []string { return []string{id + "/c1"} }
 		a.StartUsageHold()
 		t.Cleanup(a.StopUsageHold)
 		return a

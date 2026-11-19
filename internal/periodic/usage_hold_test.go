@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -132,17 +133,36 @@ func TestUsageHold_ReflectThenCompactWithPermit(t *testing.T) {
 		steps = append(steps, "compact:"+sk+":"+permit(ctx))
 		return nil
 	}
-	r.holdCompaction(context.Background(), now.Add(12*time.Hour))
+	r.holdCompaction(context.Background(), now.Add(12*time.Hour), everyAccount)
 	want := []string{"reflection:test/c1:permit", "compact:test/c1:permit"}
 	if !equalStrings(steps, want) {
 		t.Errorf("steps = %v, want %v", steps, want)
 	}
 }
 
+// everyAccount puts every session on the held account.
+func everyAccount(string) bool { return true }
+
+// TestUsageHold_CompactsOnlyTheHeldAccount (#3186 F9): a hold start
+// considers only the sessions on the held account, chats and paused
+// sessions alike.
+func TestUsageHold_CompactsOnlyTheHeldAccount(t *testing.T) {
+	now := time.Now()
+	chats := []holdSession{{key: "test/c1", cacheAge: 10 * time.Minute, fill: 150000}, {key: "test/c2", cacheAge: 10 * time.Minute, fill: 150000}}
+	paused := []holdSession{{key: "test/c1/b7", cacheAge: 10 * time.Minute, fill: 150000}, {key: "test/c2/b8", cacheAge: 10 * time.Minute, fill: 150000}}
+	r, _ := newHoldRunner(t, now, chats, paused)
+	onHeld := func(sk string) bool { return strings.HasPrefix(sk, "test/c1") }
+	keys, _ := r.holdCompactionCandidateKeys(now.Add(12*time.Hour), onHeld)
+	sort.Strings(keys)
+	if want := []string{"test/c1", "test/c1/b7"}; !equalStrings(keys, want) {
+		t.Errorf("candidates %v, want only the held account's %v", keys, want)
+	}
+}
+
 // holdTargets is the sessions holdCompaction would compact at now, judged
 // as it judges each candidate (holdCompactionSkip).
 func holdTargets(r *Runner, liftAt, now time.Time) []string {
-	keys, paused := r.holdCompactionCandidateKeys(liftAt)
+	keys, paused := r.holdCompactionCandidateKeys(liftAt, everyAccount)
 	var out []string
 	for _, sk := range keys {
 		if r.holdCompactionSkip(sk, paused[sk], liftAt, now) == "" {
@@ -240,7 +260,7 @@ func TestUsageHold_CompactionWaitsForTurnEnd(t *testing.T) {
 	compacted := make(chan string, 1)
 	hold.quietCompactFn = func(_ context.Context, sk string) error { compacted <- sk; return nil }
 	done := make(chan struct{})
-	go func() { r.holdCompaction(context.Background(), now.Add(12*time.Hour)); close(done) }()
+	go func() { r.holdCompaction(context.Background(), now.Add(12*time.Hour), everyAccount); close(done) }()
 	select {
 	case <-f.waiting: // the compaction is waiting on the turn's end
 	case <-done:
@@ -273,7 +293,7 @@ func TestUsageHold_CompactionIdleWaitIsBounded(t *testing.T) {
 	r.holdIdleTimeout = time.Millisecond
 	var got []string
 	hold.quietCompactFn = func(_ context.Context, sk string) error { got = append(got, sk); return nil }
-	r.holdCompaction(context.Background(), now.Add(12*time.Hour))
+	r.holdCompaction(context.Background(), now.Add(12*time.Hour), everyAccount)
 	if len(got) != 1 {
 		t.Errorf("compactions after the bounded wait = %v, want one attempt", got)
 	}
@@ -337,7 +357,7 @@ func TestUsageHold_CompactionJudgedOnceWindowKnown(t *testing.T) {
 	compacted := make(chan string, 1)
 	hold.quietCompactFn = func(_ context.Context, sk string) error { compacted <- sk; return nil }
 	done := make(chan struct{})
-	go func() { r.holdCompaction(context.Background(), now.Add(12*time.Hour)); close(done) }()
+	go func() { r.holdCompaction(context.Background(), now.Add(12*time.Hour), everyAccount); close(done) }()
 	close(ended) // the interrupted turn ends; the window is learned
 	<-done
 	select {
@@ -359,7 +379,7 @@ func TestUsageHold_CompactionLearnsUnknownWindow(t *testing.T) {
 	r.agent = &learnerFake{&windowFake{holdFakeAgent: hold}}
 	var got []string
 	hold.quietCompactFn = func(_ context.Context, sk string) error { got = append(got, sk); return nil }
-	r.holdCompaction(context.Background(), now.Add(12*time.Hour))
+	r.holdCompaction(context.Background(), now.Add(12*time.Hour), everyAccount)
 	if len(got) != 1 {
 		t.Errorf("compactions = %v, want test/c1 once its window was learned", got)
 	}

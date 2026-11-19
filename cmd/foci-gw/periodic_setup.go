@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"foci/internal/account"
 	"time"
 
 	"foci/internal/app"
@@ -332,11 +333,12 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		},
 	})
 	// At a usage hold start (#2491) the runner reflects and compacts the
-	// sessions worth it before the hold (requirement 8).
+	// sessions worth it before the hold (requirement 8): those on the held
+	// account only (#3186).
 	holdRunner := runner
-	inst.ag.UsageHoldChangeFunc = append(inst.ag.UsageHoldChangeFunc, func(c usagehold.Change) {
+	inst.ag.UsageHoldChangeFunc = append(inst.ag.UsageHoldChangeFunc, func(acct *account.Account, c usagehold.Change) {
 		if c.From == usagehold.Open && c.To.Phase == usagehold.Hold {
-			holdRunner.UsageHoldStarted(c.To.LiftAt)
+			holdRunner.UsageHoldStarted(c.To.LiftAt, func(sk string) bool { return inst.ag.AccountFor(sk) == acct })
 		}
 	})
 	runner.Start(p.ctx)

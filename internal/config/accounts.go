@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"path/filepath"
+	"slices"
 	"sync"
 )
 
@@ -27,8 +28,7 @@ var warnedAccounts sync.Map
 //   - A relative accounts entry is removed. foci would resolve it against the
 //     gateway's working directory and Claude Code against its own (the agent
 //     workspace), so the two would read different folders.
-//   - A list of several accounts keeps its first entry: one agent has one
-//     account until #3186 phase 2.
+//   - A folder listed twice keeps its first place: it is one account.
 //
 // An agent left with no entry runs on the host's Claude Code folder and
 // account. The env map is copied before a delete, as it may be shared with a
@@ -64,15 +64,15 @@ func NormalizeAccounts(cfg *Config) []string {
 					"backend_config.accounts entry %q is a relative path and is ignored: give an absolute path", dir)
 				continue
 			}
-			if dir != "" {
-				kept = append(kept, dir)
+			if dir == "" {
+				continue
 			}
-		}
-		if len(kept) > 1 {
-			warn(a.ID, "several\x00"+fmt.Sprint(kept),
-				"backend_config.accounts lists %d Claude Code accounts, and one agent can use only one for now: it uses the first, %q, and ignores the rest",
-				len(kept), kept[0])
-			kept = kept[:1]
+			if slices.ContainsFunc(kept, func(k string) bool { return filepath.Clean(k) == filepath.Clean(dir) }) {
+				warn(a.ID, "twice\x00"+dir,
+					"backend_config.accounts lists %q more than once: it is one account, used once", dir)
+				continue
+			}
+			kept = append(kept, dir)
 		}
 		if len(kept) != len(a.BackendConfig.Accounts) {
 			a.BackendConfig.Accounts = kept

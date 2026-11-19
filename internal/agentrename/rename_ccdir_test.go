@@ -49,3 +49,38 @@ func TestRenameMoveWorkspace_AgentsOwnCCFolder(t *testing.T) {
 	}
 	diffHashes(t, hostBefore, hashTree(t, filepath.Join(f.root, ".claude")))
 }
+
+// TestRenameMoveWorkspace_EveryAccountFolder (#3186 F10): an agent with two
+// accounts has its CC project folder moved inside EACH account's folder.
+func TestRenameMoveWorkspace_EveryAccountFolder(t *testing.T) {
+	f := newFixture(t)
+	ccA, ccB := filepath.Join(f.root, "ccA"), filepath.Join(f.root, "ccB")
+	cfg, err := os.ReadFile(f.cfgPath)
+	must(t, err)
+	const anchor = "name = \"Bob\"\n"
+	if !strings.Contains(string(cfg), anchor) {
+		t.Fatalf("fixture config has no %q", anchor)
+	}
+	withAccounts := strings.Replace(string(cfg), anchor, anchor+"\n[agents.backend_config]\naccounts = [\""+ccA+"\", \""+ccB+"\"]\n", 1)
+	writeFile(t, f.cfgPath, []byte(withAccounts))
+
+	oldWS, newWS := filepath.Join(f.root, "bob"), filepath.Join(f.root, "rob")
+	for i, dir := range []string{ccA, ccB} {
+		name := []string{"ua.jsonl", "ub.jsonl"}[i]
+		writeFile(t, filepath.Join(dir, "projects", fociroot.CCProjectSlug(oldWS), name), []byte(`{"cwd":"x"}`+"\n"))
+	}
+
+	out, err := f.run(Options{Move: true})
+	if err != nil {
+		t.Fatalf("rename: %v\n%s", err, out)
+	}
+	for i, dir := range []string{ccA, ccB} {
+		name := []string{"ua.jsonl", "ub.jsonl"}[i]
+		if _, err := os.Stat(filepath.Join(dir, "projects", fociroot.CCProjectSlug(newWS), name)); err != nil {
+			t.Errorf("transcript not moved inside %s: %v\n%s", dir, err, out)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "projects", fociroot.CCProjectSlug(oldWS))); !os.IsNotExist(err) {
+			t.Errorf("old project folder still in %s (stat err %v)", dir, err)
+		}
+	}
+}

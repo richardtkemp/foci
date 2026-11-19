@@ -23,7 +23,10 @@ import (
 // (HostHooks.OnUsageWindow → Account.ObserveUsage); the account's hold
 // decides its phase; every agent with the account in its pool sees each phase
 // change (StartUsageHold's subscription) and:
-//   - posts one notice in its own default chat (UsageHoldNotifyFunc);
+//   - posts one notice in each of its chats whose session is on that account
+//     (UsageHoldNotifyFunc over ChatSessionsFunc; Dick 2026-11-19, RULINGS 4
+//     Q6: "Only chats whose session is on that account"): its default chat
+//     hears nothing of a hold of an account its session is not on;
 //   - while the account HOLDS, runs only keepalives and foci_remind fires
 //     (scheduled_wake) on its sessions on that account: user messages, cron
 //     sends, webhooks, agent messages and every other injection wait in the
@@ -52,7 +55,7 @@ type usageHoldState struct {
 	changed chan struct{}
 	// notices wait to be posted, in order; posting is true while a goroutine
 	// posts them.
-	notices []string
+	notices []holdNotice
 	posting bool
 	// turns are the running turns a hold start interrupts through their
 	// context (UsageHoldTurn); paused are the sessions it paused, by kind
@@ -144,8 +147,8 @@ func (a *Agent) onUsageHoldChange(acct *account.Account, c usagehold.Change) {
 	a.usageHold.mu.Unlock()
 
 	a.logger().Infof("usage hold (%s): %s -> %s (lifts %s)", c.Account, c.From, c.To.Phase, formatLift(c.To.LiftAt))
-	if fn := a.UsageHoldNotifyFunc; fn != nil {
-		a.queueUsageHoldNotice(fn, acct.WithName(UsageHoldNotice(c)))
+	if a.UsageHoldNotifyFunc != nil {
+		a.queueUsageHoldNotice(holdNotice{acct: acct, text: acct.WithName(UsageHoldNotice(c))})
 	}
 	// The work running on the account at a hold start is interrupted or left
 	// to finish (usage_hold_interrupt.go), before the reactions below: the
@@ -155,15 +158,42 @@ func (a *Agent) onUsageHoldChange(acct *account.Account, c usagehold.Change) {
 		a.interruptForUsageHold(acct)
 	}
 	for _, fn := range a.UsageHoldChangeFunc {
-		fn(c)
+		fn(acct, c)
 	}
 }
 
-// queueUsageHoldNotice posts text through fn off the caller's goroutine, in
-// the order the changes happened: a start and its end must not swap.
-func (a *Agent) queueUsageHoldNotice(fn func(string), text string) {
+// holdNotice is one hold notice waiting to be posted: its text, for the chats
+// on acct.
+type holdNotice struct {
+	acct *account.Account
+	text string
+}
+
+// postUsageHoldNotice posts n in every chat of the agent whose session is on
+// n's account, once each.
+func (a *Agent) postUsageHoldNotice(n holdNotice) {
+	if a.ChatSessionsFunc == nil {
+		return
+	}
+	seen := map[string]bool{}
+	for _, sk := range a.ChatSessionsFunc() {
+		if sk == "" || seen[sk] {
+			continue
+		}
+		seen[sk] = true
+		if a.AccountFor(sk) == n.acct {
+			a.UsageHoldNotifyFunc(sk, n.text)
+		}
+	}
+}
+
+// queueUsageHoldNotice posts n off the caller's goroutine, in the order the
+// changes happened: a start and its end must not swap. The chats are chosen
+// there too, as asking a session's account may bind it (account.Pool), and
+// binding asks the accounts' holds, whose change is being reported.
+func (a *Agent) queueUsageHoldNotice(n holdNotice) {
 	a.usageHold.mu.Lock()
-	a.usageHold.notices = append(a.usageHold.notices, text)
+	a.usageHold.notices = append(a.usageHold.notices, n)
 	start := !a.usageHold.posting
 	a.usageHold.posting = true
 	a.usageHold.mu.Unlock()
@@ -181,7 +211,7 @@ func (a *Agent) queueUsageHoldNotice(fn func(string), text string) {
 			next := a.usageHold.notices[0]
 			a.usageHold.notices = a.usageHold.notices[1:]
 			a.usageHold.mu.Unlock()
-			fn(next)
+			a.postUsageHoldNotice(next)
 		}
 	}()
 }

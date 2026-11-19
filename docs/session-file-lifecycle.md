@@ -147,8 +147,8 @@ root.2026-03-13T10-30-00Z.jsonl.gz (gzipped, original deleted)
 For the `claude-code` (ccstream) backend the conversation lives in Claude
 Code's own transcript, `<CC config folder>/projects/<cwd-slug>/<sessionID>.jsonl`,
 not a foci `root.jsonl`. The CC config folder is the session's account's (#3104,
-#3186, `ccaccount.ForLaunchEnv`): the folder the agent's
-`[agents.<id>.backend_config] accounts` lists, else a `CLAUDE_CONFIG_DIR` from
+#3186, `ccaccount.ForLaunchEnv`): the folder of the one the session is on,
+of those the agent's `[agents.<id>.backend_config] accounts` lists, else a `CLAUDE_CONFIG_DIR` from
 the operator's shell rc file, else the host folder (`~/.claude`, or `<install root>/.claude`
 on a separate-root install). `Backend.SessionFilePath()` derives that path from
 the live session id + workdir (the same construction `ForkSession` uses to

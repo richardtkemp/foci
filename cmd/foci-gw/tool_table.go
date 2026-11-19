@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"foci/internal/fap"
 	"path/filepath"
 	"time"
 
@@ -819,8 +820,21 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 			// #3151: the app's new-conversation picker shows the agent's
 			// allowance from its stored figures. A conversation that does
 			// not exist yet has no session to ask: it shows the account a
-			// new session starts on, the pool's first.
-			app.SetAgentUsageSource(acfg.ID, appUsageFromBinding(accounts[0].Readings(acfg.ID)))
+			// new session would start on now (the pool's pick, #3186).
+			app.SetAgentUsageSource(acfg.ID, func() *fap.AgentUsage {
+				acct := accounts[0]
+				if d.agLazy != nil {
+					if ag := d.agLazy(); ag != nil {
+						if next := ag.Accounts().Next(); next != nil {
+							acct = next
+						}
+					}
+				}
+				if usage := appUsageFromBinding(acct.Readings(acfg.ID)); usage != nil {
+					return usage()
+				}
+				return nil
+			})
 		}
 		spawnDeps.Delegated = &tools.DelegatedSpawn{
 			Spec: spec,

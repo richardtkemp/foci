@@ -84,10 +84,15 @@ func wireAgentPlatformCallbacks(
 		defaultSession: func() string { return defaultSessionKeyFor(ag, acfg.ID) },
 	}, cacheBustOn), cacheBustOn)
 
-	// Usage hold (#2491): each agent posts its own start/end notice in its
-	// default chat.
-	ag.UsageHoldNotifyFunc = func(text string) {
-		route.NotifySessionChat(connMgr, acfg.ID, defaultSessionKeyFor(ag, acfg.ID), text)
+	// Usage hold (#2491): each agent posts its own start/end notice in each
+	// of its chats whose session is on the account (#3186): the default
+	// chat and the open app chats, the chats quiet-hours compaction and the
+	// hold's compaction consider.
+	ag.UsageHoldNotifyFunc = func(sessionKey, text string) {
+		route.NotifySessionChat(connMgr, acfg.ID, sessionKey, text)
+	}
+	ag.ChatSessionsFunc = func() []string {
+		return append([]string{defaultSessionKeyFor(ag, acfg.ID)}, app.OpenSessionsForAgent(acfg.ID)...)
 	}
 
 	// Rate limit — broadcast to every surface

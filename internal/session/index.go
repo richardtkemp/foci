@@ -2117,6 +2117,25 @@ func (idx *SessionIndex) DeleteAllSessionMetadata(sessionKey string) error {
 	return err
 }
 
+// BackfillSessionMetadata sets key to value on every session of agentID
+// (its key starts "<agentID>/") that has metadata `having` set and key unset,
+// and returns how many it set. A one-statement migration: run again, it sets
+// nothing.
+func (idx *SessionIndex) BackfillSessionMetadata(agentID, having, key, value string) (int64, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	res, err := idx.db.Exec(
+		`INSERT INTO session_metadata (session_key, key, value)
+		 SELECT h.session_key, ?, ? FROM session_metadata h
+		 WHERE h.key = ? AND substr(h.session_key, 1, length(?) + 1) = ? || '/'
+		   AND NOT EXISTS (SELECT 1 FROM session_metadata k WHERE k.session_key = h.session_key AND k.key = ?)`,
+		key, value, having, agentID, agentID, key)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // SessionKeysWithMetadata returns all session keys that have a given metadata key set.
 // Used for cleanup of stale session metadata (e.g. no_compact entries for defunct sessions).
 func (idx *SessionIndex) SessionKeysWithMetadata(key string) ([]string, error) {

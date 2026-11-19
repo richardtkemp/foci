@@ -101,22 +101,38 @@ func (a Account) String() string {
 func Host() (Location, error) { return ForLaunchEnv(nil) }
 
 // ForFolder is the location of the account whose CC config folder is dir
-// (one backend_config.accounts entry). "" and the host's own folder are the
-// host's account, so listing the host's folder never makes a second login of
-// it.
-func ForFolder(dir string) (Location, error) {
-	host, err := Host()
+// (one backend_config.accounts entry). "" and the host's own folder (by any
+// spelling, a symlink included) are the host's account, so listing the
+// host's folder, alone or beside other folders, never makes a second login
+// of it (#3186 F11). That matters on macOS: CC given CLAUDE_CONFIG_DIR
+// names its Keychain item after that folder, so the host's folder passed
+// as a folder of its own would read an empty item, not the host's login.
+func ForFolder(dir string) (Location, error) { return forFolder(dir, runtime.GOOS) }
+
+func forFolder(dir, goos string) (Location, error) {
+	host, err := FromEnv(Env(nil), goos)
 	if err != nil || dir == "" {
 		return host, err
 	}
-	loc, err := ForLaunchEnv(FolderEnv(dir))
+	loc, err := FromEnv(Env(FolderEnv(dir)), goos)
 	if err != nil {
 		return Location{}, err
 	}
-	if loc.Dir == host.Dir {
+	if sameFolder(loc.Dir, host.Dir) {
 		return host, nil
 	}
 	return loc, nil
+}
+
+// sameFolder reports whether a and b (absolute, cleaned) name one folder:
+// equal, or equal once symlinks are resolved.
+func sameFolder(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && ra == rb
 }
 
 // FolderEnv is what a CC process must be given, on top of the operator's

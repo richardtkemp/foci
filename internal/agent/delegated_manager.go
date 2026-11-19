@@ -424,7 +424,11 @@ func (m *DelegatedManager) resumeRetention(sessionKey string) time.Duration {
 	if m.Spec.ResumeRetention == nil {
 		return 0
 	}
-	return m.Spec.ResumeRetention(m.LaunchEnv(sessionKey))
+	env, err := m.LaunchEnv(sessionKey)
+	if err != nil {
+		return 0
+	}
+	return m.Spec.ResumeRetention(env)
 }
 
 // LaunchEnv is the launch env of sessionKey's backend before the per-launch
@@ -432,8 +436,14 @@ func (m *DelegatedManager) resumeRetention(sessionKey string) time.Duration {
 // backend_config.env with the part of the session's account on top. The
 // Spec's functions that read a session's files without a backend instance
 // (ResumeRetention, TranscriptChecker) and a usage read (UsageTarget) take it.
-func (m *DelegatedManager) LaunchEnv(sessionKey string) map[string]string {
-	return m.Accounts.For(sessionKey).LaunchEnv(m.StartOpts.Env)
+// An error is a session whose account cannot be read (account.Pool.Resolve):
+// its files are in a folder foci cannot name now.
+func (m *DelegatedManager) LaunchEnv(sessionKey string) (map[string]string, error) {
+	acct, err := m.Accounts.Resolve(sessionKey)
+	if err != nil {
+		return nil, fmt.Errorf("account of session %s: %w", sessionKey, err)
+	}
+	return acct.LaunchEnv(m.StartOpts.Env), nil
 }
 
 // NewBackendFor creates a fresh Backend instance on acct (does not start
@@ -454,9 +464,39 @@ func (m *DelegatedManager) NewBackendFor(acct *account.Account) (delegator.Deleg
 	return be, nil
 }
 
-// newSessionBackend is NewBackendFor the account sessionKey is on.
+// newSessionBackend is NewBackendFor the account sessionKey is on. It fails
+// when that account cannot be read: an instance on a guessed account would
+// look for the session's files in another account's folder.
 func (m *DelegatedManager) newSessionBackend(sessionKey string) (delegator.Delegator, error) {
-	return m.NewBackendFor(m.Accounts.For(sessionKey))
+	acct, err := m.Accounts.Resolve(sessionKey)
+	if err != nil {
+		return nil, fmt.Errorf("account of session %s: %w", sessionKey, err)
+	}
+	return m.NewBackendFor(acct)
+}
+
+// AccountLeft is account.Pool.OnLeft: sessionKey was stored on account was,
+// which the agent no longer lists, and is now on now. Its backend session is
+// in was's folder, out of reach, so the session starts fresh on now (its
+// resume id is dropped before the launch reads it), and a top-level session's
+// chat is told once (#3186). A child's chat is its root's.
+func (m *DelegatedManager) AccountLeft(sessionKey, was string, now *account.Account) {
+	m.clearResumeID(sessionKey)
+	if sk, err := session.ParseSessionKey(sessionKey); err == nil && !sk.IsRoot() {
+		return
+	}
+	if m.SystemNoticeFunc != nil {
+		m.SystemNoticeFunc(sessionKey, AccountLeftNotice(was, now))
+	}
+}
+
+// AccountLeftNotice is the chat notice of AccountLeft.
+func AccountLeftNotice(was string, now *account.Account) string {
+	text := "⚠️ This chat was on the account " + was + ", which this agent no longer has, so its earlier context is out of reach. It starts fresh"
+	if name := now.Name(); name != "" {
+		return text + " on the account " + name + "."
+	}
+	return text + "."
 }
 
 // Supports reports whether the agent's backend declares capability c.
@@ -612,6 +652,13 @@ func (m *DelegatedManager) get(ctx context.Context, sessionKey string, user bool
 // invoked through createGroup.Do, so per-key creation is serialized. user
 // marks the creation a user turn needs (GetForUserTurn).
 func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string, user bool) (_ delegator.Delegator, retErr error) {
+	// The session's account is fixed before its resume id is read: a session
+	// stored on an account the agent no longer has drops its resume id here
+	// (AccountLeft), and every instance below runs on this account.
+	acct, err := m.Accounts.Resolve(sessionKey)
+	if err != nil {
+		return nil, fmt.Errorf("create delegated backend for %s: account: %w", sessionKey, err)
+	}
 	m.mu.Lock()
 	// dead is the corpse to clean up after the lock is released. Holding
 	// m.mu across be.Close() risks deadlocking the entire agent if the
@@ -676,7 +723,7 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string, u
 	}()
 
 	// Create and start a new Backend for this session, on its account.
-	be, err := m.newSessionBackend(sessionKey)
+	be, err := m.NewBackendFor(acct)
 	if err != nil {
 		return nil, fmt.Errorf("create delegated backend for %s: %w", sessionKey, err)
 	}
@@ -852,7 +899,7 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string, u
 		if resumeID != "" && !opts.Ephemeral {
 			m.logger().Warnf("start with --resume %s failed for %s: %v — retrying without resume", resumeID, sessionKey, err)
 			_ = be.Close()
-			newBe, err := m.newSessionBackend(sessionKey)
+			newBe, err := m.NewBackendFor(acct)
 			if err != nil {
 				if bridge != nil {
 					bridge.Close()
@@ -918,7 +965,7 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string, u
 			_ = mb.be.Close()
 			m.clearResumeID(sessionKey)
 
-			newBe, err := m.newSessionBackend(sessionKey)
+			newBe, err := m.NewBackendFor(acct)
 			if err != nil {
 				if bridge != nil {
 					bridge.Close()
