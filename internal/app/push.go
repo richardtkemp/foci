@@ -691,6 +691,21 @@ func readableMessageID(frame fap.ServerFrame) string {
 // read-through-latest covers it for a device that shows it as a row.
 func isVoicePresentation(m fap.Media) bool { return m.VoiceMode }
 
+// isAmbientNotice reports whether frame is a system message that is ambient
+// unless the user turned on "Notify for system messages" (#3180): every system
+// message except one marked Urgent. An ambient notice is not "visible" in
+// pushPreview's sense (no push, preview, activity time), as the app shows it
+// without an unread badge.
+func isAmbientNotice(frame fap.ServerFrame) bool {
+	switch f := frame.(type) {
+	case fap.Notification:
+		return !f.Urgent
+	case fap.ServerMessage:
+		return f.Role == "system" && !f.Urgent
+	}
+	return false
+}
+
 // pushPreview classifies a server frame for offline push. It returns a short
 // preview hint and true for user-visible frames (those a human should be woken
 // for), or ("", false) for control/streaming frames that carry no notification

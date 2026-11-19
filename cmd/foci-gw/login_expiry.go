@@ -37,7 +37,13 @@ func deliverLoginExpiryNotice(connMgr platform.ConnectionManager, target, notice
 		log.NewComponentLogger("agent:" + target).Debugf("sign-in expiry notice undelivered, no chat to address")
 		return false
 	}
-	conn.SendNotification(notice)
+	// Urgent (#3180): it notifies whatever the app's "Notify for system
+	// messages" setting says.
+	if u, ok := conn.(platform.UrgentNoticeSender); ok {
+		u.SendUrgentNotification(notice)
+	} else {
+		conn.SendNotification(notice)
+	}
 	return true
 }
 

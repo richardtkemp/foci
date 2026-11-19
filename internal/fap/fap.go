@@ -628,6 +628,14 @@ type ServerMessage struct {
 	// GET /app/blob/<id>. Only set on Role "user"; omitted when empty, so an
 	// older client never sees it.
 	Attachments []AttachmentRef `json:"attachments,omitempty"`
+	// Urgent marks a system-role message (Role "system") the user must see
+	// whatever their settings: it marks the chat unread, moves it up the
+	// list and pushes (#3180). Every other system message is ambient: it
+	// lands in the transcript, but does none of those unless the user turned
+	// on "Notify for system messages". Only the sign-in link sets it (Dick,
+	// 2026-11-19). Meaningless on other roles. Omitted when false, so an app
+	// that predates it treats the message as before.
+	Urgent bool `json:"urgent,omitempty"`
 }
 
 func (ServerMessage) Type() string { return TypeMessage }
@@ -692,11 +700,21 @@ type Notification struct {
 	// app that predates it ignores the key and shows Text, which holds the command
 	// and its readable result.
 	Shell *ShellCommand `json:"shell,omitempty"`
-	// Ambient marks a notification that is a trace in the transcript, not news:
-	// it is stored, replayed and rendered like any other, but the server does not
-	// treat it as user-facing activity (no offline push, no conversation-list
-	// preview, no unread bump). Server-side only (never on the wire): it is read
-	// by pushPreview at send time, and the stored visible flag carries it after.
+	// Urgent marks a notification the user must see whatever their settings:
+	// it marks the chat unread, moves it up the list and pushes (#3180). Every
+	// other notification is ambient: it lands in the transcript but does none
+	// of those unless the user turned on "Notify for system messages" (the
+	// synced app setting notify_for_system_messages). Only the sign-in expiry
+	// notice sets it (Dick, 2026-11-19). Omitted when false, so an app that
+	// predates it treats the notification as before.
+	Urgent bool `json:"urgent,omitempty"`
+	// Ambient marks a notification that is a trace in the transcript, not news,
+	// even with "Notify for system messages" on (a shell chit, a "Loaded skill"
+	// line): it is stored, replayed and rendered like any other, but the server
+	// does not treat it as user-facing activity (no offline push, no
+	// conversation-list preview). Server-side only (never on the wire): it is
+	// read by pushPreview at send time, and the stored visible flag carries it
+	// after.
 	Ambient bool `json:"-"`
 }
 

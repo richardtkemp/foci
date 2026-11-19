@@ -418,6 +418,21 @@ type SessionMessageEditor interface {
 	EditInjectedMessage(sessionKey, msgID, text string) error
 }
 
+// UrgentNoticeSender is optionally implemented by connections on which a
+// system message is ambient by default: it lands in the chat but does not mark
+// it unread, move it up or push, unless the user asked to be notified for
+// system messages (the app, #3180). The few notices the user must see whatever
+// their settings (Dick, 2026-11-19: the sign-in link and the sign-in expiry
+// notice) are sent through it. A transport without it notifies for every
+// message already, so its callers fall back to the plain send.
+type UrgentNoticeSender interface {
+	// SendUrgentNotification is SendNotification, urgent.
+	SendUrgentNotification(text string)
+	// SendUrgentEditableInjected is SessionMessageEditor.SendEditableInjected,
+	// urgent. Its EditInjectedMessage rewrites stay silent.
+	SendUrgentEditableInjected(sessionKey, text string) (msgID string, err error)
+}
+
 // OwnChatDocumentSender is optionally implemented by connections whose plain
 // SendDocument can land above the addressed session, in another chat of its
 // family tree (the app, #2755). A backend prompt's attachment must land exactly

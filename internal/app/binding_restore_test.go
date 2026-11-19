@@ -318,6 +318,7 @@ func TestConvBindingFieldCensus(t *testing.T) {
 		"notifyOffline": true, "seq": true, "seen": true,
 		"onMessageStored":  true, // h.chatMessageStored (#2962, #2993)
 		"onActivityChange": true, // h.refreshWaiting (#3112)
+		"notifySystem":     true, // h.notifySystemMessages (#3180)
 	}
 	// durableBacked: correctness depends on a value from persistent storage
 	// (frameStore / SessionIndex) that predates this process — MUST be

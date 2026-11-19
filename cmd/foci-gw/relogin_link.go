@@ -45,6 +45,11 @@ func reloginLinkTarget(connMgr platform.ConnectionManager, agentID, sessionKey s
 			if err != nil {
 				return "", err
 			}
+			// The link is urgent (#3180): it notifies whatever the app's
+			// "Notify for system messages" setting says.
+			if u, ok := conn.(platform.UrgentNoticeSender); ok {
+				return u.SendUrgentEditableInjected(sessionKey, text)
+			}
 			if ed, ok := conn.(platform.SessionMessageEditor); ok {
 				return ed.SendEditableInjected(sessionKey, text)
 			}

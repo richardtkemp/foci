@@ -169,6 +169,10 @@ type Hub struct {
 	// for the same reason as pinsMu: it is held across a SessionIndex
 	// read+write, and here across the sends too.
 	settingsMu sync.Mutex
+	// notifySystem caches the bag's notify_for_system_messages for the send
+	// path (notifySystemMessages): notifySystemUnknown until first read, then
+	// notifySystemOff or notifySystemOn. handleSettingPut refreshes it.
+	notifySystem atomic.Int32
 
 	// openSetMu serialises every writer of the shared open-set (open_chats):
 	// handleConversationOpenSet's full replace, mintSessionConversation's append
@@ -1787,7 +1791,7 @@ func (h *Hub) ensureBinding(client *wsClient, agentID, convID string) *convBindi
 		}
 		return existing
 	}
-	b = &convBinding{convID: convID, chatID: chatID, replayDepth: h.replayDepth, replayTTL: h.replayTTL, store: h.frames, seq: h.frames.MaxSeq(convID), seen: make(map[string]struct{}), notifyOffline: h.pushNotify, onMessageStored: h.chatMessageStored, onActivityChange: h.refreshWaiting}
+	b = &convBinding{convID: convID, chatID: chatID, replayDepth: h.replayDepth, replayTTL: h.replayTTL, store: h.frames, seq: h.frames.MaxSeq(convID), seen: make(map[string]struct{}), notifyOffline: h.pushNotify, notifySystem: h.notifySystemMessages, onMessageStored: h.chatMessageStored, onActivityChange: h.refreshWaiting}
 	b.setIdent(agentID, sk)
 	if preview, sentMs, ok := h.frames.LastVisible(convID); ok {
 		b.lastPreview = preview
@@ -2149,6 +2153,50 @@ func (h *Hub) storeAppSetting(key, value string) (stored map[string]string, ok b
 		return prev, true
 	}
 	return merged, true
+}
+
+// settingNotifySystemMessages is the synced bag key of the app's "Notify for
+// system messages" toggle (#1403): on, an ambient system message is news like
+// any other (#3180). Encoded "true"/"false" by the client, like every bool.
+const settingNotifySystemMessages = "notify_for_system_messages"
+
+// The states of Hub.notifySystem.
+const (
+	notifySystemUnknown int32 = iota
+	notifySystemOff
+	notifySystemOn
+)
+
+// parseNotifySystemMessages reads the toggle from a settings bag. Missing or
+// unparseable is off, the app's default.
+func parseNotifySystemMessages(bag map[string]string) int32 {
+	if on, err := strconv.ParseBool(strings.TrimSpace(bag[settingNotifySystemMessages])); err == nil && on {
+		return notifySystemOn
+	}
+	return notifySystemOff
+}
+
+// notifySystemMessages reports whether the user turned on "Notify for system
+// messages" (#3180): an ambient system message then pushes, previews and
+// moves its chat like any message. Off by default. The first call reads the
+// bag; it takes no lock (a CompareAndSwap from unknown, so a value a
+// concurrent handleSettingPut stored is never overwritten). An unreadable bag
+// reads as off and is tried again on the next call.
+func (h *Hub) notifySystemMessages() bool {
+	if v := h.notifySystem.Load(); v != notifySystemUnknown {
+		return v == notifySystemOn
+	}
+	idx := h.deps.SessionIndex
+	if idx == nil {
+		return false
+	}
+	bag, err := h.loadAppSettings(idx)
+	if err != nil {
+		appLog.Warnf("app settings: cannot read %s, treating system messages as ambient: %v", settingNotifySystemMessages, err)
+		return false
+	}
+	h.notifySystem.CompareAndSwap(notifySystemUnknown, parseNotifySystemMessages(bag))
+	return h.notifySystem.Load() == notifySystemOn
 }
 
 // loadOpenChats reads the persisted shared open-set. Empty (nil) when unset or
@@ -2723,6 +2771,10 @@ type convBinding struct {
 	store       *frameStore   // durable replay backstop (nil = in-memory only)
 
 	notifyOffline func(p pushPayload) // fires a wake push for offline visible frames; nil = no push
+	// notifySystem reports the synced "Notify for system messages" setting
+	// (Hub.notifySystemMessages): when false, an ambient system message
+	// (isAmbientNotice) is not a visible frame (#3180). nil = off.
+	notifySystem func() bool
 	// onMessageStored runs after a chat message frame (autoNameCounts) is in
 	// the durable store, on a goroutine of its own; nil = none. The hub's
 	// automatic chat name (#2962) and chat sections (#2993) count messages
@@ -3408,6 +3460,8 @@ func (b *convBinding) send(frame fap.ServerFrame) { b.sendThen(frame, nil) }
 // or — with no store — once it is in the in-memory buffer. It also runs if the
 // frame cannot be encoded (there is nothing to wait for). nil = none.
 func (b *convBinding) sendThen(frame fap.ServerFrame, onRecorded func()) {
+	// Read before b.mu: the setting's first read loads the settings bag.
+	quiet := isAmbientNotice(frame) && (b.notifySystem == nil || !b.notifySystem())
 	b.mu.Lock()
 	b.seq++
 	seq := b.seq
@@ -3427,6 +3481,9 @@ func (b *convBinding) sendThen(frame fap.ServerFrame, onRecorded func()) {
 	}
 	now := time.Now()
 	preview, visible := pushPreview(frame)
+	if quiet {
+		preview, visible = "", false
+	}
 	leaf := b.leaf
 	if visible {
 		if leaf != nil && leaf.title != "" {
@@ -3446,6 +3503,14 @@ func (b *convBinding) sendThen(frame fap.ServerFrame, onRecorded func()) {
 		// Not a visible frame, but the bubble a device draws for it can hold a
 		// read watermark: a read through the latest message must cover it.
 		b.lastMsgID = m.MessageID
+	}
+	if n, trace := frame.(fap.Notification); quiet && !(trace && n.Ambient) {
+		// The same for an ambient system message (#3180): a row of its own,
+		// which a read through the latest message must cover. A trace (a
+		// shell chit, a "Loaded skill" line) is not a message row.
+		if id := readableMessageID(frame); id != "" {
+			b.lastMsgID = id
+		}
 	}
 	b.buffer = append(b.buffer, bufferedFrame{seq: seq, wire: wire, sent: now})
 	b.trimBufferLocked()

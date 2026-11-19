@@ -128,6 +128,8 @@ var (
 	_ platform.InteractiveRemover   = (*appConn)(nil)
 	_ agent.Driver                  = (*appConn)(nil)
 	_ turn.SessionSubagentDeliverer = (*appConn)(nil)
+	_ platform.UrgentNoticeSender   = (*appConn)(nil)
+	_ platform.SessionMessageEditor = (*appConn)(nil)
 )
 
 // errNoBinding is returned by ButtonSender sends and by media sends when the
@@ -278,6 +280,17 @@ func (c *appConn) speakInVoiceMode(b *convBinding, textMessageID, text string) {
 // returns its messageID, so EditInjectedMessage can rewrite it later.
 // Implements platform.SessionMessageEditor (#2384, system role #3003).
 func (c *appConn) SendEditableInjected(sessionKey, text string) (string, error) {
+	return c.sendEditableInjected(sessionKey, text, false)
+}
+
+// SendUrgentEditableInjected is SendEditableInjected for a message the user
+// must see whatever their settings (the sign-in link, #3180): it marks the
+// chat unread, moves it up and pushes. Implements platform.UrgentNoticeSender.
+func (c *appConn) SendUrgentEditableInjected(sessionKey, text string) (string, error) {
+	return c.sendEditableInjected(sessionKey, text, true)
+}
+
+func (c *appConn) sendEditableInjected(sessionKey, text string, urgent bool) (string, error) {
 	clean := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(text))
 	if clean == "" {
 		return "", fmt.Errorf("editable message for session %q is empty", sessionKey)
@@ -290,7 +303,7 @@ func (c *appConn) SendEditableInjected(sessionKey, text string) (string, error) 
 		clean = misdeliveryBanner(sessionKey, b.convID, clean)
 	}
 	msgID := fap.NewULID()
-	b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: msgID, Role: "system", Text: clean})
+	b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: msgID, Role: "system", Text: clean, Urgent: urgent})
 	return msgID, nil
 }
 
@@ -404,14 +417,19 @@ func (c *appConn) SendTextToChat(chatID int64, text string) error {
 	return c.SendToSession(c.SessionKeyForChat(chatID), text)
 }
 
-func (c *appConn) SendNotification(text string) { c.notify(text) }
+func (c *appConn) SendNotification(text string) { c.notify(text, false) }
+
+// SendUrgentNotification is SendNotification for a notice the user must see
+// whatever their settings (the sign-in expiry notice, #3180): it marks the
+// chat unread, moves it up and pushes. Implements platform.UrgentNoticeSender.
+func (c *appConn) SendUrgentNotification(text string) { c.notify(text, true) }
 
 // SendNotificationDirect returns the delivered notification's messageID so the
 // caller can later edit it in place via EditMessageText (the compaction ⏳→✅
 // flow). Empty when nothing was delivered or this is the unbound fan-out
 // instance (agent-wide notices like rate-limit warnings are not edited).
 func (c *appConn) SendNotificationDirect(text string) string {
-	return c.notify(text)
+	return c.notify(text, false)
 }
 
 // notify delivers an agent notification and returns its messageID. A bound
@@ -422,8 +440,8 @@ func (c *appConn) SendNotificationDirect(text string) string {
 // a fan-out to every conversation. Session-targeted notices that must land
 // in a SPECIFIC chat use a bound view (the wrong-chat compaction-notice bug,
 // #911). The messageID is registered so a later EditMessageText can replace
-// the notification in place.
-func (c *appConn) notify(text string) string {
+// the notification in place. urgent sets fap.Notification.Urgent (#3180).
+func (c *appConn) notify(text string, urgent bool) string {
 	clean := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(text))
 	if clean == "" {
 		return ""
@@ -439,7 +457,7 @@ func (c *appConn) notify(text string) string {
 	}
 	msgID := fap.NewULID()
 	c.hub.registerNotification(msgID, b)
-	b.send(fap.Notification{ConversationID: b.convID, MessageID: msgID, Text: clean, Level: "info"})
+	b.send(fap.Notification{ConversationID: b.convID, MessageID: msgID, Text: clean, Level: "info", Urgent: urgent})
 	return msgID
 }
 

@@ -669,6 +669,7 @@ func (h *Hub) handleSettingPut(f fap.SettingPut) {
 	h.settingsMu.Lock()
 	defer h.settingsMu.Unlock()
 	if stored, ok := h.storeAppSetting(f.Key, f.Value); ok {
+		h.notifySystem.Store(parseNotifySystemMessages(stored))
 		h.broadcastSettings(stored)
 	}
 }

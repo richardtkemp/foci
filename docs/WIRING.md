@@ -3166,7 +3166,26 @@ with role `system` (#3003: the relogin link is a system notice, like
 rewrites that row's text in place (same position, role kept, no unread, no push,
 no marker); `pushPreview` treats `message.edit` as invisible. Telegram/Discord/Slack
 implement the same interface with their edit-message APIs and prepend the
-`injected_message_header` on the send and every edit. The `Send{Photo,Document,
+`injected_message_header` on the send and every edit.
+
+**System messages are ambient by default (#3180, Dick 2026-11-19).** Every
+system message (a `notification` frame, or a `message` with role `system`) is
+ambient: `convBinding.sendThen` treats it as not visible (`isAmbientNotice`):
+no wake push, no roster preview, no `lastActMs`, though `lastMsgID` still moves
+to it so a read through the latest message covers its row (a trace notification,
+`Ambient`, does not move it). Two notices are urgent and always visible: the
+sign-in link and the sign-in expiry notice. They go out through
+`platform.UrgentNoticeSender` (`SendUrgentEditableInjected`,
+`SendUrgentNotification`; `relogin_link.go`, `login_expiry.go`; a transport
+without it gets the plain send) and carry `urgent:true` on the wire, which the
+app reads to count the row. The app's "Notify for system messages" toggle is the
+synced settings-bag key `notify_for_system_messages`; when it is on, an ambient
+notice is visible like any message (a trace stays quiet). The hub caches it in
+`Hub.notifySystem` (`notifySystemMessages`: first read loads the bag,
+`handleSettingPut` refreshes it), read by the binding through `notifySystem`
+before `b.mu`.
+
+The `Send{Photo,Document,
 Voice,…}` media methods store the payload in the `blobStore` and emit a `media`
 frame referencing the blobId. All sends go through `convBinding.send`, which
 assigns seq + ack, buffers for replay, and enqueues iff a socket is attached.
