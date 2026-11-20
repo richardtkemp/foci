@@ -128,9 +128,12 @@ func (a *Agent) tryPeerSteerHeld(inb *sessionInbox, env *Envelope) bool {
 }
 
 // injectClass names the FIFO class heldSiblingPins keeps order within:
-// keepalives, SkipHolds messages, and every other system injection.
+// keepalives, SkipHolds messages, user injections (an ask answer or a
+// redelivery the usage hold parked, #3195), and every other system injection.
 func injectClass(m *InjectMeta) int {
 	switch {
+	case userInject(m):
+		return 3
 	case isKeepaliveTrigger(m.Trigger):
 		return 1
 	case m.SkipHolds:

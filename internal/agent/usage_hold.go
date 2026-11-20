@@ -325,9 +325,18 @@ func (a *Agent) parkUsageHeld(inb *sessionInbox, env Envelope) {
 	a.syncUsageHeldMirror(inb)
 	st := a.UsageHold(inb.sk)
 	a.logger().Infof("inbox: usage hold (%s) holds a message sk=%s (%dB, resume=%v, %d held)", st.Phase, env.SessionKey, len(env.Text), env.usageResume, n)
-	if fn := a.TurnQueuedNotifyFunc; fn != nil && !env.Automated && !env.usageResume && !restored {
-		text := a.AccountFor(inb.sk).WithName("⏸️ Held: usage is at the hold limit, so this message waits until " + formatLift(st.LiftAt) + ", then runs.")
-		go fn(env.SessionKey, text)
+	if !env.Automated && !env.usageResume && !restored {
+		a.notifyUsageHeld(env.SessionKey, st)
+	}
+}
+
+// notifyUsageHeld tells sk's chat that the input it just sent waits for the
+// usage hold's lift (a user message, parkUsageHeld; an ask answer or a
+// redelivery, dispatchUserInject).
+func (a *Agent) notifyUsageHeld(sk string, st usagehold.State) {
+	if fn := a.TurnQueuedNotifyFunc; fn != nil {
+		text := a.AccountFor(sk).WithName("⏸️ Held: usage is at the hold limit, so this message waits until " + formatLift(st.LiftAt) + ", then runs.")
+		go fn(sk, text)
 	}
 }
 

@@ -158,6 +158,32 @@ func isRedeliveryInject(m *InjectMeta) bool {
 	return m != nil && m.Trigger == TriggerRedelivery
 }
 
+// userInject reports whether m carries the user's own input: an ask answer
+// (UserInput, #2233) or a redelivery (#2362). Such an injection waits only
+// for what a user turn waits for, and the usage hold parks it like a user
+// message (#3195).
+func userInject(m *InjectMeta) bool {
+	return m != nil && (m.UserInput || isRedeliveryInject(m))
+}
+
+// userInjectForced reports whether a bare /lb (LimitBreakHeld) covered user
+// injection env: it was enqueued at or before the /lb, so it runs past the
+// usage hold (#3195).
+func (a *Agent) userInjectForced(env Envelope) bool {
+	if env.usageForce {
+		return true
+	}
+	inb := a.lookupInbox(env.SessionKey)
+	return inb != nil && env.enqSeq != 0 && env.enqSeq <= inb.userInjectForceThrough.Load()
+}
+
+// userInjectHeld reports whether the usage hold holds user injection env now
+// (#3195): it holds it as it holds a user message, unless a bare /lb covered
+// it.
+func (a *Agent) userInjectHeld(env Envelope) bool {
+	return a.usageHoldsTrigger(env.SessionKey, "user", false) && !a.userInjectForced(env)
+}
+
 // injectHeld is THE single decision "must this system inject wait now": the
 // gate applies to it AND a hold reason that applies to IT is active. The hold
 // has two halves (holdActive): the backend's whole background-work window,
@@ -174,8 +200,18 @@ func isRedeliveryInject(m *InjectMeta) bool {
 // design — the release path then hands the inject to runInject, whose drain
 // gate refuses it (#2059), exactly as the blocking gate used to open on
 // shutdown.
+//
+// A user injection (an ask answer or a redelivery) is held by the usage hold
+// alone, as a user message is (userInjectHeld, #3195): never by background
+// work.
 func (a *Agent) injectHeld(env Envelope) bool {
-	if a.ShuttingDown() || !injectGateApplies(env.Inject) {
+	if a.ShuttingDown() {
+		return false
+	}
+	if userInject(env.Inject) {
+		return a.userInjectHeld(env)
+	}
+	if !injectGateApplies(env.Inject) {
 		return false
 	}
 	// The usage hold (#2491) holds every system inject but a keepalive, a
@@ -220,6 +256,13 @@ func (a *Agent) waitInjectGate(ctx context.Context, sk string) bool {
 func (a *Agent) waitHeldGate(ctx context.Context, env Envelope) bool {
 	if env.Inject == nil {
 		return a.waitInjectGate(ctx, env.SessionKey)
+	}
+	if userInject(env.Inject) {
+		// Only the usage hold parks a user injection (#3195); the poll
+		// backstop sees the lift.
+		return a.gateWaitLoop(ctx, env.SessionKey, "usage_hold", func() bool {
+			return a.injectHeld(env)
+		})
 	}
 	if env.Inject.SkipHolds {
 		// A SkipHolds message (#3114) is also released when a run it can
@@ -377,9 +420,11 @@ func stopHeldWatch(inb *sessionInbox) {
 // waiting (the worker must stop; the envelope has been refused).
 //
 // Routing: a user-input injection (an ask answer, #2233) and a redelivery
-// (#2362) wait only for what a user turn waits for (waitUserTurnGates:
-// re-login, a non-delivering turn in flight, compaction) and are never held
-// by the pending-work gate. A gated
+// (#2362) wait only for what a user turn waits for and are never held by the
+// pending-work gate. The usage hold parks one on the held list, as it parks a
+// user message, and its sender is told (dispatchUserInject, #3195); the rest
+// of the user gates (waitUserTurnGates: re-login, a non-delivering turn in
+// flight, compaction) it waits out on the worker. A gated
 // system inject parks on the inbox's held list when its OWN hold is active or
 // a same-class sibling is already parked (heldSiblingPins — FIFO among
 // injects held for the same reason must survive a gate that flickers open;
@@ -390,13 +435,8 @@ func stopHeldWatch(inb *sessionInbox) {
 // be blocked in EnqueueInjectWait on another session's injection, so counting
 // them would deadlock at small limits.
 func (a *Agent) dispatchInject(ctx context.Context, inb *sessionInbox, env Envelope) bool {
-	if env.Inject.UserInput || isRedeliveryInject(env.Inject) {
-		if !a.waitUserTurnGates(ctx, env.SessionKey, false) {
-			a.refuseDroppedInject(env)
-			return false
-		}
-		a.runInject(inb, env)
-		return true
+	if userInject(env.Inject) {
+		return a.dispatchUserInject(ctx, inb, env)
 	}
 	// A message within this agent or an async tool result (#3114) steers
 	// into an adopted run in flight instead of parking behind it — unless an
@@ -422,6 +462,41 @@ func (a *Agent) dispatchInject(ctx context.Context, inb *sessionInbox, env Envel
 		return true
 	}
 	if !a.waitReloginGate(ctx, env.SessionKey) {
+		a.refuseDroppedInject(env)
+		return false
+	}
+	a.runInject(inb, env)
+	return true
+}
+
+// dispatchUserInject is dispatchInject for a user injection (an ask answer or
+// a redelivery). While the usage hold holds it, or an earlier user injection
+// is parked, it parks on the held list and the worker goes on serving the
+// session (#3195: it used to wait out the hold on the worker, silently, and
+// every later message, "/lb <text>" included, queued behind it). The sender
+// is told it waits, as for a user message (parkUsageHeld). The held-inject
+// watcher wakes the worker at the lift; a bare /lb releases it sooner
+// (LimitBreakHeld). Otherwise it waits out the other user gates and runs.
+func (a *Agent) dispatchUserInject(ctx context.Context, inb *sessionInbox, env Envelope) bool {
+	if a.injectHeld(env) || heldSiblingPins(inb.held, env) {
+		if env.Inject.Durable != nil && a.usageHoldPhase(inb.sk) != usagehold.Open {
+			a.storeUsageHeld(&env)
+		}
+		if env.heldSince.IsZero() {
+			env.heldSince = time.Now()
+		}
+		inb.held = append(inb.held, env)
+		inb.heldGen++
+		a.syncUsageHeldMirror(inb)
+		a.ensureHeldWatch(ctx, inb)
+		st := a.UsageHold(inb.sk)
+		a.logger().Infof("inbox: usage hold (%s) holds a user injection sk=%s trigger=%s (%dB)", st.Phase, inb.sk, env.Inject.Trigger, len(env.Text))
+		if !env.Automated {
+			a.notifyUsageHeld(inb.sk, st)
+		}
+		return true
+	}
+	if !a.waitUserTurnGates(ctx, env.SessionKey, true) {
 		a.refuseDroppedInject(env)
 		return false
 	}
@@ -487,6 +562,10 @@ func (a *Agent) releaseHeld(ctx context.Context, inb *sessionInbox) bool {
 type heldBound struct {
 	seq   uint64
 	phase usagehold.Phase
+	// forceThrough is the session's userInjectForceThrough at the walk's
+	// start: a user injection numbered at or below it runs past the hold
+	// (a bare /lb, #3195).
+	forceThrough uint64
 }
 
 // passes reports whether env, a held entry that arrived after the bound's
@@ -498,6 +577,11 @@ type heldBound struct {
 func (b *heldBound) passes(env Envelope) bool {
 	if b == nil || env.jumpQueue || env.enqSeq < b.seq {
 		return true
+	}
+	if userInject(env.Inject) {
+		// The hold holds it as it holds the bound's message, unless a
+		// bare /lb covered it (#3195).
+		return env.usageForce || (env.enqSeq != 0 && env.enqSeq <= b.forceThrough)
 	}
 	return usageHoldsTriggerIn(b.phase, "user", false) &&
 		!usageHoldsTriggerIn(b.phase, env.Inject.Trigger, env.Inject.HoldPermit)
@@ -521,7 +605,15 @@ func (a *Agent) releaseHeldBefore(ctx context.Context, inb *sessionInbox, bound 
 			kept = append(kept, env)
 			continue
 		}
-		if !a.waitReloginGate(ctx, env.SessionKey) {
+		// A user injection waits what a user turn waits for (#3195): the
+		// usage hold already passed it.
+		gateOpen := false
+		if userInject(env.Inject) {
+			gateOpen = a.waitUserTurnGates(ctx, env.SessionKey, true)
+		} else {
+			gateOpen = a.waitReloginGate(ctx, env.SessionKey)
+		}
+		if !gateOpen {
 			// ctx ended mid-release: this entry and the rest stay on the
 			// list for the worker's exit path — refuseHeld owns refusals.
 			kept = append(kept, inb.held[i:]...)
@@ -578,7 +670,7 @@ func (a *Agent) releaseHeldInArrivalOrder(ctx context.Context, inb *sessionInbox
 		if !ok {
 			return a.releaseHeld(ctx, inb)
 		}
-		bound := &heldBound{seq: headSeq, phase: a.usageHoldPhase(inb.sk)}
+		bound := &heldBound{seq: headSeq, phase: a.usageHoldPhase(inb.sk), forceThrough: inb.userInjectForceThrough.Load()}
 		if !a.releaseHeldBefore(ctx, inb, bound) {
 			return false
 		}

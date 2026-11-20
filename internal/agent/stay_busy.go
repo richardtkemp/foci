@@ -55,11 +55,18 @@ func (a *Agent) SetOnWaitInputsChanged(fn func(sessionKey string)) {
 // hook. Worker-confined callers (it reads inb's worker-owned lists).
 func (a *Agent) syncUsageHeldMirror(inb *sessionInbox) {
 	n := inb.usageHeldLen()
+	var userInjects int32
 	for _, env := range inb.held {
-		if env.usageHeldID != "" {
+		// A user injection on the held list is there for the usage hold
+		// alone (#3195).
+		if userInject(env.Inject) {
+			userInjects++
+		}
+		if env.usageHeldID != "" || userInject(env.Inject) {
 			n++
 		}
 	}
+	inb.userInjectsHeld.Store(userInjects)
 	a.usageHold.mirrorMu.Lock()
 	before := a.usageHold.heldBySession[inb.sk] > 0
 	if n == 0 {

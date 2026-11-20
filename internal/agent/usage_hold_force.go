@@ -107,6 +107,11 @@ const (
 //     (heldQueuedSeq); user messages leave the queue in order, so the ones
 //     numbered above userTakenThrough are still queued.
 //
+// A user injection (an ask answer, a redelivery) the hold parked (#3195) is
+// covered too: every one enqueued so far runs past the hold
+// (userInjectForceThrough), released by the worker's next loop top in
+// arrival order, after the running turn if there is one.
+//
 // The parked ones are taken off the list and their stored records and become
 // limit-break messages. While a turn runs with nothing still queued, each is
 // enqueued again, oldest first, and takes the normal routing, so it steers
@@ -158,10 +163,13 @@ func (a *Agent) LimitBreakHeld(sk string) LimitBreakOutcome {
 	}
 	inb.usageHeldMu.Unlock()
 	a.forgetUsageHeld(stored...)
-	if len(taken) == 0 && !queued {
+	// Every user injection enqueued so far runs past the hold (#3195).
+	inb.userInjectForceThrough.Store(inb.enqSeq.Load())
+	injects := inb.userInjectsHeld.Load()
+	if len(taken) == 0 && !queued && injects == 0 {
 		return LimitBreakNothingHeld
 	}
-	a.logger().Infof("inbox: bare /lb runs %d parked held message(s) past the usage hold sk=%s (queued ones marked: %v)", len(taken), sk, queued)
+	a.logger().Infof("inbox: bare /lb runs %d parked held message(s) and %d user injection(s) past the usage hold sk=%s (queued ones marked: %v)", len(taken), injects, sk, queued)
 	// The worker owns the mirror (it also counts parked injections): kick
 	// it to recount, and to run what was put on its queue.
 	select {

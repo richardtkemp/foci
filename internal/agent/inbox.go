@@ -463,6 +463,13 @@ type sessionInbox struct {
 	heldQueuedSeq     atomic.Uint64
 	userTakenThrough  uint64
 	usageForceThrough uint64
+	// userInjectForceThrough is the enqSeq a bare /lb covered for user
+	// injections (an ask answer, a redelivery): one numbered at or below it
+	// runs past the usage hold (userInjectForced, #3195). userInjectsHeld
+	// counts the user injections parked on the held list, for LimitBreakHeld
+	// (written by the worker in syncUsageHeldMirror).
+	userInjectForceThrough atomic.Uint64
+	userInjectsHeld        atomic.Int32
 	// usageResume is set when a usage hold interrupted this session's turn:
 	// the worker parks the hidden resume line at the head of usageHeld at
 	// its next loop top (takeUsageResume). usageKick wakes an idle worker for
@@ -1627,7 +1634,8 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 			openCh = inb.heldWatch.open
 		}
 		var usageCh <-chan struct{}
-		if inb.usageHeldLen() > 0 {
+		if inb.usageHeldLen() > 0 || inb.userInjectsHeld.Load() > 0 {
+			// A parked user injection (#3195) runs at the lift too.
 			usageCh = usageChanged
 		}
 		select {
