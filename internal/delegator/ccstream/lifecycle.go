@@ -721,15 +721,16 @@ func (b *Backend) runKeepAlive(ctx context.Context) {
 // can contain progress info, warnings, and errors. Lines containing "error"
 // or "fatal" are logged at warn level; everything else at debug.
 //
-// Buffer matches the stdout reader's 1MB cap (reader.go maxTokenSize) so
-// a misbehaving subprocess writing one huge stderr line doesn't silently
-// stall its own stderr pipe: bufio.Scanner with default 64KB buffer
+// The 1MB buffer was chosen to match the stdout reader's old 1MB cap; the
+// stdout reader has had no line cap since #1278 (reader.go). The buffer stops
+// a misbehaving subprocess writing one long stderr line from stalling its own
+// stderr pipe below 1MB: bufio.Scanner with default 64KB buffer
 // would return ErrTooLong and this goroutine would exit, causing the pipe
 // to fill and the subprocess to block on its next stderr write — wedging
 // the whole turn before stdout ever delivered a single envelope.
 func (b *Backend) captureStderr(r io.Reader) {
 	scanner := bufio.NewScanner(r)
-	const maxLine = 1 << 20 // 1MB — matches stdout reader cap
+	const maxLine = 1 << 20 // 1MB; see the doc comment above
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLine)
 	for scanner.Scan() {
 		line := scanner.Text()

@@ -85,10 +85,11 @@ const slowToolThreshold = 10 * time.Second
 // in the emitted JSON. Two independent constraints, the tighter of which sets
 // the value:
 //
-//  1. Each hook_response line from CC must stay under the ccstream reader's
-//     1MB scanner limit (internal/delegator/ccstream/reader.go maxTokenSize) —
-//     without a cap, a multi-MB file read would blow the scanner and tear down
-//     the backend via OnReaderStopped.
+//  1. Each hook_response line from CC once had to stay under the ccstream
+//     reader's 1MB scanner limit, or a multi-MB file read tore down the
+//     backend via OnReaderStopped. The reader has had no line cap since #1278
+//     (internal/delegator/ccstream/reader.go, bufio.Reader.ReadBytes), so this
+//     constraint no longer binds; constraint 2 sets the value.
 //  2. Foci's only consumer of tool_response is the tool-call display: the
 //     result hint (one line) and the "Show full" expansion, which is itself
 //     hard-capped at 4096 bytes for the whole message (telegram/discord

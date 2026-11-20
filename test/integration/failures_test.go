@@ -538,20 +538,22 @@ func TestL2_Failures_UnknownEnvelopeTypeIgnored(t *testing.T) {
 	}
 }
 
-// TestL2_Failures_OversizedJSONLineRejected proves foci's 1MB
-// per-line scanner cap (maxTokenSize in ccstream/reader.go) trips
-// cleanly when cc-stub emits a >1MB assistant text block. The reader
-// should stop with bufio.ErrTooLong wrapped via OnReaderStopped, the
-// backend marks dead, and the next turn relaunches. Assertion: stderr
-// contains the scanner-overflow log line and the second message lands
-// in the recorder.
-func TestL2_Failures_OversizedJSONLineRejected(t *testing.T) {
+// TestL2_Failures_OversizedJSONLineSurvives proves a stdout line over 1MB
+// does not stop the ccstream reader. Since #1278 the reader uses
+// bufio.Reader.ReadBytes, with no line cap: a Read tool_result inlining
+// an image's base64 is a real >1MB line from Claude Code.
+//
+// The oversized line is a "user" tool_result envelope, the shape #1278
+// saw. The reader skips that type, so the 2MB is never delivered as chat
+// text. An earlier version put the 2MB in the assistant text: foci then
+// sent it as 512 Telegram messages, and the next message waited behind
+// that delivery longer than the wait budget under -race load (#3132).
+//
+// Assertions: the reply that follows the big line in the same turn
+// reaches Telegram, the next message reaches the SAME Claude Code
+// process (one invocation, no relaunch), and the reader never logs a stop.
+func TestL2_Failures_OversizedJSONLineSurvives(t *testing.T) {
 	testharness.ParallelWait(t)
-	// cc-stub's stubScript.Text is honoured in the assistant text
-	// block. Marshalled into a single NDJSON envelope, a >1MB text
-	// payload trips ccstream's bufio cap. The scripted Text path runs
-	// through the normal assistant-emit code so no new cc-stub feature
-	// is required.
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 1004},
@@ -559,13 +561,28 @@ func TestL2_Failures_OversizedJSONLineRejected(t *testing.T) {
 		ReadyTimeout: 30 * time.Second,
 	})
 
-	// Build a ~2MB assistant text — well over the 1MB scanner cap.
-	bigText := strings.Repeat("X", 2*1024*1024)
+	// ~2MB of tool_result content: one NDJSON line, twice the old 1MB cap.
+	bigContent := strings.Repeat("X", 2*1024*1024)
+	const marker = "stub-reply: after oversized line"
 	scriptBody, err := json.Marshal(map[string]any{
-		"text": bigText,
+		"extra_envelopes": []map[string]any{{
+			"type": "user",
+			"message": map[string]any{
+				"role": "user",
+				"content": []map[string]any{{
+					"type":        "tool_result",
+					"tool_use_id": "toolu_oversized",
+					"content":     bigContent,
+				}},
+			},
+		}},
+		"text": marker,
 	})
 	if err != nil {
 		t.Fatalf("marshal script: %v", err)
+	}
+	if len(scriptBody) <= 1024*1024 {
+		t.Fatalf("script line is %d bytes, not over the 1MB the test is about", len(scriptBody))
 	}
 	h.WriteCCStubScript(t, "alpha", scriptBody)
 
@@ -581,15 +598,24 @@ func TestL2_Failures_OversizedJSONLineRejected(t *testing.T) {
 	}
 
 	send("trigger oversized line")
-	// Give foci time to receive the oversized line and recover.
-	time.Sleep(3 * time.Second)
+	// The assistant envelope comes AFTER the oversized line on stdout, so
+	// its text reaching Telegram proves the reader read past the line.
+	if got := waitForSendMessageContaining(h, token, marker, 20*time.Second); got == "" {
+		t.Fatalf("reply after the oversized line never reached Telegram\n--- recorder ---\n%s--- stderr ---\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
 
-	// Recovery: next message must process normally (cc-stub's script
-	// is one-shot, so the next turn defaults to the small echo reply).
-	send("recovery message")
-	if !waitForUserMessage(t, h, "workspaces/alpha", "recovery message", 20*time.Second) {
-		t.Fatalf("agent did not recover after oversized JSON line\n--- recorder ---\n%s--- stderr full ---\n%s",
-			recorderTail(t, h.RecorderPath()), h.Stderr())
+	send("follow-up message")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "follow-up message", 20*time.Second) {
+		t.Fatalf("follow-up message did not reach Claude Code after the oversized line\n--- recorder ---\n%s--- stderr ---\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+	if invs := invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"); len(invs) != 1 {
+		t.Errorf("Claude Code launched %d times, want 1: the oversized line must not kill the process\n--- recorder ---\n%s",
+			len(invs), recorderTail(t, h.RecorderPath()))
+	}
+	if strings.Contains(h.Stderr(), "subprocess reader stopped") {
+		t.Errorf("the ccstream reader stopped on the oversized line\n--- stderr ---\n%s", stderrTail(h.Stderr()))
 	}
 }
 
