@@ -179,6 +179,12 @@ func (h *Hub) clientForTool(tool string) *wsClient {
 	return best
 }
 
+// PushAlarm sends a set_alarm's args by push to the phone last opened that has
+// no live socket (#3194). tools.ErrNoAlarmPushDevice when none can take it.
+func (h *Hub) PushAlarm(args json.RawMessage) error {
+	return h.pusher.pushAlarm(args, h.connectedDeviceIDs())
+}
+
 // CanRunTool reports whether any live socket can run tool. The foci_client
 // tool uses it to tell a phone with an app too old for an action apart from no
 // phone at all (#2802).

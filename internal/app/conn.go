@@ -204,6 +204,12 @@ func (c *appConn) CanRunTool(tool string) bool { return c.hub.CanRunTool(tool) }
 
 var _ tools.AppToolProber = (*appConn)(nil)
 
+// PushAlarm sends a set_alarm to the phone by push when none is connected
+// (tools.AlarmPusher, #3194).
+func (c *appConn) PushAlarm(args json.RawMessage) error { return c.hub.PushAlarm(args) }
+
+var _ tools.AlarmPusher = (*appConn)(nil)
+
 // Compile-time guard: *appConn MUST satisfy tools.AppInvoker, because the
 // client tool resolves its invoker via a runtime conn.(tools.AppInvoker)
 // assertion (cmd/foci-gw/tool_table.go). A signature drift (e.g. a mirror

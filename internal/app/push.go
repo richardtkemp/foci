@@ -17,6 +17,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/fap"
+	"foci/internal/tools"
 )
 
 const (
@@ -39,7 +40,17 @@ const (
 	// It names no conversation; the client shows a notification that opens
 	// the app, whose reconnect brings the askgw.prompts dialog.
 	pushTypeAskgw = "askgw"
+	// pushTypeAlarm carries a foci_client set_alarm to a phone with no live
+	// socket (#3194). Its "args" key is the action's args JSON, exactly as a
+	// tool.invoke would carry it; the phone holds the alarm and asks the user to
+	// open the app, which creates it.
+	pushTypeAlarm = "alarm"
 )
+
+// featureAlarmPush is the ClientHello feature a client advertises when it
+// handles an "alarm" push (foci-client #3194). Older clients would show it as
+// "New message", so alarm pushes go only to devices whose latest hello carried it.
+const featureAlarmPush = "alarmPush"
 
 // featureReadWake is the ClientHello feature a client advertises when it
 // handles a "read" push without posting a notification (foci-client #2182).
@@ -61,10 +72,52 @@ type pushTokens struct {
 	// askgwSeen is whether any hello advertised featureAskgwPrompts since this
 	// process started. It never clears, so a downgrade does not read as a restart.
 	askgwSeen bool
+	// alarmPush: deviceId → when its latest hello advertised featureAlarmPush
+	// (#3194). The time picks ONE phone for an alarm push: the one last opened.
+	alarmPush map[string]time.Time
 }
 
 func newPushTokens() *pushTokens {
-	return &pushTokens{tokens: make(map[string]string), readWake: make(map[string]bool), askgw: make(map[string]bool), askgwValue: make(map[string]bool)}
+	return &pushTokens{
+		tokens: make(map[string]string), readWake: make(map[string]bool), askgw: make(map[string]bool),
+		askgwValue: make(map[string]bool), alarmPush: make(map[string]time.Time),
+	}
+}
+
+// setAlarmPush records whether deviceID's latest hello (at at) advertised
+// featureAlarmPush. Set on every hello, like setAskgw.
+func (p *pushTokens) setAlarmPush(deviceID string, ok bool, at time.Time) {
+	if deviceID == "" {
+		return
+	}
+	p.mu.Lock()
+	if ok {
+		p.alarmPush[deviceID] = at
+	} else {
+		delete(p.alarmPush, deviceID)
+	}
+	p.mu.Unlock()
+}
+
+// alarmPushTarget returns the FCM token of the one alarm-capable device not in
+// exclude whose capable hello is the most recent: the phone the user last
+// opened the app on, as clientForTool picks among live sockets. One device, so
+// a user with two phones (or a second profile) gets one alarm, not two.
+func (p *pushTokens) alarmPushTarget(exclude map[string]bool) (string, bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	var best string
+	var bestAt time.Time
+	for id, at := range p.alarmPush {
+		tok := p.tokens[id]
+		if exclude[id] || tok == "" {
+			continue
+		}
+		if best == "" || at.After(bestAt) {
+			best, bestAt = tok, at
+		}
+	}
+	return best, best != ""
 }
 
 // setAskgw records whether deviceID's latest hello advertised
@@ -546,6 +599,34 @@ func askgwWakeData(promptID, preview string) map[string]string {
 	}
 }
 
+// pushAlarm sends a set_alarm's args to the one alarm-capable phone without a
+// live socket (#3194), and waits until FCM accepts it. errNoAlarmPushDevice when
+// there is none: no pusher, no capable device, or no token since this process
+// started (tokens are in memory and come back with the phone's next hello).
+func (p *fcmPusher) pushAlarm(args json.RawMessage, exclude map[string]bool) error {
+	if p == nil {
+		return errNoAlarmPushDevice
+	}
+	tok, ok := p.tokens.alarmPushTarget(exclude)
+	if !ok {
+		return errNoAlarmPushDevice
+	}
+	return p.sendDataSync(tok, alarmPushData(args), map[string]any{"priority": "high"})
+}
+
+// errNoAlarmPushDevice: no phone can take an alarm by push. The tools value,
+// so the client tool can tell it apart from a failed push.
+var errNoAlarmPushDevice = tools.ErrNoAlarmPushDevice
+
+// alarmPushData is an alarm push's FCM data payload. FCM data values are
+// strings, so the args object travels as JSON text.
+func alarmPushData(args json.RawMessage) map[string]string {
+	return map[string]string{
+		"type": pushTypeAlarm,
+		"args": string(args),
+	}
+}
+
 // readWakeData is a read wake's FCM data payload. The client posts no
 // notification for it: it reconnects, and the post-hello read replay clears the
 // chat's notification once the chat is fully read. messageId is the new
@@ -581,12 +662,19 @@ func (p *fcmPusher) send(token string, payload pushPayload) {
 	}, map[string]any{"priority": "high"})
 }
 
-// sendData sends one data-only FCM message to token, retrying transient failures.
+// sendData sends one data-only FCM message to token, retrying transient
+// failures. Fire and forget: sendDataSync's error is logged there.
 func (p *fcmPusher) sendData(token string, data map[string]string, android map[string]any) {
+	_ = p.sendDataSync(token, data, android)
+}
+
+// sendDataSync is sendData that reports the outcome: nil once FCM accepted the
+// message (which is not delivery to the device), else why it did not.
+func (p *fcmPusher) sendDataSync(token string, data map[string]string, android map[string]any) error {
 	tok, err := p.ts.Token()
 	if err != nil {
 		appLog.Warnf("fcm token: %v", err)
-		return
+		return fmt.Errorf("fcm token: %w", err)
 	}
 	body, err := json.Marshal(map[string]any{
 		"message": map[string]any{
@@ -596,7 +684,7 @@ func (p *fcmPusher) sendData(token string, data map[string]string, android map[s
 		},
 	})
 	if err != nil {
-		return
+		return err
 	}
 	base := p.baseURL
 	if base == "" {
@@ -609,50 +697,52 @@ func (p *fcmPusher) sendData(token string, data map[string]string, android map[s
 		backoff = fcmRetryBase
 	}
 	for attempt := 1; ; attempt++ {
-		if !p.sendOnce(url, token, tok, body) {
-			return // success or permanent outcome — done
+		retry, err := p.sendOnce(url, token, tok, body)
+		if !retry {
+			return err // success (nil) or permanent outcome — done
 		}
 		if attempt >= fcmMaxAttempts {
 			appLog.Warnf("fcm send: giving up after %d attempts", fcmMaxAttempts)
-			return
+			return fmt.Errorf("fcm send: giving up after %d attempts: %w", fcmMaxAttempts, err)
 		}
 		select {
 		case <-p.ctx.Done():
-			return
+			return p.ctx.Err()
 		case <-time.After(backoff):
 		}
 		backoff *= 2
 	}
 }
 
-// sendOnce performs one FCM send attempt. It returns true only when the failure is
+// sendOnce performs one FCM send attempt. retry is true only when the failure is
 // transient and worth retrying — a transport error (timeout, reset) or a 5xx/429
-// from FCM. Success, and permanent failures (a dead token, pruned here; any other
-// 4xx), return false so the caller stops.
-func (p *fcmPusher) sendOnce(url, token string, tok *oauth2.Token, body []byte) (retry bool) {
+// from FCM. Success (err nil), and permanent failures (a dead token, pruned
+// here; any other 4xx), return retry false so the caller stops.
+func (p *fcmPusher) sendOnce(url, token string, tok *oauth2.Token, body []byte) (retry bool, err error) {
 	req, err := http.NewRequestWithContext(p.ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return false
+		return false, err
 	}
 	tok.SetAuthHeader(req)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := p.http.Do(req)
 	if err != nil {
 		appLog.Warnf("fcm send: %v", err)
-		return true
+		return true, fmt.Errorf("fcm send: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusMultipleChoices {
-		return false
+		return false, nil
 	}
 	appLog.Warnf("fcm send: status %d", resp.StatusCode)
+	err = fmt.Errorf("fcm send: status %d", resp.StatusCode)
 	// 404 (unregistered) / 410 (gone) mean the token is dead — prune it so we
 	// stop retrying; the device re-registers on its next ClientHello.
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
 		p.tokens.removeByToken(token)
-		return false
+		return false, err
 	}
-	return resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError
+	return resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError, err
 }
 
 // isOwnMessage reports whether a frame is a message the user themselves sent

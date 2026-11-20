@@ -132,3 +132,85 @@ func TestClientTool_CtxCancelPropagates(t *testing.T) {
 		t.Logf("Execute returned Go err (acceptable): %v", err)
 	}
 }
+
+// pushingInvoker is a fakeInvoker that can also push an alarm (#3194).
+type pushingInvoker struct {
+	fakeInvoker
+	pushErr error
+	pushed  []json.RawMessage
+}
+
+func (p *pushingInvoker) PushAlarm(args json.RawMessage) error {
+	p.pushed = append(p.pushed, args)
+	return p.pushErr
+}
+
+// With no phone connected, set_alarm goes by push and succeeds as held, with
+// the note saying the alarm is not created yet (Dick 2026-11-20, "Push it now").
+func TestClientTool_SetAlarmWithNoPhoneIsPushedAndHeld(t *testing.T) {
+	inv := &pushingInvoker{fakeInvoker: fakeInvoker{err: ErrNoAppDevice}}
+	tool := NewClientTool(func() (AppInvoker, bool) { return inv, true })
+	res, err := tool.Execute(context.Background(), json.RawMessage(`{"action":"set_alarm","time":"07:30","label":"nursery","days":"mon,wed"}`))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(inv.pushed) != 1 {
+		t.Fatalf("pushes = %d, want 1", len(inv.pushed))
+	}
+	var args map[string]any
+	if err := json.Unmarshal(inv.pushed[0], &args); err != nil || args["hour"] != float64(7) || args["minute"] != float64(30) || args["label"] != "nursery" {
+		t.Errorf("pushed args = %s (%v)", inv.pushed[0], err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(res.Text), &out); err != nil {
+		t.Fatalf("result not JSON: %q", res.Text)
+	}
+	if out["alarm"] != "07:30" || out["held"] != true || out["created"] != false || out["label"] != "nursery" {
+		t.Errorf("result = %v", out)
+	}
+	if !strings.Contains(out["note"].(string), "NOT created yet") {
+		t.Errorf("note = %v", out["note"])
+	}
+}
+
+// A desktop-only connection (ErrNoCapableDevice, not ErrNoAppDevice) pushes too.
+func TestClientTool_SetAlarmWithOnlyDesktopIsPushed(t *testing.T) {
+	inv := &pushingInvoker{fakeInvoker: fakeInvoker{err: ErrNoCapableDevice}}
+	tool := NewClientTool(func() (AppInvoker, bool) { return inv, true })
+	res, err := tool.Execute(context.Background(), json.RawMessage(`{"action":"set_alarm","time":"19:00"}`))
+	if err != nil || len(inv.pushed) != 1 || !strings.Contains(res.Text, `"held":true`) || !strings.Contains(res.Text, `"days":[]`) {
+		t.Errorf("res=%q err=%v pushes=%d", res.Text, err, len(inv.pushed))
+	}
+}
+
+func TestClientTool_SetAlarmPushUnavailableOrFailed(t *testing.T) {
+	inv := &pushingInvoker{fakeInvoker: fakeInvoker{err: ErrNoAppDevice}, pushErr: ErrNoAlarmPushDevice}
+	tool := NewClientTool(func() (AppInvoker, bool) { return inv, true })
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"action":"set_alarm","time":"07:30"}`))
+	if err == nil || !strings.Contains(err.Error(), "no Android device connected") {
+		t.Errorf("no push device: err = %v, want the no-phone error", err)
+	}
+
+	inv = &pushingInvoker{fakeInvoker: fakeInvoker{err: ErrNoAppDevice}, pushErr: errors.New("fcm send: status 400")}
+	tool = NewClientTool(func() (AppInvoker, bool) { return inv, true })
+	_, err = tool.Execute(context.Background(), json.RawMessage(`{"action":"set_alarm","time":"07:30"}`))
+	if err == nil || !strings.Contains(err.Error(), "push to it failed") || !strings.Contains(err.Error(), "not set") {
+		t.Errorf("failed push: err = %v", err)
+	}
+}
+
+// Only set_alarm is pushed; a connected phone runs it live with no push.
+func TestClientTool_OnlySetAlarmIsPushedAndOnlyWithNoPhone(t *testing.T) {
+	inv := &pushingInvoker{fakeInvoker: fakeInvoker{err: ErrNoAppDevice}}
+	tool := NewClientTool(func() (AppInvoker, bool) { return inv, true })
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"action":"set_timer","duration":"2m"}`))
+	if err == nil || len(inv.pushed) != 0 {
+		t.Errorf("set_timer: err=%v pushes=%d, want error and no push", err, len(inv.pushed))
+	}
+
+	live := &pushingInvoker{fakeInvoker: fakeInvoker{result: fap.ToolResult{Status: "completed", Output: json.RawMessage(`{"alarm":"07:30"}`)}}}
+	tool = NewClientTool(func() (AppInvoker, bool) { return live, true })
+	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"action":"set_alarm","time":"07:30"}`)); err != nil || len(live.pushed) != 0 {
+		t.Errorf("live phone: err=%v pushes=%d, want live run and no push", err, len(live.pushed))
+	}
+}

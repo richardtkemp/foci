@@ -51,6 +51,27 @@ type AppToolProber interface {
 	CanRunTool(tool string) bool
 }
 
+// AlarmPusher is the optional capability an AppInvoker may also satisfy: send a
+// set_alarm to a phone with no live socket by push (#3194, Dick 2026-11-20:
+// "Push it now"). The phone holds the alarm and asks the user to open the app,
+// which creates it. PushAlarm returns nil once the push service accepted the
+// message, ErrNoAlarmPushDevice when no phone can take one. *app.appConn
+// implements it.
+type AlarmPusher interface {
+	PushAlarm(args json.RawMessage) error
+}
+
+// ErrNoAlarmPushDevice is returned by an AlarmPusher when no phone can take an
+// alarm by push: push is not configured, no phone's app handles alarm pushes,
+// or no phone has registered a push token since the server started.
+var ErrNoAlarmPushDevice = errors.New("app: no phone can take an alarm by push")
+
+// heldAlarmNote is the note of a set_alarm sent by push. Keep in step with the
+// phone's HeldAlarms.HELD_NOTE (foci-client), which a held live call returns.
+const heldAlarmNote = "NOT created yet: the foci app is not open on the phone, so the alarm was sent to it by push. " +
+	"The alarm is held on the phone and will be created when the app is next opened; a notification asks the " +
+	"user to tap it. A one-off alarm whose time passes first is not created. Phone local time."
+
 // ErrNoCapableDevice is returned by an AppInvoker when no live device can run
 // the requested device tool: none is connected, or only ones without that
 // handler (a desktop app). app.ErrNoLiveDevice is this value.
@@ -638,6 +659,11 @@ func NewClientTool(invoker func() (AppInvoker, bool)) *Tool {
 			if errors.Is(err, ErrNoCapableDevice) && !errors.Is(err, ErrNoAppDevice) {
 				res, err = invokeLegacy(ctx, inv, spec.name, argsJSON)
 			}
+			if spec.name == "set_alarm" && errors.Is(err, ErrNoCapableDevice) {
+				if text, held, perr := pushAlarm(inv, args, argsJSON); held || perr != nil {
+					return TextResult(text), perr
+				}
+			}
 			if err != nil {
 				return ToolResult{}, clientInvokeError(spec.name, err)
 			}
@@ -649,6 +675,36 @@ func NewClientTool(invoker func() (AppInvoker, bool)) *Tool {
 			return TextResult(text), err
 		},
 	}
+}
+
+// pushAlarm sends a set_alarm to a phone with no live socket (#3194). held is
+// false, with no error, when no phone can take a push: the caller then reports
+// its own no-phone error. A push that fails is an error: nothing was set.
+func pushAlarm(inv AppInvoker, args map[string]any, argsJSON json.RawMessage) (text string, held bool, err error) {
+	ap, ok := inv.(AlarmPusher)
+	if !ok {
+		return "", false, nil
+	}
+	if perr := ap.PushAlarm(argsJSON); perr != nil {
+		if errors.Is(perr, ErrNoAlarmPushDevice) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("set_alarm: the foci app is not open on the phone and the push to it failed (%v). The alarm was not set", perr)
+	}
+	h, _ := args["hour"].(int)
+	m, _ := args["minute"].(int)
+	days, _ := args["days"].([]string)
+	if days == nil {
+		days = []string{}
+	}
+	return mustJSON(map[string]any{
+		"alarm":   fmt.Sprintf("%02d:%02d", h, m),
+		"label":   args["label"],
+		"days":    days,
+		"created": false,
+		"held":    true,
+		"note":    heldAlarmNote,
+	}), true, nil
 }
 
 // phoneUnknownActionPrefix starts the error FociClientToolHandler returns for an
