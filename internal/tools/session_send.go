@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"foci/internal/session"
@@ -71,7 +72,15 @@ type CallerSessionTypeFn func(sessionKey string) session.SessionType
 // message and ids) so the app can show the message in the receiving chat as
 // a chit (#1286); see AgentOrigin for why the origin, not the trigger name,
 // is the discriminator.
-func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, sessionNotifyFn SessionNotifyFn, resolveKeyFn SessionKeyResolverFn, onWaitFn SessionWaitFn, callerSessionTypeFn CallerSessionTypeFn) *Tool {
+func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, sessionNotifyFn SessionNotifyFn, resolveKeyFn SessionKeyResolverFn, onWaitFn SessionWaitFn, callerSessionTypeFn CallerSessionTypeFn, opts ...SendToSessionOption) *Tool {
+	var o sendToSessionOpts
+	for _, opt := range opts {
+		opt(&o)
+	}
+	// followUpsSent holds each reflection branch that has sent its one chat
+	// follow-up (#3159). A branch key is unique per pass, so one entry per
+	// pass that sent one: a few short strings a day.
+	var followUpsSent sync.Map
 	return &Tool{
 		Name:       "send_to_session",
 		ExecExport: true,
@@ -142,10 +151,30 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 			// the parent's history, but not what this branch itself did — a
 			// commit, an unlanded branch, a finding — which is exactly when a
 			// branch reaches for this tool (#1951).
+			//
+			// The one exception (#3159, Dick 2026-11-20): a reflection pass
+			// may send its parent chat ONE follow-up about a promise the agent
+			// has not kept or an important point the user dropped. Only to the
+			// parent, only once per branch, and always reply_to=session, so
+			// the chat answers its own user. Everything else stays refused.
+			followUp, followUpKey := false, ""
 			if originSession != "" && callerSessionTypeFn != nil && callerSessionTypeFn(originSession).IsBarredFromSessionSend() {
-				return ToolResult{}, fmt.Errorf("send_to_session is disabled in reflection/keepalive branches: you cannot message the main session or other branches. " +
+				const barMsg = "send_to_session is disabled in reflection/keepalive branches: you cannot message the main session or other branches. " +
 					"If you produced something the main session needs (a commit, an unlanded branch, a finding, an error you couldn't resolve), " +
-					"leave it somewhere durable that gets read — whatever channel your task instructions name, or failing that a file on disk")
+					"leave it somewhere durable that gets read — whatever channel your task instructions name, or failing that a file on disk"
+				parent, ok := "", false
+				if o.chatFollowUpParent != nil {
+					parent, ok = o.chatFollowUpParent(originSession)
+				}
+				if !ok {
+					return ToolResult{}, errors.New(barMsg)
+				}
+				if !sameSession(p.SessionKey, parent, resolveKeyFn) {
+					return ToolResult{}, fmt.Errorf("%s. The only message a reflection pass may send is its one chat follow-up, to its parent chat %s", barMsg, parent)
+				}
+				p.SessionKey = parent
+				p.ReplyTo = "session"
+				followUp, followUpKey = true, originSession
 			}
 
 			// An API character spawn sends from its own identity, not its
@@ -189,7 +218,7 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 			// A reply_to=caller relay only makes sense when the CALLER can
 			// actually receive it. A oneshot session (background-task, spawn
 			// — see SessionType.IsOneshot; reflection/keepalive are already
-			// barred outright above and never reach this line) runs a single
+			// barred above; only the #3159 chat follow-up passes, as reply_to=session) runs a single
 			// headless turn and typically terminates before an async reply
 			// could arrive; wiring the reply back to it anyway spins up a
 			// fresh, unusable turn whose output has nowhere sane to go — this
@@ -257,7 +286,16 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 				(callerSessionTypeFn == nil || !callerSessionTypeFn(originSession).IsOneshot())
 			origin.CallerTold = unavailable != ""
 
-			send_to_sessionLog.Infof("from=%s to=%s reply_to=%s oneshot_caller=%v len=%d", originSession, targetKey, p.ReplyTo, oneshotCaller, len(p.Message))
+			// Claim the follow-up last, after every refusal above, so a
+			// refused attempt does not use it up; LoadOrStore makes two
+			// concurrent calls send one message between them.
+			if followUp {
+				if _, sent := followUpsSent.LoadOrStore(followUpKey, struct{}{}); sent {
+					return ToolResult{}, fmt.Errorf("send_to_session: this reflection pass has already sent its one chat follow-up to %s; it may send no other message", targetKey)
+				}
+			}
+
+			send_to_sessionLog.Infof("from=%s to=%s reply_to=%s oneshot_caller=%v chat_follow_up=%v len=%d", originSession, targetKey, p.ReplyTo, oneshotCaller, followUp, len(p.Message))
 			// The target's injected turn will record this turn as its parent
 			// trace (metadata parent_trace_id); Langfuse has no cross-trace
 			// edge, so the link is by id.
@@ -302,6 +340,40 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 			return TextResult(result), nil
 		},
 	}
+}
+
+// ChatFollowUpParentFn reports the parent chat a reflection-pass branch may
+// send its one follow-up to (#3159). ok is false when the caller is not a
+// reflection-pass branch (session.IsChatFollowUpBranchType) or its parent is
+// not a session reflection runs on.
+type ChatFollowUpParentFn func(callerSessionKey string) (parentKey string, ok bool)
+
+// SendToSessionOption configures optional send_to_session behaviour.
+type SendToSessionOption func(*sendToSessionOpts)
+
+type sendToSessionOpts struct {
+	chatFollowUpParent ChatFollowUpParentFn
+}
+
+// WithChatFollowUp enables the #3159 exception to the #1409 bar: a branch for
+// which fn reports a parent may send that parent ONE message, reply_to=session.
+// Without it every reflection/keepalive send is refused, as before.
+func WithChatFollowUp(fn ChatFollowUpParentFn) SendToSessionOption {
+	return func(o *sendToSessionOpts) { o.chatFollowUpParent = fn }
+}
+
+// sameSession reports whether target names the session key want: verbatim,
+// or through the same resolution ladder a delivery would use (an alias, a
+// bare agent name). A target that does not resolve is not want.
+func sameSession(target, want string, resolveKeyFn SessionKeyResolverFn) bool {
+	if target == want {
+		return true
+	}
+	if resolveKeyFn == nil {
+		return false
+	}
+	key, _, err := resolveKeyFn(target)
+	return err == nil && key == want
 }
 
 // targetAgentOf derives the target agent id (foci personality) from a resolved

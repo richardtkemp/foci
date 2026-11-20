@@ -91,6 +91,14 @@ func TestHeadlessOrientationReportRuleMatchesSendBar(t *testing.T) {
 		if barred && !strings.Contains(got, "cannot message the main session") {
 			t.Errorf("%s (barred) is not told it has no session channel:\n%s", bt, got)
 		}
+		// #3159: only the reflection passes are told about the one chat
+		// follow-up, naming the parent; consolidation and keepalive are not.
+		offersFollowUp := strings.Contains(got, "One exception: the chat follow-up") &&
+			strings.Contains(got, "parent chat `"+parentKey+"`")
+		wantFollowUp := bt == "reflection" || bt == "compaction-memory" || bt == "session-end-memory"
+		if offersFollowUp != wantFollowUp {
+			t.Errorf("%s: offers the chat follow-up = %v, want %v:\n%s", bt, offersFollowUp, wantFollowUp, got)
+		}
 	}
 }
 

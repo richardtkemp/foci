@@ -91,9 +91,18 @@ func resolveOrientation(template, branchKey, parentKey, branchType string) strin
 // the tool enforces keeps the prompt and the bar from drifting apart.
 func reportRule(parentKey, branchType string) string {
 	if SessionTypeForBranch(branchType).IsBarredFromSessionSend() {
-		return "- **You cannot message the main session or other branches** — `send_to_session` is disabled for " + branchType + " branches, and you have no chat. " +
+		rule := "- **You cannot message the main session or other branches** — `send_to_session` is disabled for " + branchType + " branches, and you have no chat. " +
 			"Anything the main session needs from you (a commit you made, a branch you left unlanded, a finding, an error you couldn't resolve) must be left somewhere durable that gets read — " +
 			"use whatever channel your task instructions name; failing that, a file on disk."
+		// The one exception (#3159): a reflection pass may send its parent
+		// chat the single follow-up its task describes. The tool enforces
+		// the same limits (session.IsChatFollowUpBranchType + the tool's
+		// once-per-branch claim).
+		if IsChatFollowUpBranchType(branchType) {
+			rule += "\n- **One exception: the chat follow-up your task describes.** If your task asks for it, you may send exactly ONE message to your parent chat `" + parentKey + "` with `send_to_session`, `reply_to` = `session`. " +
+				"Only that follow-up: never a status update, a summary of this pass, or a second message."
+		}
+		return rule
 	}
 	return "- **Report significant work** to the main session via `send_to_session` targeting `" + parentKey + "`. Keep it brief — the message header already identifies your session.\n" +
 		"- **Report errors you can't resolve** to the main session the same way."

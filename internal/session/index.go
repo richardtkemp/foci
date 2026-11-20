@@ -108,6 +108,24 @@ var barredSenderTypes = map[SessionType]bool{
 // barredSenderTypes for which types and why.
 func (t SessionType) IsBarredFromSessionSend() bool { return barredSenderTypes[t] }
 
+// chatFollowUpBranchTypes are the branch types of the reflection passes —
+// interval, pre-compaction and session-end, the three that run reflection.md
+// on a chat's conversation. They are the one exception to the #1409 bar
+// (#3159, Dick 2026-11-20): such a branch may send its parent chat ONE
+// follow-up message, about a promise the agent has not kept or an important
+// point the user dropped, with the reply going to the chat's own user. Every
+// other send from them stays barred, as does every send from consolidation
+// (also SessionTypeReflection) and keepalive.
+var chatFollowUpBranchTypes = map[string]bool{
+	"reflection":         true,
+	"compaction-memory":  true,
+	"session-end-memory": true,
+}
+
+// IsChatFollowUpBranchType reports whether a branch of this type may send its
+// parent chat the one follow-up message (#3159). See chatFollowUpBranchTypes.
+func IsChatFollowUpBranchType(branchType string) bool { return chatFollowUpBranchTypes[branchType] }
+
 // reflectableTypesSQL renders reflectableTypes as a SQL-quoted, comma-separated
 // list for IN clauses, sorted for stable output. Built from the trusted
 // reflectableTypes constant (never user input), so string interpolation into

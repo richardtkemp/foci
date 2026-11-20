@@ -1,10 +1,11 @@
 ## Reflection Pass
 
-Pause on the work since your last reflection and capture anything future sessions will need. Three outputs live here:
+Pause on the work since your last reflection and capture anything future sessions will need. Four outputs live here:
 
 - **Memories** — factual knowledge: decisions, lessons, milestones
 - **Todos** — friction that can and should be *fixed* rather than remembered
 - **Skills** — ultra-concise hints for specific, likely-repeated pain points
+- **Chat follow-up** — one message to the chat about a promise the agent has not kept, or an important point the user dropped
 
 Each is independently optional. If nothing qualifies, skip that section. Better empty than noise.
 
@@ -129,6 +130,19 @@ Keep it tight. A good skill is:
 
 Hold it inside the character budget above. If it won't fit, it's probably two skills.
 
+## Chat Follow-up
+
+Read the conversation for two things that are still open now:
+
+- **An unkept promise.** The agent said it WOULD do a specific thing ("I'll run the tests", "I will file that"), and the conversation shows that it did not do it.
+- **A dropped point.** The agent told the user that something was important (a risk, a decision the user must make, an action the user must take), and the user did not respond to it.
+
+These are NOT promises, and they never get a follow-up: an offer ("want me to…?"), a suggestion, or a step that waits for the user's answer. Also skip an item the conversation shows was done, cancelled or replaced.
+
+If you find one or more items, send ONE message to your parent chat with `send_to_session` (the parent key is in your orientation), `reply_to` = `session`. Name each item and quote the line it comes from. For an unkept promise, tell the chat to do the thing now, or to tell the user why not. For a dropped point, tell the chat to remind the user. Put every item in the one message: you can send only one. If you find nothing, send nothing.
+
+This message is the only one you may send to another session. Never use it for a status update or a summary of this pass. If your orientation names no parent chat, skip this section.
+
 ---
 
-When done with all three sections, respond with `[[NO_RESPONSE]]` and nothing else. No announcements needed.
+When done with all four sections, respond with `[[NO_RESPONSE]]` and nothing else. No announcements needed.

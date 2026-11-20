@@ -387,7 +387,7 @@ var toolTable = []toolEntry{
 				return session.SessionTypeUnknown
 			}
 			return entry.SessionType
-		})
+		}, tools.WithChatFollowUp(chatFollowUpParent(d.p.sessions, d.p.sessionIndex)))
 	}},
 
 	{name: "ask", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {
