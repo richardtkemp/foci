@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"foci/internal/provider"
 	"foci/internal/timeutil"
@@ -108,34 +107,58 @@ func reportRule(parentKey, branchType string) string {
 		"- **Report errors you can't resolve** to the main session the same way."
 }
 
-// Test seams for CreateBranchWithOptions: branch keys are b<unix seconds>, so
-// forcing a collision deterministically needs control of both the key and the
-// retry sleep.
-var (
-	newBranchKey     = branchFromSession
-	branchRetrySleep = time.Sleep
-)
+// Test seam for CreateBranchWithOptions: branch keys are b<unix seconds>, so
+// forcing a collision deterministically needs control of the base key.
+var newBranchKey = branchFromSession
+
+// maxBranchKeyAttempts bounds the walk to the next free second. Each attempt
+// is an O_EXCL create with no sleep, so a burst of N concurrent branches in one
+// chat costs N attempts at most for the last caller; the cap only stops a
+// runaway loop.
+const maxBranchKeyAttempts = 256
+
+// nextBranchKey moves key's timestamp to the first second above the highest
+// one this store has handed out under the same root (#3201). Every branch of
+// every session in a chat shares the root's b<seconds> namespace, so without
+// this, concurrent callers in one second all collide.
+func (s *Store) nextBranchKey(key string) (string, error) {
+	k, err := ParseSessionKey(key)
+	if err != nil {
+		return "", err
+	}
+	root := k.Root().String()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if hw, ok := s.branchHighWater[root]; ok && k.ChildTS <= hw {
+		k.ChildTS = hw + 1
+	}
+	if s.branchHighWater == nil {
+		s.branchHighWater = map[string]int64{}
+	}
+	s.branchHighWater[root] = k.ChildTS
+	return k.String(), nil
+}
 
 // CreateBranchWithOptions creates a branch session from parentKey.
 // Generates the branch key internally, resolves orientation template
-// placeholders, and writes the branch file. On same-second key collision,
-// sleeps past the second boundary and retries with a fresh key.
+// placeholders, and writes the branch file. A key already taken (by a
+// concurrent caller, or a file from another process) moves on to the next
+// free second at once, with no sleep (#3201).
 // Returns the branch key used.
 func (s *Store) CreateBranchWithOptions(parentKey string, opts BranchOptions) (string, error) {
-	const maxRetries = 3
-
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
-			branchRetrySleep(time.Second)
-			// INFO, not WARN: two branches off one parent in the same second
-			// (e.g. consolidation + nudge extraction) is routine and a retry
-			// resolves it. Only the give-up below is worth a WARN (#2024).
-			sessionLog(parentKey).Infof("branch key collision on %s, retrying (attempt %d/%d)", parentKey, attempt, maxRetries)
-		}
-
-		branchKey, err := newBranchKey(parentKey)
+	base, err := newBranchKey(parentKey)
+	if err != nil {
+		return "", fmt.Errorf("generate branch key: %w", err)
+	}
+	for attempt := 0; attempt < maxBranchKeyAttempts; attempt++ {
+		branchKey, err := s.nextBranchKey(base)
 		if err != nil {
 			return "", fmt.Errorf("generate branch key: %w", err)
+		}
+		if attempt > 0 {
+			// INFO, not WARN: a concurrent branch in the same chat is routine
+			// and the next second resolves it (#2024).
+			sessionLog(parentKey).Infof("branch key collision on %s, trying %s (attempt %d)", parentKey, branchKey, attempt+1)
 		}
 
 		orientation := resolveOrientation(opts.OrientationTemplate, branchKey, parentKey, opts.BranchType)
@@ -147,8 +170,8 @@ func (s *Store) CreateBranchWithOptions(parentKey string, opts BranchOptions) (s
 			return "", err
 		}
 	}
-	sessionLog(parentKey).Warnf("branch key collision on %s, giving up after %d retries", parentKey, maxRetries)
-	return "", fmt.Errorf("branch creation failed: key collision after %d attempts (parent=%s)", maxRetries+1, parentKey)
+	sessionLog(parentKey).Warnf("branch key collision on %s, giving up after %d attempts", parentKey, maxBranchKeyAttempts)
+	return "", fmt.Errorf("branch creation failed: key collision after %d attempts (parent=%s)", maxBranchKeyAttempts, parentKey)
 }
 
 // createBranchFile performs a single attempt to create a branch file with

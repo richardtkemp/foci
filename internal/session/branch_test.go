@@ -2,9 +2,11 @@ package session
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -627,23 +629,16 @@ func TestCreateBranchCollision(t *testing.T) {
 	}
 }
 
-// stubBranchRetry makes CreateBranchWithOptions deterministic: keys come from
-// the given sequence (the last one repeats), retry sleeps are skipped, and the
-// event log is captured.
-func stubBranchRetry(t *testing.T, keys ...string) *bytes.Buffer {
+// stubBranchRetry makes CreateBranchWithOptions deterministic: the base key
+// (the "current second") is always key, and the event log is captured.
+func stubBranchRetry(t *testing.T, key string) *bytes.Buffer {
 	t.Helper()
-	origKey, origSleep := newBranchKey, branchRetrySleep
-	calls := 0
-	newBranchKey = func(string) (string, error) {
-		k := keys[min(calls, len(keys)-1)]
-		calls++
-		return k, nil
-	}
-	branchRetrySleep = func(time.Duration) {}
+	origKey := newBranchKey
+	newBranchKey = func(string) (string, error) { return key, nil }
 	var buf bytes.Buffer
 	log.SetOutput(&buf)
 	t.Cleanup(func() {
-		newBranchKey, branchRetrySleep = origKey, origSleep
+		newBranchKey = origKey
 		log.SetOutput(os.Stderr)
 	})
 	return &buf
@@ -672,7 +667,7 @@ func TestCreateBranchCollisionRetryLogsInfo(t *testing.T) {
 		t.Fatalf("pre-create taken branch: %v", err)
 	}
 
-	buf := stubBranchRetry(t, taken, fresh)
+	buf := stubBranchRetry(t, taken)
 	got, err := s.CreateBranchWithOptions(parentKey, BranchOptions{})
 	if err != nil {
 		t.Fatalf("CreateBranchWithOptions: %v", err)
@@ -689,25 +684,81 @@ func TestCreateBranchCollisionRetryLogsInfo(t *testing.T) {
 }
 
 func TestCreateBranchCollisionGiveUpWarns(t *testing.T) {
-	// #2024: when every attempt collides, each retry is INFO and the give-up
-	// is a single WARN, alongside the returned error.
+	// #2024/#3201: when every second in the walk is taken (here by files from
+	// "another process"), each retry is INFO and the give-up is one WARN.
 	s := NewStore(t.TempDir())
 	parentKey := "main/imain"
-	taken := "main/imain/b1000000001"
 	s.TestAppend(parentKey, msg("user", "hello"))
-	if err := s.createBranchFile(parentKey, taken, false, "", "", false); err != nil {
-		t.Fatalf("pre-create taken branch: %v", err)
+	for i := int64(0); i < maxBranchKeyAttempts; i++ {
+		k := fmt.Sprintf("main/imain/b%d", 1000000001+i)
+		if err := s.createBranchFile(parentKey, k, false, "", "", false); err != nil {
+			t.Fatalf("pre-create %s: %v", k, err)
+		}
 	}
+	s.branchHighWater = nil // the files came from elsewhere, not this store
 
-	buf := stubBranchRetry(t, taken)
+	buf := stubBranchRetry(t, "main/imain/b1000000001")
 	if _, err := s.CreateBranchWithOptions(parentKey, BranchOptions{}); err == nil {
 		t.Fatal("expected error when every attempt collides, got nil")
 	}
-	if n := len(logLinesAt(buf, "INFO", "branch key collision")); n != 3 {
-		t.Errorf("INFO retry lines = %d, want 3\nlog:\n%s", n, buf)
+	if n := len(logLinesAt(buf, "INFO", "branch key collision")); n != maxBranchKeyAttempts-1 {
+		t.Errorf("INFO retry lines = %d, want %d", n, maxBranchKeyAttempts-1)
 	}
 	if w := logLinesAt(buf, "WARN", "branch key collision"); len(w) != 1 || !strings.Contains(w[0], "giving up") {
 		t.Errorf("WARN lines = %v, want exactly one give-up WARN", w)
+	}
+}
+
+// TestCreateBranchConcurrentBurstAllSucceed is #3201: many branches of one
+// chat created at once (10 depth leaves each starting a spawn the moment a
+// usage hold lifts) all succeed, with distinct keys, without waiting a second
+// per branch. Branches of different sessions in one chat share the root's
+// key namespace, so the parents differ here on purpose.
+func TestCreateBranchConcurrentBurstAllSucceed(t *testing.T) {
+	s := NewStore(t.TempDir())
+	root := "main/imain"
+	s.TestAppend(root, msg("user", "hello"))
+	const n = 20
+	parents := make([]string, n)
+	for i := range parents {
+		k, err := s.CreateBranchWithOptions(root, BranchOptions{BranchType: "depth"})
+		if err != nil {
+			t.Fatalf("create leaf %d: %v", i, err)
+		}
+		parents[i] = k
+	}
+
+	start := time.Now()
+	keys := make([]string, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range parents {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			keys[i], errs[i] = s.CreateBranchWithOptions(parents[i], BranchOptions{BranchType: "spawn", Fresh: true})
+		}(i)
+	}
+	wg.Wait()
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("burst of %d took %v; branches must not wait a second each", n, d)
+	}
+	seen := map[string]bool{}
+	for _, p := range parents {
+		seen[p] = true
+	}
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("spawn branch %d: %v", i, err)
+		}
+		if seen[keys[i]] {
+			t.Fatalf("duplicate branch key %s", keys[i])
+		}
+		seen[keys[i]] = true
+		meta, err := s.GetBranchMeta(keys[i])
+		if err != nil || meta == nil || meta.ParentKey != parents[i] {
+			t.Fatalf("branch %s meta = %+v, %v; want parent %s", keys[i], meta, err, parents[i])
+		}
 	}
 }
 

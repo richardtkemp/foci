@@ -37,6 +37,9 @@ type Store struct {
 	fileMode os.FileMode
 	mu       sync.Mutex
 	onEvent  func(SessionEvent)
+	// branchHighWater is the highest branch-key second handed out per root
+	// key, guarded by mu (#3201, see nextBranchKey).
+	branchHighWater map[string]int64
 }
 
 // NewStore creates a session store rooted at dir.
