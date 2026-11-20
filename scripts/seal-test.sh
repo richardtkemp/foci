@@ -537,7 +537,9 @@ run_integration() {
     return 1
   fi
 
-  diagnostic_rerun -tags=integration "${filter[@]}"
+  # The re-runs are -count=1, so they get the single-pass budget. Without a
+  # -timeout they got go's default 10m, under the -race run's TIMEOUT (#3133).
+  diagnostic_rerun -tags=integration -timeout "${TEST_TIMEOUT:-600s}" "${filter[@]}"
   return "$status"
 }
 

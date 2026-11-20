@@ -277,6 +277,14 @@ expect "memcap: the unsealed re-run is capped" "$WRAPPER" "$(grep '^--- call 2' 
 expect "memcap: the sealed re-run is capped" "$WRAPPER" "$(grep '^--- call 3' "$TMP/goroot/seen")"
 run sandbox one >/dev/null
 expect "re-run: still -count=1 (runs for real)" "-count=1" "$(grep '^--- call 2' "$TMP/goroot/seen")"
+# #3133: the integration re-runs get the integration budget, not go's default 10m
+# (a -race nightly sets TIMEOUT=3600s; its unsealed re-run died at 600 s).
+run sandbox integration TEST_TIMEOUT= >/dev/null
+expect "integration re-run: unsealed gets the single-pass budget" "-timeout 600s" "$(grep '^--- call 2' "$TMP/goroot/seen")"
+expect "integration re-run: sealed gets the single-pass budget" "-timeout 600s" "$(grep '^--- call 3' "$TMP/goroot/seen")"
+run sandbox integration TEST_TIMEOUT=3600s >/dev/null
+expect "integration re-run: TIMEOUT= reaches the unsealed re-run" "-timeout 3600s" "$(grep '^--- call 2' "$TMP/goroot/seen")"
+expect "integration re-run: TIMEOUT= reaches the sealed re-run" "-timeout 3600s" "$(grep '^--- call 3' "$TMP/goroot/seen")"
 run pass unit >/dev/null
 reject "unit: no -count by default (cached)" "-count" "$(grep '^--- call' "$TMP/goroot/seen")"
 reject "unit: the log header does not say UNCACHED" "UNCACHED" "$(cat "$TMP/log")"
