@@ -1201,15 +1201,28 @@ func (a *Agent) enqueueInjection(inb *sessionInbox, env Envelope, reloginHold bo
 	if env.Inject.UserInput && !reloginHold {
 		active := a.sessionTurnActive(inb, env.SessionKey)
 		if a.trySteer(inb, env, active, a.IsCompacting(env.SessionKey)) {
+			// A restored copy reached the model: it leaves the store.
+			a.forgetUsageHeld(env)
 			return true
 		}
+	}
+	// A user injection with a serialisable form (an ask answer) is stored
+	// from here until it runs (runInject forgets it), so a restart while it
+	// queues or waits at any gate (usage hold, re-login, compaction, an open
+	// ask) does not lose it (#3197). RestoreUsageHeld brings it back.
+	if userInject(env.Inject) && env.Inject.Durable != nil {
+		a.storeUsageHeld(&env)
 	}
 	// Numbered in the same series as user messages, so a release can keep
 	// held injections and held user messages in arrival order (#3121).
 	env.enqSeq = inb.enqSeq.Add(1)
 	// A SkipHolds injection that finds the channel full waits in the
 	// overflow list instead of being dropped (#3163, inbox_overflow.go).
-	return a.sendInjection(inb, env)
+	if !a.sendInjection(inb, env) {
+		a.forgetUsageHeld(env) // dropped, as a user message is (forgetQueuedInput)
+		return false
+	}
+	return true
 }
 
 // steerToBackend folds env into the backend's in-flight turn

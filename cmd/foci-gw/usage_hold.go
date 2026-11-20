@@ -133,7 +133,7 @@ func wireUsageHeldRestore(ag *agent.Agent, ctx context.Context, connMgr platform
 	ag.UsageHeldInjectRestore = func(sk string, d agent.DurableInject, id string) {
 		switch d.Kind {
 		case durableSessionChat:
-			deliverToSessionChatThen(ag, ctx, d.Trigger, connMgr, agentID, sk, d.Text, nil, "", nil, withUsageHeldID(id))
+			restoreSessionChat(ag, ctx, connMgr, agentID, sk, d, id)
 		case durableSessionRelay:
 			restoreHeldRelay(ag, ctx, connMgr, agentID, resolver, deliverChit, sk, d, id)
 		case durableHTTPAsync:

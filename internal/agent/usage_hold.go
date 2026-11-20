@@ -41,7 +41,15 @@ import (
 type usageHoldState struct {
 	// storeMu serialises read-modify-write of the stored held lists.
 	storeMu sync.Mutex
-	mu      sync.Mutex
+	// minted names the held records this process stored before
+	// RestoreUsageHeld read the store; heldRestored is set once it has
+	// (both under storeMu). Such a record is already parked in memory, or
+	// has run, so the startup restore must skip it (#3197: a queued message
+	// the startup re-queue parked was restored a second time).
+	minted       map[string]bool
+	heldRestored bool
+
+	mu sync.Mutex
 	// unsubs end the subscriptions StartUsageHold made, one pair per account
 	// of the pool (phase changes, limit resets); started is set once it ran.
 	unsubs  []func()
@@ -309,6 +317,17 @@ func (a *Agent) parkUsageHeld(inb *sessionInbox, env Envelope) {
 		a.storeUsageHeld(&env)
 	}
 	inb.usageHeldMu.Lock()
+	if restored {
+		// A stored message is parked once (#3197): a second restored copy
+		// of a parked id is dropped.
+		for _, h := range inb.usageHeld {
+			if h.usageHeldID == env.usageHeldID {
+				inb.usageHeldMu.Unlock()
+				a.logger().Infof("inbox: usage hold already holds %s sk=%s — duplicate dropped", env.usageHeldID, env.SessionKey)
+				return
+			}
+		}
+	}
 	if env.usageResume {
 		for _, h := range inb.usageHeld {
 			if h.usageResume {

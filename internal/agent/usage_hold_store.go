@@ -21,6 +21,11 @@ import (
 // startup RestoreUsageHeld puts each back on its session's inbox, where the
 // hold parks it again or, if the hold lifted meanwhile, it runs.
 //
+// A user injection with a DurableInject (an ask answer) is stored from the
+// moment it is queued, not only when the hold parks it, and taken off as it
+// runs: its ask is gone once answered, so a restart while it waits at any
+// gate (re-login, compaction, an open ask, the hold) would lose it (#3197).
+//
 // What is NOT kept, and why:
 //   - Envelope.Original (the platform's raw message) and Envelope.Driver: they
 //     are live platform objects. A restored message gets UsageHeldDriver's
@@ -138,6 +143,12 @@ func (a *Agent) storeUsageHeld(env *Envelope) {
 		list = append(list, rec)
 	}
 	a.saveUsageHeldLocked(env.SessionKey, list)
+	if !a.usageHold.heldRestored {
+		if a.usageHold.minted == nil {
+			a.usageHold.minted = map[string]bool{}
+		}
+		a.usageHold.minted[rec.ID] = true
+	}
 }
 
 // forgetUsageHeld drops the stored records of envs that are about to run.
@@ -224,10 +235,23 @@ func (a *Agent) saveInputRecords(sk, key, what string, list []usageHeldRecord) {
 // not store it twice. Call once at startup, after the inboxes and platforms
 // are up. A session whose record cannot be rebuilt (no driver hook) keeps it
 // for the next start.
+//
+// Only records an earlier process stored are restored. A record this process
+// stored is already parked in memory, or has run: the startup re-queue of
+// queued input (RestoreCutTurns, #2999) runs first, and under a hold the
+// worker parks each message it puts back, storing it under a new id. Read
+// back here, it would be parked a second time and run twice at the lift
+// (#3197).
 func (a *Agent) RestoreUsageHeld() {
 	if a.SessionIndex == nil {
 		return
 	}
+	defer func() {
+		a.usageHold.storeMu.Lock()
+		a.usageHold.heldRestored = true
+		a.usageHold.minted = nil
+		a.usageHold.storeMu.Unlock()
+	}()
 	keys, err := a.SessionIndex.SessionKeysWithMetadata(session.MetaKeyUsageHeld)
 	if err != nil {
 		a.logger().Warnf("usage hold: restore held input: %v", err)
@@ -238,7 +262,14 @@ func (a *Agent) RestoreUsageHeld() {
 			continue
 		}
 		a.usageHold.storeMu.Lock()
-		list := a.loadUsageHeldLocked(sk)
+		var list []usageHeldRecord
+		for _, rec := range a.loadUsageHeldLocked(sk) {
+			if a.usageHold.minted[rec.ID] {
+				a.logger().Debugf("usage hold: held %s %s on %s was stored by this process — already parked, not restored", rec.Kind, rec.ID, sk)
+				continue
+			}
+			list = append(list, rec)
+		}
 		a.usageHold.storeMu.Unlock()
 		for _, rec := range list {
 			a.restoreUsageHeldOne(sk, rec)

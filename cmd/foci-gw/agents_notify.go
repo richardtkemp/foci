@@ -643,6 +643,11 @@ func deliverToSessionChatThen(
 ) {
 	if agent.UserInputFromContext(ctx) {
 		opts = append([]injectOption{asUserInput(message)}, opts...)
+		// An ask answer is stored until it runs, so a restart while it
+		// waits at a gate does not lose it (#3197).
+		if d := userInputDurable(trigger, message, askReqID, after); d != nil {
+			opts = append([]injectOption{func(env *agent.Envelope) { env.Inject.Durable = d }}, opts...)
+		}
 	} else if agent.SkipHoldsFromContext(ctx) {
 		// A message within this agent or an async tool result (#3114): it
 		// may steer into the running turn. A steered message never runs the
@@ -717,6 +722,42 @@ func sessionChatDurable(trigger, message, askReqID string, after func(error)) *a
 		return nil
 	}
 	return &agent.DurableInject{Kind: durableSessionChat, Trigger: trigger, Text: message}
+}
+
+// durableUserInputArg marks a durableSessionChat record as the user's own
+// input (an ask answer); durableAskReqArg keeps the ask it answers.
+const (
+	durableUserInputArg = "user_input"
+	durableAskReqArg    = "ask_req_id"
+)
+
+// userInputDurable is the serialisable form of a user-input injection (an ask
+// answer, #2233), so it survives a restart while it waits at any gate (#3197,
+// Dick 2026-11-20: "Any gate"). It is rebuilt as user input with its ask id,
+// so it reaches the agent as if just answered ("As your answer"). The ask's
+// own row is gone once answered, so nothing else would bring it back. nil
+// when a completion hook ties it to live state.
+func userInputDurable(trigger, message, askReqID string, after func(error)) *agent.DurableInject {
+	if after != nil {
+		return nil
+	}
+	args := map[string]string{durableUserInputArg: "true"}
+	if askReqID != "" {
+		args[durableAskReqArg] = askReqID
+	}
+	return &agent.DurableInject{Kind: durableSessionChat, Trigger: trigger, Text: message, Args: args}
+}
+
+// restoreSessionChat rebuilds a durableSessionChat record under its stored
+// id: a user-input record as user input with its ask id, any other as the
+// system injection it was. opts pass further injectOptions through.
+func restoreSessionChat(ag *agent.Agent, ctx context.Context, connMgr platform.ConnectionManager, agentID, sk string, d agent.DurableInject, id string, opts ...injectOption) {
+	askReqID := ""
+	if d.Args[durableUserInputArg] == "true" {
+		ctx = agent.WithUserInput(ctx)
+		askReqID = d.Args[durableAskReqArg]
+	}
+	deliverToSessionChatThen(ag, ctx, d.Trigger, connMgr, agentID, sk, d.Text, nil, askReqID, nil, append([]injectOption{withUsageHeldID(id)}, opts...)...)
 }
 
 // withUsageHeldID marks an injection as the restored copy of held input id.
