@@ -61,6 +61,8 @@ To change one element of an array, name it with a selector instead of resending 
 
 TOML value syntax. Quote the whole value for your shell, and quote a path with `agents[...]` in it (the brackets are a shell glob).
 
+One shortcut (#3199): a bare word set on a registered string, duration or schedule field is quoted for you, so `foci config set logging.level DEBUG` writes `"DEBUG"`. An agent's top-level keys (`agents[x].model`) are not registered: they still need the TOML quotes, and the error says so.
+
 ```bash
 foci config set agent_loop.max_tool_loops 20
 foci config set 'agents[main].model' '"opus"'                     # a string needs its TOML quotes

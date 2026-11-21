@@ -82,6 +82,10 @@ func cmdConfig(base string, args []string, stdout, stderr io.Writer) int {
 // configGetCmd prints the value at a path in the config file.
 func configGetCmd(args []string, stdout, stderr io.Writer) int {
 	configPath, args := parseFlagValue(args, "config")
+	if msg := strayFlag(args, "--config"); msg != "" {
+		_, _ = fmt.Fprintf(stderr, "config get: %s\n", msg)
+		return 2
+	}
 	if len(args) != 1 {
 		_, _ = fmt.Fprintln(stderr, "usage: foci config get <path> [--config <file>]")
 		return 2
@@ -120,6 +124,10 @@ func configGetCmd(args []string, stdout, stderr io.Writer) int {
 func configRequestCmd(base, sub string, args []string, stdout, stderr io.Writer) int {
 	waitFlag, args := parseFlagValue(args, "wait")
 	session, args := parseFlagValue(args, "session")
+	if msg := strayFlag(args, "--wait", "--session"); msg != "" {
+		_, _ = fmt.Fprintf(stderr, "config %s: %s\n", sub, msg)
+		return 2
+	}
 	timeout := configapprove.DefaultTimeout
 	if waitFlag != "" {
 		d, err := time.ParseDuration(waitFlag)
@@ -144,7 +152,7 @@ func configRequestCmd(base, sub string, args []string, stdout, stderr io.Writer)
 			want = 1
 		}
 		if len(args) != want {
-			_, _ = fmt.Fprintf(stderr, "usage: foci config %s\n", map[string]string{"set": "set <path> <value> [--wait <duration>]", "add": "add <path> <value> [--wait <duration>]", "unset": "unset <path> [--wait <duration>]"}[sub])
+			_, _ = fmt.Fprintf(stderr, "usage: foci config %s\n", map[string]string{"set": "set <path> <value> [--wait <duration>] [--session <key>]", "add": "add <path> <value> [--wait <duration>] [--session <key>]", "unset": "unset <path> [--wait <duration>] [--session <key>]"}[sub])
 			return 2
 		}
 		if session == "" {
@@ -174,6 +182,31 @@ func configRequestCmd(base, sub string, args []string, stdout, stderr io.Writer)
 		st = pollConfigRequest(base, st, timeout+configWaitGrace)
 	}
 	return printConfigOutcome(stdout, st)
+}
+
+// strayFlag names the first flag-shaped word left in args once the
+// subcommand's own flags (known) and main's global flags are taken out
+// (#3199): a known flag left there had no value, anything else is unknown.
+// "" when there is none. Only a "--" word counts, so a value such as -5 or
+// -inf stays a value. The name is cut at "=" (flagName) so a value never
+// reaches the error line.
+func strayFlag(args []string, known ...string) string {
+	for _, a := range args {
+		if !strings.HasPrefix(a, "--") {
+			continue
+		}
+		name := flagName(a)
+		for _, k := range known {
+			if name == k {
+				return fmt.Sprintf("flag %s needs a value", name)
+			}
+		}
+		if _, ok := matchGlobalFlag(a); ok {
+			return fmt.Sprintf("flag %s needs a value", name)
+		}
+		return fmt.Sprintf("unknown flag %s (config flags: %s; global flags: --socket, --addr, --api-key)", name, strings.Join(known, ", "))
+	}
+	return ""
 }
 
 // postConfigRequest submits a request. A gateway that cannot be reached is
@@ -304,8 +337,10 @@ their text:
 
 Values are TOML values: "text", 42, 1.5, true, 2026-11-01T10:00:00Z,
 ["a", "b"], {key = "v"}, or [{path = "/x"}, {path = "/y"}] for a whole array
-of tables. A whole array set to a new array changes only the elements that
-differ: the others keep their layout and comments. Quote the value for your
+of tables. A bare word set on a registered string, duration or schedule
+field is quoted for you (logging.level DEBUG writes "DEBUG"). A whole array
+set to a new array changes only the elements that differ: the others keep
+their layout and comments. Quote the value for your
 shell, and quote a path holding [...] (the brackets are a shell glob):
   foci config set 'agents[main].model' '"opus"'
 

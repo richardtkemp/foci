@@ -334,6 +334,9 @@ func (s *Service) Submit(sub Submission) Status {
 	if err != nil {
 		return Status{Outcome: Failed, Reason: err.Error()}
 	}
+	if sub.Value, err = normalizeValue(p, sub.Op, sub.Value); err != nil {
+		return Status{Outcome: Failed, Path: p.String(), Reason: err.Error()}
+	}
 	cur, next, old, oldSet, unknown, err := s.validate(sub, p)
 	if err != nil {
 		return Status{Outcome: Failed, Path: p.String(), Reason: err.Error()}

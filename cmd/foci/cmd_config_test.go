@@ -206,3 +206,39 @@ func TestPrintConfigOutcome_RestartNeeded(t *testing.T) {
 		t.Errorf("live change output mentions a restart: %q", out.String())
 	}
 }
+
+// TestConfigSet_NamesStrayFlag proves #3199 part 2: a flag config does not
+// know is named in the error (not just the usage line), a known flag with no
+// value says so, an attached value never reaches the error line, and a
+// negative number value is still a value. Nothing is posted.
+func TestConfigSet_NamesStrayFlag(t *testing.T) {
+	t.Setenv("FOCI_SESSION_KEY", "main/app/1")
+	f := &fakeConfigGateway{submit: configapprove.Status{Outcome: configapprove.Failed, Reason: "x"}}
+	srv := httptest.NewServer(f)
+	defer srv.Close()
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"set", "debug.x", "true", "--sockett", "/tmp/s"}, "config set: unknown flag --sockett"},
+		{[]string{"set", "debug.x", "true", "--sockett=secret"}, "config set: unknown flag --sockett "},
+		{[]string{"unset", "debug.x", "--session"}, "config unset: flag --session needs a value"},
+		{[]string{"set", "debug.x", "true", "--socket"}, "config set: flag --socket needs a value"},
+		{[]string{"get", "debug.x", "--nope"}, "config get: unknown flag --nope"},
+	}
+	for _, c := range cases {
+		var out, errOut strings.Builder
+		code := cmdConfig(srv.URL, c.args, &out, &errOut)
+		if code != 2 || !strings.Contains(errOut.String(), c.want) || strings.Contains(errOut.String(), "secret") {
+			t.Errorf("%v: exit %d stderr %q, want %q", c.args, code, errOut.String(), c.want)
+		}
+	}
+	if f.posted != nil {
+		t.Errorf("posted %v", f.posted)
+	}
+	var out, errOut strings.Builder
+	cmdConfig(srv.URL, []string{"set", "agent_loop.x", "-5"}, &out, &errOut)
+	if f.posted["value"] != "-5" {
+		t.Errorf("negative value: posted %v stderr %q", f.posted, errOut.String())
+	}
+}
