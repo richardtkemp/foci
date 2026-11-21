@@ -108,28 +108,33 @@ func (rn *runner) crontabStep() step {
 	next := rewriteCrontab(cur, rn.r, moveFrom, moveTo)
 	st.n = changedLines(cur, next)
 	st.detail = indent(unifiedDiff("crontab", cur, next, 1))
-	st.run = func() error {
-		if err := writeBackupFile(filepath.Join(rn.backup, "crontab.before"), []byte(cur)); err != nil {
-			return err
-		}
-		rn.man.Crontab = "crontab.before"
-		if err := writeJSON(filepath.Join(rn.backup, manifestName), rn.man); err != nil {
-			return err
-		}
-		now, err := rn.o.Crontab.Read()
-		if err != nil {
-			return err
-		}
-		if now != cur {
-			return errors.New("the crontab changed since its diff was made; nothing installed")
-		}
-		if err := rn.o.Crontab.Install(next); err != nil {
-			return err
-		}
-		if got, err := rn.o.Crontab.Read(); err == nil && strings.TrimRight(got, "\n") != strings.TrimRight(next, "\n") {
-			return errors.New("the installed crontab differs from the planned one")
-		}
-		return nil
-	}
+	st.run = func() error { return installCrontab(rn.o.Crontab, rn.backup, rn.man, cur, next) }
 	return st
+}
+
+// installCrontab saves cur into the backup (crontab.before, recorded in the
+// manifest), then installs next, only while the crontab still is cur, and
+// checks it took.
+func installCrontab(c CrontabIO, backup string, man *manifest, cur, next string) error {
+	if err := writeBackupFile(filepath.Join(backup, "crontab.before"), []byte(cur)); err != nil {
+		return err
+	}
+	man.Crontab = "crontab.before"
+	if err := writeJSON(filepath.Join(backup, manifestName), man); err != nil {
+		return err
+	}
+	now, err := c.Read()
+	if err != nil {
+		return err
+	}
+	if now != cur {
+		return errors.New("the crontab changed since its diff was made; nothing installed")
+	}
+	if err := c.Install(next); err != nil {
+		return err
+	}
+	if got, err := c.Read(); err == nil && strings.TrimRight(got, "\n") != strings.TrimRight(next, "\n") {
+		return errors.New("the installed crontab differs from the planned one")
+	}
+	return nil
 }

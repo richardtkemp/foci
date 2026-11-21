@@ -61,6 +61,7 @@ type cmdRegParams struct {
 	agentListFn   func() []command.AgentInfo
 	startAgentFn  func(agentID string) ([]string, error) // /agents new live start (#963); nil = none
 	renameAgentFn command.AgentRenameFn                  // /agents rename live rename (#2787); nil = none
+	deleteAgentFn command.AgentDeleteFn                  // /agents delete live delete (#3210); nil = none
 
 	// Platform
 	plat              *platform.Messaging
@@ -225,6 +226,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		BitwardenEnabled:      p.cfg.Bitwarden.Enabled,
 		AgentListFn:           p.agentListFn,
 		AgentRenameFn:         p.renameAgentFn,
+		AgentDeleteFn:         p.deleteAgentFn,
 		LastMessageStore:      lastMsgStore,
 		TodoStore:             p.todoStore,
 		ConfigSetDeps:         configSetDeps,

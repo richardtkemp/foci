@@ -360,11 +360,16 @@ func AgentsCommand() *Command {
 		Subcommands: []Subcommand{
 			{Name: "new", Description: "Start the new-agent wizard, or create one in one step: /agents new NAME [--backend B] [--model M] [--chars defaults|openclaw|blank] [--copy ID]"},
 			{Name: "rename", Description: "Rename an agent live: /agents rename OLD NEW [--move-workspace] [--yes]"},
+			{Name: "delete", Aliases: []string{"rm", "remove"}, Description: "Delete an agent, after two confirmations: /agents delete NAME"},
 		},
 		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
 			// /agents rename OLD NEW … — the live rename (#2787)
 			if f := strings.Fields(req.Args); len(f) > 0 && strings.ToLower(f[0]) == "rename" {
 				return agentsRename(ctx, req, cc, strings.TrimSpace(req.Args[strings.Index(req.Args, f[0])+len(f[0]):])), nil
+			}
+			// /agents delete NAME (rm, remove) — behind two confirmations (#3210)
+			if f := strings.Fields(req.Args); len(f) > 0 && agentDeleteVerbs[strings.ToLower(f[0])] {
+				return agentsDelete(ctx, req, cc, strings.TrimSpace(req.Args[strings.Index(req.Args, f[0])+len(f[0]):])), nil
 			}
 			// /agents new <name> [flags] — create in one step (#3122)
 			if f := strings.Fields(req.Args); len(f) > 1 && strings.ToLower(f[0]) == "new" {

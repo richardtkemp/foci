@@ -141,6 +141,8 @@ type setupParams struct {
 	startAgentFn func(agentID string) ([]string, error)
 	// renameAgentFn carries out /agents rename (#2787). nil = unavailable.
 	renameAgentFn command.AgentRenameFn
+	// deleteAgentFn carries out /agents delete (#3210). nil = unavailable.
+	deleteAgentFn command.AgentDeleteFn
 	connMgr       platform.ConnectionManager
 	plat          *platform.Messaging
 }

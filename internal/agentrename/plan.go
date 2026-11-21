@@ -294,10 +294,16 @@ func (rn *runner) printPlan(steps []step, resume bool) {
 	} else {
 		rn.out.printf("Rename agent %q to %q (%s).\n", rn.o.Old, rn.o.New, mode)
 	}
-	rn.out.println("\nPlan:")
+	printSteps(rn.out, steps, rn.jr.Done)
+}
+
+// printSteps prints the plan's steps not yet done, numbered, with their
+// counts and detail lines (the rename's and the delete's plan).
+func printSteps(out *printer, steps []step, done map[string]bool) {
+	out.println("\nPlan:")
 	i := 0
 	for _, s := range steps {
-		if rn.jr.Done[s.id] {
+		if done[s.id] {
 			continue
 		}
 		i++
@@ -308,13 +314,13 @@ func (rn *runner) printPlan(steps []step, resume bool) {
 		if s.always {
 			count = ""
 		}
-		rn.out.printf("%3d. %s", i, s.title)
+		out.printf("%3d. %s", i, s.title)
 		if count != "" {
-			rn.out.printf(" — %s", count)
+			out.printf(" — %s", count)
 		}
-		rn.out.println()
+		out.println()
 		for _, d := range s.detail {
-			rn.out.printf("       %s\n", d)
+			out.printf("       %s\n", d)
 		}
 	}
 }

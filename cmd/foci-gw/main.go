@@ -451,6 +451,8 @@ Subcommands:
 	}
 	// /agents rename (#2787) reaches the same starter, late-bound the same way.
 	env.renameAgentFn = newRenameCommandFn(ctx, func() *liveAgentStarter { return starter }, agents, connMgr)
+	// /agents delete (#3210) too.
+	env.deleteAgentFn = newDeleteCommandFn(ctx, func() *liveAgentStarter { return starter }, connMgr)
 
 	for _, acfg := range cfg.Agents {
 		if reason, skip := skipAgents[acfg.ID]; skip {

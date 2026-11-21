@@ -1679,6 +1679,29 @@ If a step fails, the rename stops there and says why; while `foci.toml` still na
 
 Moving the workspace changes the working directory of every backend session, so a Claude Code / opencode / codex session that cannot be found under the new folder starts fresh. Turn ids change, so a Langfuse re-export creates new traces for the agent's old turns. Renaming the first agent while Telegram shared facet bots are configured: send `/restart` afterwards, so the shared facet bots serve the renamed agent.
 
+### Deleting an agent
+
+Delete an agent from chat or the app, while foci runs:
+
+```
+/agents delete NAME      # aliases: /agents rm NAME, /agents remove NAME
+```
+
+Nothing changes before you confirm twice: the first prompt lists what goes; the second, in the app a dialog with a big red warning, asks once more. Cancel either (or let it expire) and nothing changes. Only NAME stops; every other agent carries on.
+
+What goes, after a backup under `data/backups/delete-NAME-<time>/` (database snapshots, `foci.toml`, the crontab, the removed `secrets.toml` lines, and the sessions tree itself):
+
+- its `[[agents]]` block (and sub-tables) in `foci.toml`;
+- its `[agents.NAME.*]` tables and `allowed_agents`/`denied_agents` entries in `secrets.toml` (bot tokens under `[telegram]`/`[discord]` stay);
+- its `foci … -a NAME` crontab lines, and lines naming its workspace;
+- its rows in `state.db`, the app replay store, `deferred-sends.db` and `jit_memory.db`;
+- its sessions tree (moved into the backup);
+- its workspace and Claude Code transcript folders, moved to the trash of the user foci runs as (`~/.local/share/Trash`, or `~/.Trash` on macOS).
+
+Kept: its rows in the cost and usage ledgers (`api.db`, `api-shadow.db`, `usage-history.db`), so past spend stays in the totals. A workspace that is shared with another agent, or holds foci's data, config or sessions directory, is kept too; its databases then lose only NAME's rows.
+
+Refused, with nothing changed: from NAME's own chat (send it from another agent's chat), for the last agent, from a shell or an agent (`foci command`), and while `master_agent`, `[askgw] default_agent` or a Slack `default_agent`/channel names NAME (point it at another agent first). If a step fails, the delete stops there and says why; while `foci.toml` still names NAME, NAME runs again. Sending the same command again resumes it.
+
 ## Coding Agent Backends
 
 Instead of calling an LLM API directly (the default `"api"` backend), an agent can delegate entire turns to a coding agent subprocess. The coding agent handles inference, tool execution, and context management; Foci handles platform delivery, prompt enrichment (metadata, reminders, nudges), and command dispatch.

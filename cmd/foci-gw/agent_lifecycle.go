@@ -55,6 +55,9 @@ type agentEnv struct {
 	// renameAgentFn is /agents rename's live rename (#2787); nil until main
 	// has built the starter.
 	renameAgentFn command.AgentRenameFn
+	// deleteAgentFn is /agents delete's live delete (#3210); nil until main
+	// has built the starter.
+	deleteAgentFn command.AgentDeleteFn
 	// gracefulTimeout bounds how long a live stop waits for the agent's
 	// in-flight turns ([http] graceful_shutdown_timeout, as at shutdown).
 	gracefulTimeout time.Duration
@@ -124,6 +127,7 @@ func (e *agentEnv) buildAgent(acfg config.AgentConfig) *agentInstance {
 		agentResolverFn: e.agentResolverFn,
 		startAgentFn:    e.startAgentFn,
 		renameAgentFn:   e.renameAgentFn,
+		deleteAgentFn:   e.deleteAgentFn,
 		connMgr:         e.connMgr,
 		plat:            e.plat,
 	})
@@ -389,6 +393,8 @@ type liveAgentStarter struct {
 	renameDisk      func(ctx context.Context, o agentrename.Options) error
 	renamePlatforms func(old, new string)
 	renameNote      func(old string) string
+	// deleteDisk is the disk delete (agentrename.Delete, #3210).
+	deleteDisk func(ctx context.Context, o agentrename.DeleteOptions) (agentrename.DeleteResult, error)
 
 	// mu serialises every live start, stop and rename.
 	mu     sync.Mutex
@@ -492,6 +498,7 @@ func newLiveAgentStarter(e *agentEnv, agents *agentRegistry, load func() (*confi
 			e.plat.RenameAgent(old, new, renameKeyFn(old, new))
 		},
 		renameNote: sharedFacetNote(e.cfg, agents),
+		deleteDisk: deleteDiskFn(e.configPath, delegator.RegisteredNames()),
 	}
 }
 

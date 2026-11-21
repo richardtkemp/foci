@@ -17,14 +17,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
 
-	"foci/internal/ccaccount"
 	"foci/internal/config"
 	"foci/internal/fociroot"
 	"foci/internal/usagelog"
@@ -232,23 +230,12 @@ func resolvePaths(cfg *config.Config, o Options) (paths, error) {
 	if err != nil {
 		return paths{}, err
 	}
-	// The CC config folder of every account of the agent (#3186): each one
-	// its backend_config.accounts lists; without a list, the host's. A
+	// The CC config folder of every account of the agent (#3186). A
 	// session's transcript is in the folder of the session's account, so all
 	// of them move.
-	folders := a.BackendConfig.Accounts
-	if len(folders) == 0 {
-		folders = []string{""}
-	}
-	var ccProjects []string
-	for _, folder := range folders {
-		cc, err := ccaccount.ForFolder(folder)
-		if err != nil {
-			return paths{}, err
-		}
-		if dir := cc.ProjectsDir(); !slices.Contains(ccProjects, dir) {
-			ccProjects = append(ccProjects, dir)
-		}
+	ccProjects, err := agentCCProjects(a)
+	if err != nil {
+		return paths{}, err
 	}
 	ws := filepath.Clean(config.ResolvePath(a.Workspace))
 	p := paths{

@@ -171,6 +171,8 @@ type CommandContext struct {
 	AgentListFn func() []AgentInfo
 	// AgentRenameFn carries out /agents rename (#2787); nil = unavailable.
 	AgentRenameFn AgentRenameFn
+	// AgentDeleteFn carries out /agents delete (#3210); nil = unavailable.
+	AgentDeleteFn AgentDeleteFn
 
 	// Stores
 	LastMessageStore *LastMessageStore
