@@ -432,7 +432,21 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		return nil
 	}
 
-	return t.beginTurn(ts, be, foldable)
+	err = t.beginTurn(ts, be, foldable)
+	if err != nil && errors.Is(err, delegator.ErrBackendClosed) && !be.IsRunning() {
+		// The backend stopped between Get and the begin and refused the turn
+		// before sending it: codex retires an idle app-server after a codex
+		// upgrade (#3233), and a process can die in that gap too. Begin the
+		// turn once more on the respawned backend instead of failing it, as
+		// the follow-up path above does (#2050).
+		t.logger().Infof("session=%s turn refused by a stopped backend (%v) — beginning it on the respawned backend", ts.SessionKey, err)
+		if be, err = t.backendFor(ts); err != nil {
+			return err
+		}
+		ts.Backend = be
+		return t.beginTurn(ts, be, foldable)
+	}
+	return err
 }
 
 // waitOutSystemTurn blocks while a protected system turn is in flight on ts's

@@ -58,9 +58,27 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// lock, or concurrent sessions on one agent would serialise their turn
 	// starts — a behaviour change, not a fix.
 	unlockAcquire := acquireLocks.Lock(opts.AgentID)
+	// A new thread on an app-server whose codex binary has since been
+	// upgraded can be broken (#3233): restart an idle one first, so this
+	// Start launches the new binary instead of attaching to the old one.
+	if o := pooledOwner(opts.AgentID); o != nil {
+		o.recycleIfStaleLocked()
+	}
 	sharedPool.Lock()
 	owner := sharedPool.servers[opts.AgentID]
 	attached := owner != nil && owner.IsRunning()
+	// pool is the owner of the connection this Start uses. Its starting count
+	// keeps recycle from retiring it before this Start's thread is ready.
+	pool := b
+	if attached {
+		pool = owner
+	}
+	pool.starting++
+	defer func() {
+		sharedPool.Lock()
+		pool.starting--
+		sharedPool.Unlock()
+	}()
 	if attached {
 		sharedPool.refs[opts.AgentID]++
 		b.shared = owner
@@ -149,6 +167,7 @@ func (b *Backend) launchAppServer(ctx context.Context, opts delegator.StartOptio
 	if _, err := procx.LookPath(procx.Operator, bin); err != nil {
 		return fmt.Errorf("codex: binary %q not found: %w", bin, err)
 	}
+	b.recordLaunchBinary(bin)
 
 	// Resolve the compaction prompt ONCE at launch and pass it as a `-c`
 	// override (see appServerArgs). Doing this per-process at launch — rather
@@ -228,6 +247,12 @@ func (b *Backend) launchAppServer(ctx context.Context, opts delegator.StartOptio
 	// The usage allowance, for the status block before the first turn.
 	// Off the start path: it is informational and must not delay a session.
 	go b.seedRateLimits()
+
+	// Restart this app-server once idle if codex is upgraded under it (#3233).
+	b.mu.Lock()
+	done := b.done
+	b.mu.Unlock()
+	go b.watchBinary(done)
 
 	return nil
 }
@@ -344,9 +369,6 @@ func (b *Backend) Close() error {
 	}
 	b = owner
 	b.mu.Lock()
-	b.closing = true
-	cancel := b.cancel
-	wr := b.writer
 	// Re-read, not re-declare: b is the OWNER now, and its thread is not the
 	// facade's thread that was read at the top of this function.
 	threadID = b.threadID
@@ -358,6 +380,20 @@ func (b *Backend) Close() error {
 	// unbinds via unregisterThread, and refs hitting zero means they all
 	// already have.
 	b.unbindThreadEnv(threadID)
+	b.stopProcess()
+	return nil
+}
+
+// stopProcess ends the owner's app-server: it closes stdin, cancels the
+// process context (killing the process if it has not exited after
+// closeGracefulWait) and waits up to 10s for the reader to stop. Used by the
+// last facade's Close and by a recycle after a codex upgrade (recycle.go).
+func (b *Backend) stopProcess() {
+	b.mu.Lock()
+	b.closing = true
+	cancel := b.cancel
+	wr := b.writer
+	b.mu.Unlock()
 
 	if wr != nil {
 		_ = wr.Close()
@@ -384,8 +420,6 @@ func (b *Backend) Close() error {
 			b.logWarnf("reader goroutine did not exit within 10s")
 		}
 	}
-
-	return nil
 }
 
 // interruptOnClose stops this facade's running turn in codex when the facade

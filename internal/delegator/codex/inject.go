@@ -40,12 +40,25 @@ func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) err
 
 // beginTurn starts a new turn via turn/start.
 func (b *Backend) beginTurn(text string, turn *delegator.TurnEvents) error {
+	// The claim is made under the owner's recycleMu, so an app-server cannot
+	// be retired for a codex upgrade between the claim and turn/start
+	// (recycle.go, #3233). One that is already retired refuses before
+	// anything is claimed or sent; the agent begins the turn again on the
+	// respawned backend.
+	p := b.process()
+	p.recycleMu.Lock()
+	if p.retired.Load() {
+		p.recycleMu.Unlock()
+		return fmt.Errorf("codex: app-server restarting after a codex upgrade: %w", delegator.ErrBackendClosed)
+	}
 	b.turnMu.Lock()
 	if b.turnActive {
 		b.turnMu.Unlock()
+		p.recycleMu.Unlock()
 		return delegator.ErrTurnInFlight
 	}
 	b.turnActive = true
+	p.recycleMu.Unlock()
 	b.turnEvents = turn
 	b.turnResultCh = make(chan *delegator.TurnResult, 1)
 	b.turnText.Reset()

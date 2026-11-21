@@ -219,6 +219,20 @@ type Backend struct {
 	// keeps it, because one that timed out can still complete. Guarded by
 	// threadMapMu.
 	deleteRequested map[string]struct{}
+	// Recycling after a codex upgrade (recycle.go, #3233), on the owner only.
+	// binStamp is the executable this app-server was launched from (guarded
+	// by mu). retired is set once the owner has left the pool to be
+	// restarted; IsRunning then reports false. recycleMu makes recycle's idle
+	// check and beginTurn's turn claim exclusive. starting counts the Starts
+	// between obtaining this connection and returning (guarded by
+	// sharedPool). recycleWaitLogged keeps the "waiting for idle" line to one
+	// per process (guarded by mu).
+	binStamp          binaryStamp
+	retired           atomic.Bool
+	recycleMu         sync.Mutex
+	starting          int
+	recycleWaitLogged bool
+
 	// unclaimed holds the deferred lost-line WARNs (unclaimed.go), on the
 	// owner only: lines for a thread that matches no session yet, which codex
 	// sends for a fork or resume before foci can register it (#2700).
@@ -264,6 +278,11 @@ type pendingApproval struct {
 // IsRunning reports whether the Codex app-server subprocess is alive.
 func (b *Backend) IsRunning() bool {
 	p := b.process()
+	if p.retired.Load() {
+		// Retired after a codex upgrade (recycle.go): the process is being
+		// stopped, and the manager must respawn this session on a new one.
+		return false
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.running
