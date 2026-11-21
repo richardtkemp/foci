@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -158,14 +159,19 @@ func (s *Server) Start() error {
 	if err != nil {
 		return fmt.Errorf("askgw: listen %s: %w", s.socketPath, err)
 	}
+	// A socket group that cannot be set (missing, or one this user is not in)
+	// must not disable askgw (#3237). The socket then falls back to owner-only
+	// 0600, never 0660 with the process's default group: that group (staff on
+	// macOS) would widen the file layer instead of keeping it as tight. Root
+	// still connects; the UID allow-list is unchanged.
+	mode := os.FileMode(0o660)
 	if s.group != "" {
 		if err := s.setGroup(s.group); err != nil {
-			_ = ln.Close()
-			_ = os.Remove(s.socketPath)
-			return fmt.Errorf("askgw: set group: %w", err)
+			askgwLog.Warnf("socket group not set: %v; socket mode 0600 (owner only, root still connects; allowed_uids unchanged)", err)
+			mode = 0o600
 		}
 	}
-	if err := os.Chmod(s.socketPath, 0660); err != nil { //nolint:gosec // G302: intentional — socket must be group-accessible
+	if err := os.Chmod(s.socketPath, mode); err != nil { //nolint:gosec // G302: intentional — 0660 lets the askgw group connect
 		_ = ln.Close()
 		_ = os.Remove(s.socketPath)
 		return fmt.Errorf("askgw: chmod socket: %w", err)
@@ -621,13 +627,21 @@ func (s *Server) removeStaleSocket() error {
 	return os.Remove(s.socketPath)
 }
 
+// setGroup gives the socket the configured group. Its error names the
+// cause: the group does not exist, or the chown was refused (a non-root
+// process may only chown to a group it is a member of).
 func (s *Server) setGroup(name string) error {
 	gid, err := groupGID(name)
 	if err != nil {
-		askgwLog.Warnf("group %q not found: %v (socket keeps default group)", name, err)
-		return nil
+		return fmt.Errorf("group %q not found: %w", name, err)
 	}
-	return os.Chown(s.socketPath, -1, gid)
+	if err := os.Chown(s.socketPath, -1, gid); err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			return fmt.Errorf("chown to group %q (gid %d) not permitted: the gateway user is not a member: %w", name, gid, err)
+		}
+		return fmt.Errorf("chown to group %q (gid %d): %w", name, gid, err)
+	}
+	return nil
 }
 
 func askgwMsgID(askID string, idx int) string {

@@ -39,6 +39,10 @@ package configcheck
 //     silently;
 //   - one summary line with the count and the sorted command names.
 //
+// It also warns when [askgw] is enabled and its socket group does not exist
+// or the gateway user is not a member (askgwGroupConcern, #3237): the
+// gateway then serves the socket owner-only (0600) instead of with the group.
+//
 // All of those are WARNINGS: the finding is identical before and after the
 // deploy, so blocking the deploy would fix nothing (the backend_config
 // warning follows the same rule).
@@ -255,6 +259,9 @@ func checkLoaded(cfg *config.Config, path string, stdout, stderr io.Writer, d *c
 
 	if d != nil {
 		previewAutoApprove(cfg, stderr, *d)
+		if c := askgwGroupConcern(cfg, path, prodAskgwGroupDeps(d.euid())); c != "" {
+			_, _ = fmt.Fprintf(stderr, "config check warning: %s\n", c)
+		}
 	}
 
 	if failures := checkPretoolExamples(cfg, stderr); failures > 0 {

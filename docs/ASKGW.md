@@ -12,6 +12,8 @@ Example: [ai-sudo](https://github.com/richardtkemp/ai-sudo) uses askgw to forwar
 
 **Socket ownership:** The socket is owned by group `foci-askgw` (configurable), mode `0660`. The parent directory must not be group- or world-writable.
 
+**When the group cannot be set** (#3237): if the configured group does not exist, or the gateway user is not a member of it (a non-root process may only `chown` to its own groups), askgw still starts. It logs a WARN naming the cause and serves the socket **owner-only, mode `0600`**: only the gateway user and root can connect. It does not fall back to `0660` with the process's default group, because that group (on macOS, `staff`) would widen the file layer; `0600` keeps it at least as tight as the intended setup. The UID allow-list below still applies. A caller in `allowed_uids` that runs as a different, non-root user cannot connect until the group is fixed. `foci check config` warns about both causes before a restart.
+
 **Two-layer access control:**
 1. **Unix group membership** — the connecting process must be in the `foci-askgw` group (or be the foci user).
 2. **UID allow-list** — `allowed_uids` in config; accepts usernames or numeric UIDs. The connecting process's UID (checked via `SO_PEERCRED`) must be in this list.
