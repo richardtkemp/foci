@@ -2103,6 +2103,21 @@ what the fork should read, the source's last call's read + write (api.db-seeded 
 restart, #2932), and whether it knows the source at all; that is the decision's baseline,
 and `ForkReadShort` (the same slack) is its test, so the two agree on a miss (#3089).
 
+**Cache evidence** (#3221). A booking may carry `Call.Cache` (`accounting.CacheEvidence`),
+copied onto its report as `CacheReport.Evidence`: the response's Anthropic
+`diagnostics.cache_miss_reason` (type, `cache_missed_input_tokens`) and what the backend's
+request digests show changed against the previous request. Only ccstream fills it.
+`parseCCRecord` reads the reason and the line's `requestRef` off every assistant line
+(main and subagent). The main-transcript tail (`ccLedger` tail goroutine) also feeds every
+line to its own `ccRequestDigests` (`cachediag.go`), which keeps the last 64 `api-request`
+records, and stamps each main line's `RequestChange` from its record against the record's
+`base`: `unchanged`, or the parts that differ (`model`, `system_or_tools` from
+`shapeHash`, `params`, `messages` when `keep` < the base's `keep + len(tail)`). Subagent
+lines carry no digest verdict. `bookCall` copies the evidence into the call's `detail`
+(`cache_miss_reason`, `cache_missed_input_tokens`, `request_change`). The alert's
+`prefix_changed` wording is built from it: the reason's part when it is a `*_changed`
+type, else "the request changed" only when the digest shows a change, else "not known".
+
 **Cache-bust chat alert** (`cmd/foci-gw/cache_alert.go`, #2933). `initLogging`'s hook
 also hands every `bust` (never an `expiry`) to `dispatchCacheAlert`, which looks up the
 report's agent (`CacheReport.AgentID`, else the session key's) in the `cacheAlerts`

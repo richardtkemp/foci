@@ -145,6 +145,12 @@ type ccLine struct {
 	// unseen: what its usage carries that the ledger does not price — a key
 	// not in ccUsageKeys, or a non-standard rate tier (invUnseenField).
 	unseen []accounting.UnseenKey
+	// cache is the call's cache evidence (#3221): the response's
+	// diagnostics.cache_miss_reason, and — set by the main tail, which reads
+	// the api-request records — what CC's request digests show changed.
+	cache accounting.CacheEvidence
+	// requestRef is the id of the api-request record CC wrote for the call.
+	requestRef string
 }
 
 // ccUsageJSON is a per-message usage object with the fields the ledger prices.
@@ -192,12 +198,19 @@ type ccRecord struct {
 	IsSidechain bool   `json:"isSidechain"`
 	Timestamp   string `json:"timestamp"`
 	SessionID   string `json:"sessionId"`
+	RequestRef  string `json:"requestRef"`
 	Message     struct {
-		ID         string          `json:"id"`
-		Model      string          `json:"model"`
-		StopReason *string         `json:"stop_reason"`
-		Usage      json.RawMessage `json:"usage"`
-		Content    json.RawMessage `json:"content"`
+		ID          string          `json:"id"`
+		Model       string          `json:"model"`
+		StopReason  *string         `json:"stop_reason"`
+		Usage       json.RawMessage `json:"usage"`
+		Content     json.RawMessage `json:"content"`
+		Diagnostics *struct {
+			CacheMissReason *struct {
+				Type         string `json:"type"`
+				MissedTokens int    `json:"cache_missed_input_tokens"`
+			} `json:"cache_miss_reason"`
+		} `json:"diagnostics"`
 	} `json:"message"`
 	ModelUsage map[string]ModelUsage `json:"modelUsage"`
 }
@@ -231,6 +244,12 @@ func parseCCRecord(raw []byte) (line *ccLine, costState *ccRecord) {
 	l.tokens, l.method = ccTokens(u)
 	l.unseen = append(accounting.UnseenUsageKeys(r.Message.Usage, ccUsageKeys), accounting.StandardTierOnly(r.Message.Usage)...)
 	l.webTool = hasWebTool(r.Message.Content)
+	l.requestRef = r.RequestRef
+	// Anthropic's cache diagnostics, which CC requests on every call. A null
+	// reason means the comparison was still running: no evidence.
+	if d := r.Message.Diagnostics; d != nil && d.CacheMissReason != nil {
+		l.cache.MissReason, l.cache.MissedTokens = d.CacheMissReason.Type, d.CacheMissReason.MissedTokens
+	}
 	return l, nil
 }
 
@@ -1228,7 +1247,7 @@ func (c *ccBook) bookCall(l *ccLine, turn, actor string, window int, finality st
 		Session: c.session, AgentID: c.agentID, TurnID: turn, Actor: actor,
 		Kind: accounting.KindCall, Finality: finality, ClassMethod: l.method,
 		BilledAt: c.billedAt(l.at), Tokens: l.tokens, StopReason: l.stopReason, SessionFile: c.sessionFile,
-		Detail: map[string]any{"scope": c.scope, "window": window},
+		Detail: l.cache.Detail(map[string]any{"scope": c.scope, "window": window}), Cache: l.cache,
 	}, nil)
 	if err != nil {
 		c.lg.Warnf("ledger: book %s: %v", l.id, err)

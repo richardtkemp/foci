@@ -349,6 +349,7 @@ func (s *ccLedger) tailMain(path string, offset int64) {
 	}
 	r := bufio.NewReaderSize(f, 1<<20)
 	var partial []byte
+	digests := newCCRequestDigests() // this goroutine's: what each request changed (#3221)
 	drain := func() {
 		start := time.Now()
 		for {
@@ -367,7 +368,9 @@ func (s *ccLedger) tailMain(path string, offset int64) {
 			if uuids := parseCCRetraction(line); uuids != nil {
 				s.enqueue(ccEvent{kind: ccRetractEv, uuids: uuids})
 			}
+			digests.observe(line)
 			if l, cs := parseCCRecord(line); l != nil {
+				l.cache.RequestChange = digests.change(l.requestRef)
 				s.enqueue(ccEvent{kind: ccMainLine, line: l})
 			} else if cs != nil {
 				s.enqueue(ccEvent{kind: ccCostState, mu: cs.ModelUsage})

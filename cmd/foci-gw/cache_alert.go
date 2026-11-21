@@ -222,19 +222,104 @@ func cacheBustAlertText(r accounting.CacheReport) string {
 	return b.String()
 }
 
-// cacheBustCause words a report's cause for a person.
+// cacheBustCause words a report's cause for a person. A cause the watch
+// inferred from the counts alone (prefix_changed) is worded from the call's
+// evidence (#3221): Anthropic's cache_miss_reason when it named a divergence,
+// else what the request digests show. It says the request changed only when
+// one of them shows a change. Any other cause quotes the API's reason after it.
 func cacheBustCause(r accounting.CacheReport) string {
+	var cause string
 	switch r.Cause {
 	case accounting.CacheCauseModelSwitch:
-		return fmt.Sprintf("model switch (%s → %s)", r.PrevModel, r.Model)
+		cause = fmt.Sprintf("model switch (%s → %s)", r.PrevModel, r.Model)
 	case accounting.CacheCausePromptChanged:
-		return "the system prompt changed"
+		cause = "the system prompt changed"
 	case accounting.CacheCauseForkMiss:
-		return fmt.Sprintf("a fork of %s missed its cache", r.Source)
+		cause = fmt.Sprintf("a fork of %s missed its cache", r.Source)
 	case accounting.CacheCausePrefixChanged:
-		return fmt.Sprintf("the request changed after the first %s tokens", kTokens(r.Read))
+		return prefixChangedCause(r)
+	default:
+		cause = r.Cause
 	}
-	return r.Cause
+	if q := cacheMissQuote(r.Evidence); q != "" {
+		cause += " (" + q + ")"
+	}
+	return cause
+}
+
+// prefixChangedCause words a bust the watch could not attribute: the read
+// stopped after r.Read tokens, inside the TTL, with the same model and prompt.
+func prefixChangedCause(r accounting.CacheReport) string {
+	e := r.Evidence
+	read := kTokens(r.Read)
+	switch {
+	case e.MissDiagnosed():
+		return fmt.Sprintf("the %s changed (%s)", cacheMissPart(e.MissReason), cacheMissQuote(e))
+	case e.RequestChanged():
+		return fmt.Sprintf("the request changed after the first %s tokens: %s differed from the previous request (Claude Code's request digest)%s",
+			read, requestChangeParts(e.RequestChange), cacheMissSuffix(e))
+	case e.RequestChange == accounting.RequestUnchanged:
+		return fmt.Sprintf("not known: Claude Code's request digest shows the request unchanged from the previous one, yet only the first %s tokens were cached%s",
+			read, cacheMissSuffix(e))
+	}
+	return fmt.Sprintf("not known: only the first %s tokens were cached%s", read, cacheMissSuffix(e))
+}
+
+// cacheMissQuote quotes the API's cache_miss_reason: "Anthropic's
+// cache_miss_reason system_changed, ~45.3k tokens after the change", or ""
+// when the call carried none.
+func cacheMissQuote(e accounting.CacheEvidence) string {
+	if e.MissReason == "" {
+		return ""
+	}
+	q := "Anthropic's cache_miss_reason " + e.MissReason
+	if e.MissedTokens > 0 {
+		q += fmt.Sprintf(", ~%s tokens after the change", kTokens(e.MissedTokens))
+	}
+	return q
+}
+
+// cacheMissSuffix is cacheMissQuote as a trailing clause, or "".
+func cacheMissSuffix(e accounting.CacheEvidence) string {
+	if q := cacheMissQuote(e); q != "" {
+		return "; " + q
+	}
+	return ""
+}
+
+// cacheMissPart names the part of the request a *_changed reason points at.
+func cacheMissPart(reason string) string {
+	switch reason {
+	case accounting.CacheMissModelChanged:
+		return "model"
+	case accounting.CacheMissSystemChanged:
+		return "system prompt"
+	case accounting.CacheMissToolsChanged:
+		return "tool list"
+	case accounting.CacheMissMessagesChanged:
+		return "conversation history (an earlier message)"
+	}
+	return "request"
+}
+
+// requestChangeParts words a RequestChange list for a person.
+func requestChangeParts(change string) string {
+	var parts []string
+	for _, p := range strings.Split(change, ",") {
+		switch p {
+		case accounting.RequestChangedModel:
+			parts = append(parts, "the model")
+		case accounting.RequestChangedSystemOrTools:
+			parts = append(parts, "the system prompt or tools")
+		case accounting.RequestChangedParams:
+			parts = append(parts, "the request parameters")
+		case accounting.RequestChangedMessages:
+			parts = append(parts, "an earlier message")
+		default:
+			parts = append(parts, p)
+		}
+	}
+	return strings.Join(parts, " and ")
 }
 
 // kTokens renders a token count compactly: 950, 12.3k, 1.2M.

@@ -193,3 +193,49 @@ func TestCacheAlert_NotifyLiveApply(t *testing.T) {
 		t.Fatalf("alert not sent at the next bust after cache_bust_notify was set true live: %v", hub.shownIn)
 	}
 }
+
+// TestCacheBustCause_QuotesTheEvidence pins #3221: an unexplained bust's cause
+// quotes Anthropic's cache_miss_reason when the call carried one, and says the
+// request changed only when the request digests show a change.
+func TestCacheBustCause_QuotesTheEvidence(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		ev      accounting.CacheEvidence
+		want    []string
+		wantNot []string
+	}{
+		{"api diagnosis", accounting.CacheEvidence{MissReason: accounting.CacheMissSystemChanged, MissedTokens: 45_347},
+			[]string{"system prompt changed", "cache_miss_reason system_changed", "45.3k"}, nil},
+		{"digest shows a change", accounting.CacheEvidence{RequestChange: accounting.RequestChangedMessages},
+			[]string{"request changed", "an earlier message", "12.3k"}, nil},
+		// Cam's repro, 11 Nov: keep:2 digest, cache_miss_reason unavailable.
+		{"digest unchanged, api unavailable", accounting.CacheEvidence{MissReason: accounting.CacheMissUnavailable, RequestChange: accounting.RequestUnchanged},
+			[]string{"not known", "unchanged", "cache_miss_reason unavailable", "12.3k"}, []string{"request changed"}},
+		{"no evidence", accounting.CacheEvidence{},
+			[]string{"not known", "12.3k"}, []string{"request changed"}},
+	}
+	for _, c := range cases {
+		r := bustReport("main/c1")
+		r.Evidence = c.ev
+		got := cacheBustCause(r)
+		for _, w := range c.want {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s: cause %q lacks %q", c.name, got, w)
+			}
+		}
+		for _, w := range c.wantNot {
+			if strings.Contains(got, w) {
+				t.Errorf("%s: cause %q says %q", c.name, got, w)
+			}
+		}
+	}
+
+	// A cause the watch named itself still quotes the API's reason.
+	r := bustReport("main/c1")
+	r.Cause, r.PrevModel, r.Model = accounting.CacheCauseModelSwitch, "a", "b"
+	r.Evidence = accounting.CacheEvidence{MissReason: accounting.CacheMissModelChanged, MissedTokens: 900}
+	if got := cacheBustCause(r); !strings.HasPrefix(got, "model switch (a → b)") || !strings.Contains(got, "cache_miss_reason model_changed") {
+		t.Errorf("model switch cause = %q", got)
+	}
+}

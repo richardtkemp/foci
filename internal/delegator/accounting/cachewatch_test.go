@@ -349,3 +349,34 @@ func TestCacheWatch_PrunesStaleLineages(t *testing.T) {
 		t.Error("the prompt of a session with no lineage was kept")
 	}
 }
+
+// A bust's report carries the call's own cache evidence (#3221): the API's
+// cache_miss_reason and the backend's request digest verdict, and its log line
+// quotes both.
+func TestCacheWatch_ReportCarriesTheCallsEvidence(t *testing.T) {
+	w := newCacheWatch()
+	bust := cc(2, "a/c1", "", KindCall, at("1h1m"), 39400, 12800)
+	bust.Cache = CacheEvidence{MissReason: CacheMissUnavailable, RequestChange: RequestUnchanged}
+	r := wantOne(t, run(w, cc(1, "a/c1", "", KindCall, at("1h"), 50000, 2200), bust), CacheClassBust, CacheCausePrefixChanged)
+	if r.Evidence != bust.Cache {
+		t.Fatalf("evidence = %+v, want %+v", r.Evidence, bust.Cache)
+	}
+	for _, want := range []string{"cache_miss_reason unavailable", "request digest: unchanged"} {
+		if !strings.Contains(r.String(), want) {
+			t.Errorf("report line lacks %q: %s", want, r)
+		}
+	}
+}
+
+func TestCacheEvidence_Detail(t *testing.T) {
+	if d := (CacheEvidence{}).Detail(nil); d != nil {
+		t.Errorf("empty evidence added %v", d)
+	}
+	d := CacheEvidence{MissReason: CacheMissSystemChanged, MissedTokens: 45347, RequestChange: RequestChangedMessages}.Detail(map[string]any{"scope": "s"})
+	if d["cache_miss_reason"] != "system_changed" || d["cache_missed_input_tokens"] != 45347 || d["request_change"] != "messages" || d["scope"] != "s" {
+		t.Errorf("detail = %v", d)
+	}
+	if !(CacheEvidence{MissReason: CacheMissToolsChanged}).MissDiagnosed() || (CacheEvidence{MissReason: CacheMissNotFound}).MissDiagnosed() {
+		t.Error("MissDiagnosed must hold for a *_changed reason only")
+	}
+}

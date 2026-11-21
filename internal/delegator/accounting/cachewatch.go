@@ -2,6 +2,7 @@ package accounting
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -50,6 +51,93 @@ const (
 	CacheCausePrefixChanged = "prefix_changed"
 )
 
+// CacheEvidence is what a call's provider and backend reported about its
+// cache read, beyond the counts (#3221). The cache watch infers a bust's cause
+// from the counts alone; this is the direct evidence a report quotes when it
+// exists.
+type CacheEvidence struct {
+	// MissReason is the type of the response's diagnostics.cache_miss_reason
+	// (Anthropic's cache diagnostics, which Claude Code requests): a
+	// CacheMiss* constant or a type foci does not know. "" when the response
+	// carried none. A *_changed type names where the request diverged from
+	// the previous one; CacheMissNotFound and CacheMissUnavailable mean the
+	// API made no comparison.
+	MissReason string
+	// MissedTokens is the reason's cache_missed_input_tokens: the API's
+	// estimate of the input after the divergence (a *_changed type only).
+	MissedTokens int
+	// RequestChange is what the backend's own request digests show changed
+	// against the previous request (Claude Code's api-request records):
+	// RequestUnchanged, or a comma-separated list of RequestChanged* parts.
+	// "" when there is no digest to go by (no record, or no previous request
+	// in this process to compare with).
+	RequestChange string
+}
+
+// Anthropic's cache_miss_reason types
+// (https://platform.claude.com/docs/en/build-with-claude/cache-diagnostics).
+const (
+	CacheMissModelChanged    = "model_changed"
+	CacheMissSystemChanged   = "system_changed"
+	CacheMissToolsChanged    = "tools_changed"
+	CacheMissMessagesChanged = "messages_changed"
+	// CacheMissNotFound: the API held no fingerprint of the previous
+	// request (too old, or it did not ask for diagnostics). Not evidence of
+	// a change.
+	CacheMissNotFound = "previous_message_not_found"
+	// CacheMissUnavailable: the API made no comparison (another
+	// prompt-affecting parameter differs, or the change is beyond its
+	// horizon).
+	CacheMissUnavailable = "unavailable"
+)
+
+// RequestChange values: what a request's digests show changed.
+const (
+	RequestUnchanged = "unchanged"
+	// RequestChangedModel: the request named a different model.
+	RequestChangedModel = "model"
+	// RequestChangedSystemOrTools: the system prompt or the tool list (CC's
+	// shape hash covers both).
+	RequestChangedSystemOrTools = "system_or_tools"
+	// RequestChangedParams: another request parameter (thinking, betas,
+	// context management, effort ...).
+	RequestChangedParams = "params"
+	// RequestChangedMessages: an earlier message differs; the request kept
+	// fewer of the previous request's messages than it had.
+	RequestChangedMessages = "messages"
+)
+
+// MissDiagnosed reports whether the API named where the request diverged (a
+// *_changed reason).
+func (e CacheEvidence) MissDiagnosed() bool { return strings.HasSuffix(e.MissReason, "_changed") }
+
+// RequestChanged reports whether the request digests show a change.
+func (e CacheEvidence) RequestChanged() bool {
+	return e.RequestChange != "" && e.RequestChange != RequestUnchanged
+}
+
+// Detail adds the evidence to a call's Detail map (for forensics: api.db
+// keeps Detail), creating the map when needed. Nothing is added for empty
+// evidence.
+func (e CacheEvidence) Detail(d map[string]any) map[string]any {
+	if e == (CacheEvidence{}) {
+		return d
+	}
+	if d == nil {
+		d = map[string]any{}
+	}
+	if e.MissReason != "" {
+		d["cache_miss_reason"] = e.MissReason
+	}
+	if e.MissedTokens > 0 {
+		d["cache_missed_input_tokens"] = e.MissedTokens
+	}
+	if e.RequestChange != "" {
+		d["request_change"] = e.RequestChange
+	}
+	return d
+}
+
 // cacheSlackFrac and cacheSlackMin bound the shortfall that is not reported:
 // a fork's first call can re-render the last few thousand tokens of its
 // source's tail (03:43 7 Nov: forks read 85,876 of a source's 88,465, 2.9%
@@ -90,6 +178,9 @@ type CacheReport struct {
 	// rate for either class.
 	RewriteUSD, ReadUSD float64
 	Priced              bool
+	// Evidence is the call's own cache evidence (Call.Cache), quoted by the
+	// report.
+	Evidence CacheEvidence
 }
 
 // String is the report as one log line.
@@ -112,6 +203,15 @@ func (r CacheReport) String() string {
 	}
 	if r.Source != "" {
 		s += " ; fork of " + r.Source
+	}
+	if e := r.Evidence; e.MissReason != "" {
+		s += "; cache_miss_reason " + e.MissReason
+		if e.MissedTokens > 0 {
+			s += fmt.Sprintf(" (missed ~%d)", e.MissedTokens)
+		}
+	}
+	if r.Evidence.RequestChange != "" {
+		s += "; request digest: " + r.Evidence.RequestChange
 	}
 	return s + fmt.Sprintf("; %s since last touch, ttl %s; model %s, backend %s",
 		r.Since.Round(time.Second), r.TTL, r.Model, r.Backend)
@@ -469,6 +569,7 @@ func checkCache(b Booking, base *cacheLineage, source, prompt string, read, writ
 		Session: b.Session, Actor: b.Actor, Backend: b.Backend, Model: b.Model, AgentID: b.AgentID, At: b.BilledAt,
 		Class: CacheClassBust, Expected: expected, Read: read, Lost: lost, Write: write,
 		Since: since, TTL: base.ttl, Source: source, PrevModel: base.model,
+		Evidence: b.Cache,
 	}
 	switch {
 	case since > base.ttl:

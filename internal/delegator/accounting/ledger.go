@@ -201,6 +201,12 @@ type Call struct {
 	// entry configured zero_cost, a local model server. Its model is not
 	// looked up, so no unpriced-model warning or invModelNotInTable fires.
 	ZeroCost bool
+
+	// Cache is what the provider and the backend reported about why the
+	// call's cache read fell short (#3221); zero when they reported nothing.
+	// The cache watch quotes it in a bust report. It has no column: an
+	// adapter that wants it kept copies it into Detail (CacheEvidence.Detail).
+	Cache CacheEvidence
 }
 
 // Report is a backend's own reported totals at its native grain (R5): CC's
