@@ -157,6 +157,25 @@ func (s *Spawner) adoptSpawns() *spawnRestorePlan {
 			}
 			continue
 		}
+		if rec.Stopped {
+			// Stopped before the restart, its run cut before it ended
+			// (#3226): not resumed. Its parent gets the stopped result its
+			// run would have sent; no restart notice names it.
+			tr.adopt(rec, false, "stopped", func() {})
+			spawnLog.Infof("spawn=%s was stopped before the restart — reporting it stopped, not resuming it", rec.ID)
+			p.deliveries = append(p.deliveries, func() {
+				// Its app chit was left open by the last process (#3127).
+				if s.deps.Observer != nil {
+					s.deps.Observer.SpawnEnded(rec.Parent, rec.ID)
+				}
+				if rec.Result != "" {
+					s.deliver(rec.Parent, rec.ID, rec.Result)
+				}
+				s.deliver(rec.Parent, rec.ID, keptMessagesHead(rec.ID, tr.takeKept(rec.Parent, rec.ID))+fmt.Sprintf(
+					"%s was stopped by %s.", spawnResultHead(recInfo(rec).Label(), rec.BranchKey, rec.ID), tr.stopper(rec.Parent, rec.ID)))
+			})
+			continue
+		}
 		label := fmt.Sprintf("%s (%s)", rec.ID, recInfo(rec).Label())
 		// The agent the spawn runs as: this one, or another for a
 		// cross-agent spawn (#2662).

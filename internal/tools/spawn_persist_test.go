@@ -502,3 +502,76 @@ func TestRestoredSpawnKeepsInputsAcrossSecondRestart(t *testing.T) {
 	}
 	d.done(true)
 }
+
+// stubbornAgent's turn ignores its context and ends only when release is
+// closed, as a CC turn that has not yet seen its interrupt does.
+type stubbornAgent struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (a *stubbornAgent) HandleMessage(context.Context, string, []string, []platform.Attachment) error {
+	a.started <- struct{}{}
+	<-a.release
+	return errors.New("backend closed")
+}
+
+// #3226: a stop requested before a restart, while the spawn's run has not
+// ended yet, is persisted at once; the next process does not resume the
+// spawn but reports it stopped (seen 6 Nov on the work Mac: spawn_stop at
+// ~01:16, restart at 01:16:49, spawn "resumed 1 time after a foci restart").
+func TestSpawnStoppedBeforeRestartNotResumed(t *testing.T) {
+	t.Parallel()
+	agent := &stubbornAgent{started: make(chan struct{}, 1), release: make(chan struct{})}
+	t.Cleanup(func() { close(agent.release) })
+	h := newPersistHarness(agent, nil)
+	id := h.spawn(t, "long task")
+	<-agent.started
+
+	if known, stopped := h.tracker.stopOne("test/imain", id); !known || !stopped {
+		t.Fatalf("stopOne = known %v, stopped %v, want the running spawn stopped", known, stopped)
+	}
+	rec, ok := h.store.record(t, id)
+	if !ok || !rec.Stopped {
+		t.Fatalf("record after a stop whose run has not ended = %+v (ok %v), want Stopped persisted", rec, ok)
+	}
+	h.tracker.BeginShutdown()
+
+	// The next process: same rows, a fresh tracker and spawner.
+	next := newScriptedSpawnAgent(0)
+	obs := &recordingSpawnObserver{}
+	h2 := newPersistHarness(next, func(d *SpawnDeps) { d.Observer = obs })
+	h2.store.put(t, rec)
+	h2.spawner.RestoreSpawns()
+
+	d := h2.nextDelivery(t)
+	if d.session != "test/imain" || !strings.Contains(d.msg, "[SPAWN RESULT]") ||
+		!strings.Contains(d.msg, "was stopped by "+stoppedBySpawnStop) {
+		t.Fatalf("parent got %q, want a stopped [SPAWN RESULT] naming spawn_stop", d.msg)
+	}
+	select {
+	case <-next.started:
+		t.Fatal("a spawn stopped before the restart was resumed")
+	case <-time.After(50 * time.Millisecond):
+	}
+	select {
+	case n := <-h2.notices:
+		if strings.Contains(n, "Resumed") {
+			t.Fatalf("notice %q says the stopped spawn was resumed", n)
+		}
+	default:
+	}
+	if snap, ok := h2.tracker.Lookup("test/imain", id, 0); !ok || snap.Running || snap.Outcome != "stopped" || snap.Resumes != 0 {
+		t.Fatalf("tracker after restore = %+v (ok %v), want it known as stopped, not running, never resumed", snap, ok)
+	}
+	obs.mu.Lock()
+	ended := slices.Clone(obs.ended)
+	obs.mu.Unlock()
+	if !slices.Equal(ended, []string{id}) {
+		t.Fatalf("observer ended %v, want the stopped spawn's chit ended", ended)
+	}
+	d.done(true)
+	if _, ok := h2.store.record(t, id); ok {
+		t.Fatal("record kept after the parent took the stopped report")
+	}
+}

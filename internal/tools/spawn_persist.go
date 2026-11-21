@@ -65,8 +65,13 @@ type spawnRecord struct {
 	// Wake: what its own spawns sent it after its run ended, in arrival
 	// order, for the run that resumes it (#3163); a new process resumes it
 	// with them. Stopped: it was stopped, so they pass up instead.
-	Wake    []childReport `json:"wake,omitempty"`
-	Stopped bool          `json:"stopped,omitempty"`
+	Wake []childReport `json:"wake,omitempty"`
+	// Stopped is set as soon as a stop is requested, even while its run
+	// has not ended yet (Running still true): a new process then reports
+	// it stopped instead of resuming it (#3226). StoppedBy: who stopped it
+	// (see trackedSpawn.stoppedBy), for that report.
+	Stopped   bool   `json:"stopped,omitempty"`
+	StoppedBy string `json:"stopped_by,omitempty"`
 }
 
 // keptRecord is the persisted form of one kept message to the spawner.
@@ -164,6 +169,10 @@ func (s *trackedSpawn) record(parent string, live bool) *spawnRecord {
 	if !s.running && s.result == "" && len(s.wake) == 0 && !live {
 		return nil
 	}
+	stoppedBy := ""
+	if s.stopped {
+		stoppedBy = s.stoppedBy
+	}
 	return &spawnRecord{
 		ID: s.info.ID, Parent: parent, BranchKey: s.info.BranchKey,
 		Name: s.info.Name, Description: s.info.Description, Model: s.info.Model, Prompt: s.prompt,
@@ -172,7 +181,7 @@ func (s *trackedSpawn) record(parent string, live bool) *spawnRecord {
 		Character: s.info.Character, SpawnModel: s.info.SpawnModel,
 		Agent: s.info.Agent, SpawnerUnattended: s.info.SpawnerUnattended, Depth: s.info.Depth,
 		Kept: keptRecords(s.kept), OneShot: s.oneShot,
-		Wake: slices.Clone(s.wake), Stopped: s.stopped && !s.running,
+		Wake: slices.Clone(s.wake), Stopped: s.stopped, StoppedBy: stoppedBy,
 	}
 }
 
@@ -333,6 +342,9 @@ func (t *SpawnTracker) adopt(rec spawnRecord, running bool, outcome string, canc
 		prompt: rec.Prompt, resumes: rec.Resumes, result: rec.Result,
 		kept: keptEntries(rec.Kept), oneShot: rec.OneShot,
 		wake: slices.Clone(rec.Wake), stopped: rec.Stopped && !running,
+	}
+	if s.stopped {
+		s.stoppedBy = rec.StoppedBy
 	}
 	if running {
 		s.resumes++

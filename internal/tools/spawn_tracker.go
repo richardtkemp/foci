@@ -794,17 +794,40 @@ func (t *SpawnTracker) stopOne(parent, idOrBranch string) (known, stopped bool) 
 		return false, false
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	s := t.find(parent, idOrBranch)
 	if s == nil {
+		t.mu.Unlock()
 		return false, false
 	}
 	if !s.running || s.stopped {
+		t.mu.Unlock()
 		return true, false
 	}
 	s.stopped, s.stoppedBy = true, stoppedBySpawnStop
 	s.cancel()
+	id := s.info.ID
+	t.mu.Unlock()
+	t.persistStopped([]spawnRef{{parent, id}})
 	return true, true
+}
+
+// spawnRef names one tracked spawn: its parent session and its id.
+type spawnRef struct{ parent, id string }
+
+// persistStopped persists spawns just marked stopped, so a restart before
+// their runs end reports them stopped instead of resuming them (#3226).
+// Caller does not hold t.mu.
+//
+// It skips a spawn whose run has ended meanwhile and whose result is not
+// recorded yet (persistOne's upward rule): its row stays "running" until
+// pushResult writes it, so a crash in between loses nothing (finishOrNext).
+// Nothing above it needs rewriting: a stop does not change whether the spawn
+// is live for its parent spawn's row (#3163); its run's end does, and
+// persists then.
+func (t *SpawnTracker) persistStopped(refs []spawnRef) {
+	for _, r := range refs {
+		_, _, _ = t.persistOne(r.parent, r.id, true)
+	}
 }
 
 // StopOne cancels the one running spawn with this id that session owns now
@@ -815,18 +838,21 @@ func (t *SpawnTracker) StopOne(session, id string) bool {
 		return false
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	var found *trackedSpawn
-	t.ownedLocked(session, func(_ string, s *trackedSpawn) {
+	var parent string
+	t.ownedLocked(session, func(p string, s *trackedSpawn) {
 		if s.info.ID == id {
-			found = s
+			found, parent = s, p
 		}
 	})
 	if found == nil || !found.running || found.stopped {
+		t.mu.Unlock()
 		return false
 	}
 	found.stopped, found.stoppedBy = true, "the user"
 	found.cancel()
+	t.mu.Unlock()
+	t.persistStopped([]spawnRef{{parent, id}})
 	return true
 }
 
@@ -843,17 +869,18 @@ func (t *SpawnTracker) stopAll(session, by string) int {
 		return 0
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	n := 0
-	t.ownedLocked(session, func(_ string, s *trackedSpawn) {
+	var refs []spawnRef
+	t.ownedLocked(session, func(p string, s *trackedSpawn) {
 		if !s.running || s.stopped {
 			return
 		}
 		s.stopped, s.stoppedBy = true, by
 		s.cancel()
-		n++
+		refs = append(refs, spawnRef{p, s.info.ID})
 	})
-	return n
+	t.mu.Unlock()
+	t.persistStopped(refs)
+	return len(refs)
 }
 
 // stopper says who stopped a spawn ("the user" when unknown).

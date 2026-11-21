@@ -284,7 +284,8 @@ procx.PassOpenFileLimitToChildren()                       ← internal/procx, ri
                                                             resuming nothing, so a child's result found by one agent's restore finds a
                                                             parent spawn whose record another agent holds (a cross-agent spawn)
   → Agent.SpawnRestore() per agent (Spawner.RestoreSpawns) ← #2589: deliver untaken spawn results, resume interrupted spawns (or report
-                                                            them lost), one chat notice per parent; BEFORE RestoreUndelivered, as it
+                                                            them lost; one whose stop was persisted before the restart, #3226,
+                                                            is reported stopped, not resumed), one chat notice per parent; BEFORE RestoreUndelivered, as it
                                                             takes the spawn branches' unconsumed inputs into their resume turns
   → Agent.DepthRestore() per agent (DepthManager.Restore)  ← #2588: re-register depth-mode leaf conversations from the depth:<key> records, mark
                                                             unresumable leaves lost, re-run interrupted acks, run task leaves' unstarted tasks and resume cut-off ones (#2998; no question-leaf first turn: #2617),
