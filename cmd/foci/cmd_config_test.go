@@ -184,3 +184,25 @@ func TestPrintConfigOutcome_ActionResult(t *testing.T) {
 		t.Errorf("output = %q", got)
 	}
 }
+
+// An applied change the running gateway did not pick up (#3227) says the
+// change needs a restart, on its own line after the applied line; the exit
+// stays 0 (the file was written). A live change prints no such line.
+func TestPrintConfigOutcome_RestartNeeded(t *testing.T) {
+	var out strings.Builder
+	code := printConfigOutcome(&out, configapprove.Status{Outcome: configapprove.Applied, Path: "sandbox.writable_roots", New: `["/x"]`, Old: "(unset)",
+		Restart: "this setting does not apply live; the change takes effect after a foci restart"})
+	if code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	want := "applied: sandbox.writable_roots = [\"/x\"] (was (unset))\nrestart needed: this setting does not apply live; the change takes effect after a foci restart\n"
+	if got := out.String(); got != want {
+		t.Errorf("output = %q\nwant     %q", got, want)
+	}
+
+	out.Reset()
+	printConfigOutcome(&out, configapprove.Status{Outcome: configapprove.Applied, Path: "logging.level", New: `"debug"`, Old: `"info"`})
+	if strings.Contains(out.String(), "restart") {
+		t.Errorf("live change output mentions a restart: %q", out.String())
+	}
+}

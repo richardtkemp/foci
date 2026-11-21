@@ -62,14 +62,23 @@ func newConfigApproveService(cfg *config.Config, configPath string, agents *agen
 				configLog.Warnf("config request %s: edit timed-out prompt: %v", id, err)
 			}
 		},
-		Apply: func(p config.KeyPath) {
+		Apply: func(p config.KeyPath) (bool, error) {
 			if gwLiveApply == nil {
-				return
+				return false, nil
 			}
 			section, key := p.LiveApplyAddress()
-			if _, err := gwLiveApply.Apply(section, key); err != nil {
+			live, err := gwLiveApply.Apply(section, key)
+			if err != nil {
 				configLog.Warnf("%s written but live apply failed (takes effect on restart): %v", p, err)
 			}
+			return live, err
+		},
+		Live: func(p config.KeyPath) bool {
+			if gwLiveApply == nil {
+				return false
+			}
+			section, key := p.LiveApplyAddress()
+			return gwLiveApply.Live(section, key)
 		},
 	})
 }

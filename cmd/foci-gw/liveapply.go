@@ -87,25 +87,7 @@ func (la *liveApply) registerMapSection(sections []string, fn func(*config.Confi
 // takes effect on restart — so the log answers "did my edit apply?" (#2116).
 // An apply error is returned for the caller to log.
 func (la *liveApply) Apply(section, key string) (bool, error) {
-	addr := section
-	if key != "" {
-		addr += "." + key
-	}
-	la.mu.RLock()
-	fn := la.appliers[addr]
-	if fn == nil {
-		fn = la.mapSectionAppliers[section]
-	}
-	if fn == nil {
-		// A mapObject section ([endpoints.*]) edited by key path: section
-		// "endpoints.<name>" (or "endpoints" with key "<name>") goes to the
-		// applier at the bare section address.
-		head, _, _ := strings.Cut(section, ".")
-		if spec, ok := config.MapObjectFieldSpecFor(head); ok && spec.Live {
-			fn = la.appliers[spec.Section]
-		}
-	}
-	la.mu.RUnlock()
+	fn, addr := la.applierFor(section, key)
 	if fn == nil {
 		configLog.Warnf("%s written but not live-appliable: takes effect on restart", addr)
 		return false, nil
@@ -122,6 +104,40 @@ func (la *liveApply) Apply(section, key string) (bool, error) {
 	}
 	configLog.Infof("applied %s live", addr)
 	return true, nil
+}
+
+// applierFor finds the applier for one registry address, and returns the
+// address for log lines. A nil applier means the edit takes effect only on
+// restart.
+func (la *liveApply) applierFor(section, key string) (func(*config.Config) error, string) {
+	addr := section
+	if key != "" {
+		addr += "." + key
+	}
+	la.mu.RLock()
+	defer la.mu.RUnlock()
+	fn := la.appliers[addr]
+	if fn == nil {
+		fn = la.mapSectionAppliers[section]
+	}
+	if fn == nil {
+		// A mapObject section ([endpoints.*]) edited by key path: section
+		// "endpoints.<name>" (or "endpoints" with key "<name>") goes to the
+		// applier at the bare section address.
+		head, _, _ := strings.Cut(section, ".")
+		if spec, ok := config.MapObjectFieldSpecFor(head); ok && spec.Live {
+			fn = la.appliers[spec.Section]
+		}
+	}
+	return fn, addr
+}
+
+// Live reports whether Apply(section, key) would find an applier: false
+// means an edit there takes effect only on restart. The approval prompt
+// asks this before the user decides (#3227).
+func (la *liveApply) Live(section, key string) bool {
+	fn, _ := la.applierFor(section, key)
+	return fn != nil
 }
 
 // Registry addresses covered by each tranche-1 applier. These lists and the

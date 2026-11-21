@@ -37,6 +37,10 @@ type harness struct {
 	check   error
 	unknown []string
 	present error
+	// notLive makes the fake live applier report no applier for any path
+	// (a restart-only key); applyErr makes it fail.
+	notLive  bool
+	applyErr error
 }
 
 func newHarness(t *testing.T) *harness {
@@ -64,10 +68,16 @@ func newHarness(t *testing.T) *harness {
 			defer h.mu.Unlock()
 			h.closed = append(h.closed, id+": "+text)
 		},
-		Apply: func(p config.KeyPath) {
+		Apply: func(p config.KeyPath) (bool, error) {
 			h.mu.Lock()
 			defer h.mu.Unlock()
 			h.applied = append(h.applied, p.String())
+			return !h.notLive, h.applyErr
+		},
+		Live: func(config.KeyPath) bool {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			return !h.notLive
 		},
 		AfterFunc: func(_ time.Duration, f func()) func() bool {
 			h.mu.Lock()
@@ -487,5 +497,57 @@ func TestSubmit_UnknownKeyWarnsInPrompt(t *testing.T) {
 	}
 	if p := h.prompt(0); !strings.Contains(p.Text, "⚠️ This foci binary does not know this key: agent_loop.future") {
 		t.Errorf("prompt lacks the warning:\n%s", p.Text)
+	}
+}
+
+// TestApprove_RestartOnlyKeySaysSo proves a restart-only key (#3227): the
+// prompt warns before the user decides, and after Approve the edited prompt
+// and the outcome both say the change takes effect only after a restart.
+func TestApprove_RestartOnlyKeySaysSo(t *testing.T) {
+	h := newHarness(t)
+	h.notLive = true
+	st := h.set("agent_loop.max_tool_loops", "20")
+	p := h.prompt(0)
+	if !strings.Contains(p.Text, "restart") {
+		t.Errorf("prompt does not warn about the restart:\n%s", p.Text)
+	}
+	reply := p.OnAnswer(true)
+	if !strings.HasPrefix(reply, "✅") || !strings.Contains(reply, "restart") {
+		t.Errorf("reply = %q, want applied with a restart notice", reply)
+	}
+	got := h.outcome(st.ID)
+	if got.Outcome != Applied || !strings.Contains(got.Restart, "restart") {
+		t.Fatalf("outcome = %+v, want applied with Restart set", got)
+	}
+}
+
+// TestApprove_LiveKeyNoRestartNotice is the control: a key with an applier
+// gets no restart notice anywhere.
+func TestApprove_LiveKeyNoRestartNotice(t *testing.T) {
+	h := newHarness(t)
+	st := h.set("agent_loop.max_tool_loops", "20")
+	p := h.prompt(0)
+	if strings.Contains(p.Text, "restart") {
+		t.Errorf("prompt warns about a restart for a live key:\n%s", p.Text)
+	}
+	if reply := p.OnAnswer(true); strings.Contains(reply, "restart") {
+		t.Errorf("reply = %q, want no restart notice", reply)
+	}
+	if got := h.outcome(st.ID); got.Outcome != Applied || got.Restart != "" {
+		t.Fatalf("outcome = %+v, want applied with no Restart", got)
+	}
+}
+
+// TestApprove_LiveApplyErrorNeedsRestart proves a live apply that fails
+// after the write reports the error and the restart in the outcome: the file
+// holds the value, the process does not.
+func TestApprove_LiveApplyErrorNeedsRestart(t *testing.T) {
+	h := newHarness(t)
+	h.applyErr = errors.New("applier broke")
+	st := h.set("agent_loop.max_tool_loops", "20")
+	h.prompt(0).OnAnswer(true)
+	got := h.outcome(st.ID)
+	if got.Outcome != Applied || !strings.Contains(got.Restart, "restart") || !strings.Contains(got.Restart, "applier broke") {
+		t.Fatalf("outcome = %+v, want applied with Restart naming the error", got)
 	}
 }

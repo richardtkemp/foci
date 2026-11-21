@@ -77,7 +77,7 @@ A set of a whole array replaces every entry: list all the entries you want to ke
 
 ## What the user sees
 
-A message in their chat with **Approve** and **Deny** buttons: the session asking, the setting, its current value and the new value. Nothing changes unless they approve. Before the prompt is shown, foci checks that the change touches only that setting and that the changed file passes `foci check config`; a change that fails either check is refused at once and the user never sees it. One exception: a key the running binary does not know (a typo, or a key for a version not yet deployed) is not refused. The prompt warns about it, the command prints the same `warning:` line, and the user decides. A pre-seeded key is ignored until a binary that knows it runs, and `foci check config` (the deploy gate) still fails on it while it is unknown.
+A message in their chat with **Approve** and **Deny** buttons: the session asking, the setting, its current value and the new value. Nothing changes unless they approve. Before the prompt is shown, foci checks that the change touches only that setting and that the changed file passes `foci check config`; a change that fails either check is refused at once and the user never sees it. One exception: a key the running binary does not know (a typo, or a key for a version not yet deployed) is not refused. The prompt warns about it, the command prints the same `warning:` line, and the user decides. A setting that does not apply live gets a line in the prompt saying it takes effect only after a foci restart. A pre-seeded key is ignored until a binary that knows it runs, and `foci check config` (the deploy gate) still fails on it while it is unknown.
 
 ## Outcomes
 
@@ -85,7 +85,7 @@ The command prints one line and exits 0 only for the first:
 
 | Outcome | Meaning |
 |---|---|
-| `applied: <path> = <new> (was <old>)` | Approved and written. Live-appliable settings take effect now; others on the next restart. |
+| `applied: <path> = <new> (was <old>)` | Approved and written. A live-appliable setting takes effect now. A setting that does not apply live (or whose live apply failed) adds a second line, `restart needed: <why>`: it takes effect only after a foci restart, so tell the user before you rely on it. |
 | `denied: ...` | The user said no. Do not ask again for the same change unless they tell you to. |
 | `timed out: ...` | Nobody answered in time. Nothing changed. |
 | `failed: <reason>` | Refused or not written: an invalid path or value, a change the config check rejects, the setting changed since you asked, or the gateway restarted. Read the reason. |

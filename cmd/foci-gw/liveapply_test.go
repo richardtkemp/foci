@@ -519,3 +519,33 @@ id = "app"
 		t.Errorf("after live apply PlatformDisplay(app).ShowToolCalls = %q, want %q — live reload dropped the provider default", got, config.ToolCallOff)
 	}
 }
+
+// TestLiveApply_LiveMatchesApply proves Live (the approval prompt's
+// pre-approval check, #3227) answers what Apply would find: true for an
+// exact address, a map-section key and an agent override with an applier;
+// false for a restart-only key such as sandbox.writable_roots, which is
+// exactly the edit Apply logs as "not live-appliable".
+func TestLiveApply_LiveMatchesApply(t *testing.T) {
+	la := newLiveApply("", nil)
+	registerLiveAppliers(la, registryFromMap(map[string]*agentInstance{}))
+	for _, c := range []struct {
+		section, key string
+		want         bool
+	}{
+		{"logging", "level", true},
+		{"groups", "myteam", true},
+		{"agent", "skills.extra_dirs", true},
+		{"sandbox", "writable_roots", false},
+		{"nonexistent", "foo", false},
+	} {
+		if got := la.Live(c.section, c.key); got != c.want {
+			t.Errorf("Live(%q, %q) = %v, want %v", c.section, c.key, got, c.want)
+		}
+		if c.want {
+			continue
+		}
+		if applied, err := la.Apply(c.section, c.key); applied || err != nil {
+			t.Errorf("Apply(%q, %q) = %v, %v; want false, nil (Live disagrees)", c.section, c.key, applied, err)
+		}
+	}
+}

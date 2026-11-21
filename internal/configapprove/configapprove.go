@@ -92,6 +92,11 @@ type Status struct {
 	// Result is an applied action request's report (SubmitAction). Empty
 	// for a path edit.
 	Result string `json:"result,omitempty"`
+	// Restart is set on an applied path edit that the running process did
+	// not pick up (#3227): the key has no live applier, or its live apply
+	// failed. It says the change takes effect after a foci restart, and why.
+	// Empty when the change applied live.
+	Restart string `json:"restart,omitempty"`
 }
 
 // Prompt is what the presenter shows the user.
@@ -123,8 +128,14 @@ type Deps struct {
 	Present func(p Prompt) error
 	// Close edits a shown prompt to finalText and removes its buttons.
 	Close func(id, finalText string)
-	// Apply live-applies the written path where an applier exists.
-	Apply func(p config.KeyPath)
+	// Apply live-applies the written path where an applier exists. live is
+	// false when the path has no applier (restart-only); err is a live apply
+	// that failed after the write. Either way the change waits for a restart.
+	Apply func(p config.KeyPath) (live bool, err error)
+	// Live reports whether the path has a live applier, so the prompt can
+	// say before the user decides that the change needs a restart. nil: not
+	// known, and the prompt says nothing.
+	Live func(p config.KeyPath) bool
 	// Now and AfterFunc are the clock, injectable for tests.
 	Now       func() time.Time
 	AfterFunc func(d time.Duration, f func()) (stop func() bool)
@@ -367,7 +378,7 @@ func (s *Service) Submit(sub Submission) Status {
 		AgentID:    sub.AgentID,
 		SessionKey: sub.SessionKey,
 		Summary:    "config change " + shownPath,
-		Text:       promptText(sub.SessionKey, shownPath, oldText, newText, warning),
+		Text:       promptText(sub.SessionKey, shownPath, oldText, newText, joinNonEmpty(warning, s.restartWarning(p))),
 		OnAnswer:   func(approve bool) string { return s.answer(r.id, approve) },
 		OnExpire:   func() { s.timeout(r.id) },
 	})
@@ -521,7 +532,11 @@ func (s *Service) answer(id string, approve bool) string {
 		if r.run != nil {
 			return "✅ Approved: " + r.status.Path + "\n\n" + s.statusOf(r).Result
 		}
-		return "✅ Applied: " + r.status.Path + " = " + r.status.New
+		reply := "✅ Applied: " + r.status.Path + " = " + r.status.New
+		if note := s.statusOf(r).Restart; note != "" {
+			reply += "\n\n⚠️ Restart needed: " + note + "."
+		}
+		return reply
 	case Failed:
 		return "⚠️ Approved, but not applied: " + s.statusOf(r).Reason
 	default:
@@ -544,11 +559,51 @@ func (s *Service) approve(r *request) Outcome {
 		s.resolve(r, Failed, err.Error())
 		return Failed
 	}
-	s.resolve(r, Applied, "")
+	// Live-apply before resolving, so a waiter never reads Applied without
+	// the restart notice (#3227). writeMu still keeps a timeout out.
 	if s.d.Apply != nil {
-		s.d.Apply(r.path)
+		live, err := s.d.Apply(r.path)
+		if note := restartNote(live, err); note != "" {
+			s.mu.Lock()
+			r.status.Restart = note
+			s.mu.Unlock()
+		}
 	}
+	s.resolve(r, Applied, "")
 	return Applied
+}
+
+// joinNonEmpty joins the non-empty parts with a blank line.
+func joinNonEmpty(parts ...string) string {
+	var kept []string
+	for _, p := range parts {
+		if p != "" {
+			kept = append(kept, p)
+		}
+	}
+	return strings.Join(kept, "\n\n")
+}
+
+// restartNote is Status.Restart for a written path edit: empty when it
+// applied live, else that it waits for a foci restart and why.
+func restartNote(live bool, err error) string {
+	switch {
+	case err != nil:
+		return "the live apply failed (" + err.Error() + "); the change takes effect after a foci restart"
+	case !live:
+		return "this setting does not apply live; the change takes effect after a foci restart"
+	}
+	return ""
+}
+
+// restartWarning is the prompt's notice, before the user decides, that the
+// change will need a restart; empty when the path applies live or the
+// service cannot tell.
+func (s *Service) restartWarning(p config.KeyPath) string {
+	if s.d.Live == nil || s.d.Live(p) {
+		return ""
+	}
+	return "⚠️ This setting does not apply live: it takes effect only after a foci restart."
 }
 
 // runAction runs an approved action request and resolves it. The caller

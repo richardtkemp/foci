@@ -3891,7 +3891,11 @@ foci config set|unset|add <path> [<value>]   (cmd/foci/cmd_config.go)
 
 Approve press → Service.approve (under writeMu, so a timeout cannot land between write and outcome):
   CheckProtected → re-read → value at path still the old value? → re-plan → CheckContent
-  → WriteConfigFile → resolve(applied) → liveApply.Apply(KeyPath.LiveApplyAddress())
+  → WriteConfigFile → liveApply.Apply(KeyPath.LiveApplyAddress()) → resolve(applied)
+      not live (no applier) or apply error → Status.Restart (#3227): the edited prompt says
+      "⚠️ Restart needed", the CLI prints "restart needed: <why>". Apply runs BEFORE resolve so a
+      waiter never reads applied without it. Before the user decides, Deps.Live (liveApply.Live,
+      the same lookup as Apply) adds a restart warning to the prompt text.
 ```
 
 **/config over HTTP.** `runAgentCommand` (/command, the deferred sweep, the suggestion press) and `handleSend`'s slash branch stamp `Source = SourceHTTP`. There `/config set` with a full value and `/config unset` run with `httpConfigDeps` (internal/command/config_http.go): the writers are replaced by `ConfigSetDeps.RequestApprovalFn` (gateway: `requestConfigApproval` → the same `Submit`, same key path via `setTargetPath`), and the reply carries the request id for `foci config wait <id>`. The /config set wizard, bare `/agents new` and `/android` refuse over HTTP. Chat, app and the app config editor write directly, as before.

@@ -250,6 +250,9 @@ func printConfigOutcome(w io.Writer, st configapprove.Status) int {
 		if st.Result != "" { // an approved action (e.g. /agents new over HTTP, #3122): its report
 			line = "applied: " + st.Path + "\n" + st.Result
 		}
+		if st.Restart != "" { // written, but the running gateway did not pick it up (#3227)
+			line += "\nrestart needed: " + st.Restart
+		}
 	case configapprove.Denied:
 		line = fmt.Sprintf("denied: the user did not approve %s; nothing was changed", st.Path)
 	case configapprove.TimedOut:
