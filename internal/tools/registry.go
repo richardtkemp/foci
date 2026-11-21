@@ -57,6 +57,17 @@ type Tool struct {
 	// Positional.
 	RestParam string
 
+	// LeadParam names a string flag parameter that may instead come as the
+	// FIRST bare word, when its flag is not given; the remaining bare words
+	// then fill the single Positional one (#3200). It lets a tool whose
+	// positional is the body also take its target first, as
+	// send_to_session does: `foci_spawn_send <name> <message>` and
+	// `foci_spawn_send <name> --message X` beside the older
+	// `foci_spawn_send <message> --id <name>`. With the flag given, every
+	// bare word is the positional, as without LeadParam. Requires exactly
+	// one Positional and no RestParam.
+	LeadParam string
+
 	// StdinParam declares which schema parameter consumes stdin when no
 	// explicit value is provided and stdin is not a TTY. Used by tools
 	// that accept piped content (send_to_chat, summary).

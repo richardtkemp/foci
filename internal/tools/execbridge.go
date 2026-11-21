@@ -1970,6 +1970,15 @@ func generateGenericShellFunc(t *Tool) string {
 	}
 	hasStdinFile := len(filepathParams) > 0
 
+	// lead is the Tool.LeadParam, once checked against the shapes it is
+	// defined for (#3200). Empty when the tool has none.
+	lead := t.LeadParam
+	if lead != "" {
+		if len(positional) != 1 || t.RestParam != "" || posSet[lead] || schema.Properties[lead].Type != "string" {
+			return fmt.Sprintf("# error: tool %q LeadParam=%q needs one Positional, no RestParam, and a string flag param\n", t.Name, lead)
+		}
+	}
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s() {\n%s\n%s\n", name, helpCheck, guard)
 
@@ -1992,6 +2001,11 @@ func generateGenericShellFunc(t *Tool) string {
 		fmt.Fprintf(&b, "  local __foci_%s_via=\"\"\n", positional[0])
 		if t.RestParam != "" {
 			b.WriteString("  local __foci_rest=()\n")
+		}
+		if lead != "" {
+			// Bare words are kept apart until the loop ends: only then is it
+			// known whether the lead param came as a flag (#3200).
+			b.WriteString("  local __foci_bare=()\n")
 		}
 	}
 
@@ -2055,6 +2069,10 @@ func generateGenericShellFunc(t *Tool) string {
 				p, p, p)
 			break
 		}
+		if lead != "" {
+			b.WriteString("      *)\n        __foci_bare+=(\"$1\"); shift ;;\n")
+			break
+		}
 		// Multi-word join — matches existing query/prompt UX.
 		p := positional[0]
 		fmt.Fprintf(&b, "      *)\n        if [ \"$__foci_%s_via\" = flag ]; then echo \"error: %s was already given as --%s; use --%s OR the positional form, not both\" >&2; return 1; fi\n        __foci_%s_via=pos; %s=\"$%s $1\"; shift ;;\n",
@@ -2065,6 +2083,23 @@ func generateGenericShellFunc(t *Tool) string {
 		b.WriteString("      *)\n        echo \"error: multiple positional args not supported by generic generator\" >&2\n        return 1 ;;\n")
 	}
 	b.WriteString("    esac\n  done\n")
+
+	// Lead param resolution (#3200): with its flag absent, the first bare
+	// word is the lead param; the remaining bare words are the positional,
+	// space-joined as without LeadParam.
+	if lead != "" {
+		p := positional[0]
+		pf := strings.ReplaceAll(p, "_", "-")
+		fmt.Fprintf(&b,
+			"  if [ -z \"$%[1]s\" ] && [ ${#__foci_bare[@]} -gt 0 ]; then %[1]s=\"${__foci_bare[0]}\"; __foci_bare=(\"${__foci_bare[@]:1}\"); fi\n"+
+				"  if [ ${#__foci_bare[@]} -gt 0 ]; then\n"+
+				"    if [ \"$__foci_%[2]s_via\" = flag ]; then echo \"error: %[2]s was given as --%[3]s and as bare words; use --%[3]s OR the bare-word form, not both\" >&2; return 1; fi\n"+
+				"    __foci_%[2]s_via=pos\n"+
+				"    local __foci_w\n"+
+				"    for __foci_w in \"${__foci_bare[@]}\"; do %[2]s=\"$%[2]s $__foci_w\"; done\n"+
+				"  fi\n",
+			lead, p, pf)
+	}
 
 	// Trim leading space from joined single-positional.
 	if len(positional) == 1 && t.RestParam == "" {

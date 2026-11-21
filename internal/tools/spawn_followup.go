@@ -27,6 +27,7 @@ func (s *Spawner) SendTool() *Tool {
 		Name:        "spawn_send",
 		ExecExport:  true,
 		Positional:  []string{"message"},
+		LeadParam:   "id",      // `foci_spawn_send <name> <message>` too, like send_to_session (#3200)
 		StdinParam:  "message", // piped stdin is the message when none is given (#3107)
 		Description: "Send a message to one of your background spawns (from spawn), by its name or id. A running spawn gets it during its current work; a finished one resumes on its branch, with its earlier context, and reports a new [SPAWN RESULT] when done.",
 		Parameters: json.RawMessage(`{
