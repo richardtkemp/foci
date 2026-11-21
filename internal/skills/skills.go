@@ -2,8 +2,10 @@ package skills
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -191,11 +193,30 @@ func IsSkillDir(dir string) bool {
 	return err == nil && info.Mode().IsRegular()
 }
 
+// youngSkillDirAge is how long a skill folder with no SKILL.md is skipped
+// quietly (#3229). A folder this new is most likely a skill still being
+// written; an older one has probably been abandoned or misnamed, so it WARNs.
+// Dick 2026-11-21: "Skip only if the folder is <1hr old, otherwise still warn".
+const youngSkillDirAge = time.Hour
+
+// isYoungDir reports whether dir was last modified less than youngSkillDirAge
+// ago. "Age" is the folder's mtime: Linux exposes no portable creation time,
+// and a folder whose SKILL.md is not written yet has mtime ≈ its creation
+// time unless other files were added to it since.
+func isYoungDir(dir string) bool {
+	info, err := os.Stat(dir)
+	return err == nil && time.Since(info.ModTime()) < youngSkillDirAge
+}
+
 // scanSkillAt loads the single skill whose folder is skillDir.
 func scanSkillAt(skillDir string) []Skill {
 	skillFile := filepath.Join(skillDir, "SKILL.md")
 	skill, yamlErr, err := parseSkillFile(skillFile, skillDir)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) && isYoungDir(skillDir) {
+			skillsLog.Debugf("skip %s: %v (folder under %v old; SKILL.md not written yet?)", skillFile, err, youngSkillDirAge)
+			return nil
+		}
 		skillsLog.Warnf("skip %s: %v", skillFile, err)
 		return nil
 	}
