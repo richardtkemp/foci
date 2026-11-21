@@ -72,3 +72,36 @@ func TestSpawnSendRefusesAmbiguousArgs(t *testing.T) {
 		})
 	}
 }
+
+// TestSpawnSendErrorsNameBothForms is the #3203 repro: the dup error and the
+// usage line contradicted each other. Every message that shows the call's
+// shape (the usage line, --help, the unrecognized-flag note, the dup error)
+// now names the spawn-first form beside the --id form.
+func TestSpawnSendErrorsNameBothForms(t *testing.T) {
+	t.Parallel()
+	requireBashJq(t)
+	s := NewSpawner(SpawnDeps{}, nil)
+	const leadForm = "foci_spawn_send <id> <message>"
+	const flagForm = "foci_spawn_send <message> --id <id>"
+	cases := []struct {
+		name, invocation string
+		want             []string
+	}{
+		{"usage line", `foci_spawn_send x </dev/null`, []string{"usage: " + leadForm, flagForm}},
+		{"help", `foci_spawn_send --help`, []string{"Usage: " + leadForm, "Usage: foci_spawn_send <message> [flags...]", "(required: this flag, or the first bare word)"}},
+		{"unrecognized flag", `foci_spawn_send --bogus </dev/null`, []string{leadForm}},
+		{"dup after lead", `foci_spawn_send x word --message t </dev/null`, []string{"the first bare word is the id", leadForm}},
+		{"dup with --id", `foci_spawn_send --id x word --message t </dev/null`, []string{"--id is set, so every bare word is the message"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			_, out, _ := spawnShellParams(t, s.SendTool(), c.invocation)
+			for _, w := range c.want {
+				if !strings.Contains(out, w) {
+					t.Errorf("output lacks %q\n%s", w, out)
+				}
+			}
+		})
+	}
+}

@@ -849,8 +849,13 @@ func generateHelpText(t *Tool) string {
 		for _, p := range pos {
 			posSet[p] = true
 		}
-		// Show usage line with positional args.
-		fmt.Fprintf(&b, "\n\nUsage: foci_%s", t.Name)
+		// Show usage line with positional args. A LeadParam has a second
+		// form, target first, shown above the flag form (#3203).
+		b.WriteString("\n")
+		if t.LeadParam != "" && len(pos) == 1 {
+			fmt.Fprintf(&b, "\nUsage: foci_%s <%s> <%s> [flags...]", t.Name, t.LeadParam, pos[0])
+		}
+		fmt.Fprintf(&b, "\nUsage: foci_%s", t.Name)
 		for _, p := range pos {
 			fmt.Fprintf(&b, " <%s>", p)
 		}
@@ -893,6 +898,9 @@ func generateHelpText(t *Tool) string {
 				req := ""
 				if reqSet[k] {
 					req = " (required)"
+					if k == t.LeadParam {
+						req = " (required: this flag, or the first bare word)"
+					}
 				}
 				desc := p.Description
 				if len(p.Enum) > 0 {
@@ -1814,6 +1822,13 @@ func stdinReadSnippet(param, extraGuard, flag string) string {
 		param, extraGuard, flag)
 }
 
+// leadForms names both call shapes of a tool with a LeadParam (#3203), for
+// the messages that tell a caller how to call it.
+func leadForms(name, lead, pos string) string {
+	return fmt.Sprintf("%[1]s <%[2]s> <%[3]s> [flags...], or %[1]s <%[3]s> --%[4]s <%[2]s> [flags...]",
+		name, lead, pos, strings.ReplaceAll(lead, "_", "-"))
+}
+
 // shellFuncUsageLine renders the "usage: foci_<name>[ [--json]][ <args>]"
 // line the fallback bodies print on a rejected call. " [--json]" appears
 // only when the tool has the --json OUTPUT flag (hasJSONOutputFlag): a tool
@@ -2050,6 +2065,9 @@ func generateGenericShellFunc(t *Tool) string {
 	posNote := ""
 	if len(positional) == 1 {
 		posNote = fmt.Sprintf("        echo \"note: %s <%s> [flags...] — <%s> may also be given as a bare argument\" >&2\n", name, positional[0], positional[0])
+		if lead != "" {
+			posNote = fmt.Sprintf("        echo \"note: %s\" >&2\n", leadForms(name, lead, positional[0]))
+		}
 	}
 	fmt.Fprintf(&b,
 		"      --*)\n        echo \"error: unrecognized flag: $1\" >&2\n        echo \"valid flags: %s\" >&2\n%s        return 1 ;;\n",
@@ -2091,14 +2109,21 @@ func generateGenericShellFunc(t *Tool) string {
 		p := positional[0]
 		pf := strings.ReplaceAll(p, "_", "-")
 		fmt.Fprintf(&b,
-			"  if [ -z \"$%[1]s\" ] && [ ${#__foci_bare[@]} -gt 0 ]; then %[1]s=\"${__foci_bare[0]}\"; __foci_bare=(\"${__foci_bare[@]:1}\"); fi\n"+
+			"  local __foci_lead_bare=\"\"\n"+
+				"  if [ -z \"$%[1]s\" ] && [ ${#__foci_bare[@]} -gt 0 ]; then %[1]s=\"${__foci_bare[0]}\"; __foci_bare=(\"${__foci_bare[@]:1}\"); __foci_lead_bare=1; fi\n"+
 				"  if [ ${#__foci_bare[@]} -gt 0 ]; then\n"+
-				"    if [ \"$__foci_%[2]s_via\" = flag ]; then echo \"error: %[2]s was given as --%[3]s and as bare words; use --%[3]s OR the bare-word form, not both\" >&2; return 1; fi\n"+
+				"    if [ \"$__foci_%[2]s_via\" = flag ]; then\n"+
+				// Name which rule split the words, so the caller sees why
+				// they count as the positional (#3203).
+				"      if [ -n \"$__foci_lead_bare\" ]; then echo \"error: %[2]s was given as --%[3]s and as bare words: the first bare word is the %[1]s, so the rest are the %[2]s; use --%[3]s OR the bare-word form, not both\" >&2\n"+
+				"      else echo \"error: %[2]s was given as --%[3]s and as bare words: --%[4]s is set, so every bare word is the %[2]s; use --%[3]s OR the bare-word form, not both\" >&2; fi\n"+
+				"      echo \"usage: %[5]s\" >&2; return 1\n"+
+				"    fi\n"+
 				"    __foci_%[2]s_via=pos\n"+
 				"    local __foci_w\n"+
 				"    for __foci_w in \"${__foci_bare[@]}\"; do %[2]s=\"$%[2]s $__foci_w\"; done\n"+
 				"  fi\n",
-			lead, p, pf)
+			lead, p, pf, strings.ReplaceAll(lead, "_", "-"), leadForms(name, lead, p))
 	}
 
 	// Trim leading space from joined single-positional.
@@ -2245,6 +2270,18 @@ func generateGenericShellFunc(t *Tool) string {
 		}
 		var usage strings.Builder
 		usage.WriteString("usage: ")
+		if lead != "" {
+			// The target-first form comes first (#3203); the flag form
+			// follows as the standard line.
+			fmt.Fprintf(&usage, "%s <%s> <%s>", name, lead, positional[0])
+			for _, k := range paramNames {
+				if posSet[k] || !reqSet[k] || k == lead {
+					continue
+				}
+				fmt.Fprintf(&usage, " --%s <%s>", strings.ReplaceAll(k, "_", "-"), k)
+			}
+			usage.WriteString("   or: ")
+		}
 		usage.WriteString(name)
 		for _, p := range positional {
 			fmt.Fprintf(&usage, " <%s>", p)
