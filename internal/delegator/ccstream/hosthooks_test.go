@@ -47,16 +47,20 @@ func TestSetHostHooks_WiresEveryCallback(t *testing.T) {
 	}
 }
 
-// TestAgentThrottle_SharedPerAgent: every Backend of one agent shares one
-// rate-limit warning throttle (the gateway used to build and pass it), and
-// agents don't share.
+// TestAgentThrottle_SharedPerAgent: every Backend of one agent on one
+// account shares one rate-limit warning throttle (the gateway used to build
+// and pass it); agents don't share, and one agent's accounts don't share
+// (#3242).
 func TestAgentThrottle_SharedPerAgent(t *testing.T) {
 	t.Parallel()
-	a1, a2 := agentThrottle("throttle-test-a"), agentThrottle("throttle-test-a")
+	a1, a2 := agentThrottle("throttle-test-a", "acct-1"), agentThrottle("throttle-test-a", "acct-1")
 	if a1 != a2 {
-		t.Error("two Backends of one agent got different throttles")
+		t.Error("two Backends of one agent on one account got different throttles")
 	}
-	if agentThrottle("throttle-test-b") == a1 {
+	if agentThrottle("throttle-test-b", "acct-1") == a1 {
 		t.Error("two agents share a throttle")
+	}
+	if agentThrottle("throttle-test-a", "acct-2") == a1 {
+		t.Error("two accounts of one agent share a throttle")
 	}
 }

@@ -164,12 +164,20 @@ func (s *rateLimitState) windowNoticeLocked(key, limitID string, w rateLimitWind
 	if seen && absDiff(resetsAt, prev.resetsAt) > rlNewWindowSlack {
 		base = 0
 	}
+	// #3242: a warning whose use is not ahead of the time gone in its window
+	// is not sent and its level is not marked told, so a later update that
+	// is ahead still announces it. A window used up (rlExhausted) is always
+	// announced. The first update of a window is a baseline, as before.
+	ahead := level >= rlExhausted || delegator.UsageAheadOfWindow(w.UsedPercent, w.resetTime(), w.length(), now)
 	store := level
+	if seen && level > base && !ahead {
+		store = base
+	}
 	if base > store {
 		store = base // same window: usage never goes down, keep the high-water mark
 	}
 	s.marks[key] = rlMark{resetsAt: resetsAt, level: store}
-	if !seen || level <= base {
+	if !seen || level <= base || !ahead {
 		return ""
 	}
 	icon := "⚠️"

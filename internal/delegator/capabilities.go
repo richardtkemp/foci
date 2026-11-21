@@ -335,12 +335,13 @@ type Spec struct {
 	// named after the backend (AccountOf).
 	Account func(folder string) (AccountSpec, error)
 	// UsageReadNotices returns the chat notices one successful UsageQuery
-	// read of agentID's account raises (#3144: Claude Code warns at each of
-	// levels, the live [notify] usage_warning_levels (#3145), sharing the
-	// per-agent throttle of its own stream warnings). The gateway delivers
-	// them like HostHooks.OnRateLimitNotice. nil: reads raise no notice
-	// (codex warns from its own pushed updates).
-	UsageReadNotices func(agentID string, info *UsageInfo, levels []int, now time.Time) []string
+	// read of agentID's account accountKey (AccountSpec.Key) raises (#3144:
+	// Claude Code warns at each of levels, the live [notify]
+	// usage_warning_levels (#3145), sharing the throttle of the stream
+	// warnings of the agent's sessions on that account, #3242). The gateway
+	// delivers them like HostHooks.OnRateLimitNotice. nil: reads raise no
+	// notice (codex warns from its own pushed updates).
+	UsageReadNotices func(agentID, accountKey string, info *UsageInfo, levels []int, now time.Time) []string
 
 	// Process-global lifecycle hooks the gateway runs once for every backend.
 	OnGatewayStart    func()

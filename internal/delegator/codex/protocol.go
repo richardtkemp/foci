@@ -3,6 +3,7 @@ package codex
 import (
 	"encoding/json"
 	"strings"
+	"time"
 )
 
 // JSON-RPC 2.0 message types (without the "jsonrpc":"2.0" header, as per
@@ -475,6 +476,22 @@ type rateLimitWindow struct {
 }
 
 func (w rateLimitWindow) usedPercent() int { return int(w.UsedPercent) }
+
+// resetTime is when the window resets; zero when not reported.
+func (w rateLimitWindow) resetTime() time.Time {
+	if w.ResetsAt == nil || *w.ResetsAt == 0 {
+		return time.Time{}
+	}
+	return time.Unix(*w.ResetsAt, 0)
+}
+
+// length is how long the window lasts; zero when not reported.
+func (w rateLimitWindow) length() time.Duration {
+	if w.WindowDurationMins == nil || *w.WindowDurationMins <= 0 {
+		return 0
+	}
+	return time.Duration(*w.WindowDurationMins) * time.Minute
+}
 
 type creditsSnapshot struct {
 	HasCredits bool    `json:"hasCredits"`

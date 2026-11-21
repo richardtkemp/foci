@@ -288,12 +288,8 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		// rate_limit_notify_to, read LIVE per notice (hot:"event") so an edit
 		// takes effect without a restart — the backend outlives the config
 		// (#1857).
-		// The notice carries a table of the windows of the session's account
-		// (#3154).
-		OnRateLimitNotice: func(sessionKey, notice string) {
-			deliverRateLimitNotice(connMgr, agentID, sessionKey, withUsageTable(notice, ag.AccountFor(sessionKey).Readings(agentID)),
-				p.resolvedLive.Load().Notify.RateLimitNotifyTo, app.OpenSessionsForAgent)
-		},
+		// The notice is about the login of the instance that saw it, so it
+		// is set per instance in bindAccount (#3242).
 		// A model refusal fallback (CC's primary model refused and another
 		// answered) is shown in the chat of the session it happened in, so the
 		// user knows which model is now answering (Dick, 2026-10-06, #2200).
@@ -331,6 +327,14 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		// account's gate now rather than at its deadline.
 		hooks.ReleaseRateLimit = func() { ag.ReleaseRateLimit(acct) }
 		hooks.OnUsageWindow = acct.ObserveUsage
+		// The notice names the account, carries a table of its windows
+		// (#3154) and, under "all", reaches only the chats on it (#3242).
+		hooks.OnRateLimitNotice = func(sessionKey, notice string) {
+			deliverRateLimitNotice(connMgr, agentID, sessionKey,
+				withUsageTable(nameUsageNotice(acct, notice), acct.Readings(agentID)),
+				p.resolvedLive.Load().Notify.RateLimitNotifyTo, app.OpenSessionsForAgent,
+				usageNoticeChats(ag.Accounts(), acct))
+		}
 		if spec.Supports(delegator.CapRelogin) {
 			// A 401 runs the account's re-login (#843) via the shared
 			// trigger built above (same path as the manual /login command);
@@ -1188,10 +1192,13 @@ func firstLine(s string) string {
 // foci session whose backend saw the event — before #1857 the hook carried no
 // session identity, so every notice could only land in the agent's default chat
 // even when a facet or app session triggered it. openSessions lists the agent's
-// open chats (app.OpenSessionsForAgent); nil means none.
+// open chats (app.OpenSessionsForAgent); nil means none. onAccount reports
+// whether a chat's session is on the login the notice is about
+// (usageNoticeChats, #3242); nil means every chat is.
 //
-//   - "all" (default, #3137): every open chat of the agent plus the
-//     triggering session's chat, each once (deliverRateLimitNoticeAll).
+//   - "all" (default, #3137): every open chat of the agent on the notice's
+//     login plus the triggering session's chat, each once
+//     (deliverRateLimitNoticeAll).
 //   - "session": the session's own chat, falling back to the agent's
 //     primary connection when that session has none live.
 //   - "default": always the agent's primary connection (pre-#1857 behaviour).
@@ -1203,11 +1210,12 @@ func firstLine(s string) string {
 //     stays in the session's own conversation only, and with no live
 //     session connection it is dropped, never copied out.
 //
-// The throttle is per-agent (rate limits are account-wide), so a crossing fires
-// ONE notice per agent however many of its sessions see it; under "session"
+// The throttle is per agent and account (rate limits are account-wide), so a
+// crossing fires ONE notice per agent however many of its sessions see it;
+// under "session"
 // that notice reaches only the session that FIRST crossed the utilization
 // bucket — "all" is the setting that tells every open chat.
-func deliverRateLimitNotice(connMgr platform.ConnectionManager, agentID, sessionKey, notice, target string, openSessions func(agentID string) []string) {
+func deliverRateLimitNotice(connMgr platform.ConnectionManager, agentID, sessionKey, notice, target string, openSessions func(agentID string) []string, onAccount func(sessionKey string) bool) {
 	logger := log.NewComponentLogger("agent:" + agentID)
 
 	send := func(conn platform.Connection, outcome route.DeliveryOutcome) bool {
@@ -1229,7 +1237,7 @@ func deliverRateLimitNotice(connMgr platform.ConnectionManager, agentID, session
 
 	switch target {
 	case config.RateLimitNotifyAll:
-		deliverRateLimitNoticeAll(connMgr, agentID, sessionKey, openSessions, send, logger, notice)
+		deliverRateLimitNoticeAll(connMgr, agentID, sessionKey, openSessions, onAccount, send, logger, notice)
 	case config.RateLimitNotifyDefault:
 		if !send(connMgr.Primary(agentID), route.DeliveredViaPrimary) {
 			logger.Debugf("rate limit notice undelivered (target=%s, no primary connection): %s", target, notice)
@@ -1268,33 +1276,38 @@ func deliverRateLimitNotice(connMgr platform.ConnectionManager, agentID, session
 // Spec.UsageReadNotices), delivered by
 // deliverRateLimitNotice to target() (rate_limit_notify_to, read live). A
 // read has no triggering session, so the session key is "": "all" reaches
-// every open chat (else the primary), "session" and "default" the primary.
-// Delivery runs off the reading goroutine.
+// every open chat on the read's account acct (else, for an agent with one
+// account, the primary), "session" and "default" the primary. Delivery runs
+// off the reading goroutine.
 // levels() is [notify] usage_warning_levels (#3145), also read live. hist is
 // the agent's view of the usage history, for the notice's table of windows
-// (#3154; nil: no table).
-func usageReadAlerter(connMgr platform.ConnectionManager, agentID string, raise usageNoticesFunc, target func() string, levels func() []int, openSessions func(agentID string) []string, hist *usagelog.Binding) tools.UsageRecorder {
+// (#3154; nil: no table). pool() is the agent's pool of accounts, asked at
+// each read (nil before the agent exists: every chat).
+func usageReadAlerter(connMgr platform.ConnectionManager, agentID string, acct *account.Account, pool func() *account.Pool, raise usageNoticesFunc, target func() string, levels func() []int, openSessions func(agentID string) []string, hist *usagelog.Binding) tools.UsageRecorder {
 	return func(info *delegator.UsageInfo, source string) {
 		to, lv := target(), levels()
-		go deliverUsageReadNotices(connMgr, agentID, raise, info, source, to, lv, openSessions, hist)
+		go deliverUsageReadNotices(connMgr, agentID, acct, pool(), raise, info, source, to, lv, openSessions, hist)
 	}
 }
 
 // usageNoticesFunc is delegator.Spec.UsageReadNotices.
-type usageNoticesFunc = func(agentID string, info *delegator.UsageInfo, levels []int, now time.Time) []string
+type usageNoticesFunc = func(agentID, accountKey string, info *delegator.UsageInfo, levels []int, now time.Time) []string
 
 // deliverUsageReadNotices raises (the backend's Spec.UsageReadNotices, at
 // levels) and delivers the notices of one usage read of agentID's account
-// (usageReadAlerter) to target. The read's notices go as one message with
-// one table of the account's windows (#3154): a read that crosses levels in
-// two windows would otherwise send the same table twice.
-func deliverUsageReadNotices(connMgr platform.ConnectionManager, agentID string, raise usageNoticesFunc, info *delegator.UsageInfo, source, target string, levels []int, openSessions func(agentID string) []string, hist *usagelog.Binding) {
-	notices := raise(agentID, info, levels, timeutil.Now())
+// acct (usageReadAlerter) to target. The read's notices go as one message
+// with one table of the account's windows (#3154): a read that crosses
+// levels in two windows would otherwise send the same table twice. The
+// message names acct and, under "all", reaches only the chats on acct of
+// pool (#3242).
+func deliverUsageReadNotices(connMgr platform.ConnectionManager, agentID string, acct *account.Account, pool *account.Pool, raise usageNoticesFunc, info *delegator.UsageInfo, source, target string, levels []int, openSessions func(agentID string) []string, hist *usagelog.Binding) {
+	notices := raise(agentID, acct.Key(), info, levels, timeutil.Now())
 	if len(notices) == 0 {
 		return
 	}
-	log.NewComponentLogger("agent:"+agentID).Infof("usage read (%s) raised %d usage notice(s) (target=%s)", source, len(notices), target)
-	deliverRateLimitNotice(connMgr, agentID, "", withUsageTable(strings.Join(notices, "\n\n"), hist), target, openSessions)
+	log.NewComponentLogger("agent:"+agentID).Infof("usage read (%s) of account %s raised %d usage notice(s) (target=%s)", source, acct.Key(), len(notices), target)
+	notice := nameUsageNotice(acct, strings.Join(notices, "\n\n"))
+	deliverRateLimitNotice(connMgr, agentID, "", withUsageTable(notice, hist), target, openSessions, usageNoticeChats(pool, acct))
 }
 
 // deliverRateLimitNoticeAll is the "all" target (#3137, Dick 2026-11-16:
@@ -1305,16 +1318,21 @@ func deliverUsageReadNotices(connMgr platform.ConnectionManager, agentID string,
 //     traffic is never copied to another audience. Nothing else is sent.
 //  2. Every open chat of the agent (openSessions, deduped by session key) gets
 //     it through its own session connection — except a chat that confines
-//     replies, which is a different audience from the session that raised it.
+//     replies, which is a different audience from the session that raised it,
+//     and a chat whose session is on another login than the notice's
+//     (onAccount, #3242).
 //  3. The triggering session's own chat gets it if step 2 did not already
 //     reach it (a session that is not an open app chat: a Telegram chat, a
 //     closed conversation).
 //  4. Only when nothing at all was delivered does it fall back to the agent's
 //     primary connection (the default chat), so a headless session's notice
 //     is not lost. It is never an extra target: the app's primary resolves to
-//     the default conversation, usually already one of the open chats.
+//     the default conversation, usually already one of the open chats. An
+//     agent with several logins (onAccount set) has no such fallback: its
+//     default chat may be on another login, and the notice goes only to
+//     chats on its own (#3242).
 func deliverRateLimitNoticeAll(connMgr platform.ConnectionManager, agentID, sessionKey string,
-	openSessions func(agentID string) []string,
+	openSessions func(agentID string) []string, onAccount func(sessionKey string) bool,
 	send func(platform.Connection, route.DeliveryOutcome) bool, logger *log.ComponentLogger, notice string) {
 	const target = config.RateLimitNotifyAll
 	if platform.SessionConfinesReplies(connMgr, sessionKey) {
@@ -1345,11 +1363,22 @@ func deliverRateLimitNoticeAll(connMgr platform.ConnectionManager, agentID, sess
 				logger.Debugf("rate limit notice not copied into confined session %s (raised by %s)", key, sessionKey)
 				continue
 			}
+			if onAccount != nil && !onAccount(key) {
+				seen[key] = true
+				logger.Debugf("rate limit notice not sent to session %s: on another account (raised by %q)", key, sessionKey)
+				continue
+			}
 			toSession(key)
 		}
 	}
+	// The triggering session is on the notice's account: it is the session
+	// of the backend instance on that account that saw the event.
 	toSession(sessionKey)
 
+	if delivered == 0 && onAccount != nil {
+		logger.Debugf("rate limit notice undelivered (target=%s, no open chat on its account): %s", target, notice)
+		return
+	}
 	if delivered == 0 {
 		if !send(connMgr.Primary(agentID), route.DeliveredViaPrimary) {
 			logger.Debugf("rate limit notice undelivered (target=%s, no live connection): %s", target, notice)

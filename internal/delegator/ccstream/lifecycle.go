@@ -34,7 +34,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	b.startOpts = opts
 	b.workDir = opts.WorkDir
 	b.agentID = opts.AgentID
-	b.rlThrottle = agentThrottle(opts.AgentID)
+	b.rlThrottle = agentThrottle(opts.AgentID, b.account.Key)
 	b.label = opts.Label
 	b.model = opts.Model
 	b.systemPrompt = opts.SystemPrompt

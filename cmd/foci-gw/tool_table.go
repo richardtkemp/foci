@@ -807,7 +807,14 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 				// reads reach, as the stream's notices are.
 				if spec.UsageReadNotices != nil {
 					tools.OnSpawnUsageRead(acct.Key(), acfg.ID,
-						usageReadAlerter(d.connMgr, acfg.ID, spec.UsageReadNotices,
+						usageReadAlerter(d.connMgr, acfg.ID, acct, func() *account.Pool {
+							if d.agLazy != nil {
+								if ag := d.agLazy(); ag != nil {
+									return ag.Accounts()
+								}
+							}
+							return nil
+						}, spec.UsageReadNotices,
 							func() string { return live.Load().Notify.RateLimitNotifyTo },
 							func() []int { return live.Load().Notify.UsageWarningLevels },
 							app.OpenSessionsForAgent, hist))

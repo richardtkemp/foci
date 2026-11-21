@@ -228,7 +228,7 @@ type Backend struct {
 	// zero value is the host's.
 	account    delegator.AccountSpec
 	usageSink  delegator.UsageSink // SetUsageSink: the usage store (#3103)
-	rlThrottle *RateLimitThrottle  // OnRateLimit throttle; shared per agent (agentThrottle)
+	rlThrottle *RateLimitThrottle  // OnRateLimit throttle; shared per agent and account (agentThrottle)
 
 	// prevModelUsage is this process's previous result's modelUsage, for the
 	// monotonic check (checkModelUsageMonotonic); nil until its first result.

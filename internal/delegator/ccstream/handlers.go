@@ -1422,6 +1422,17 @@ func (b *Backend) OnRateLimit(ev *RateLimitEvent) {
 		}
 	}
 
+	// #3242: a warning whose use is not ahead of the time gone in its window
+	// is not sent, and its level is not marked told, so a later event that
+	// is ahead announces it. A rejection always fires.
+	if info.Status != "rejected" && info.Utilization != nil && resetsAt != 0 &&
+		!delegator.UsageAheadOfWindow(*info.Utilization*100, time.Unix(resetsAt, 0),
+			delegator.UsageWindowLength(info.RateLimitType), timeutil.Now()) {
+		b.logger().Debugf("rate_limit_event not ahead of its window (skip): key=%s util=%s bucket=%d resetsAt=%d",
+			key, utilStr, bucket, resetsAt)
+		return
+	}
+
 	res := b.rlThrottle.evaluateStream(key, info.RateLimitType, info.Status, resetsAt, bucket)
 	switch {
 	case res.byRead:

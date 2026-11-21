@@ -254,8 +254,11 @@ func TestRateLimitsUpdatedUsesLiveLevels(t *testing.T) {
 		OnRateLimitNotice:  func(_, n string) { notices = append(notices, n) },
 		UsageWarningLevels: func() []int { return levels },
 	})
+	// A live update is judged at the wall clock: a window with 4 of its 5
+	// hours left (20% gone), so 35% and 41% are ahead of it (#3242).
+	reset := timeutil.Now().Add(4 * time.Hour).Unix()
 	update := func(pct int) {
-		b.dispatch([]byte(fmt.Sprintf(`{"jsonrpc":"2.0","method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":%d,"windowDurationMins":300,"resetsAt":%d}}}}`, pct, reset5h)))
+		b.dispatch([]byte(fmt.Sprintf(`{"jsonrpc":"2.0","method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":%d,"windowDurationMins":300,"resetsAt":%d}}}}`, pct, reset)))
 	}
 	update(10) // seeds the mark
 	update(35)
@@ -537,5 +540,29 @@ func TestRateLimitsUpdatedOneNoticeAfterStore(t *testing.T) {
 	}
 	if n := events[1]; !strings.Contains(n, "5h usage at 55%") || !strings.Contains(n, "7d usage at 72%") {
 		t.Fatalf("notice %q, want both windows' notices in one message", n)
+	}
+}
+
+// TestRateLimitsNotAheadOfWindow (#3242, Dick 2026-11-21: "Only send these
+// alerts if percent exceeds progress-through-window"): a level reached while
+// the use is not ahead of the time gone in the window is not announced and
+// not marked told, so a later update that is ahead announces it; a window
+// used up is always announced.
+func TestRateLimitsNotAheadOfWindow(t *testing.T) {
+	s := newRLState()
+	// rlNow is 1h39m before reset5h: 67% of the 5h window gone.
+	s.apply(codexWindow(10, reset5h), nil, rlNow)
+	if n := s.apply(codexWindow(55, reset5h), nil, rlNow); len(n) != 0 {
+		t.Fatalf("55%% with 67%% gone: notices %q, want none", n)
+	}
+	// Level 50 is still unsent: the same window seen earlier (2 h before
+	// rlNow, 27% gone) at 56% announces it.
+	if n := s.apply(codexWindow(56, reset5h), nil, rlNow.Add(-2*time.Hour)); len(n) != 1 || !strings.Contains(n[0], "at 56%") {
+		t.Fatalf("56%% with 27%% gone after an unsent 50: notices %q, want one at 56%%", n)
+	}
+	late := newRLState()
+	late.apply(codexWindow(10, reset5h), nil, rlNow)
+	if n := late.apply(codexWindow(100, reset5h), nil, rlNow.Add(99*time.Minute)); len(n) != 1 || !strings.Contains(n[0], "used up (100%)") {
+		t.Fatalf("100%% at the very end of the window: notices %q, want the used-up notice", n)
 	}
 }

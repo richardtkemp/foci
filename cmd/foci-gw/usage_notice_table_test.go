@@ -97,12 +97,12 @@ func TestDeliverUsageReadNotices_OneMessageWithTable(t *testing.T) {
 	read := &delegator.UsageInfo{
 		RateLimitsAvailable: true,
 		FiveHour:            delegator.UsageWindow{Percent: 92, ResetsAt: now.Add(time.Hour), Reported: true},
-		SevenDay:            delegator.UsageWindow{Percent: 61, ResetsAt: now.Add(48 * time.Hour), Reported: true},
+		SevenDay:            delegator.UsageWindow{Percent: 61, ResetsAt: now.Add(120 * time.Hour), Reported: true}, // 2 of 7 days gone: 61% is ahead (#3242)
 		Raw:                 []byte(`{}`),
 	}
 	b.RecordRead(read, delegator.UsageSourceScheduled) // the cache stores a read before its listeners hear it
 
-	deliverUsageReadNotices(m, agentID, ccstream.AnnounceUsageRead, read, delegator.UsageSourceScheduled, config.RateLimitNotifyAll, delegator.DefaultUsageWarningLevels, open, b)
+	deliverUsageReadNotices(m, agentID, nil, nil, ccstream.AnnounceUsageRead, read, delegator.UsageSourceScheduled, config.RateLimitNotifyAll, delegator.DefaultUsageWarningLevels, open, b)
 	for k, c := range m.others {
 		if len(c.notices) != 1 {
 			t.Fatalf("chat %s got %d messages %q, want one", k, len(c.notices), c.notices)

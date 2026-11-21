@@ -283,7 +283,15 @@ func (t *RateLimitThrottle) usageReadNotices(info *delegator.UsageInfo, levels [
 			continue
 		}
 		level := delegator.UsageLevelReached(levels, w.u.Percent)
-		if level == 0 || !t.claimWindowLocked(w.window, w.u.ResetsAt.Unix(), level) {
+		if level == 0 {
+			continue
+		}
+		// #3242: use not ahead of the time gone in the window says nothing,
+		// and claims nothing: a later read that is ahead announces it.
+		if !delegator.UsageAheadOfWindow(float64(w.u.Percent), w.u.ResetsAt, delegator.UsageWindowLength(w.window), now) {
+			continue
+		}
+		if !t.claimWindowLocked(w.window, w.u.ResetsAt.Unix(), level) {
 			continue
 		}
 		util := float64(w.u.Percent) / 100
@@ -296,29 +304,38 @@ func (t *RateLimitThrottle) usageReadNotices(info *delegator.UsageInfo, levels [
 }
 
 // AnnounceUsageRead returns the chat notices a usage read of agentID's
-// account raises at levels (#3144, #3145): the same notices, and the same
-// per-agent throttle, as the stream's rate_limit_event warnings, so a level
-// either source has announced is not announced again. The caller delivers
-// them the way it delivers HostHooks.OnRateLimitNotice.
-func AnnounceUsageRead(agentID string, info *delegator.UsageInfo, levels []int, now time.Time) []string {
-	return agentThrottle(agentID).usageReadNotices(info, levels, now)
+// account accountKey raises at levels (#3144, #3145): the same notices, and
+// the same throttle, as the stream's rate_limit_event warnings of the
+// agent's sessions on that account, so a level either source has announced
+// is not announced again. The caller delivers them the way it delivers
+// HostHooks.OnRateLimitNotice.
+func AnnounceUsageRead(agentID, accountKey string, info *delegator.UsageInfo, levels []int, now time.Time) []string {
+	return agentThrottle(agentID, accountKey).usageReadNotices(info, levels, now)
 }
 
 var (
 	agentThrottlesMu sync.Mutex
-	agentThrottles   = map[string]*RateLimitThrottle{}
+	agentThrottles   = map[throttleKey]*RateLimitThrottle{}
 )
 
-// agentThrottle is the throttle every Backend of agentID shares (main, facet
-// and batch sessions), so an account-wide limit warns once per bucket however
-// many sessions see it. One per agent for the process lifetime.
-func agentThrottle(agentID string) *RateLimitThrottle {
+// throttleKey names one throttle: an agent's sessions on one account.
+type throttleKey struct{ agent, account string }
+
+// agentThrottle is the throttle every Backend of agentID on the account
+// accountKey shares (main, facet and batch sessions), so a limit of that
+// login warns once per bucket however many sessions see it. An agent with
+// several accounts (#3186) has one per account (#3242): two logins' windows
+// are different windows even when their resets are close, and one login's
+// level must not hide or re-arm another's. One per agent and account for the
+// process lifetime.
+func agentThrottle(agentID, accountKey string) *RateLimitThrottle {
 	agentThrottlesMu.Lock()
 	defer agentThrottlesMu.Unlock()
-	t, ok := agentThrottles[agentID]
+	k := throttleKey{agentID, accountKey}
+	t, ok := agentThrottles[k]
 	if !ok {
 		t = NewRateLimitThrottle()
-		agentThrottles[agentID] = t
+		agentThrottles[k] = t
 	}
 	return t
 }

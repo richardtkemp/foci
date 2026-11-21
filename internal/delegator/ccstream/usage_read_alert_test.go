@@ -191,14 +191,14 @@ func TestAnnounceUsageRead_PerAgent(t *testing.T) {
 	five := readNow.Add(3 * time.Hour)
 	seven := readNow.Add(4 * 24 * time.Hour)
 	info := readInfo(0, 70, five, seven)
-	if got := AnnounceUsageRead("t3144-a", info, delegator.DefaultUsageWarningLevels, readNow); len(got) != 1 {
+	if got := AnnounceUsageRead("t3144-a", "", info, delegator.DefaultUsageWarningLevels, readNow); len(got) != 1 {
 		t.Fatalf("agent a first: got %q, want one", got)
 	}
-	if got := AnnounceUsageRead("t3144-a", info, delegator.DefaultUsageWarningLevels, readNow); len(got) != 0 {
+	if got := AnnounceUsageRead("t3144-a", "", info, delegator.DefaultUsageWarningLevels, readNow); len(got) != 0 {
 		t.Fatalf("agent a again: got %q, want none", got)
 	}
 	// Another agent on the same account is told in its own chats.
-	if got := AnnounceUsageRead("t3144-b", info, delegator.DefaultUsageWarningLevels, readNow); len(got) != 1 {
+	if got := AnnounceUsageRead("t3144-b", "", info, delegator.DefaultUsageWarningLevels, readNow); len(got) != 1 {
 		t.Fatalf("agent b: got %q, want one", got)
 	}
 }
