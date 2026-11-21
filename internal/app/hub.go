@@ -266,16 +266,19 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		}
 	}
 
-	tokens := newPushTokens()
-
 	devicesFile := defaultDevicesFile
 	if appCfg != nil && appCfg.DevicesPath != "" {
 		devicesFile = appCfg.DevicesPath
 	}
-	devicePath := ""
+	devicePath, pushTokensPath := "", ""
 	if deps.Config != nil && deps.Config.DataDir != "" {
 		devicePath = filepath.Join(deps.Config.DataDir, devicesFile)
+		pushTokensPath = filepath.Join(deps.Config.DataDir, defaultPushTokensFile)
 	}
+	devices := newDeviceStore(devicePath)
+	// Saved push registry (#3196): a phone that registered before a restart
+	// still gets wake pushes after it. Entries for unpaired devices are dropped.
+	tokens := loadPushTokens(pushTokensPath, devices.paired)
 
 	blobDataDir := ""
 	if deps.Config != nil {
@@ -351,7 +354,7 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		blobs:         blobs,
 		mermaid:       mermaidR,
 		tokens:        tokens,
-		devices:       newDeviceStore(devicePath),
+		devices:       devices,
 		authLim:       newAuthLimiter(authFailMax, authFailWindow),
 		trust:         &proxyTrust{},
 		agents:        make(map[string]*appConn),
@@ -666,6 +669,7 @@ func (h *Hub) ServeRevoke(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "device not found", http.StatusNotFound)
 		return
 	}
+	h.tokens.forget(req.DeviceID)
 	h.closeDeviceSockets(req.DeviceID)
 	appLog.Infof("revoked device %q (by device=%s)", req.DeviceID, actor.DeviceID)
 	w.WriteHeader(http.StatusNoContent)

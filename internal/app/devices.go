@@ -158,6 +158,14 @@ func (s *deviceStore) revoke(deviceID string) (*device, bool) {
 	return d, true
 }
 
+// paired reports whether deviceID holds a device token.
+func (s *deviceStore) paired(deviceID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.byID[deviceID]
+	return ok
+}
+
 // label returns the paired label of deviceID, "" when unknown or unlabelled.
 // For log lines: the id alone does not say which physical device it is.
 func (s *deviceStore) label(deviceID string) string {

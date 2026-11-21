@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"slices"
 	"strings"
 	"time"
 
@@ -127,11 +126,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.evictOtherDeviceSockets(client, devID)
 		// Register the device's FCM token for offline wake pushes, under the
 		// authenticated id so a hello cannot claim another device's pushes.
-		h.tokens.set(devID, f.PushToken)
-		h.tokens.setReadWake(devID, slices.Contains(f.Features, featureReadWake))
-		h.tokens.setAskgw(devID, slices.Contains(f.Features, featureAskgwPrompts))
-		h.tokens.setAskgwValue(devID, slices.Contains(f.Features, featureAskgwValueInput))
-		h.tokens.setAlarmPush(devID, slices.Contains(f.Features, featureAlarmPush), time.Now())
+		h.tokens.hello(devID, f.PushToken, f.Features, time.Now())
 		// The replay below catches this device up, consuming any wake it was
 		// sent: reopen its coalescing windows so the next offline message wakes it.
 		h.pusher.deviceConnected(devID)

@@ -157,7 +157,7 @@ func (h *Hub) presentAskgw(id, header, text, host, source string, buttons []plat
 		if h.tokens.askgwSeenSinceStart() {
 			appLog.Infof("askgw: no device can show prompt %s (none connected or push-wakeable with %s), falling back to the agent chat", id, featureAskgwPrompts)
 		} else {
-			appLog.Infof("askgw: no device can show prompt %s (none has advertised %s since this gateway started: the list is in memory, so a restart empties it until a device reconnects), falling back to the agent chat", id, featureAskgwPrompts)
+			appLog.Infof("askgw: no device can show prompt %s (no device has advertised %s since this gateway started, in a hello or in the saved push registry), falling back to the agent chat", id, featureAskgwPrompts)
 		}
 		return false
 	}

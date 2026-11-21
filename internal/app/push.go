@@ -58,19 +58,23 @@ const featureAlarmPush = "alarmPush"
 // devices whose latest hello carried it.
 const featureReadWake = "readWake"
 
-// pushTokens is the in-memory deviceId→FCM-token registry. The client re-sends
-// its token in every ClientHello, so the map repopulates on each connect — no
-// persistence needed for v1 (a device only needs a push while it is offline, and
-// it registered its token the last time it was online).
+// pushTokens is the deviceId→FCM-token registry, with each device's push
+// features from its latest hello. The client re-sends its token in every
+// ClientHello. With a path the registry is also saved to disk on every change
+// and loaded at start (#3196): a device needs a push exactly while it is
+// offline, and a gateway restart must not forget a phone that registered before
+// it (see push_store.go). path == "" keeps it purely in memory.
 type pushTokens struct {
+	path     string
 	mu       sync.RWMutex
 	tokens   map[string]string // deviceId → FCM registration token
 	readWake map[string]bool   // deviceId → its latest hello advertised featureReadWake
 	askgw    map[string]bool   // deviceId → its latest hello advertised featureAskgwPrompts (#2707)
 	// askgwValue: deviceId → its latest hello advertised featureAskgwValueInput (#3090).
 	askgwValue map[string]bool
-	// askgwSeen is whether any hello advertised featureAskgwPrompts since this
-	// process started. It never clears, so a downgrade does not read as a restart.
+	// askgwSeen is whether any device has advertised featureAskgwPrompts since
+	// this process started: in a hello, or in the saved registry loaded at start.
+	// It never clears, so a downgrade does not read as a restart.
 	askgwSeen bool
 	// alarmPush: deviceId → when its latest hello advertised featureAlarmPush
 	// (#3194). The time picks ONE phone for an alarm push: the one last opened.
@@ -84,19 +88,14 @@ func newPushTokens() *pushTokens {
 	}
 }
 
-// setAlarmPush records whether deviceID's latest hello (at at) advertised
-// featureAlarmPush. Set on every hello, like setAskgw.
-func (p *pushTokens) setAlarmPush(deviceID string, ok bool, at time.Time) {
-	if deviceID == "" {
-		return
-	}
-	p.mu.Lock()
+// setAlarmPushLocked records whether deviceID's latest hello (at at) advertised
+// featureAlarmPush. Set on every hello, like setAskgwLocked.
+func (p *pushTokens) setAlarmPushLocked(deviceID string, ok bool, at time.Time) {
 	if ok {
 		p.alarmPush[deviceID] = at
 	} else {
 		delete(p.alarmPush, deviceID)
 	}
-	p.mu.Unlock()
 }
 
 // alarmPushTarget returns the FCM token of the one alarm-capable device not in
@@ -120,38 +119,29 @@ func (p *pushTokens) alarmPushTarget(exclude map[string]bool) (string, bool) {
 	return best, best != ""
 }
 
-// setAskgw records whether deviceID's latest hello advertised
+// setAskgwLocked records whether deviceID's latest hello advertised
 // featureAskgwPrompts. Set on every hello, so a device downgraded to an older
 // build stops counting as able to show askgw prompts at its next connect.
-// In memory like the tokens: after a restart no device counts until it
+// Saved with the tokens (#3196): after a restart a device that advertised it
+// still counts. With no path (no data_dir) no device counts until it
 // reconnects, so askgw prompts fall back to the agent chat — the visible side.
-func (p *pushTokens) setAskgw(deviceID string, ok bool) {
-	if deviceID == "" {
-		return
-	}
-	p.mu.Lock()
+func (p *pushTokens) setAskgwLocked(deviceID string, ok bool) {
 	if ok {
 		p.askgw[deviceID] = true
 		p.askgwSeen = true
 	} else {
 		delete(p.askgw, deviceID)
 	}
-	p.mu.Unlock()
 }
 
-// setAskgwValue records whether deviceID's latest hello advertised
-// featureAskgwValueInput, like setAskgw.
-func (p *pushTokens) setAskgwValue(deviceID string, ok bool) {
-	if deviceID == "" {
-		return
-	}
-	p.mu.Lock()
+// setAskgwValueLocked records whether deviceID's latest hello advertised
+// featureAskgwValueInput, like setAskgwLocked.
+func (p *pushTokens) setAskgwValueLocked(deviceID string, ok bool) {
 	if ok {
 		p.askgwValue[deviceID] = true
 	} else {
 		delete(p.askgwValue, deviceID)
 	}
-	p.mu.Unlock()
 }
 
 // askgwValueTargetsExcluding is askgwTargetsExcluding further limited to
@@ -191,20 +181,15 @@ func (p *pushTokens) askgwTargetsExcluding(exclude map[string]bool) map[string]s
 	return out
 }
 
-// setReadWake records whether deviceID's latest hello advertised
+// setReadWakeLocked records whether deviceID's latest hello advertised
 // featureReadWake. Set on every hello, so a device downgraded to an older build
 // stops receiving read wakes at its next connect.
-func (p *pushTokens) setReadWake(deviceID string, ok bool) {
-	if deviceID == "" {
-		return
-	}
-	p.mu.Lock()
+func (p *pushTokens) setReadWakeLocked(deviceID string, ok bool) {
 	if ok {
 		p.readWake[deviceID] = true
 	} else {
 		delete(p.readWake, deviceID)
 	}
-	p.mu.Unlock()
 }
 
 // readWakeTargetsExcluding is targetsExcluding limited to devices that handle a
@@ -226,8 +211,13 @@ func (p *pushTokens) set(deviceID, token string) {
 		return
 	}
 	p.mu.Lock()
-	p.tokens[deviceID] = token
+	p.setLocked(deviceID, token)
+	p.saveLocked()
 	p.mu.Unlock()
+}
+
+func (p *pushTokens) setLocked(deviceID, token string) {
+	p.tokens[deviceID] = token
 }
 
 // targetsExcluding returns deviceId→registration token for every device NOT in
@@ -258,6 +248,7 @@ func (p *pushTokens) removeByToken(token string) {
 			delete(p.tokens, id)
 		}
 	}
+	p.saveLocked()
 }
 
 // pushPayload carries the full push context from the conversation binding to
