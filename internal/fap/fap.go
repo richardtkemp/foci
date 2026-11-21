@@ -638,6 +638,8 @@ type TextEnd struct {
 	// error") — never a raw provider body. The client renders it as a muted
 	// "audio unavailable" marker on the bubble. Omitted on every other frame.
 	VoiceUnavailable string `json:"voiceUnavailable,omitempty"`
+	// RunnableWords: see ServerMessage.RunnableWords (#3209), for FinalText.
+	RunnableWords []string `json:"runnableWords,omitempty"`
 }
 
 func (TextEnd) Type() string { return TypeTextEnd }
@@ -665,6 +667,14 @@ type ServerMessage struct {
 	// 2026-11-19). Meaningless on other roles. Omitted when false, so an app
 	// that predates it treats the message as before.
 	Urgent bool `json:"urgent,omitempty"`
+	// RunnableWords are the first command words of Text's code blocks that
+	// could start a "!" command for the conversation's agent when the server
+	// sent the message (#3209). The app draws a code block's run button when
+	// the block's own first word (it reads it the same way) is in the list:
+	// the server decides, the app no longer asks. Omitted when empty: no
+	// block gets a button (an older server, a message with no code block, a
+	// role or agent with no "!" support).
+	RunnableWords []string `json:"runnableWords,omitempty"`
 }
 
 func (ServerMessage) Type() string { return TypeMessage }
@@ -1309,6 +1319,9 @@ type MessageEdit struct {
 	ConversationID string `json:"conversationId"`
 	MessageID      string `json:"messageId"`
 	Text           string `json:"text"`
+	// RunnableWords: see ServerMessage.RunnableWords (#3209), for the new
+	// Text; it replaces the list the message had.
+	RunnableWords []string `json:"runnableWords,omitempty"`
 }
 
 func (MessageEdit) Type() string { return TypeMessageEdit }

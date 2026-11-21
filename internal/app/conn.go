@@ -253,6 +253,7 @@ func (c *appConn) SendToSession(sessionKey, text string) error {
 		MessageID:      msgID,
 		Role:           "agent",
 		Text:           clean,
+		RunnableWords:  c.runnableWordsIn(clean),
 	})
 	c.speakInVoiceMode(b, msgID, clean)
 	return nil
@@ -311,7 +312,7 @@ func (c *appConn) sendEditableInjected(sessionKey, text string, urgent bool) (st
 		clean = misdeliveryBanner(sessionKey, b.convID, clean)
 	}
 	msgID := fap.NewULID()
-	b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: msgID, Role: "system", Text: clean, Urgent: urgent})
+	b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: msgID, Role: "system", Text: clean, Urgent: urgent, RunnableWords: c.runnableWordsIn(clean)})
 	return msgID, nil
 }
 
@@ -331,7 +332,7 @@ func (c *appConn) EditInjectedMessage(sessionKey, msgID, text string) error {
 	if fellBack {
 		clean = misdeliveryBanner(sessionKey, b.convID, clean)
 	}
-	b.send(fap.MessageEdit{ConversationID: b.convID, MessageID: msgID, Text: clean})
+	b.send(fap.MessageEdit{ConversationID: b.convID, MessageID: msgID, Text: clean, RunnableWords: c.runnableWordsIn(clean)})
 	return nil
 }
 
@@ -348,6 +349,7 @@ func (c *appConn) SendInjectedMessage(sessionKey, text string) error {
 		MessageID:      fap.NewULID(),
 		Role:           "system",
 		Text:           text,
+		RunnableWords:  c.runnableWordsIn(text),
 	})
 	return nil
 }
@@ -978,6 +980,7 @@ func (c *appConn) NewTurnSink(env agent.Envelope) (turnevent.Sink, func()) {
 	// session via hub.BotForSession. Stamping a shared default was last-speaker-
 	// wins and misrouted compaction notices to whoever spoke most recently.
 	sink := newAppSink(b)
+	sink.backend.runnableWords = c.runnableWordsIn
 	if c.agentRef != nil {
 		sk := env.SessionKey
 		sink.statusFn = func() string { return c.agentRef.MetaStatus(sk) }

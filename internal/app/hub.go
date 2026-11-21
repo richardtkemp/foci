@@ -1722,7 +1722,7 @@ func (h *Hub) openSessionConversation(agentID, sessionKey string) (convID string
 // turn enqueued on b's session with conn as its driver.
 func (h *Hub) sendFirstMessage(conn *appConn, b *convBinding, first command.FirstMessage) {
 	msgID := fap.NewULID()
-	b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: msgID, Role: "user", Text: first.Text})
+	b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: msgID, Role: "user", Text: first.Text, RunnableWords: conn.runnableWordsIn(first.Text)})
 	if conn.OnUserMessage != nil {
 		conn.OnUserMessage()
 	}

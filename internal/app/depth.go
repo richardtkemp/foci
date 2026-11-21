@@ -429,7 +429,7 @@ func (DepthSurface) ShowQuestion(branchKey, text string) {
 		return
 	}
 	if b := h.bindingForSession(branchKey); b != nil {
-		b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: fap.NewULID(), Role: "agent", Text: text})
+		b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: fap.NewULID(), Role: "agent", Text: text, RunnableWords: h.PrimaryBot(b.agent()).runnableWordsIn(text)})
 	}
 }
 

@@ -1284,7 +1284,7 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 	// caption, so other devices show the files as placeholders they fetch on
 	// tap (#2161).
 	if text != "" || len(echoRefs) > 0 {
-		b.send(fap.ServerMessage{ConversationID: convID, MessageID: inID, Role: "user", Text: text, Attachments: echoRefs})
+		b.send(fap.ServerMessage{ConversationID: convID, MessageID: inID, Role: "user", Text: text, Attachments: echoRefs, RunnableWords: conn.runnableWordsIn(text)})
 	}
 	if b.depthLeafOf() != nil {
 		if ctl := depthController(); ctl != nil {

@@ -157,9 +157,10 @@ func (h *Hub) startShellCommand(conn *appConn, b *convBinding, script, typed, in
 const maxShellRunnableBody = 8 << 10
 
 // ServeShellRunnable handles POST /app/shell/runnable (#2878, #2882): can a word
-// start a command for the agent that owns a conversation? The app asks before it
-// draws the run button on a code block, because only the server has the agent's
-// PATH, files and tools. Body: {"conversationId","word"}. Response: {"runnable":bool}. A conversation
+// start a command for the agent that owns a conversation? An app that predates
+// #3209 asks before it draws the run button on a code block, because only the
+// server has the agent's PATH, files and tools. A current app reads the answer
+// from the message frame's runnableWords instead (runwords.go). Body: {"conversationId","word"}. Response: {"runnable":bool}. A conversation
 // with no binding, or an agent with no "!" support, answers false. Running stays the
 // ordinary "!cmd" message: this endpoint never starts anything.
 func (h *Hub) ServeShellRunnable(w http.ResponseWriter, r *http.Request) {

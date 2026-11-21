@@ -45,6 +45,11 @@ type appBackend struct {
 	// messages the turn's Message info is recorded against (#2992). Same
 	// goroutine as Emit, so no lock.
 	delivered []string
+
+	// runnableWords reads a segment's run-button words for the conversation's
+	// agent (#3209, appConn.runnableWordsIn). nil = none: no block gets a
+	// button.
+	runnableWords func(text string) []string
 }
 
 func newAppBackend(b *convBinding) *appBackend {
@@ -73,6 +78,10 @@ func (p *appBackend) Deliver(pl turn.Payload, stream turn.StreamSink) (turn.Deli
 	p.delivered = append(p.delivered, msgID)
 	voiceUnavailable := p.voiceUnavailable
 	p.voiceUnavailable = ""
+	var runnable []string
+	if p.runnableWords != nil {
+		runnable = p.runnableWords(pl.Text)
+	}
 	if ss, ok := stream.(*appStreamSink); ok && ss.surfaced() {
 		final := pl.Text
 		ss.b.send(fap.TextEnd{
@@ -81,6 +90,7 @@ func (p *appBackend) Deliver(pl turn.Payload, stream turn.StreamSink) (turn.Deli
 			MessageID:        msgID,
 			FinalText:        &final,
 			VoiceUnavailable: voiceUnavailable,
+			RunnableWords:    runnable,
 		})
 		return turn.DeliveryResult{MsgIDs: []string{msgID}}, nil
 	}
@@ -90,6 +100,7 @@ func (p *appBackend) Deliver(pl turn.Payload, stream turn.StreamSink) (turn.Deli
 		Role:             "agent",
 		Text:             pl.Text,
 		VoiceUnavailable: voiceUnavailable,
+		RunnableWords:    runnable,
 	})
 	return turn.DeliveryResult{MsgIDs: []string{msgID}}, nil
 }
