@@ -306,8 +306,8 @@ func (s *Spawner) resumeAfterRestart(host *Spawner, agent SpawnAgent, rec spawnR
 	tr.setCancel(rec.Parent, rec.ID, cancel)
 
 	tr.appendLog(rec.Parent, rec.ID, "message", "(resumed after a foci restart)")
-	spawnLog.Infof("resume spawn=%s branch=%s parent=%s after restart (resume %d) inputs=%d",
-		rec.ID, rec.BranchKey, rec.Parent, rec.Resumes+1, len(texts))
+	spawnLog.Infof("resume spawn=%s name=%q branch=%s parent=%s after restart (resume %d) inputs=%d",
+		rec.ID, oneLine(rec.Name), rec.BranchKey, rec.Parent, rec.Resumes+1, len(texts))
 
 	if s.deps.Observer != nil {
 		shown := running

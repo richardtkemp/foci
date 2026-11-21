@@ -376,8 +376,8 @@ func (s *Spawner) resumeOneShotAfterRestart(host *Spawner, rec spawnRecord, base
 			p.ownSession, p.ownTurnStart = key, rec.OneShot.Started
 		}
 		p.checkpoint = w.save
-		spawnLog.Infof("resume one-shot spawn=%s mode=%s parent=%s after restart (resume %d) saved_messages=%d",
-			id, rec.OneShot.Mode, parent, rec.Resumes+1, len(p.history))
+		spawnLog.Infof("resume one-shot spawn=%s name=%q mode=%s parent=%s after restart (resume %d) saved_messages=%d",
+			id, oneLine(rec.Name), rec.OneShot.Mode, parent, rec.Resumes+1, len(p.history))
 		answer, err = spawnOneShot(turnevent.WithTee(ctx, sink), p)
 	}
 

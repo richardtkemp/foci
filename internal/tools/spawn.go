@@ -781,7 +781,8 @@ func (s *Spawner) runDirect(ctx context.Context, host *Spawner, mode, name, prom
 	if obs != nil {
 		obs.SpawnStarted(parent, info, prompt)
 	}
-	spawnLog.Infof("direct spawn=%s mode=%s agent=%q parent=%s prompt=%d chars", info.ID, mode, info.Agent, parent, len(prompt))
+	// name= lets a spawn name a user quotes grep straight to its id (#3167).
+	spawnLog.Infof("direct spawn=%s name=%q mode=%s agent=%q parent=%s prompt=%d chars", info.ID, oneLine(info.Name), mode, info.Agent, parent, len(prompt))
 	// Its send_to_spawner finds it through this (#2662).
 	runCtx = withSpawnLink(runCtx, spawnLink{s: s, parent: parent, id: info.ID, info: info})
 	tee := &spawnTextSink{BufferSink: turnevent.NewBufferSink(), obs: obs, tracker: tr, parent: parent, id: info.ID}
@@ -1602,6 +1603,10 @@ func (s *Spawner) launchBackground(ctx context.Context, agent SpawnAgent, parent
 		running.Model = h.deps.ModelFor(running.BranchKey)
 	}
 	deps.Tracker.addWithPrompt(parent, running, cancel, prompt)
+	// The start line naming both its id and its name: a spawn name a user
+	// quotes greps straight to the id its lifecycle lines carry (#3167).
+	spawnLog.Infof("background spawn=%s name=%q mode=%s agent=%q branch=%s parent=%s prompt=%d chars",
+		running.ID, oneLine(running.Name), running.Mode, running.Agent, running.BranchKey, parent, len(prompt))
 	if wait != nil {
 		deps.Tracker.setQueued(parent, running.ID)
 	}
