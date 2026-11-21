@@ -159,6 +159,15 @@ func (a *Agent) backgroundWork(sessionKey string) string {
 	return strings.Join(parts, " | ")
 }
 
+// BackgroundWork describes the background work in the session's live backend
+// (subagents, background shell commands, or the autonomous run their end
+// triggers), or "" when there is none or the agent is not delegated. A
+// background spawn's turn that ends while it runs keeps the spawn running
+// (#2728, SpawnDeps.BackgroundWork).
+func (a *Agent) BackgroundWork(sessionKey string) string {
+	return a.backgroundWork(sessionKey)
+}
+
 // BackgroundWorkRunning reports whether a plain /compact would be refused
 // (#1539): the session has background work AND compaction would restart CC.
 func (a *Agent) BackgroundWorkRunning(sessionKey string) bool {

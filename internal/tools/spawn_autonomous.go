@@ -133,9 +133,20 @@ func (a *spawnAutonomousSink) markDone() {
 // spawn's own run ends first (#3143).
 func (a *spawnAutonomousSink) claim() {
 	s, tr, parent, id := a.s, a.s.deps.Tracker, a.parent, a.running.ID
-	if !tr.claimRun(parent, id, a) {
+	switch tr.claimRun(parent, id, a) {
+	case claimAdrift:
 		spawnLog.Infof("spawn=%s branch=%s: a run it did not start began on its branch while the spawn runs; the run's text goes to its activity log", id, a.running.BranchKey)
 		tr.appendLog(parent, id, "message", spawnWokeNote)
+		return
+	case claimFromWait:
+		// #2728: the spawn waited on its background work, and is still
+		// shown running; this run reports its result.
+		spawnLog.Infof("spawn=%s branch=%s parent=%s: its backend woke on its background work; the run reports the spawn's result", id, a.running.BranchKey, parent)
+		tr.appendLog(parent, id, "message", spawnWokeNote)
+		a.markPending()
+		if s.deps.Observer != nil {
+			s.deps.Observer.SpawnPrompt(parent, id, spawnWokeNote)
+		}
 		return
 	}
 	spawnLog.Infof("spawn=%s branch=%s parent=%s: a run it did not start began on its branch; it reports to the spawner", id, a.running.BranchKey, parent)
@@ -167,7 +178,16 @@ func (a *spawnAutonomousSink) finish(tc turnevent.TurnComplete) {
 		return
 	}
 	defer a.markDone()
-	end := tr.finishOrNext(parent, id, tc.Err != nil)
+	work := ""
+	if tc.Err == nil {
+		work = s.backgroundWork(a.running)
+	}
+	end := tr.finishRun(parent, id, tc.Err != nil, work, a.answer())
+	if end.awaiting != nil {
+		// It ended its turn again with work still running (#2728).
+		s.startAwait(parent, a.running, end.awaiting)
+		return
+	}
 	if end.interrupted {
 		// foci is shutting down: the persisted record stays running and the
 		// next process resumes the spawn (#2589).
@@ -205,30 +225,46 @@ func (a *spawnAutonomousSink) finish(tc turnevent.TurnComplete) {
 	s.deliver(parent, id, s.resultMessage(parent, id, branchKey, end.stopped, tc.Err, a.answer(), end.dropped))
 }
 
-// claimRun marks parent's spawn id running for r's run when it is finished
-// (r owns it then: true), or adds r to its adrift runs when it runs already
-// (false).
-func (t *SpawnTracker) claimRun(parent, id string, r *spawnAutonomousSink) bool {
+// claimHow is how claimRun took a run on a spawn's branch.
+type claimHow int
+
+const (
+	claimAdrift   claimHow = iota // the spawn runs (or is unknown): r is adrift, not its owner
+	claimFinished                 // the spawn was finished: marked running, r owns it
+	claimFromWait                 // the spawn waited on its background work (#2728): r owns it, the wait ends
+)
+
+// claimRun marks parent's spawn id running for r's run when it is finished,
+// or hands it a spawn that waits on its background work (#2728); r owns it
+// then. It adds r to its adrift runs when it runs already.
+func (t *SpawnTracker) claimRun(parent, id string, r *spawnAutonomousSink) claimHow {
 	if t == nil {
-		return false
+		return claimAdrift
 	}
 	t.mu.Lock()
 	s := t.spawns[parent][id]
 	if s == nil {
 		t.mu.Unlock()
-		return false
+		return claimAdrift
+	}
+	if s.running && s.awaiting != nil && !s.stopped {
+		s.takeAwaitLocked()
+		s.cancel = r.stopFunc()
+		r.owned.Store(true)
+		t.mu.Unlock()
+		return claimFromWait
 	}
 	if s.running {
 		s.adrift = append(s.adrift, r)
 		t.mu.Unlock()
-		return false
+		return claimAdrift
 	}
 	s.running, s.stopped, s.cancel = true, false, r.stopFunc()
 	s.ended, s.outcome = time.Time{}, ""
 	r.owned.Store(true)
 	t.mu.Unlock()
 	t.persist(parent, id)
-	return true
+	return claimFinished
 }
 
 // releaseRun is called when r's run ends. It reports whether r owns the

@@ -764,6 +764,17 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 				ag.CloseSpawnBranchNow(bk)
 			}
 		},
+		// #2728: a spawn whose turn ends with background work running
+		// stays running until that work ends.
+		BackgroundWork: func(bk string) string {
+			if d.agLazy == nil {
+				return ""
+			}
+			if ag := d.agLazy(); ag != nil {
+				return ag.BackgroundWork(bk)
+			}
+			return ""
+		},
 	}
 	if d.path == pathExec {
 		// A delegated agent: one-shots run as batches on its own backend.

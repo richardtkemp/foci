@@ -310,6 +310,13 @@ type SpawnDeps struct {
 	// it is ended with it): a spawn paused by the usage hold that went cold
 	// (#3143). nil falls back to CloseBranch.
 	CloseBranchNow func(branchKey string)
+	// BackgroundWork describes the work a branch's backend runs in the
+	// background (subagents, background shell commands, or the run their
+	// end is about to start), or "" when none (Agent.BackgroundWork). A
+	// background spawn whose turn ends while it is not "" stays running
+	// and delivers its result only when that work has ended (#2728). Nil
+	// on an API agent: its own background work is foci's (Notifier).
+	BackgroundWork func(branchKey string) string
 
 	// LiveTurn returns the ledger id of the turn running on a session
 	// (Agent.LiveTurnID), read when a spawn starts: the spawn is recorded
@@ -389,6 +396,8 @@ type Spawner struct {
 
 	// directEndGrace overrides directRunEndGrace (tests); 0 = the default.
 	directEndGrace time.Duration
+	// awaitPoll overrides spawnAwaitPoll (tests); 0 = the default.
+	awaitPoll time.Duration
 }
 
 // directRunEndGrace is how long a direct spawn's run may take to end once it
@@ -1741,6 +1750,7 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 	var handedOff *spawnAutonomousSink // a run on the branch took the spawn over (#3143)
 	var handedOffAtLift bool           // ... at a usage hold's lift, the step cut by the hold
 	var adriftAnswer string            // a paused spawn gone cold: what ran meanwhile
+	var awaiting *spawnAwait           // its turn ended with background work running (#2728)
 	signal := make(chan struct{})
 	go func() {
 		defer cancel()
@@ -1761,9 +1771,14 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 				break
 			}
 			runErr, result, holdCold, adriftAnswer = step.err, step.result, step.cold, step.adriftAnswer
-			end := tr.finishOrNext(parent, id, runErr != nil || spawnCtx.Err() != nil || holdCold)
+			force := runErr != nil || spawnCtx.Err() != nil || holdCold
+			work := ""
+			if !force {
+				work = s.backgroundWork(running)
+			}
+			end := tr.finishRun(parent, id, force, work, result)
 			if end.done {
-				stopped, interrupted, dropped, handedOff = end.stopped, end.interrupted, end.dropped, end.handedOff
+				stopped, interrupted, dropped, handedOff, awaiting = end.stopped, end.interrupted, end.dropped, end.handedOff, end.awaiting
 				break
 			}
 			for _, t := range end.next {
@@ -1775,6 +1790,14 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 			// The spawn stays running: the run that took it over reports the
 			// next result, and the prompts on the branch are that run's.
 			handedOff.tookOver()
+			close(signal)
+			return
+		}
+		if awaiting != nil {
+			// The spawn stays running until its background work ends
+			// (#2728); the prompts on the branch may be that work's. The
+			// wait holds the spawner's pending mark before this run's goes.
+			s.startAwait(parent, running, awaiting)
 			close(signal)
 			return
 		}
@@ -1826,7 +1849,7 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 		ThresholdSecs: 0, // always async
 		Done:          signal,
 		NotifyMessage: func() string {
-			if interrupted || handedOffAtLift || quiet {
+			if interrupted || handedOffAtLift || quiet || awaiting != nil {
 				return ""
 			}
 			if holdCold {

@@ -283,7 +283,7 @@ func (s *Spawner) wakeSpawn(agent SpawnAgent, parent string, info RunningSpawn) 
 				s.deliverChild(info.BranchKey, r)
 			}
 			return
-		case wakeResumed:
+		case wakeResumed, wakeResumedFromWait:
 			texts := make([]string, len(reports))
 			for i, r := range reports {
 				texts[i] = r.input()
@@ -292,7 +292,11 @@ func (s *Spawner) wakeSpawn(agent SpawnAgent, parent string, info RunningSpawn) 
 			spawnLog.Infof("wake spawn=%s branch=%s parent=%s: %d message(s) from its own spawns arrived after its run ended",
 				info.ID, info.BranchKey, parent, len(texts))
 			if s.deps.Observer != nil {
-				s.deps.Observer.SpawnStarted(parent, info, strings.Join(texts, "\n\n"))
+				if how == wakeResumedFromWait {
+					s.deps.Observer.SpawnPrompt(parent, info.ID, strings.Join(texts, "\n\n"))
+				} else {
+					s.deps.Observer.SpawnStarted(parent, info, strings.Join(texts, "\n\n"))
+				}
 			}
 			texts[0] = spawnWakeNote + "\n\n" + texts[0]
 			// runBackground releases the slot when the run's result is out.
@@ -324,7 +328,9 @@ func (t *SpawnTracker) wakeState(parent, id string) (running, waking, ok bool) {
 	if s == nil {
 		return false, false, false
 	}
-	return s.running && !s.stopped, s.waking, true
+	// A spawn waiting on its background work (#2728) takes a report as a
+	// finished one does: a resume, which ends the wait.
+	return s.running && !s.stopped && s.awaiting == nil, s.waking, true
 }
 
 // isStopped reports whether parent's spawn id was stopped (spawn_stop or the
@@ -387,11 +393,12 @@ func (t *SpawnTracker) unclaimWake(parent, id string) {
 type wakeHow int
 
 const (
-	wakeRetry   wakeHow = iota // being stopped: try again once its run ends
-	wakeResumed                // marked running for the resume run; reports are its input
-	wakeQueued                 // already running: reports went to its pending queue
-	wakeStopped                // stopped and ended: reports go to its own spawner
-	wakeGone                   // the tracker no longer knows it
+	wakeRetry           wakeHow = iota // being stopped: try again once its run ends
+	wakeResumed                        // marked running for the resume run; reports are its input
+	wakeResumedFromWait                // as wakeResumed, for a spawn that waited on its background work (#2728): still shown running
+	wakeQueued                         // already running: reports went to its pending queue
+	wakeStopped                        // stopped and ended: reports go to its own spawner
+	wakeGone                           // the tracker no longer knows it
 )
 
 // takeWake ends the wake under way for parent's spawn id in one step: a
@@ -412,7 +419,7 @@ func (t *SpawnTracker) takeWake(parent, id string, cancel context.CancelFunc) (r
 	reports = s.wake
 	s.wake, s.waking = nil, false
 	switch {
-	case s.running:
+	case s.running && s.awaiting == nil:
 		for _, r := range reports {
 			s.pending = append(s.pending, r.input())
 		}
@@ -420,9 +427,12 @@ func (t *SpawnTracker) takeWake(parent, id string, cancel context.CancelFunc) (r
 	case s.stopped:
 		how = wakeStopped
 	default:
+		how = wakeResumed
+		if s.takeAwaitLocked() {
+			how = wakeResumedFromWait
+		}
 		s.running, s.stopped, s.cancel, s.reporting = true, false, cancel, false
 		s.ended, s.outcome = time.Time{}, ""
-		how = wakeResumed
 	}
 	t.mu.Unlock()
 	t.persist(parent, id)

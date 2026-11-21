@@ -131,19 +131,29 @@ func (s *Spawner) resume(ctx context.Context, agent SpawnAgent, parent string, r
 		return ToolResult{}, err
 	}
 	spawnCtx, cancel := s.runContext(ctx, running, true)
-	if !s.deps.Tracker.restart(parent, running.ID, cancel) {
+	ok, fromWait := s.deps.Tracker.restart(parent, running.ID, cancel)
+	if !ok {
 		cancel()
 		s.slots.release()
 		return ToolResult{}, fmt.Errorf("spawn %s started running again meanwhile; send the message again to reach it", running.ID)
 	}
 	s.deps.Tracker.appendLog(parent, running.ID, "message", "(resumed with) "+message)
-	spawnLog.Infof("resume spawn=%s branch=%s parent=%s message=%d chars",
-		running.ID, running.BranchKey, parent, len(message))
+	spawnLog.Infof("resume spawn=%s branch=%s parent=%s message=%d chars from_wait=%t",
+		running.ID, running.BranchKey, parent, len(message), fromWait)
 	if s.deps.Observer != nil {
-		s.deps.Observer.SpawnStarted(parent, running, message)
+		if fromWait {
+			// Still shown running (#2728): the message joins its entry.
+			s.deps.Observer.SpawnPrompt(parent, running.ID, message)
+		} else {
+			s.deps.Observer.SpawnStarted(parent, running, message)
+		}
 	}
 	pending := fmt.Sprintf("Spawn %s (%s) had finished; it is resumed on branch %s with your message. A new [SPAWN RESULT] comes when it ends.",
 		running.Label(), running.ID, running.BranchKey)
+	if fromWait {
+		pending = fmt.Sprintf("Spawn %s (%s) had ended its turn and was waiting on work it started in the background; it takes your message as a new turn on branch %s now (that work goes on). Its [SPAWN RESULT] comes when it ends.",
+			running.Label(), running.ID, running.BranchKey)
+	}
 	return s.runBackground(ctx, agent, parent, running, []string{text}, spawnCtx, cancel, pending)
 }
 
@@ -213,6 +223,10 @@ func spawnState(snap SpawnSnapshot, now time.Time) string {
 	}
 	if snap.Running {
 		st := "running " + spawnAge(now.Sub(snap.Started))
+		if snap.Awaiting != "" {
+			// #2728: its turn ended; its result waits for this work.
+			st += ", its turn ended and it waits on work it started in the background (" + snap.Awaiting + "); its result comes when that work ends"
+		}
 		if snap.Pending > 0 {
 			st += fmt.Sprintf(", %d message(s) waiting", snap.Pending)
 		}

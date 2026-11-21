@@ -196,6 +196,11 @@ type trackedSpawn struct {
 	// (finishOrNext to pushResult); a persist from one of its own spawns
 	// then leaves its row as it is (#3163).
 	reporting bool
+	// awaiting is set while its run has ended but work it started in the
+	// background still runs (#2728): it stays running, and its result
+	// waits for that work to end (spawnAwait). In memory only: a restart
+	// resumes the running record.
+	awaiting *spawnAwait
 }
 
 // SpawnLogEntry is one step of a spawn's activity, kept for spawn_status
@@ -224,7 +229,11 @@ type SpawnSnapshot struct {
 	Ended   time.Time
 	Pending int // parent messages not yet delivered
 	Resumes int // times a foci restart has resumed it
-	Log     []SpawnLogEntry
+	// Awaiting names the background work a running spawn waits on: its
+	// run has ended, and its result waits for that work (#2728). "" when
+	// its run is going (or it is finished).
+	Awaiting string
+	Log      []SpawnLogEntry
 }
 
 const (
@@ -476,6 +485,9 @@ func (s *trackedSpawn) snapshot(n int) SpawnSnapshot {
 	if !s.running {
 		snap.Outcome = s.outcome
 	}
+	if s.awaiting != nil {
+		snap.Awaiting = s.awaiting.work
+	}
 	if n > 0 {
 		snap.Log = slices.Clone(s.log[max(0, len(s.log)-n):])
 	}
@@ -510,7 +522,9 @@ func (t *SpawnTracker) queue(parent, id, text string) bool {
 	}
 	t.mu.Lock()
 	s := t.spawns[parent][id]
-	if s == nil || !s.running || s.stopped {
+	// A spawn waiting on its background work has no step to take the text
+	// (#2728): the caller resumes it instead, which ends the wait.
+	if s == nil || !s.running || s.stopped || s.awaiting != nil {
 		t.mu.Unlock()
 		return false
 	}
@@ -553,6 +567,10 @@ type runEnd struct {
 	// handedOff: a run adrift on the spawn's branch took the spawn over
 	// (#3143). The spawn stays running, and that run reports the result.
 	handedOff *spawnAutonomousSink
+	// awaiting: the run ended while work it started in the background
+	// still runs (#2728). The spawn stays running and delivers no result
+	// now; the caller starts the wait (Spawner.startAwait).
+	awaiting *spawnAwait
 }
 
 // finishOrNext ends a spawn's run. When parent messages arrived that its turn
@@ -571,6 +589,17 @@ type runEnd struct {
 // handedOff, the spawn still running, its queued messages kept for the
 // follow-up of the run that took it over.
 func (t *SpawnTracker) finishOrNext(parent, id string, force bool) runEnd {
+	return t.finishRun(parent, id, force, "", "")
+}
+
+// finishRun is finishOrNext for a run that ended while work its backend
+// started in the background may still run: work names it ("" none), and
+// answer is the text the run ended with. A run that is not cut short (force
+// false), not stopped, has no message waiting and no run adrift to hand
+// over to, and leaves work running, does not finish the spawn (#2728, Dick
+// 2026-11-21: "Keep it running"): it stays running with answer kept in its
+// wait, done and awaiting set, and its result waits for that work to end.
+func (t *SpawnTracker) finishRun(parent, id string, force bool, work, answer string) runEnd {
 	if t == nil {
 		return runEnd{done: true}
 	}
@@ -595,6 +624,14 @@ func (t *SpawnTracker) finishOrNext(parent, id string, force bool) runEnd {
 		t.mu.Unlock()
 		t.persist(parent, id)
 		return runEnd{done: true, handedOff: r}
+	}
+	if work != "" && !force && !s.stopped {
+		w := newSpawnAwait(answer, work)
+		s.awaiting = w
+		s.cancel = w.stop
+		s.adriftAnswer = ""
+		t.mu.Unlock()
+		return runEnd{done: true, awaiting: w}
 	}
 	defer t.mu.Unlock()
 	end := runEnd{done: true, stopped: s.stopped, dropped: len(s.pending)}
@@ -690,22 +727,26 @@ func (t *SpawnTracker) pruneFinished(parent string) {
 }
 
 // restart marks a finished spawn running again for a follow-up run, with that
-// run's cancel. False when it is unknown or already running.
-func (t *SpawnTracker) restart(parent, id string, cancel context.CancelFunc) bool {
+// run's cancel. False when it is unknown or already running. A spawn waiting
+// on its background work (#2728, not being stopped) is taken over by the
+// run instead: its wait ends, and fromWait is true (it is still shown
+// running).
+func (t *SpawnTracker) restart(parent, id string, cancel context.CancelFunc) (ok, fromWait bool) {
 	if t == nil {
-		return false
+		return false, false
 	}
 	t.mu.Lock()
 	s := t.spawns[parent][id]
-	if s == nil || s.running {
+	if s == nil || (s.running && (s.awaiting == nil || s.stopped)) {
 		t.mu.Unlock()
-		return false
+		return false, false
 	}
+	fromWait = s.takeAwaitLocked()
 	s.running, s.stopped, s.cancel, s.reporting = true, false, cancel, false
 	s.ended, s.outcome = time.Time{}, ""
 	t.mu.Unlock()
 	t.persist(parent, id)
-	return true
+	return true, fromWait
 }
 
 // appendLog adds one entry to a spawn's activity log.
