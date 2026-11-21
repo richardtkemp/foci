@@ -1055,3 +1055,79 @@ func TestBrowserEvaluateAcceptsExpressionsAndFunctions(t *testing.T) {
 		t.Errorf("statement-list script error %q does not say an expression is expected", err)
 	}
 }
+
+// TestBaseLauncherDisablesMacScreenCaptureWarmup checks the launch flags turn
+// off Chromium's WarmScreenCapture (ui/base/cocoa/permissions_utils.mm). On
+// macOS that startup task takes a throwaway ScreenCaptureKit screenshot, and
+// for a Chromium started over SSH macOS shows a "bypass the system private
+// window picker" dialog on every launch (foci_todo #3222). go-rod's own
+// disabled features must survive: the flag takes one comma-joined value.
+func TestBaseLauncherDisablesMacScreenCaptureWarmup(t *testing.T) {
+	t.Parallel()
+	mgr := NewBrowserManager(&config.ResolvedBrowser{Headless: true}, 0640)
+	var disabled []string
+	for _, arg := range mgr.baseLauncher().FormatArgs() {
+		if v, ok := strings.CutPrefix(arg, "--disable-features="); ok {
+			disabled = append(disabled, strings.Split(v, ",")...)
+		}
+	}
+	for _, want := range []string{"WarmScreenCaptureSonoma", "WarmScreenCaptureSequoia", "site-per-process", "TranslateUI"} {
+		if !slices.Contains(disabled, want) {
+			t.Errorf("--disable-features lacks %s; got %v", want, disabled)
+		}
+	}
+}
+
+// TestValidateChromiumDisablesMacScreenCaptureWarmup checks the binary check
+// Start runs before launching the pinned Chromium starts it with the
+// WarmScreenCapture features off too (foci_todo #3222), and keeps go-rod's
+// verdicts: valid on the empty headless DOM, invalid otherwise.
+func TestValidateChromiumDisablesMacScreenCaptureWarmup(t *testing.T) {
+	t.Parallel()
+	dir, err := testtemp.Mkdir("foci-validate-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	fake := func(name, output string) (bin, record string) {
+		bin = filepath.Join(dir, name)
+		record = bin + ".args"
+		script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > '" + record + "'\necho '" + output + "'\n"
+		if err := os.WriteFile(bin, []byte(script), 0o700); err != nil { // #nosec G306 - the fake browser must be executable
+			t.Fatal(err)
+		}
+		return bin, record
+	}
+
+	good, record := fake("good", "<html><head></head><body></body></html>")
+	if err := validateChromium(good); err != nil {
+		t.Fatalf("validateChromium(headless-capable fake) = %v, want nil", err)
+	}
+	raw, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	var disabled []string
+	for _, a := range args {
+		if v, ok := strings.CutPrefix(a, "--disable-features="); ok {
+			disabled = append(disabled, strings.Split(v, ",")...)
+		}
+	}
+	for _, want := range []string{"WarmScreenCaptureSonoma", "WarmScreenCaptureSequoia"} {
+		if !slices.Contains(disabled, want) {
+			t.Errorf("validation launch lacks --disable-features %s; args %v", want, args)
+		}
+	}
+	if !slices.Contains(args, "--dump-dom") || !slices.Contains(args, "--headless") {
+		t.Errorf("validation launch lost go-rod's check flags; args %v", args)
+	}
+
+	bad, _ := fake("bad", "not a browser")
+	if err := validateChromium(bad); err == nil {
+		t.Error("validateChromium(fake without headless DOM) = nil, want an error")
+	}
+	if err := validateChromium(filepath.Join(dir, "missing")); err == nil {
+		t.Error("validateChromium(missing binary) = nil, want an error")
+	}
+}

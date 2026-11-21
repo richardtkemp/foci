@@ -461,7 +461,7 @@ main
  │     ├── tools/spill    → (stdlib only) shared spill-to-disk writer: bounded in-RAM head + overflow to temp file, optional total cap; `ScrubFile` rewrites a spill file through a redact func in bounded memory; used by tools/shell (`!command` output) and the http tool
  │     ├── tools/shell    → tools, tools/spill, log, procx, secrets, secrets/bitwarden, usercmd (the exec/shell tool; execbridge generator stays at root)
  │     ├── tools/tmux     → tools, log, display, procinfo, session, procx, prompts, tempdir (tmux session tool — 8 files)
- │     ├── tools/browser  → tools, config, log, tempdir, tools/browserjs (browser automation — imports root for Tool/ToolResult)
+ │     ├── tools/browser  → tools, config, log, procx, tempdir, tools/browserjs (browser automation — imports root for Tool/ToolResult)
  │     └── tools/browserjs (no foci deps — vendored go-rod JS snippets)
  ├── workspace     → log, provider, session
  ├── nudge         → config, delegator, log, platform, turnevent, workspace (rule extraction, scheduling, file I/O; `validate.go` is the one nudge-rules validator — `ValidateFile` for `foci check nudge`, `RuleProblems` for the scheduler WARN — and `CapabilitiesFor` the one backend-capability source for both, #2223)

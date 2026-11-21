@@ -1,15 +1,18 @@
 package browser
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/procx"
 	"foci/internal/tempdir"
 	"foci/internal/tools"
 
@@ -58,15 +61,9 @@ func (m *BrowserManager) IsConnected() bool {
 	return m.browser != nil
 }
 
-// Start launches the browser process.
-func (m *BrowserManager) Start() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.browser != nil {
-		return nil
-	}
-
+// baseLauncher builds the go-rod launcher with every flag that does not
+// depend on the profile directory. Start adds the user-data-dir.
+func (m *BrowserManager) baseLauncher() *launcher.Launcher {
 	l := launcher.New().Headless(m.config.Headless)
 	if m.config.ExecutablePath != "" {
 		l = l.Bin(m.config.ExecutablePath)
@@ -86,6 +83,84 @@ func (m *BrowserManager) Start() error {
 	// already be forced with no other change for this same launch to work
 	// identically whether or not the calling process happens to be sealed.
 	l = l.NoSandbox(true)
+	// Append, not Set: go-rod's own disabled features share this one flag.
+	return l.Append("disable-features", noScreenCaptureFeatures...)
+}
+
+// noScreenCaptureFeatures turns off Chromium's WarmScreenCapture
+// (ui/base/cocoa/permissions_utils.mm). On macOS, where screen recording is
+// allowed, that startup task takes a throwaway 16x10 ScreenCaptureKit
+// screenshot. For a Chromium started over SSH, macOS answers each one with a
+// "bypass the system private window picker" dialog that is never remembered
+// (foci_todo #3222). foci never captures the screen: screenshots come from
+// CDP. go-rod pins Chromium 1321438, where WarmScreenCaptureSonoma is the
+// switch for every macOS >= 14; newer Chromium also gates macOS >= 15 on
+// WarmScreenCaptureSequoia. The features exist only on macOS; other platforms
+// ignore the names. Every Chromium foci starts must carry them, the binary
+// check in pinnedChromium included.
+var noScreenCaptureFeatures = []string{"WarmScreenCaptureSonoma", "WarmScreenCaptureSequoia"}
+
+// pinnedChromium returns go-rod's pinned Chromium, downloading it if absent
+// or broken. It replaces go-rod's own lookup, which Launch runs when no binary
+// is set: that lookup checks the binary by starting it with fixed flags, and
+// a Chromium started without noScreenCaptureFeatures shows the macOS dialog.
+// The check here is go-rod's (launcher.Browser.Validate) plus those features.
+// When it fails, go-rod's Get repeats its own check, which fails before
+// starting a Chromium for a missing binary and cannot reach the warm-up for
+// a broken one, then downloads.
+func pinnedChromium() (string, error) {
+	b := launcher.NewBrowser()
+	if err := validateChromium(b.BinPath()); err == nil {
+		return b.BinPath(), nil
+	}
+	return b.Get()
+}
+
+// validateChromium returns nil if bin runs as a headless Chromium. It mirrors
+// go-rod v0.116.2 launcher.Browser.Validate, with noScreenCaptureFeatures.
+func validateChromium(bin string) error {
+	if _, err := os.Stat(bin); err != nil {
+		return err
+	}
+	out, err := procx.Spawn(context.Background(), procx.Trusted, bin, validateArgs()...).CombinedOutput()
+	if err != nil {
+		if strings.Contains(string(out), "error while loading shared libraries") {
+			// go-rod treats a binary missing only OS libraries as valid.
+			return nil
+		}
+		return fmt.Errorf("failed to run the browser: %w\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte(`<html><head></head><body></body></html>`)) {
+		return fmt.Errorf("the browser executable doesn't support headless mode")
+	}
+	return nil
+}
+
+// validateArgs is the argument list validateChromium starts Chromium with.
+func validateArgs() []string {
+	return []string{"--headless", "--no-sandbox", "--use-mock-keychain",
+		"--disable-dev-shm-usage", "--disable-gpu",
+		"--disable-features=" + strings.Join(noScreenCaptureFeatures, ","),
+		"--dump-dom", "about:blank"}
+}
+
+// Start launches the browser process.
+func (m *BrowserManager) Start() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.browser != nil {
+		return nil
+	}
+
+	l := m.baseLauncher()
+	if m.config.ExecutablePath == "" {
+		bin, err := pinnedChromium()
+		if err != nil {
+			return fmt.Errorf("launch browser: %w", err)
+		}
+		l = l.Bin(bin)
+	}
 	// Always launch with an explicit, isolated user-data-dir. Relying on
 	// go-rod's implicit default is unreliable on some hosts (notably the Linux
 	// Mint chromium wrapper): the implicit flag fails to take and chromium falls
