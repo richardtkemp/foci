@@ -122,22 +122,15 @@ func configSetAgent(deps *ConfigSetDeps, agentID, rest string) (string, error) {
 		return fmt.Sprintf("Invalid value: %s", err), nil
 	}
 
-	oldValue, err := deps.SetInFileFn(deps.ConfigPath, config.SetTarget{
-		Section: "agents",
-		AgentID: agentID,
-		Key:     field.Key,
-	}, formatted)
+	target := config.SetTarget{Section: "agents", AgentID: agentID, Key: field.Key}
+	oldValue, err := deps.SetInFileFn(deps.ConfigPath, target, formatted)
 	if err != nil {
 		return "", err
 	}
 
-	// Always "Applied live": the hot gate above refused everything the
-	// live-apply path does not cover, and SetInFileFn's write callback
-	// re-applies ALL agents from the freshly loaded file.
-	var sb strings.Builder
-	sb.WriteString(formatSetLine(agentID+" "+field.Key, formatted, oldValue))
-	sb.WriteString("\nApplied live.")
-	return sb.String(), nil
+	// The hot gate above refused restart-only fields, but the live apply
+	// can still fail, or find no applier: liveOutcome reports what happened.
+	return formatSetLine(agentID+" "+field.Key, formatted, oldValue) + "\n" + deps.liveOutcome(field, target), nil
 }
 
 // configGet handles the /config get subcommand:

@@ -82,11 +82,7 @@ func configUnsetDirect(deps *ConfigSetDeps, path string) (string, error) {
 	} else {
 		sb.WriteString(" It now uses the built-in default.")
 	}
-	if field.NeedsRestart {
-		sb.WriteString("\nRestart to take effect.")
-	} else {
-		sb.WriteString("\nApplied live.")
-	}
+	sb.WriteString("\n" + deps.liveOutcome(field, target))
 	return sb.String(), nil
 }
 
@@ -113,11 +109,8 @@ func configUnsetAgent(deps *ConfigSetDeps, agentID, rawKey string) (string, erro
 	}
 
 	name := agentID + " " + field.Key
-	old, err := deps.UnsetInFileFn(deps.ConfigPath, config.SetTarget{
-		Section: "agents",
-		AgentID: agentID,
-		Key:     field.Key,
-	})
+	target := config.SetTarget{Section: "agents", AgentID: agentID, Key: field.Key}
+	old, err := deps.UnsetInFileFn(deps.ConfigPath, target)
 	if errors.Is(err, config.ErrKeyNotSet) {
 		return notSetMsg(name), nil
 	}
@@ -138,7 +131,7 @@ func configUnsetAgent(deps *ConfigSetDeps, agentID, rawKey string) (string, erro
 		}
 		fmt.Fprintf(&sb, " Now %s (%s).", value, source)
 	}
-	sb.WriteString("\nApplied live.")
+	sb.WriteString("\n" + deps.liveOutcome(field, target))
 	return sb.String(), nil
 }
 

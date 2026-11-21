@@ -84,20 +84,24 @@ type cmdRegParams struct {
 var pprofGate atomic.Bool
 
 // liveApplyConfigEdit runs the live applier for one /config set or unset
-// file edit, so a hot field takes effect without a restart. A failed apply
-// is logged, not returned: the file write already succeeded and the value
-// takes effect at the next restart.
-func liveApplyConfigEdit(target config.SetTarget) {
+// file edit, so a hot field takes effect without a restart. It is the
+// command package's ConfigSetDeps.LiveApplyFn, called after a successful
+// write: live=false (no applier) and an error both mean the value takes
+// effect only at the next restart, and the chat reply says so (#3243). A
+// failed apply is also logged here.
+func liveApplyConfigEdit(target config.SetTarget) (bool, error) {
 	if gwLiveApply == nil {
-		return
+		return false, nil // no live-apply registry: nothing was pushed
 	}
 	section := target.Section
 	if section == "agents" { // file target → registry section
 		section = "agent"
 	}
-	if _, applyErr := gwLiveApply.Apply(section, target.Key); applyErr != nil {
+	live, applyErr := gwLiveApply.Apply(section, target.Key)
+	if applyErr != nil {
 		configLog.Warnf("%s.%s written but live apply failed (takes effect on restart): %v", section, target.Key, applyErr)
 	}
+	return live, applyErr
 }
 
 // registerAgentCommands creates and populates the command registry for an agent.
@@ -115,21 +119,16 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		LookupFn:        config.LookupField,
 		SetInFileFn: func(path string, target config.SetTarget, value string) (string, error) {
 			fm, _ := config.ParseFileMode(p.cfg.FileMode)
-			old, err := config.SetInFile(path, target, value, fm)
-			if err == nil {
-				liveApplyConfigEdit(target)
-			}
-			return old, err
+			return config.SetInFile(path, target, value, fm)
 		},
 		RequestApprovalFn: requestConfigApproval,
 		UnsetInFileFn: func(path string, target config.SetTarget) (string, error) {
 			fm, _ := config.ParseFileMode(p.cfg.FileMode)
-			old, err := config.UnsetInFile(path, target, fm)
-			if err == nil {
-				liveApplyConfigEdit(target)
-			}
-			return old, err
+			return config.UnsetInFile(path, target, fm)
 		},
+		// The command code calls the live applier after each successful
+		// write above, so its reply reports the real outcome (#3243).
+		LiveApplyFn: liveApplyConfigEdit,
 		EffectiveValueFn: func(section, key string) string {
 			return config.LookupValue(p.cfg, p.acfg, section, key)
 		},

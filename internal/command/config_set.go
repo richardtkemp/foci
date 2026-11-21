@@ -40,6 +40,16 @@ type ConfigSetDeps struct {
 	// is unavailable.
 	UnsetInFileFn func(path string, target config.SetTarget) (string, error)
 
+	// LiveApplyFn pushes one key that SetInFileFn or UnsetInFileFn has just
+	// written into the running gateway (#3243). It reports live=false when
+	// the key has no live applier, and an error when the applier failed;
+	// either way the edit takes effect only at the next restart, and the
+	// reply says so (liveOutcome). The command code calls it after every
+	// successful write, so the reply states what happened, not what the
+	// schema's hot tag predicts. The gateway wires it to the live-apply
+	// registry. nil (tests) → the reply follows the field's NeedsRestart.
+	LiveApplyFn func(target config.SetTarget) (live bool, err error)
+
 	// RequestApprovalFn submits a config change for the user's approval
 	// (#479). A /config set or unset arriving over HTTP calls it instead of
 	// the writers above (config_http.go). nil → such a request is refused.
@@ -255,7 +265,7 @@ func (w *configSetWizard) handleValue(text string) (string, bool) {
 		return fmt.Sprintf("Failed to set: %s", err), true
 	}
 
-	return formatSetResult(w.field, w.section, w.key, formatted, oldValue), true
+	return formatSetResult(w.section, w.key, formatted, oldValue, w.deps.liveOutcome(w.field, w.target)), true
 }
 
 // ConfigSetDirect handles the direct /config set section.key=value form.
@@ -308,18 +318,50 @@ func ConfigSetDirect(deps ConfigSetDeps, args string) (string, error) {
 		return "", err
 	}
 
-	return formatSetResult(field, section, key, formatted, oldValue), nil
+	return formatSetResult(section, key, formatted, oldValue, deps.liveOutcome(field, target)), nil
 }
 
-func formatSetResult(field config.ConfigField, section, key, formatted, oldValue string) string {
-	var sb strings.Builder
-	sb.WriteString(formatSetLine(section+"."+key, formatted, oldValue))
-	if field.NeedsRestart {
-		sb.WriteString("\nRestart to take effect.")
-	} else {
-		sb.WriteString("\nApplied live.")
+// formatSetResult is the reply to a successful set: the change line, then
+// the live-apply outcome line from liveOutcome.
+func formatSetResult(section, key, formatted, oldValue, outcome string) string {
+	return formatSetLine(section+"."+key, formatted, oldValue) + "\n" + outcome
+}
+
+// Reply lines for the live-apply outcome of a /config write. Every
+// "takes effect at restart" reply starts with restartLinePrefix.
+const (
+	appliedLiveLine   = "Applied live."
+	restartLinePrefix = "Restart to take effect"
+)
+
+// liveOutcome runs the live applier for a key the caller has JUST written
+// (only call it after a successful write) and returns the reply's last line,
+// stating what actually happened (#3243):
+//   - a restart-only field: "Restart to take effect." whatever the applier
+//     says (its call still leaves the gateway's log line);
+//   - the applier failed: the restart line with the error — the file holds
+//     the value, the running process does not;
+//   - no live applier for a hot-tagged key: the restart line, saying so;
+//   - applied: "Applied live.".
+//
+// With no LiveApplyFn wired, the field's NeedsRestart decides alone.
+func (d ConfigSetDeps) liveOutcome(field config.ConfigField, target config.SetTarget) string {
+	if d.LiveApplyFn == nil {
+		if field.NeedsRestart {
+			return restartLinePrefix + "."
+		}
+		return appliedLiveLine
 	}
-	return sb.String()
+	live, err := d.LiveApplyFn(target)
+	switch {
+	case field.NeedsRestart:
+		return restartLinePrefix + "."
+	case err != nil:
+		return fmt.Sprintf("%s: written to foci.toml, but the live apply failed: %v", restartLinePrefix, err)
+	case !live:
+		return restartLinePrefix + ": written to foci.toml, but this key does not apply live."
+	}
+	return appliedLiveLine
 }
 
 // formatAndValidateValue is the one source of truth for every set form's

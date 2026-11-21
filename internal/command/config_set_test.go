@@ -87,16 +87,20 @@ func TestConfigSetWizardHappyPath(t *testing.T) {
 	}
 }
 
-// TestFormatSetResultRestartVsLive covers both branches of the confirmation
-// message directly, decoupled from any specific field's hot status (which
-// migrates over time as fields gain live-apply support).
+// TestFormatSetResultRestartVsLive covers both schema branches of the
+// outcome line with no live applier wired (LiveApplyFn nil), decoupled from
+// any specific field's hot status (which migrates over time as fields gain
+// live-apply support). The wired outcomes are in config_live_outcome_test.go.
 func TestFormatSetResultRestartVsLive(t *testing.T) {
-	live := formatSetResult(config.ConfigField{NeedsRestart: false}, "agent_loop", "max_output_tokens", "32768", "16384")
+	deps := testConfigSetDeps(nil)
+	hot := config.ConfigField{NeedsRestart: false}
+	live := formatSetResult("agent_loop", "max_output_tokens", "32768", "16384", deps.liveOutcome(hot, config.SetTarget{}))
 	if !strings.Contains(live, "Applied live.") || strings.Contains(live, "Restart") {
 		t.Errorf("hot field: got %q, want an 'Applied live.' hint and no restart mention", live)
 	}
 
-	restart := formatSetResult(config.ConfigField{NeedsRestart: true}, "sec", "key", "v", "")
+	cold := config.ConfigField{NeedsRestart: true}
+	restart := formatSetResult("sec", "key", "v", "", deps.liveOutcome(cold, config.SetTarget{}))
 	if !strings.Contains(restart, "Restart to take effect.") {
 		t.Errorf("restart field: got %q, want a restart hint", restart)
 	}
