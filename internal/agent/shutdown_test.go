@@ -452,3 +452,94 @@ func TestDelegatedManager_CloseAloneAllowsRespawn(t *testing.T) {
 		t.Fatalf("NewBackend called %d times, want 2 (initial + respawn)", n)
 	}
 }
+
+// The observed #3231 shape: a user turn (trigger=app) waits in RunInference
+// for a permission prompt; the graceful wait runs out and the shutdown closes
+// the backend, which clears the prompt. That clear is not an answer: the turn
+// must be refused (ErrShuttingDown), never written to the closing backend.
+func TestDelegatedRunInference_UserTurnWaitingOnPermissionRefusedWhenShutdownClosesBackend(t *testing.T) {
+	t.Parallel()
+	be := &mockBackendDT{}
+	var dispatched atomic.Bool
+	be.sendToPaneFn = func(_ context.Context, _ string, _ *mockHandler) (*delegator.TurnResult, error) {
+		dispatched.Store(true)
+		return nil, nil
+	}
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{Model: "test-model", DelegatedManager: mgr}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	mgr.SetPermissionPending("test/s", true)
+
+	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
+	ts.Prompt = "hi"
+	ts.Trigger = "app"
+	RegisterPlatformTrigger("app") // a user turn, as production registers it
+	ts.StartedAt = time.Now()
+
+	errc := make(chan error, 1)
+	go func() { errc <- tr.RunInference(ts) }()
+	time.Sleep(50 * time.Millisecond)
+	select {
+	case err := <-errc:
+		t.Fatalf("premise: RunInference returned %v before the prompt cleared", err)
+	default:
+	}
+	// runShutdown's order: drain, the graceful wait, then close the backends.
+	a.BeginShutdown()
+	mgr.Close()
+
+	select {
+	case err := <-errc:
+		if !errors.Is(err, ErrShuttingDown) {
+			t.Fatalf("RunInference err = %v, want ErrShuttingDown", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunInference still waiting 5s after the backend closed")
+	}
+	if dispatched.Load() {
+		t.Fatal("user turn was written to the backend the shutdown closed")
+	}
+}
+
+// A real answer still lets the waiting user turn through while draining: only
+// the backend's close ends the wait as refused.
+func TestDelegatedRunInference_PermissionAnsweredWhileDrainingStillDispatches(t *testing.T) {
+	t.Parallel()
+	be := &mockBackendDT{}
+	var dispatched atomic.Bool
+	be.sendToPaneFn = func(_ context.Context, _ string, h *mockHandler) (*delegator.TurnResult, error) {
+		dispatched.Store(true)
+		if h != nil && h.OnTurnComplete != nil {
+			h.OnTurnComplete(&delegator.TurnResult{Text: "done"})
+		}
+		return nil, nil
+	}
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{Model: "test-model", DelegatedManager: mgr}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	mgr.SetPermissionPending("test/s", true)
+
+	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
+	ts.Prompt = "hi"
+	ts.Trigger = "app"
+	RegisterPlatformTrigger("app") // a user turn, as production registers it
+	ts.StartedAt = time.Now()
+
+	errc := make(chan error, 1)
+	go func() { errc <- tr.RunInference(ts) }()
+	time.Sleep(50 * time.Millisecond)
+	a.BeginShutdown()
+	mgr.SetPermissionPending("test/s", false)
+
+	select {
+	case err := <-errc:
+		if err != nil {
+			t.Fatalf("RunInference err = %v, want nil (the prompt was answered)", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunInference did not finish after the prompt was answered")
+	}
+	if !dispatched.Load() {
+		t.Fatal("answered turn was not dispatched")
+	}
+}

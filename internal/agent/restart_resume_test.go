@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -519,5 +520,146 @@ func TestRestartResumeQuotes(t *testing.T) {
 		if got := restartResumeQuotes(tc.api, tc.resumable, cutTurnRecord{Output: tc.output}); got != tc.want {
 			t.Errorf("restartResumeQuotes(api=%v, resumable=%v, output=%v) = %v, want %v", tc.api, tc.resumable, tc.output, got, tc.want)
 		}
+	}
+}
+
+// failingTurnDriver runs no turn: WrapTurn signals started, waits for
+// release (or the ctx), then returns fail(ctx) without delivering anything,
+// as a delegated turn refused or cancelled before its input reached the
+// backend does.
+type failingTurnDriver struct {
+	recordingDriver
+	started chan struct{}
+	release chan struct{}
+	fail    func(ctx context.Context) error
+}
+
+func (d *failingTurnDriver) WrapTurn(ctx context.Context, _ func() error) error {
+	d.started <- struct{}{}
+	select {
+	case <-d.release:
+	case <-ctx.Done():
+	}
+	return d.fail(ctx)
+}
+
+// #3231: a user message whose turn the shutdown stops before it reaches the
+// backend logs no ERROR (so no proactive warning), stays in the queued-input
+// store, and runs once after the restart. Both ends the turn can meet: the
+// refusal (the fix: the backend closed under its permission wait) and the
+// shutdown's ctx cancel of a write already under way.
+func TestQueuedInput_TurnStoppedByShutdownNoErrorAndRunsAfterRestart(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fail func(ctx context.Context) error
+		// cancel: the shutdown cancels the inbox ctx before the turn ends.
+		cancel bool
+	}{
+		{"refused", func(context.Context) error { return ErrShuttingDown }, false},
+		{"ctx-cancelled", func(ctx context.Context) error {
+			return fmt.Errorf("POST /prompt_async: %w", ctx.Err())
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logs := captureLogs(t)
+			idx := cutTurnIndex(t)
+			const sk = "test/c3231"
+
+			a1, cancel1 := startedAgent(t)
+			defer cancel1()
+			a1.AgentID, a1.SessionIndex = "test", idx
+			d1 := &failingTurnDriver{started: make(chan struct{}, 1), release: make(chan struct{}), fail: tc.fail}
+			a1.SetTurnObserver(d1.recordBatch)
+			a1.Enqueue(Envelope{SessionKey: sk, Text: "M1", Driver: d1})
+			select {
+			case <-d1.started:
+			case <-time.After(2 * time.Second):
+				t.Fatal("M1's turn did not start")
+			}
+			a1.BeginShutdown()
+			a1.MarkTurnsCut()
+			if tc.cancel {
+				cancel1()
+			} else {
+				close(d1.release)
+			}
+			if !waitFor(2*time.Second, func() bool {
+				return strings.Contains(logs.String(), "sk="+sk+": shutting down") ||
+					strings.Contains(logs.String(), "turn cancelled sk="+sk)
+			}) {
+				t.Fatalf("no INFO line for the stopped turn; log:\n%s", logs.String())
+			}
+			if strings.Contains(logs.String(), "driver error sk="+sk) {
+				t.Fatalf("stopped turn logged as a driver ERROR:\n%s", logs.String())
+			}
+			if got := queuedStored(a1, sk); len(got) != 1 || got[0].Text != "M1" {
+				t.Fatalf("queued store after the shutdown = %+v, want M1", got)
+			}
+
+			a2, cancel2 := startedAgent(t)
+			defer cancel2()
+			a2.AgentID, a2.SessionIndex = "test", idx
+			d2 := &recordingDriver{}
+			a2.SetTurnObserver(d2.recordBatch)
+			a2.UsageHeldDriver = func(string) Driver { return d2 }
+			a2.RestartResumeNotice = func(string, string) {}
+			a2.RestoreCutTurns()
+			if !waitFor(2*time.Second, func() bool { return d2.NumCalls() >= 1 }) {
+				t.Fatal("M1 did not run after the restart")
+			}
+			time.Sleep(100 * time.Millisecond) // nothing more may run
+			if calls := d2.Calls(); len(calls) != 1 || len(calls[0]) != 1 || calls[0][0].Text != "M1" || calls[0][0].restartResume {
+				t.Fatalf("inputs after the restart = %+v, want M1 once (no resume: it never reached the backend)", calls)
+			}
+		})
+	}
+}
+
+// #3216: a turn foci cancels itself (CancelSession: a /stop, or a follow-up
+// that replaces it) ends with context.Canceled; that is the expected outcome,
+// logged at INFO, not a driver ERROR that becomes a proactive warning.
+func TestInbox_TurnCancelledByCancelSessionIsNotDriverError(t *testing.T) {
+	logs := captureLogs(t)
+	const sk = "test/c3216"
+	a, cancel := startedAgent(t)
+	defer cancel()
+	d := &failingTurnDriver{started: make(chan struct{}, 1), release: make(chan struct{}), fail: func(ctx context.Context) error {
+		return fmt.Errorf("POST /prompt_async: %w", ctx.Err())
+	}}
+	a.SetTurnObserver(d.recordBatch)
+	a.Enqueue(Envelope{SessionKey: sk, Text: "M1", Driver: d})
+	select {
+	case <-d.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("turn did not start")
+	}
+	if !a.CancelSession(sk) {
+		t.Fatal("CancelSession found no turn to cancel")
+	}
+	if !waitFor(2*time.Second, func() bool { return strings.Contains(logs.String(), "turn cancelled sk="+sk) }) {
+		t.Fatalf("no INFO line for the cancelled turn; log:\n%s", logs.String())
+	}
+	if strings.Contains(logs.String(), "driver error sk="+sk) {
+		t.Fatalf("cancelled turn logged as a driver ERROR:\n%s", logs.String())
+	}
+}
+
+// A real failure is still an ERROR: the downgrade covers only a cancel foci
+// fired.
+func TestInbox_UncancelledTurnErrorStillDriverError(t *testing.T) {
+	logs := captureLogs(t)
+	const sk = "test/c3231err"
+	a, cancel := startedAgent(t)
+	defer cancel()
+	d := &failingTurnDriver{started: make(chan struct{}, 1), release: make(chan struct{}), fail: func(context.Context) error {
+		// A cancel from somewhere other than this turn's ctx.
+		return fmt.Errorf("POST /prompt_async: %w", context.Canceled)
+	}}
+	a.SetTurnObserver(d.recordBatch)
+	a.Enqueue(Envelope{SessionKey: sk, Text: "M1", Driver: d})
+	<-d.started
+	close(d.release)
+	if !waitFor(2*time.Second, func() bool { return strings.Contains(logs.String(), "driver error sk="+sk) }) {
+		t.Fatalf("real failure not logged as a driver ERROR; log:\n%s", logs.String())
 	}
 }

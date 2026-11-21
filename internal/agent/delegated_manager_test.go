@@ -1845,7 +1845,8 @@ func TestGet_OnSessionReadyPersistsUUID(t *testing.T) {
 func TestResetSession_ClearsPermission(t *testing.T) {
 	t.Parallel()
 	// Proves that ResetSession unblocks any WaitForPermission waiters by
-	// clearing the permission state before closing.
+	// clearing the permission state before closing, and tells them the
+	// backend closed.
 	mgr, _ := newTestManager(t, nil)
 	sk := "test-agent/c1"
 
@@ -1868,8 +1869,10 @@ func TestResetSession_ClearsPermission(t *testing.T) {
 
 	select {
 	case err := <-waitErr:
-		if err != nil {
-			t.Fatalf("WaitForPermission after reset: %v", err)
+		// The closed backend is not an answer (#3231): the waiter is told
+		// its backend is gone instead of proceeding to write to it.
+		if !errors.Is(err, delegator.ErrBackendClosed) {
+			t.Fatalf("WaitForPermission after reset: %v, want ErrBackendClosed", err)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("WaitForPermission did not unblock after ResetSession")
@@ -1900,8 +1903,10 @@ func TestClose_ClearsPermissions(t *testing.T) {
 
 	select {
 	case err := <-waitErr:
-		if err != nil {
-			t.Fatalf("WaitForPermission after Close: %v", err)
+		// The closed backend is not an answer (#3231): the waiter is told
+		// its backend is gone instead of proceeding to write to it.
+		if !errors.Is(err, delegator.ErrBackendClosed) {
+			t.Fatalf("WaitForPermission after Close: %v, want ErrBackendClosed", err)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("WaitForPermission did not unblock after Close")

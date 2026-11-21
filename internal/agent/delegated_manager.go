@@ -1347,6 +1347,15 @@ func (m *DelegatedManager) WaitForPermission(ctx context.Context, sessionKey str
 	mb.permMu.Unlock()
 	close(done)
 
+	// Closing a backend clears its prompt too (Close, the idle reaper,
+	// closeRemoved), and that is not an answer: the backend the waiter would
+	// write to is gone (#3231). Every closer takes the backend out of the map
+	// before the waiter can see the cleared prompt, so the map tells them
+	// apart.
+	if cur, live := m.getManaged(sessionKey); !live || cur != mb {
+		m.logger().Infof("permission wait on %s ended: its backend was closed", sessionKey)
+		return fmt.Errorf("permission wait on %s: %w", sessionKey, delegator.ErrBackendClosed)
+	}
 	m.logger().Infof("permission cleared on %s, proceeding", sessionKey)
 	return nil
 }

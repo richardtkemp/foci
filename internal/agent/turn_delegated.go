@@ -342,6 +342,13 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// MessageQueue channel while the worker goroutine blocks here.
 	t.logger().Debugf("RunInference: WaitForPermission start sk=%s", ts.SessionKey)
 	if err := a.DelegatedManager.WaitForPermission(ts.Ctx, ts.SessionKey); err != nil {
+		// The shutdown closed the backend this turn was waiting on (#3231): the
+		// turn never began, so it is refused, not failed. Its messages stay
+		// queued for the next process (settleDrivenQueuedInput).
+		if errors.Is(err, delegator.ErrBackendClosed) && a.ShuttingDown() {
+			t.logger().Infof("session=%s turn (trigger=%q) not dispatched: its backend closed for shutdown while it waited for a permission prompt", ts.SessionKey, ts.Trigger)
+			return ErrShuttingDown
+		}
 		return err
 	}
 	t.logger().Debugf("RunInference: WaitForPermission done sk=%s", ts.SessionKey)

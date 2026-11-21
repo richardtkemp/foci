@@ -2902,7 +2902,18 @@ func (a *Agent) driveOnce(ctx context.Context, inb *sessionInbox, batch []Envelo
 	err := driver.WrapTurn(turnCtx, func() error {
 		return a.RunTurn(turnCtx, inb.sk, batch, steerer, router, driver)
 	})
-	if err != nil {
+	switch {
+	case err == nil:
+	case errors.Is(err, ErrShuttingDown):
+		// Refused, not failed: the turn never began (#3231). Its messages
+		// stay queued for the next process (settleDrivenQueuedInput).
+		a.logger().Infof("inbox: turn not run sk=%s: shutting down", inb.sk)
+	case errors.Is(err, context.Canceled) && turnCtx.Err() != nil:
+		// foci cancelled this turn itself — a /stop or a follow-up
+		// (CancelSession), or the shutdown — so the cancellation the turn
+		// reports is the expected outcome, not a fault (#3231, #3216).
+		a.logger().Infof("inbox: turn cancelled sk=%s: %v", inb.sk, err)
+	default:
 		a.logger().Errorf("inbox: driver error sk=%s: %v", inb.sk, err)
 	}
 }
