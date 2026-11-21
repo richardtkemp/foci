@@ -63,3 +63,47 @@ func appUsageFrom(cur usagelog.Current, now time.Time) *fap.AgentUsage {
 	}
 	return &fap.AgentUsage{Windows: ws}
 }
+
+// usageLogin is one login of an agent's pool as the app's usage source sees
+// it (#3253): its name for a person, whether a new conversation would start
+// on it now (the pick), and its usage source (nil: none).
+type usageLogin struct {
+	name   string
+	picked bool
+	read   func() *fap.AgentUsage
+}
+
+// appUsageOfLogins is the app usage of an agent on logins, in the agent's
+// configured order. With one login it is that login's usage, as before
+// #3253. With two or more, Windows is the pick's (what an app that does not
+// read Accounts shows) and Accounts holds every login, one with no current
+// figure included with no windows so each login keeps its place. Nil when no
+// login has a figure.
+func appUsageOfLogins(logins []usageLogin) *fap.AgentUsage {
+	readOf := func(l usageLogin) *fap.AgentUsage {
+		if l.read == nil {
+			return nil
+		}
+		return l.read()
+	}
+	if len(logins) == 1 {
+		return readOf(logins[0])
+	}
+	var out fap.AgentUsage
+	seen := false
+	for _, l := range logins {
+		a := fap.AccountUsage{Name: l.name, Picked: l.picked, Windows: []fap.UsageWindow{}}
+		if u := readOf(l); u != nil && len(u.Windows) > 0 {
+			a.Windows = u.Windows
+			seen = true
+			if l.picked {
+				out.Windows = u.Windows
+			}
+		}
+		out.Accounts = append(out.Accounts, a)
+	}
+	if !seen {
+		return nil
+	}
+	return &out
+}

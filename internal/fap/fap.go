@@ -355,8 +355,23 @@ type AgentInfo struct {
 }
 
 // AgentUsage is an agent's plan allowance: one entry per time window of its
-// account that has a figure for the current period (#3151).
+// account that has a figure for the current period (#3151). For an agent on
+// two or more logins (#3186), Windows is the login a new conversation would
+// start on now (the pick), and Accounts lists every login (#3253); an app
+// that does not read Accounts shows the pick alone.
 type AgentUsage struct {
+	Windows  []UsageWindow  `json:"windows"`
+	Accounts []AccountUsage `json:"accounts,omitempty"`
+}
+
+// AccountUsage is one login's allowance, for an agent on two or more logins
+// (#3253). Accounts come in the agent's configured order. Name names the
+// login for a person (its email once known; "" when it has none). Picked is
+// true on the login a new conversation would start on now. Windows is as in
+// AgentUsage, and empty when the login has no current figure.
+type AccountUsage struct {
+	Name    string        `json:"name,omitempty"`
+	Picked  bool          `json:"picked,omitempty"`
 	Windows []UsageWindow `json:"windows"`
 }
 

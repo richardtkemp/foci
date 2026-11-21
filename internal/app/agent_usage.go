@@ -59,7 +59,7 @@ func agentUsageFor(ids []string) map[string]*fap.AgentUsage {
 	agentUsage.mu.RUnlock()
 	out := make(map[string]*fap.AgentUsage, len(fns))
 	for id, fn := range fns {
-		if u := fn(); u != nil && len(u.Windows) > 0 {
+		if u := fn(); u != nil && (len(u.Windows) > 0 || len(u.Accounts) > 0) {
 			out[id] = u
 		}
 	}
@@ -105,17 +105,26 @@ func (h *Hub) agentUsageChanged() {
 
 // sameShownUsage reports whether a and b show the same figures: AsOfMs is
 // ignored, since every read moves it and a re-sent roster for it alone would
-// change nothing the app shows.
+// change nothing the app shows. Each login's figures, name and pick mark
+// (#3253) count.
 func sameShownUsage(a, b map[string]*fap.AgentUsage) bool {
-	strip := func(m map[string]*fap.AgentUsage) map[string][]fap.UsageWindow {
-		out := make(map[string][]fap.UsageWindow, len(m))
+	stripWindows := func(in []fap.UsageWindow) []fap.UsageWindow {
+		ws := make([]fap.UsageWindow, len(in))
+		for i, w := range in {
+			w.AsOfMs = 0
+			ws[i] = w
+		}
+		return ws
+	}
+	strip := func(m map[string]*fap.AgentUsage) map[string]fap.AgentUsage {
+		out := make(map[string]fap.AgentUsage, len(m))
 		for id, u := range m {
-			ws := make([]fap.UsageWindow, len(u.Windows))
-			for i, w := range u.Windows {
-				w.AsOfMs = 0
-				ws[i] = w
+			s := fap.AgentUsage{Windows: stripWindows(u.Windows)}
+			for _, a := range u.Accounts {
+				a.Windows = stripWindows(a.Windows)
+				s.Accounts = append(s.Accounts, a)
 			}
-			out[id] = ws
+			out[id] = s
 		}
 		return out
 	}

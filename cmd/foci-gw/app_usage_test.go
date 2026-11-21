@@ -1,11 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/fap"
 	"foci/internal/usagelog"
 )
 
@@ -59,5 +62,56 @@ func TestAppUsageFromBinding_StoredRead(t *testing.T) {
 	u := appUsageFromBinding(b)()
 	if u == nil || len(u.Windows) != 2 || u.Windows[0].Label != "5h" || u.Windows[0].UsedPct != 34 || u.Windows[1].Label != "7d" || u.Windows[1].UsedPct != 78 {
 		t.Fatalf("usage from a stored read = %+v, want 5h 34%% then 7d 78%%", u)
+	}
+}
+
+// #3253: one login sends what it sent before (no Accounts); two or more send
+// the pick's windows as Windows and every login, in order, in Accounts, a
+// login with no figure kept with empty windows; no figure anywhere sends nil.
+func TestAppUsageOfLogins(t *testing.T) {
+	fixed := func(pcts ...int) func() *fap.AgentUsage {
+		return func() *fap.AgentUsage {
+			if len(pcts) == 0 {
+				return nil
+			}
+			var ws []fap.UsageWindow
+			for i, p := range pcts {
+				ws = append(ws, fap.UsageWindow{Label: []string{"5h", "7d"}[i], UsedPct: p})
+			}
+			return &fap.AgentUsage{Windows: ws}
+		}
+	}
+	one := appUsageOfLogins([]usageLogin{{name: "a@x", picked: true, read: fixed(34, 78)}})
+	if one == nil || len(one.Windows) != 2 || one.Accounts != nil {
+		t.Fatalf("one login = %+v, want its windows and no accounts", one)
+	}
+	two := appUsageOfLogins([]usageLogin{
+		{name: "a@x", read: fixed(34, 78)},
+		{name: "b@x", picked: true, read: fixed(12, 40)},
+		{name: "c@x", read: fixed()},
+	})
+	if two == nil || len(two.Windows) != 2 || two.Windows[0].UsedPct != 12 {
+		t.Fatalf("Windows = %+v, want the pick's (b: 12/40)", two)
+	}
+	if len(two.Accounts) != 3 {
+		t.Fatalf("Accounts = %+v, want 3 logins", two.Accounts)
+	}
+	a, b, c := two.Accounts[0], two.Accounts[1], two.Accounts[2]
+	if a.Name != "a@x" || a.Picked || a.Windows[1].UsedPct != 78 {
+		t.Errorf("login a = %+v", a)
+	}
+	if b.Name != "b@x" || !b.Picked {
+		t.Errorf("login b = %+v, want the pick", b)
+	}
+	if c.Name != "c@x" || c.Windows == nil || len(c.Windows) != 0 {
+		t.Errorf("login c = %+v, want kept with empty (non-nil) windows", c)
+	}
+	raw, _ := json.Marshal(c)
+	if !strings.Contains(string(raw), `"windows":[]`) {
+		t.Errorf("login c JSON = %s, want windows:[] (the Kotlin field is not optional)", raw)
+	}
+	none := appUsageOfLogins([]usageLogin{{name: "a@x", picked: true, read: fixed()}, {name: "b@x", read: nil}})
+	if none != nil {
+		t.Errorf("no figure on any login = %+v, want nil", none)
 	}
 }

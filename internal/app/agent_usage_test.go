@@ -105,3 +105,50 @@ func TestAgentUsageChanged_ResendsRosterOnlyOnChange(t *testing.T) {
 		t.Fatalf("hello frames after a changed figure = %d, want 1", hellos)
 	}
 }
+
+// #3253: for an agent on two or more logins, a change only in another
+// login's figures, or only in which login is the pick, re-sends the roster;
+// a read that moves only a login's AsOfMs does not.
+func TestSameShownUsage_PerLogin(t *testing.T) {
+	mk := func(aPct int, bAsOf int64, pickB bool) map[string]*fap.AgentUsage {
+		a := fap.AccountUsage{Name: "a@x", Picked: !pickB, Windows: []fap.UsageWindow{{Label: "5h", UsedPct: aPct}}}
+		b := fap.AccountUsage{Name: "b@x", Picked: pickB, Windows: []fap.UsageWindow{{Label: "5h", UsedPct: 12, AsOfMs: bAsOf}}}
+		top := a.Windows
+		if pickB {
+			top = b.Windows
+		}
+		return map[string]*fap.AgentUsage{"cam": {Windows: top, Accounts: []fap.AccountUsage{a, b}}}
+	}
+	base := mk(34, 1, true)
+	if !sameShownUsage(base, mk(34, 2, true)) {
+		t.Error("a login's AsOfMs alone counted as a change")
+	}
+	if sameShownUsage(base, mk(35, 1, true)) {
+		t.Error("another login's figure changing (the pick's unchanged) did not count")
+	}
+	if sameShownUsage(base, mk(34, 1, false)) {
+		t.Error("the pick moving to another login did not count")
+	}
+}
+
+// #3253: an agent whose logins carry figures only in Accounts (the pick has
+// none yet) still gets usage in the roster.
+func TestRoster_CarriesAccountsWithoutPickFigures(t *testing.T) {
+	h := newTestHub()
+	registerBareAgent(h, "cam")
+	setUsageSource(t, "cam", func() *fap.AgentUsage {
+		return &fap.AgentUsage{Accounts: []fap.AccountUsage{
+			{Name: "a@x", Picked: true, Windows: []fap.UsageWindow{}},
+			{Name: "b@x", Windows: []fap.UsageWindow{{Label: "5h", UsedPct: 50}}},
+		}}
+	})
+	var got *fap.AgentUsage
+	for _, a := range h.agentRoster() {
+		if a.ID == "cam" {
+			got = a.Usage
+		}
+	}
+	if got == nil || len(got.Accounts) != 2 || got.Accounts[1].Windows[0].UsedPct != 50 {
+		t.Fatalf("cam usage = %+v, want both logins", got)
+	}
+}
