@@ -14,7 +14,6 @@ import (
 
 	"foci/internal/config"
 
-	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/go-shiori/dom"
 	readability "github.com/go-shiori/go-readability"
 	"golang.org/x/net/html"
@@ -87,7 +86,8 @@ var readabilityFromReader = ParseArticle
 // Shared with HTML attachment conversion (agent.convertHTML, #2049) so both
 // paths extract the same content. The document is pre-passed through
 // neutralizeMisleadingAttrs so class/id heuristics don't drop headings and
-// footnotes (#2066).
+// footnotes (#2066), and through ariaTablesToHTML so tables built from ARIA
+// roles keep their rows (#3241).
 func ParseArticle(r io.Reader, pageURL *url.URL) (readability.Article, error) {
 	body, err := io.ReadAll(r)
 	if err != nil {
@@ -100,6 +100,8 @@ func ParseArticle(r io.Reader, pageURL *url.URL) (readability.Article, error) {
 		return readability.Article{}, fmt.Errorf("failed to parse input: %w", err)
 	}
 	neutralizeMisleadingAttrs(doc)
+	// #3241: ARIA div tables become real tables, which readability keeps.
+	ariaTablesToHTML(doc)
 	p := readability.NewParser()
 	p.TagsToScore = append(p.TagsToScore, "li")
 	return p.ParseDocument(doc, pageURL)
@@ -452,12 +454,23 @@ func isBoilerplateElement(n *html.Node) bool {
 // listItemText returns li's own whitespace-collapsed text (excluding nested
 // lists) and the part of it that sits inside links.
 func listItemText(li *html.Node) (text, linkText string) {
+	return textAndLinks(li, true)
+}
+
+// textAndLinks returns the whitespace-collapsed text below n and the part of
+// it that sits inside links. Script and style are skipped, and so are nested
+// lists when skipLists is set.
+func textAndLinks(n *html.Node, skipLists bool) (text, linkText string) {
 	var all, links strings.Builder
 	var walk func(n *html.Node, inLink bool)
 	walk = func(n *html.Node, inLink bool) {
 		if n.Type == html.ElementNode {
 			switch n.Data {
-			case "ul", "ol", "script", "style":
+			case "ul", "ol":
+				if skipLists {
+					return
+				}
+			case "script", "style":
 				return
 			case "a":
 				inLink = true
@@ -473,7 +486,7 @@ func listItemText(li *html.Node) (text, linkText string) {
 			walk(c, inLink)
 		}
 	}
-	for c := li.FirstChild; c != nil; c = c.NextSibling {
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		walk(c, false)
 	}
 	return collapseSpace(all.String()), collapseSpace(links.String())
@@ -651,7 +664,7 @@ func webFetch(ctx context.Context, params json.RawMessage, maxBytes int64, parse
 		htmlContent = string(resolveStreamedSegments(body))
 	}
 
-	md, err := htmltomarkdown.ConvertString(htmlContent)
+	md, err := HTMLToMarkdown(htmlContent)
 	if err == nil && strings.TrimSpace(md) == "" {
 		return ToolResult{}, errEmptyFetch(p.URL, resp.StatusCode, len(body))
 	}
@@ -673,9 +686,9 @@ func webFetch(ctx context.Context, params json.RawMessage, maxBytes int64, parse
 		md += fmt.Sprintf(parseBusyNote, parseTimeout)
 	}
 	if usedArticle {
-		// #2069: the thin and list-drop checks measure against the regions
-		// the extractor considered, not the whole page — comment threads,
-		// sidebars and footers it rightly rejects are no loss.
+		// #2069: the thin, list-drop and table-drop (#3241) checks measure
+		// against the regions the extractor considered, not the whole page —
+		// comment threads, sidebars and footers it rightly rejects are no loss.
 		regions := contentRegions(body, article.TextContent)
 		if err == nil && isThinExtraction(extractedChars, visibleTextLen(regions)) {
 			// #1960: flag the "broken instrument reports success" case rather than
@@ -684,6 +697,9 @@ func webFetch(ctx context.Context, params json.RawMessage, maxBytes int64, parse
 		}
 		if missing, example := missingListText(regions, article.TextContent); missing >= listDropMinChars {
 			md += fmt.Sprintf(listDropNote, missing, truncateRunes(example, 80))
+		}
+		if missing, example := missingTableRows(regions, article.TextContent); missing >= tableDropMinRows {
+			md += fmt.Sprintf(tableDropNote, missing, truncateRunes(example, 80))
 		}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {

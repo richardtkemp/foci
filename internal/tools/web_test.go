@@ -526,7 +526,8 @@ func TestWebFetchToolName(t *testing.T) {
 // is the live MDN <ul> reference page (~400 <li>, mostly sidebar/nav) stripped
 // the same way plus <link> tags. Both captured 2026-09-25. The two substack_*
 // pages (#2066) were captured 2026-09-26 and stripped the same way, as was
-// lesswrong_unlocking_emotional_brain.html (#2069, captured 2026-09-27).
+// lesswrong_unlocking_emotional_brain.html (#2069, captured 2026-09-27) and
+// oxylabs_restricted_targets.html (#3241, captured 2026-11-21).
 var webFetchCorpus = []struct {
 	name           string
 	file           string
@@ -614,6 +615,19 @@ var webFetchCorpus = []struct {
 		file:        "webfetch_corpus/substack_rivalvoices_footnote.html",
 		mustContain: []string{"just feel your feelings", "exclusively", "## **1.**"},
 	},
+	{
+		// GitBook renders its tables as an ARIA grid of <div role="row">
+		// and <div role="cell">, not <table>. Readability scored the cells
+		// as short divs and kept 2 of the 8 rows (#3241).
+		name: "developers.oxylabs.io restricted targets — ARIA div table (#3241 repro)",
+		file: "webfetch_corpus/oxylabs_restricted_targets.html",
+		mustContain: []string{
+			"Target category", "streaming", "Netflix, Spotify, Twitch, Disney",
+			"Government websites", "usa.gov, canada.ca", "Gaming", "Playstation, Steam",
+			"Ticketing", "Ticketmaster, Eventbrite", "Mailing", "Outlook, Yahoo mail",
+			"Ads", "Google Tag Manager, Doubleclick", "IP checking websites", "ipinfo.info, 2ip.io",
+		},
+	},
 }
 
 // testFetchParseTimeout is the parse budget for tests that assert on the
@@ -625,7 +639,13 @@ const testFetchParseTimeout = 5 * time.Minute
 // through the web_fetch tool, so the full extraction path is exercised.
 func fetchFixture(t *testing.T, file string) string {
 	t.Helper()
-	body, err := os.ReadFile(filepath.Join("testdata", file))
+	return fetchFixtureAt(t, filepath.Join("testdata", file))
+}
+
+// fetchFixtureAt is fetchFixture for a file at any path.
+func fetchFixtureAt(t *testing.T, path string) string {
+	t.Helper()
+	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}
@@ -643,7 +663,8 @@ func fetchFixture(t *testing.T, file string) string {
 
 func TestWebFetchExtractionCorpus(t *testing.T) {
 	// #2011: key content survives, boilerplate stays out, and no page in the
-	// corpus trips the list-drop note once extraction is correct.
+	// corpus trips the list-drop or table-drop (#3241) note once extraction
+	// is correct.
 	t.Parallel()
 	for _, c := range webFetchCorpus {
 		t.Run(c.name, func(t *testing.T) {
@@ -662,6 +683,9 @@ func TestWebFetchExtractionCorpus(t *testing.T) {
 			}
 			if i := strings.Index(got, "list-item text"); i >= 0 {
 				t.Errorf("list-drop note fired on a correctly extracted page: %s", got[i:])
+			}
+			if i := strings.Index(got, "table rows on the page"); i >= 0 {
+				t.Errorf("table-drop note fired on a correctly extracted page: %s", got[i:])
 			}
 		})
 	}

@@ -23,8 +23,10 @@ var (
 // resolved, misleading class/ids neutralized, as in ParseArticle) with every
 // region it rejected removed: hidden nodes, readability's unlikely candidates
 // (comment threads, sidebars, footers, menus) and the page-chrome elements
-// isBoilerplateElement names. It is the baseline the thin and list-drop
-// warnings compare the extraction against (#2069): measured against the whole
+// isBoilerplateElement names. ARIA tables are not rewritten
+// (ariaTablesToHTML): missingTableRows reads role="row" directly. It is the
+// baseline the thin, list-drop and table-drop (#3241) warnings compare the
+// extraction against (#2069): measured against the whole
 // page, a post whose comment thread was rightly left out read as a thin
 // extraction missing hundreds of chars of list text — the comments'.
 //

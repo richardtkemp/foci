@@ -140,6 +140,24 @@ func TestConvertHTMLKeepsListOnlySections(t *testing.T) {
 	}
 }
 
+// TestConvertHTMLRendersTables: an HTML attachment shares web_fetch's
+// Markdown converter, so a table is a Markdown table and an ARIA div table
+// keeps its rows (#3241).
+func TestConvertHTMLRendersTables(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile(filepath.Join("..", "tools", "testdata", "webfetch_corpus", "oxylabs_restricted_targets.html"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	result := convertDocument(data, mimeHTML, "/tmp/test.html")
+	if result.Err != "" {
+		t.Fatalf("unexpected error: %s", result.Err)
+	}
+	if !strings.Contains(result.Text, "| Government websites") {
+		t.Errorf("table row missing or not a Markdown table in converted HTML:\n%s", result.Text)
+	}
+}
+
 func TestConvertHTMLMinimal(t *testing.T) {
 	t.Parallel()
 	// Verifies that even minimal/broken HTML returns something.
