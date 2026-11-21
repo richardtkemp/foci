@@ -1622,7 +1622,7 @@ func (s *Spawner) launchBackground(ctx context.Context, agent SpawnAgent, parent
 		spawnLog.Infof("spawn=%s branch=%s parent=%s queued: %d running, limit %d, %d queued (itself included)",
 			running.ID, running.BranchKey, parent, held, limit, waiting)
 		deps.Tracker.appendLog(parent, running.ID, "message", fmt.Sprintf("(queued: %d spawn runs going, limit %d)", held, limit))
-		go s.startWhenSlotFree(wait, agent, parent, running, texts, spawnCtx, cancel)
+		go s.startWhenSlotFree(wait, agent, parent, running, texts, spawnCtx, cancel, true)
 		queued := fmt.Sprintf("%s QUEUED, not started: %d spawn runs are going and the limit ([tools] max_concurrent_spawns) is %d; %d spawn(s) queued, this one included. It starts by itself when a slot frees.\nName: %s\nSpawn: %s\nBranch: %s\nPrompt: %s\nResults will be delivered when complete. spawn_status shows it as queued until it starts; spawn_send queues a message for it; spawn_stop takes it off the queue.\nBackground ID: %s",
 			kind, held, limit, waiting, running.Label(), running.ID, running.BranchKey, truncatePromptPreview(prompt), spawnBackgroundID(running))
 		return TextResult(queued), nil
@@ -1634,11 +1634,13 @@ func (s *Spawner) launchBackground(ctx context.Context, agent SpawnAgent, parent
 
 // startWhenSlotFree runs a queued background spawn (#3235) once wait grants
 // its slot: from then on it runs, and reports, as one that started at once.
+// firstRun: its first run; false for a finished spawn spawn_send resumed at
+// the limit (#3244), which keeps its start time.
 // A stop while it waits ends the wait: the spawn ends stopped and reports so,
 // without a run. A shutdown leaves it, and its persisted record, for the next
 // process to resume.
 func (s *Spawner) startWhenSlotFree(wait func(context.Context) error, agent SpawnAgent, parent string, running RunningSpawn,
-	texts []string, spawnCtx context.Context, cancel context.CancelFunc) {
+	texts []string, spawnCtx context.Context, cancel context.CancelFunc, firstRun bool) {
 	tr, id := s.deps.Tracker, running.ID
 	if err := wait(spawnCtx); err != nil {
 		cancel()
@@ -1666,7 +1668,7 @@ func (s *Spawner) startWhenSlotFree(wait func(context.Context) error, agent Spaw
 		s.closeBranch(running)
 		return
 	}
-	tr.startQueued(parent, id)
+	tr.startQueued(parent, id, firstRun)
 	tr.appendLog(parent, id, "message", "(started: a spawn slot freed)")
 	spawnLog.Infof("spawn=%s branch=%s parent=%s got a spawn slot: starting", id, running.BranchKey, parent)
 	// Messages sent while it was queued go with its task, in order.

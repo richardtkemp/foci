@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -373,5 +374,132 @@ func TestQueuedBackgroundSpawnStops(t *testing.T) {
 	}
 	if m := atomic.LoadInt32(&maxRunning); m != 1 {
 		t.Fatalf("max running %d, want 1: the stopped spawn ran", m)
+	}
+}
+
+// resumeSlotAgent runs a turn at once, except one whose input holds "hold",
+// which blocks until release closes. texts records each turn's inputs.
+type resumeSlotAgent struct {
+	release chan struct{}
+	mu      sync.Mutex
+	texts   [][]string
+}
+
+func (a *resumeSlotAgent) HandleMessage(ctx context.Context, _ string, texts []string, _ []platform.Attachment) error {
+	a.mu.Lock()
+	a.texts = append(a.texts, append([]string(nil), texts...))
+	a.mu.Unlock()
+	if strings.Contains(strings.Join(texts, "\n"), "hold") {
+		select {
+		case <-a.release:
+		case <-ctx.Done():
+		}
+	}
+	turnevent.Emit(ctx, turnevent.TurnComplete{FinalText: "ok"})
+	return nil
+}
+
+func (a *resumeSlotAgent) turns() [][]string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([][]string(nil), a.texts...)
+}
+
+// #3244: a spawn_send that resumes a finished spawn while every spawn slot is
+// taken does not wait in its call. It returns at once saying the message is
+// queued, spawn_status shows the spawn queued, and the spawn resumes with the
+// message when a slot frees. A stop while it waits takes it off the queue.
+func TestSpawnSendResumeAtLimitReturnsQueued(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	notifier, got := recordingNotifier()
+	agent := &resumeSlotAgent{release: release}
+	spawner := NewSpawner(SpawnDeps{
+		Sessions:       &mockSessionBrancher{},
+		AgentID:        "resume-slots",
+		FallbackModel:  "anthropic/claude-haiku-4-5",
+		FallbackFormat: "anthropic",
+		MaxInherit:     1,
+		Notifier:       notifier,
+		Tracker:        NewSpawnTracker(),
+	}, func() SpawnAgent { return agent })
+	ctx := WithSessionKey(context.Background(), "resume-slots/imain")
+	call := func(what string, tool *Tool, params any) string {
+		t.Helper()
+		raw, _ := json.Marshal(params)
+		done := make(chan string, 1)
+		go func() {
+			r, err := tool.Execute(ctx, raw)
+			if err != nil {
+				done <- "error: " + err.Error()
+				return
+			}
+			done <- r.Text
+		}()
+		select {
+		case a := <-done:
+			return a
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s did not return: the call blocks at the spawn limit", what)
+			return ""
+		}
+	}
+	spawnTool, sendTool, statusTool := spawner.SpawnTool(), spawner.SendTool(), spawner.StatusTool()
+
+	// "done1" and "done2" run and finish; "holder" then takes the only slot.
+	for _, name := range []string{"done1", "done2"} {
+		call("spawn "+name, spawnTool, map[string]string{"name": name, "prompt": "task " + name, "context": "clone"})
+		if r := recv(t, got, "the "+name+" result"); !strings.Contains(r.msg, "completed") {
+			t.Fatalf("%s result %q, want completed", name, r.msg)
+		}
+	}
+	call("spawn holder", spawnTool, map[string]string{"name": "holder", "prompt": "hold the slot", "context": "clone"})
+	waitFor(t, "the holder to take the slot", func() bool { h, _, _ := spawner.slots.counts(); return h == 1 })
+
+	a := call("spawn_send to done1", sendTool, map[string]string{"id": "done1", "message": "go on please"})
+	for _, want := range []string{"QUEUED", "1 spawn runs are going", "max_concurrent_spawns) is 1", "1 spawn(s) queued"} {
+		if !strings.Contains(a, want) {
+			t.Errorf("resume ack lacks %q:\n%s", want, a)
+		}
+	}
+	st := call("spawn_status", statusTool, map[string]string{})
+	if !strings.Contains(st, "done1  queued ") {
+		t.Fatalf("spawn_status does not show done1 queued:\n%s", st)
+	}
+	// A second message to the queued spawn joins the first.
+	call("second spawn_send to done1", sendTool, map[string]string{"id": "done1", "message": "and this"})
+
+	// done2 is resumed at the limit too, then stopped while it waits.
+	if a := call("spawn_send to done2", sendTool, map[string]string{"id": "done2", "message": "never runs"}); !strings.Contains(a, "QUEUED") {
+		t.Fatalf("done2 resume ack %q, want queued", a)
+	}
+	call("spawn_stop done2", spawner.StopTool(), map[string]string{"id": "done2"})
+	if r := recv(t, got, "done2's stopped result"); !strings.Contains(r.msg, "stopped") {
+		t.Fatalf("done2 result %q, want stopped", r.msg)
+	}
+	if _, w, _ := spawner.slots.counts(); w != 1 {
+		t.Fatalf("%d waiting after the stop, want only done1", w)
+	}
+	if n := len(agent.turns()); n != 3 {
+		t.Fatalf("%d turns ran, want 3: a queued resume ran above the limit", n)
+	}
+
+	close(release)
+	for i := 0; i < 2; i++ {
+		if r := recv(t, got, "a [SPAWN RESULT]"); !strings.Contains(r.msg, "completed") {
+			t.Fatalf("result %q, want completed", r.msg)
+		}
+	}
+	turns := agent.turns()
+	if len(turns) != 4 {
+		t.Fatalf("%d turns, want 4 (done1, done2, holder, done1 resumed): %q", len(turns), turns)
+	}
+	last := strings.Join(turns[3], "\n")
+	if !strings.Contains(last, "go on please") || !strings.Contains(last, "and this") || strings.Contains(last, "never runs") {
+		t.Fatalf("done1's resumed turn got %q, want both its messages and not done2's", turns[3])
+	}
+	st = call("spawn_status done1", statusTool, map[string]string{"id": "done1"})
+	if !strings.Contains(st, "(started: a spawn slot freed)") {
+		t.Errorf("done1's status lacks the start entry:\n%s", st)
 	}
 }

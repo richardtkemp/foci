@@ -152,14 +152,16 @@ type trackedSpawn struct {
 	running   bool
 	// queued: a background spawn started while every spawn slot was taken
 	// ([tools] max_concurrent_spawns): it is running to its parent, but its
-	// first run waits for a slot (#3235). In memory only.
-	queued  bool
-	ended   time.Time // when its last run ended; zero while running
-	outcome string    // last run's end: "completed", "failed" or "stopped"
-	pending []string  // parent messages waiting for the spawn's next step
-	log     []SpawnLogEntry
-	prompt  string // the task it was started with, repeated when a restart resumes it
-	resumes int    // how many times a foci restart has resumed it
+	// run waits for a slot (#3235): its first run, or a run spawn_send
+	// resumes it for (#3244). queuedAt: when it began to wait. In memory only.
+	queued   bool
+	queuedAt time.Time
+	ended    time.Time // when its last run ended; zero while running
+	outcome  string    // last run's end: "completed", "failed" or "stopped"
+	pending  []string  // parent messages waiting for the spawn's next step
+	log      []SpawnLogEntry
+	prompt   string // the task it was started with, repeated when a restart resumes it
+	resumes  int    // how many times a foci restart has resumed it
 	// result is the [SPAWN RESULT] message on its way to the parent: kept,
 	// and persisted, until the parent's turn has taken it.
 	result string
@@ -222,13 +224,15 @@ type SpawnSnapshot struct {
 	// was listed for (SpawnRoute.Via); "" otherwise.
 	Via     string
 	Running bool
-	// Queued: running, but its first run waits for a free spawn slot
-	// (#3235).
-	Queued  bool
-	Outcome string // "" while running
-	Ended   time.Time
-	Pending int // parent messages not yet delivered
-	Resumes int // times a foci restart has resumed it
+	// Queued: running, but its run waits for a free spawn slot: its first
+	// (#3235), or one spawn_send resumes it for (#3244). QueuedSince: when
+	// it began to wait.
+	Queued      bool
+	QueuedSince time.Time
+	Outcome     string // "" while running
+	Ended       time.Time
+	Pending     int // parent messages not yet delivered
+	Resumes     int // times a foci restart has resumed it
 	// Awaiting names the background work a running spawn waits on: its
 	// run has ended, and its result waits for that work (#2728). "" when
 	// its run is going (or it is finished).
@@ -479,7 +483,7 @@ func (t *SpawnTracker) spawnInfo(parent, id string) (RunningSpawn, bool) {
 
 func (s *trackedSpawn) snapshot(n int) SpawnSnapshot {
 	snap := SpawnSnapshot{
-		RunningSpawn: s.info, Running: s.running, Queued: s.queued, Ended: s.ended,
+		RunningSpawn: s.info, Running: s.running, Queued: s.queued, QueuedSince: s.queuedAt, Ended: s.ended,
 		Pending: len(s.pending), Resumes: s.resumes,
 	}
 	if !s.running {
@@ -530,6 +534,25 @@ func (t *SpawnTracker) queue(parent, id, text string) bool {
 	}
 	s.pending = append(s.pending, text)
 	s.appendLog("message", "(queued) "+text)
+	t.mu.Unlock()
+	t.persist(parent, id)
+	return true
+}
+
+// pushPending adds text to the messages waiting for a running spawn, and
+// persists it, so a restart before its run takes the text keeps it. No log
+// entry: the caller logs what the parent wrote. False when the spawn is gone.
+func (t *SpawnTracker) pushPending(parent, id, text string) bool {
+	if t == nil {
+		return false
+	}
+	t.mu.Lock()
+	s := t.spawns[parent][id]
+	if s == nil {
+		t.mu.Unlock()
+		return false
+	}
+	s.pending = append(s.pending, text)
 	t.mu.Unlock()
 	t.persist(parent, id)
 	return true
@@ -647,7 +670,8 @@ func (t *SpawnTracker) finishRun(parent, id string, force bool, work, answer str
 	return end
 }
 
-// setQueued marks parent's spawn id as waiting for a spawn slot (#3235).
+// setQueued marks parent's spawn id as waiting for a spawn slot, from now
+// (#3235, #3244).
 func (t *SpawnTracker) setQueued(parent, id string) {
 	if t == nil {
 		return
@@ -655,13 +679,15 @@ func (t *SpawnTracker) setQueued(parent, id string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if s := t.spawns[parent][id]; s != nil {
-		s.queued = true
+		s.queued, s.queuedAt = true, time.Now()
 	}
 }
 
-// startQueued records that a queued spawn got its slot and starts its first
-// run now: its start time becomes now, so spawn_status's age is its run's.
-func (t *SpawnTracker) startQueued(parent, id string) {
+// startQueued records that a queued spawn got its slot and starts its run
+// now. For its first run (firstRun) its start time becomes now, so
+// spawn_status's age is its run's; a resumed spawn keeps its start time, as
+// one resumed at once does (#3244).
+func (t *SpawnTracker) startQueued(parent, id string, firstRun bool) {
 	if t == nil {
 		return
 	}
@@ -671,8 +697,10 @@ func (t *SpawnTracker) startQueued(parent, id string) {
 		t.mu.Unlock()
 		return
 	}
-	s.queued = false
-	s.info.Started = time.Now()
+	s.queued, s.queuedAt = false, time.Time{}
+	if firstRun {
+		s.info.Started = time.Now()
+	}
 	t.mu.Unlock()
 	t.persist(parent, id)
 }

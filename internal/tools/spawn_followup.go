@@ -123,23 +123,35 @@ func (s *Spawner) showFollowup(parent, id, message string) {
 // resume runs a follow-up turn on a finished spawn's branch: the branch still
 // holds the spawn's conversation (a delegated backend resumes its session), so
 // the spawn picks up where it left off.
+//
+// At the spawn limit ([tools] max_concurrent_spawns) it does not wait for a
+// slot (#3244, as a new background spawn does since #3235): the spawn is
+// running again but queued, the call returns at once saying so, and the run
+// starts when its slot comes (startWhenSlotFree). The message waits in the
+// spawn's persisted pending messages, so a restart meanwhile keeps it.
 func (s *Spawner) resume(ctx context.Context, agent SpawnAgent, parent string, running RunningSpawn, text, message string) (ToolResult, error) {
 	if s.deps.Notifier == nil {
 		return ToolResult{}, fmt.Errorf("spawn_send: no background delivery on this agent")
 	}
-	if err := s.slots.acquire(ctx); err != nil {
-		return ToolResult{}, err
-	}
+	tr := s.deps.Tracker
+	wait := s.slots.reserve() // nil: it holds a slot now
 	spawnCtx, cancel := s.runContext(ctx, running, true)
-	ok, fromWait := s.deps.Tracker.restart(parent, running.ID, cancel)
+	ok, fromWait := tr.restart(parent, running.ID, cancel)
 	if !ok {
 		cancel()
-		s.slots.release()
+		if wait != nil {
+			_ = wait(spawnCtx) // spawnCtx is done: leaves the queue, or gives back a slot granted meanwhile
+		} else {
+			s.slots.release()
+		}
 		return ToolResult{}, fmt.Errorf("spawn %s started running again meanwhile; send the message again to reach it", running.ID)
 	}
-	s.deps.Tracker.appendLog(parent, running.ID, "message", "(resumed with) "+message)
-	spawnLog.Infof("resume spawn=%s branch=%s parent=%s message=%d chars from_wait=%t",
-		running.ID, running.BranchKey, parent, len(message), fromWait)
+	if wait != nil {
+		tr.setQueued(parent, running.ID)
+	}
+	tr.appendLog(parent, running.ID, "message", "(resumed with) "+message)
+	spawnLog.Infof("resume spawn=%s branch=%s parent=%s message=%d chars from_wait=%t queued=%t",
+		running.ID, running.BranchKey, parent, len(message), fromWait, wait != nil)
 	if s.deps.Observer != nil {
 		if fromWait {
 			// Still shown running (#2728): the message joins its entry.
@@ -147,6 +159,18 @@ func (s *Spawner) resume(ctx context.Context, agent SpawnAgent, parent string, r
 		} else {
 			s.deps.Observer.SpawnStarted(parent, running, message)
 		}
+	}
+	if wait != nil {
+		tr.pushPending(parent, running.ID, text)
+		held, waiting, limit := s.slots.counts()
+		tr.appendLog(parent, running.ID, "message", fmt.Sprintf("(queued: %d spawn runs going, limit %d)", held, limit))
+		go s.startWhenSlotFree(wait, agent, parent, running, nil, spawnCtx, cancel, false)
+		was := "had finished"
+		if fromWait {
+			was = "had ended its turn and was waiting on work it started in the background (that work goes on)"
+		}
+		return TextResult(fmt.Sprintf("Spawn %s (%s) %s. Your message is QUEUED, not yet delivered: %d spawn runs are going and the limit ([tools] max_concurrent_spawns) is %d; %d spawn(s) queued, this one included. It resumes on branch %s with your message by itself when a slot frees, and a new [SPAWN RESULT] comes when it ends. spawn_status shows it as queued until then; spawn_stop takes it off the queue.",
+			running.Label(), running.ID, was, held, limit, waiting, running.BranchKey)), nil
 	}
 	pending := fmt.Sprintf("Spawn %s (%s) had finished; it is resumed on branch %s with your message. A new [SPAWN RESULT] comes when it ends.",
 		running.Label(), running.ID, running.BranchKey)
@@ -214,8 +238,13 @@ func spawnState(snap SpawnSnapshot, now time.Time) string {
 		resumed = fmt.Sprintf(", resumed %d time(s) after a foci restart", snap.Resumes)
 	}
 	if snap.Queued {
-		// #3235: started at the spawn limit; its run has not begun.
-		st := "queued " + spawnAge(now.Sub(snap.Started)) + ", waiting for a free spawn slot ([tools] max_concurrent_spawns)"
+		// #3235/#3244: started or resumed at the spawn limit; its run has
+		// not begun.
+		since := snap.QueuedSince
+		if since.IsZero() {
+			since = snap.Started
+		}
+		st := "queued " + spawnAge(now.Sub(since)) + ", waiting for a free spawn slot ([tools] max_concurrent_spawns)"
 		if snap.Pending > 0 {
 			st += fmt.Sprintf(", %d message(s) waiting", snap.Pending)
 		}

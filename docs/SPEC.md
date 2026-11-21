@@ -206,7 +206,7 @@ Every spawn call names its spawn (`name`, required, #2721). The name is unique a
 - Creates a branch session: `{parentKey}/b{TIMESTAMP}`
 - Branch has `NoResetHook` set (ephemeral, no memory formation on cleanup)
 - Spawn nesting is bounded by one depth limit, `[tools] max_spawn_depth` (default 2): a chat is depth 0, its spawn 1, and a session may start a spawn only if the new depth is at most the limit (#3061). A foreground (direct) spawn starts no spawn of any mode (#3081): its spawner blocks on it, so only background spawns nest, a clone included
-- Concurrent clone spawns are limited by `max_concurrent_spawns` (default 20, live-editable); a background spawn at the limit returns at once as queued and starts when a slot frees (#3235)
+- Concurrent clone spawns are limited by `max_concurrent_spawns` (default 20, live-editable); a background spawn at the limit returns at once as queued and starts when a slot frees (#3235); so does a `spawn_send` that resumes a finished spawn (#3244)
 - Runs as a full agent turn with all tools available
 - Always async: returns `"Spawn started in background."` immediately, delivers `[SPAWN RESULT]` via notifier on completion (matching the `[EXEC RESULT]`/`[HTTP RESULT]` pattern)
 
