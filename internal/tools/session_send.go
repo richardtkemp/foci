@@ -215,6 +215,12 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 				}
 			}
 
+			// A background spawn messaging its own spawner: it goes to the
+			// spawn's owner now, as send_to_spawner (#3238).
+			if res, handled, err := sendToSpawnerViaSession(ctx, targetKey, p.Message, resolveKeyFn); handled {
+				return res, err
+			}
+
 			// A reply_to=caller relay only makes sense when the CALLER can
 			// actually receive it. A oneshot session (background-task, spawn
 			// — see SessionType.IsOneshot; reflection/keepalive are already

@@ -163,7 +163,7 @@ func (a *spawnAutonomousSink) tookOver() {
 // follow-up turn on the branch, which reports one more result.
 func (a *spawnAutonomousSink) finish(tc turnevent.TurnComplete) {
 	s, tr, parent, id, branchKey := a.s, a.s.deps.Tracker, a.parent, a.running.ID, a.running.BranchKey
-	if !tr.releaseRun(parent, id, a, a.FinalText()) {
+	if !tr.releaseRun(parent, id, a, a.adriftAnswer()) {
 		return
 	}
 	defer a.markDone()
@@ -176,13 +176,13 @@ func (a *spawnAutonomousSink) finish(tc turnevent.TurnComplete) {
 	if end.handedOff != nil {
 		// Another run on the branch goes on and reports the next result.
 		if !promptReaped(tc.Err) {
-			s.deliver(parent, id, s.resultMessage(parent, id, branchKey, false, tc.Err, a.FinalText(), 0))
+			s.deliver(parent, id, s.resultMessage(parent, id, branchKey, false, tc.Err, a.answer(), 0))
 		}
 		end.handedOff.tookOver()
 		return
 	}
 	if !end.done {
-		s.deliver(parent, id, s.resultMessage(parent, id, branchKey, false, nil, a.FinalText(), 0))
+		s.deliver(parent, id, s.resultMessage(parent, id, branchKey, false, nil, a.answer(), 0))
 		go s.followUp(parent, a.running, end.next)
 		return
 	}
@@ -202,7 +202,7 @@ func (a *spawnAutonomousSink) finish(tc turnevent.TurnComplete) {
 		s.endQuietly(parent, id, branchKey)
 		return
 	}
-	s.deliver(parent, id, s.resultMessage(parent, id, branchKey, end.stopped, tc.Err, a.FinalText(), end.dropped))
+	s.deliver(parent, id, s.resultMessage(parent, id, branchKey, end.stopped, tc.Err, a.answer(), end.dropped))
 }
 
 // claimRun marks parent's spawn id running for r's run when it is finished

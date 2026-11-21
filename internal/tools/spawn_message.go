@@ -255,3 +255,32 @@ func keptMessagesHead(id string, kept []SpawnLogEntry) string {
 	b.WriteString("\n\n[ITS RESULT]\n\n")
 	return b.String()
 }
+
+// sendToSpawnerViaSession is send_to_session called by a background spawn
+// with its own spawner as the target (#3238). Such a message goes as
+// send_to_spawner does, to the spawn's owner now: a depth leaf that has
+// reported hands its spawns up, and a message sent to the leaf itself
+// reached a session that no longer passes anything on (seen 29 Oct on the
+// work Mac: the spawn's report went to the leaf, and the root got only the
+// spawn's [[NO_RESPONSE]]). handled is false for any other caller or target,
+// which send_to_session delivers as before.
+func sendToSpawnerViaSession(ctx context.Context, targetKey, text string, resolveKeyFn SessionKeyResolverFn) (res ToolResult, handled bool, err error) {
+	sk := SessionKeyFromContext(ctx)
+	s := spawnerFor(session.AgentIDFromAnyKey(sk))
+	if s == nil {
+		return ToolResult{}, false, nil
+	}
+	l, direct, ok := s.spawnOf(ctx)
+	if !ok || direct {
+		return ToolResult{}, false, nil
+	}
+	if !sameSession(targetKey, l.parent, resolveKeyFn) && !sameSession(targetKey, l.s.route(l.parent).Owner, resolveKeyFn) {
+		return ToolResult{}, false, nil
+	}
+	spawnLog.Infof("spawn=%s send_to_session to its spawner %s: sent as send_to_spawner", l.id, targetKey)
+	res, err = l.s.messageFromSpawn(l.parent, l.id, false, sk, text)
+	if err == nil {
+		res.Text = "That session is your spawner, so the message went as send_to_spawner. " + res.Text
+	}
+	return res, true, err
+}

@@ -98,7 +98,7 @@ func (s *Spawner) runSpawnStep(agent SpawnAgent, pauser UsageHoldPauser, runCtx,
 		// was still cut short, not completed.
 		err = context.Cause(spawnCtx)
 	}
-	step := spawnStep{err: err, result: buf.FinalText()}
+	step := spawnStep{err: err, result: sink.answer()}
 	if !holdDone() {
 		return step
 	}
