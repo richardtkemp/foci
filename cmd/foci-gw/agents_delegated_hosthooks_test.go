@@ -80,7 +80,7 @@ func TestConfigureDelegated_HostHooksFollowSpec(t *testing.T) {
 			if _, err := ag.DelegatedManager.NewBackendFor(ag.AccountFor("")); err != nil {
 				t.Fatalf("NewBackend: %v", err)
 			}
-			if got.OnAuthFailure == nil || got.OnRateLimitNotice == nil || got.EngageRateLimit == nil {
+			if got.OnAuthFailure == nil || got.OnRateLimitNotice == nil || got.EngageRateLimit == nil || got.ReleaseRateLimit == nil {
 				t.Errorf("auth/rate-limit hooks not all wired: %+v", *got)
 			}
 			// #3145: the usage warning levels are read live from the

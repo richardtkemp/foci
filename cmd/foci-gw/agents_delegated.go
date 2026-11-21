@@ -327,6 +327,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		// pauses until the window resets; the gate's own hooks notify the
 		// user.
 		hooks.EngageRateLimit = func(signal ratelimit.Signal) { ag.EngageRateLimit(acct, signal) }
+		// The backend reports the limit cleared (codex, #3239): reopen the
+		// account's gate now rather than at its deadline.
+		hooks.ReleaseRateLimit = func() { ag.ReleaseRateLimit(acct) }
 		hooks.OnUsageWindow = acct.ObserveUsage
 		if spec.Supports(delegator.CapRelogin) {
 			// A 401 runs the account's re-login (#843) via the shared

@@ -238,8 +238,9 @@ func (s *rateLimitState) earliestFullResetLocked(now time.Time) string {
 // "rate limited" notice. After it reopens, the next background turn is the
 // probe: if the limit still holds, that turn fails at once (no spend), codex
 // reports the limit again, and the gate closes for another period. So an
-// out-of-credits block costs one failed probe per hour, not one per tick,
-// and resumes by itself once credits are added.
+// out-of-credits block costs one failed probe per hour, not one per tick.
+// A live update that leaves no bucket reached (credits added) reopens the
+// gate at once (limitCleared, ReleaseRateLimit, #3239).
 func (s *rateLimitState) gateSignal(now time.Time) *ratelimit.Signal {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -271,6 +272,21 @@ func (s *rateLimitState) gateSignal(now time.Time) *ratelimit.Signal {
 	}
 	s.gateUntil = ratelimit.Resolve(now, sig, 0).Until
 	return &sig
+}
+
+// limitCleared reports whether no bucket reports a reached limit, so turns
+// work again (#3239). It then forgets the gate's deadline, so a limit reached
+// again closes the gate at once instead of waiting out the old period.
+func (s *rateLimitState) limitCleared() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, sn := range s.snaps {
+		if sn.RateLimitReachedType != nil && *sn.RateLimitReachedType != "" {
+			return false
+		}
+	}
+	s.gateUntil = time.Time{}
+	return true
 }
 
 // statusLine renders the current allowance for the status block, e.g.
@@ -512,6 +528,19 @@ func (b *Backend) onRateLimitsUpdated(params json.RawMessage) {
 		b.logInfof("rate limit reached (%s); pausing background work", sig.Detail)
 		if fn != nil {
 			fn(*sig)
+		}
+	} else if st.limitCleared() {
+		// No bucket reports a reached limit (credits added, #3239): reopen
+		// a gate the limit closed now, not at its deadline. The agent's
+		// release does nothing to an open gate, and it also opens a gate
+		// whose deadline a previous foci process stored. Live updates only,
+		// as for closing: a read (startup seed, /usage) never moves the
+		// gate (Dick 2026-11-11: the /usage unblock is Claude Code only).
+		b.mu.Lock()
+		fn := b.onRateLimitReleased
+		b.mu.Unlock()
+		if fn != nil {
+			fn()
 		}
 	}
 }

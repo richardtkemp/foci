@@ -374,6 +374,25 @@ func (a *Agent) EngageRateLimit(acct *account.Account, signal ratelimit.Signal) 
 	a.engageRateLimit(a.Endpoint, acct, signal, true)
 }
 
+// ReleaseRateLimit opens acct's default-endpoint gate early, when the
+// delegated backend running on acct reports that the hard limit it engaged
+// has cleared (codex: an account/rateLimits/updated with no
+// rateLimitReachedType left, e.g. after credits were added, #3239). The
+// stored deadline is cleared too, so a restart does not close the gate again.
+// Queued system work replays at the next drain tick, as after a natural
+// reopen. An open gate is left as it is, silently.
+func (a *Agent) ReleaseRateLimit(acct *account.Account) {
+	gate := a.rateLimitGate(a.Endpoint, acct)
+	limited, until := gate.IsLimited()
+	if !gate.Open() {
+		return
+	}
+	a.persistRateLimitDeadline(rateLimitGateKey{endpoint: a.Endpoint, account: acct.Key()}, time.Time{})
+	if limited {
+		a.logger().Infof("rate limit gate (%s) released early: the backend reports the limit cleared (was until %s)", a.Endpoint, until.Format(time.Kitchen))
+	}
+}
+
 // releaseRateLimit opens an endpoint gate after a successful API response.
 // Queued system work remains queued until the normal drain tick replays it.
 func (a *Agent) releaseRateLimit(endpoint string) {

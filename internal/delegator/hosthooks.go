@@ -50,6 +50,13 @@ type HostHooks struct {
 	// (Claude Code's session limit, opencode's rejected usage limit).
 	EngageRateLimit func(signal ratelimit.Signal)
 
+	// ReleaseRateLimit reopens the gate EngageRateLimit closed, before its
+	// deadline, when the backend reports the limit has cleared (#3239: codex's
+	// account/rateLimits/updated with no rateLimitReachedType left, e.g. after
+	// credits were added). Opening an open gate does nothing. Honoured by
+	// codex; Claude Code and opencode report no such signal.
+	ReleaseRateLimit func()
+
 	// OnModelBlocked reports that the session's model needs usage credits the
 	// account does not have (Claude Code's "Fable 5 requires usage credits.
 	// Switch to another model… to continue.", #3106). It has no reset time;

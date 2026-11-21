@@ -91,6 +91,11 @@ type Backend struct {
 	readyOnce       sync.Once
 	startOpts       delegator.StartOptions
 
+	// onRateLimitReleased is the gateway's HostHooks.ReleaseRateLimit: it
+	// reopens the gate onRateLimited closed when an update shows the limit
+	// cleared (#3239, ratelimits.go limitCleared).
+	onRateLimitReleased func()
+
 	// JSON-RPC request/response correlation
 	rpcMu      sync.Mutex
 	rpcSeq     int64
@@ -524,12 +529,14 @@ func (b *Backend) StatusDetail() string {
 
 // SetHostHooks implements delegator.HostHooksAcceptor. codex honours
 // OnRateLimitNotice (usage warnings, at UsageWarningLevels) and
-// EngageRateLimit (pause background work at a reached limit), both in
-// ratelimits.go; it has no re-login, pretool or stop hooks.
+// EngageRateLimit (pause background work at a reached limit) with
+// ReleaseRateLimit (resume when the limit clears), all in ratelimits.go; it
+// has no re-login, pretool or stop hooks.
 func (b *Backend) SetHostHooks(h delegator.HostHooks) {
 	b.mu.Lock()
 	b.onRateLimitNotice = h.OnRateLimitNotice
 	b.onRateLimited = h.EngageRateLimit
+	b.onRateLimitReleased = h.ReleaseRateLimit
 	b.onUsageWindow = h.OnUsageWindow
 	b.usageLevels = h.UsageWarningLevels
 	b.mu.Unlock()

@@ -336,6 +336,41 @@ func TestRateLimitsGateNoResetUsesFallbackAndReprobes(t *testing.T) {
 	}
 }
 
+// TestRateLimitsGateReleasesWhenLimitClears (#3239): a live update that
+// leaves no bucket at a reached limit (credits added) reopens the gate at
+// once, not at its deadline; an update for another bucket while one is still
+// reached does not; and a limit reached again after the release closes the
+// gate again at once (the release forgets the old deadline).
+func TestRateLimitsGateReleasesWhenLimitClears(t *testing.T) {
+	b := newTestBackend(t)
+	b.startOpts.AgentID = t.Name()
+	isolateRateLimits(t, t.Name())
+	engaged, released := 0, 0
+	b.SetHostHooks(delegator.HostHooks{
+		EngageRateLimit:  func(ratelimit.Signal) { engaged++ },
+		ReleaseRateLimit: func() { released++ },
+	})
+	codexUpdate := fmt.Sprintf(`{"method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":40,"windowDurationMins":300,"resetsAt":%d}}}}`, time.Now().Add(2*time.Hour).Unix())
+	premiumCleared := `{"method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":"premium","primary":null,"secondary":null,"rateLimitReachedType":null}}}`
+
+	b.dispatch([]byte(livePremiumDepleted))
+	if engaged != 1 || released != 0 {
+		t.Fatalf("after the limit: engaged=%d released=%d, want 1, 0", engaged, released)
+	}
+	b.dispatch([]byte(codexUpdate)) // the premium bucket is still reached
+	if released != 0 {
+		t.Fatalf("released %d times while the premium bucket is still reached, want 0", released)
+	}
+	b.dispatch([]byte(premiumCleared))
+	if released != 1 {
+		t.Fatalf("released %d times after the limit cleared, want 1", released)
+	}
+	b.dispatch([]byte(livePremiumDepleted))
+	if engaged != 2 {
+		t.Fatalf("engaged %d times after the limit came back, want 2 (closed again at once)", engaged)
+	}
+}
+
 // TestRateLimitsSeedDoesNotEngageGate proves the startup read never closes
 // the gate: its deadline survives a restart by itself, and re-closing would
 // re-broadcast the rate-limited notice on every restart.
