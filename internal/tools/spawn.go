@@ -685,8 +685,17 @@ func (s *Spawner) SpawnTool() *Tool {
 			if err := s.checkSpawnDepth(ctx); err != nil {
 				return ToolResult{}, err
 			}
-			// The usage hold (#2491): no new spawn while the account holds.
-			if msg := usageHoldRefusal(host.agentOrNil(), SessionKeyFromContext(ctx)); msg != "" {
+			// The usage hold (#2491): no new spawn while the account it runs
+			// on holds. A spawn as another agent runs on the TARGET's account
+			// (Dick 2026-11-21, #3220 Q-3220a: "The target agent's hold"),
+			// under its cross-agent root, so the target is asked about that
+			// root: never about the caller's session, which is in another
+			// agent's pool (asking moved it onto the target's account).
+			if host != s {
+				if msg := usageHoldRefusal(host.agentOrNil(), session.CrossAgentSpawnRoot(host.deps.AgentID)); msg != "" {
+					return ToolResult{}, fmt.Errorf("NOT started: the agent you asked to spawn, %s, is held (its account's hold, not yours): %s", host.deps.AgentID, msg)
+				}
+			} else if msg := usageHoldRefusal(s.agentOrNil(), SessionKeyFromContext(ctx)); msg != "" {
 				return ToolResult{}, fmt.Errorf("NOT started: %s", msg)
 			}
 			background := p.Context == spawnModeClone || p.Background

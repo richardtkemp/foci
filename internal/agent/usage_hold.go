@@ -406,14 +406,18 @@ func (inb *sessionInbox) takeUsageRelease() []Envelope {
 
 // UsageHoldRefusal is tools.UsageHoldRefuser: why sessionKey may start no
 // spawn (and spawn_send may not reach one of its spawns) now, or "" when its
-// account is open. A spawn runs on its spawner's account.
+// account is open. sessionKey is one of this agent's sessions: a spawn of the
+// agent's own runs on its spawner's account; a spawn as this agent from
+// another agent asks about this agent's cross-agent root (#3220). The reason
+// names the account when it has a name (#3220 problem 4).
 func (a *Agent) UsageHoldRefusal(sessionKey string) string {
-	st := a.UsageHold(sessionKey)
+	acct := a.AccountFor(sessionKey)
+	st := acct.Hold()
 	switch st.Phase {
 	case usagehold.Hold:
-		return "the usage hold is on (only keepalives and reminders run) until " + formatLift(st.LiftAt) + "."
+		return acct.WithName("the usage hold is on (only keepalives and reminders run) until "+formatLift(st.LiftAt)) + "."
 	case usagehold.Stop:
-		return "the usage limit is reached; nothing runs until " + formatLift(st.LiftAt) + "."
+		return acct.WithName("the usage limit is reached; nothing runs until "+formatLift(st.LiftAt)) + "."
 	}
 	return ""
 }

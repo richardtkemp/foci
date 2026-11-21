@@ -159,3 +159,44 @@ func TestRegistryOneAccountPerKey(t *testing.T) {
 		t.Errorf("Get: same key gave distinct accounts, or distinct keys one")
 	}
 }
+
+// TestPool_OtherAgentsSessionIsNeverBound (#3220): a pool asked about a
+// session of another agent (a cross-agent spawn's hold check asked the
+// target's pool about the caller's session) binds nothing, stores nothing
+// and tells OnLeft nothing: the session's stored account stays as it is.
+// Before the fix the codex agent's pool found cam's stored Claude Code
+// account "not in the pool", moved the cam session to codex, stored that and
+// cleared its resume id.
+func TestPool_OtherAgentsSessionIsNeverBound(t *testing.T) {
+	codex := testAccount("codex")
+	const camRoot, camChild = "cam/c2426135064553928237", "cam/c2426135064553928237/b1795192750"
+	st := memStore{camRoot + "\x00" + session.MetaKeyAccount: "claude-code:keychain:"}
+	p := NewPool(st, codex).ForAgent("codex")
+	left := 0
+	p.OnLeft = func(string, string, *Account) { left++ }
+	for _, k := range []string{camRoot, camChild} {
+		a, err := p.Resolve(k)
+		if a != nil || err == nil {
+			t.Errorf("Resolve(%s) = %v, %v; want no account and an error", k, a.Key(), err)
+		}
+		if got := p.For(k); got != nil {
+			t.Errorf("For(%s) = %v, want nil", k, got.Key())
+		}
+	}
+	if v := st[camRoot+"\x00"+session.MetaKeyAccount]; v != "claude-code:keychain:" {
+		t.Errorf("cam root's stored account = %q, want it untouched", v)
+	}
+	if v, ok := st[camChild+"\x00"+session.MetaKeyAccount]; ok {
+		t.Errorf("cam child stored on %q, want nothing stored", v)
+	}
+	if left != 0 {
+		t.Errorf("OnLeft told %d time(s), want none", left)
+	}
+	// The pool's own sessions, its cross-agent spawn root among them, are
+	// bound as before.
+	for _, k := range []string{"codex/c1", session.CrossAgentSpawnRoot("codex") + "/b1"} {
+		if got := p.For(k); got != codex {
+			t.Errorf("own session %s on %v, want codex", k, got.Key())
+		}
+	}
+}

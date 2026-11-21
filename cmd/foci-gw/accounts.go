@@ -76,7 +76,7 @@ func accountFor(cfg *config.Config, spec delegator.Spec, as delegator.AccountSpe
 // whatever account a new session would take.
 func agentPool(idx *session.SessionIndex, agentID string, accounts []*account.Account) *account.Pool {
 	if idx == nil {
-		return account.NewPool(nil, accounts...)
+		return account.NewPool(nil, accounts...).ForAgent(agentID)
 	}
 	if len(accounts) > 0 {
 		n, err := idx.BackfillSessionMetadata(agentID, session.MetaKeyCCResumeID, session.MetaKeyAccount, accounts[0].Key())
@@ -87,7 +87,7 @@ func agentPool(idx *session.SessionIndex, agentID string, accounts []*account.Ac
 			log.NewComponentLogger("account/"+agentID).Infof("recorded %d session(s) made before accounts on account %s", n, accounts[0].Key())
 		}
 	}
-	return account.NewPool(idx, accounts...)
+	return account.NewPool(idx, accounts...).ForAgent(agentID)
 }
 
 // masterOnAccount returns cfg's master agent when acct is one of its

@@ -890,3 +890,53 @@ func TestCrossAgentDirectSpawnPromptsGoToCaller(t *testing.T) {
 		t.Error("the batch still has an owner after the spawn returned")
 	}
 }
+
+// keyHeldAgent is a ctxSpawnAgent whose account holds for every session; it
+// records which sessions the hold check asked about.
+type keyHeldAgent struct {
+	*ctxSpawnAgent
+	hmu   sync.Mutex
+	asked []string
+}
+
+func (a *keyHeldAgent) UsageHoldRefusal(sk string) string {
+	a.hmu.Lock()
+	defer a.hmu.Unlock()
+	a.asked = append(a.asked, sk)
+	return "the usage hold is on (only keepalives and reminders run) until Tue 24 Nov 15:46."
+}
+
+// TestCrossAgentSpawnChecksTargetsHold (#3220, Dick 2026-11-21 Q-3220a: "The
+// target agent's hold"): a cross-agent spawn is refused on the TARGET
+// agent's hold, asked about the session the spawn runs under (the target's
+// cross-agent root), never about the caller's session (which belongs to
+// another agent's pool); the refusal names the target agent. The caller's
+// own hold is not asked.
+func TestCrossAgentSpawnChecksTargetsHold(t *testing.T) {
+	t.Parallel()
+	callerAgent := &keyHeldAgent{ctxSpawnAgent: newCtxSpawnAgent()}
+	targetAgent := &keyHeldAgent{ctxSpawnAgent: newCtxSpawnAgent()}
+	h, _ := newCharacterHarness(callerAgent)
+	h.spawner.deps.AgentID = "xhold-caller"
+	h.ctx = WithSessionKey(context.Background(), "xhold-caller/c1")
+	target := NewSpawner(SpawnDeps{AgentID: "xhold-target", MaxInherit: 1, CharacterBranch: (&characterBranches{}).create, Tracker: h.tracker},
+		func() SpawnAgent { return targetAgent })
+	registerTestSpawner(t, h.spawner)
+	registerTestSpawner(t, target)
+
+	_, err := h.spawner.SpawnTool().Execute(h.ctx, json.RawMessage(`{"name":"xhold","prompt":"p","background":true,"agent":"xhold-target"}`))
+	if err == nil || !strings.Contains(err.Error(), "NOT started") || !strings.Contains(err.Error(), "xhold-target") || !strings.Contains(err.Error(), "15:46") {
+		t.Fatalf("spawn as a held target = %v; want NOT started naming the target agent and its lift", err)
+	}
+	targetAgent.hmu.Lock()
+	asked := slices.Clone(targetAgent.asked)
+	targetAgent.hmu.Unlock()
+	if want := []string{session.CrossAgentSpawnRoot("xhold-target")}; !slices.Equal(asked, want) {
+		t.Errorf("target asked about %q, want only %q (the session the spawn runs under)", asked, want)
+	}
+	callerAgent.hmu.Lock()
+	defer callerAgent.hmu.Unlock()
+	if len(callerAgent.asked) != 0 {
+		t.Errorf("caller's hold asked about %q, want not asked (the target's hold applies)", callerAgent.asked)
+	}
+}

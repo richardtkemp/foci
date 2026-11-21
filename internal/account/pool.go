@@ -1,6 +1,7 @@
 package account
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -40,6 +41,9 @@ type Pool struct {
 	// longer has is moved to the pick (its files are out of reach, so it
 	// starts again on now). Set before the first For; nil = log only.
 	OnLeft func(sessionKey, was string, now *Account)
+	// agent is the id of the agent whose pool this is (ForAgent); "" when
+	// unset (tests), when every key is taken as the agent's own.
+	agent string
 
 	mu    sync.Mutex
 	bound map[string]*Account // by session key
@@ -49,6 +53,15 @@ type Pool struct {
 // keeping its bindings in store; a nil store keeps them in memory only.
 func NewPool(store BindingStore, accounts ...*Account) *Pool {
 	return &Pool{accounts: accounts, store: store, bound: map[string]*Account{}}
+}
+
+// ForAgent sets the id of the agent whose pool p is and returns p. Call it
+// before the first For.
+func (p *Pool) ForAgent(agentID string) *Pool {
+	if p != nil {
+		p.agent = agentID
+	}
+	return p
 }
 
 // Accounts returns the pool's accounts, in order.
@@ -79,6 +92,12 @@ func (p *Pool) For(sessionKey string) *Account {
 func (p *Pool) Resolve(sessionKey string) (*Account, error) {
 	if p == nil || len(p.accounts) == 0 {
 		return nil, nil
+	}
+	if !p.owns(sessionKey) {
+		// A session of another agent is in that agent's pool (#3220): binding
+		// it here would store this pool's account over its own and, through
+		// OnLeft, clear its resume id.
+		return nil, fmt.Errorf("session %s belongs to another agent, not %s: its account is in that agent's pool", sessionKey, p.agent)
 	}
 	p.mu.Lock()
 	a := p.bound[sessionKey]
@@ -212,6 +231,16 @@ func liftsBefore(x, y time.Time) bool {
 		return true
 	}
 	return x.Before(y)
+}
+
+// owns reports whether sessionKey is a session of the pool's agent: always
+// when the pool's agent is unset or the key does not parse as a session key.
+func (p *Pool) owns(sessionKey string) bool {
+	if p.agent == "" || sessionKey == "" {
+		return true
+	}
+	sk, err := session.ParseSessionKey(sessionKey)
+	return err != nil || sk.AgentID == p.agent
 }
 
 func (p *Pool) byKey(key string) *Account {
