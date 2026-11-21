@@ -281,6 +281,45 @@ func (s *Store) newestWindow(account, window string, withUsed bool) (windowRow, 
 	return row, true, nil
 }
 
+// PercentReading is one stored percent figure of one window (PercentReadings).
+type PercentReading struct {
+	Window     string
+	ReportID   int64 // figures of one report share it
+	ReceivedAt time.Time
+	Percent    float64   // 0-100, whatever unit it was stored in
+	ResetsAt   time.Time // zero = not reported
+}
+
+// PercentReadings lists every stored percent figure of account, of every
+// window, oldest first (the account pick's demand profile and window-size
+// ratio, #3247). Rows with no figure (a Claude Code "allowed" event) are left
+// out.
+func (s *Store) PercentReadings(account string) ([]PercentReading, error) {
+	rows, err := s.db.Query(`SELECT window, report_id, received_at, used, used_unit, resets_at FROM usage_windows
+		WHERE account = ? AND used IS NOT NULL ORDER BY received_at, id`, account)
+	if err != nil {
+		return nil, fmt.Errorf("usagelog: percent readings: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []PercentReading
+	for rows.Next() {
+		var (
+			r                windowRow
+			pr               PercentReading
+			received, resets int64
+		)
+		if err := rows.Scan(&pr.Window, &pr.ReportID, &received, &r.used, &r.unit, &resets); err != nil {
+			return nil, fmt.Errorf("usagelog: percent readings: %w", err)
+		}
+		pr.ReceivedAt, pr.Percent = time.Unix(0, received), r.percent()
+		if resets != 0 {
+			pr.ResetsAt = time.Unix(resets, 0)
+		}
+		out = append(out, pr)
+	}
+	return out, rows.Err()
+}
+
 // ReportFromRead is the report of a usage read (a UsageQuery result) of
 // source, or false when the read holds no figures received for it (a codex
 // /usage with no fresh read repeats figures already stored). The payload is

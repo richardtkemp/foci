@@ -117,13 +117,15 @@ On macOS the account gets its own Keychain item, named after its folder: on a se
 
 ## Several accounts for one agent
 
-An agent may list several folders, one per account (#3186): `accounts = ["/home/foci/.claude", "/home/foci/.claude-b"]`. Each **new** chat or session takes the account with the most usage left, and keeps it for its whole life, resumes and restarts included; its branches, forks and spawns are on the same account. A session never moves to another account (it is for load balancing).
+An agent may list several folders, one per account (#3186): `accounts = ["/home/foci/.claude", "/home/foci/.claude-b"]`. Each **new** chat or session takes the account with the most allowance left for the demand expected before its usage windows reset, and keeps it for its whole life, resumes and restarts included; its branches, forks and spawns are on the same account. A session never moves to another account (it is for load balancing).
 
 How the account of a new session is chosen:
 
 1. An account that needs a new login is passed over while another one works. When every account needs one, the first in the list is taken and its login starts as for any session.
 2. An account on a usage hold or stop is passed over while another is open. When every account is held, the one whose hold lifts first is taken.
-3. Of the open accounts, the least used wins: an account's use is its fullest usage window (5-hour or 7-day), from the last figures its sessions reported (no fresh read). An account with no figure yet counts as unused. A tie goes to the first in the list.
+3. Of the open accounts, the one with the largest score wins (#3247). For each of the 5-hour and 7-day windows, foci divides the allowance left by the demand it expects until that window resets; the score is the smaller of the two. The figures are the last ones its sessions reported (no fresh read). An account with no figure yet counts as unused; a window at its limit gives a score of 0. A tie goes to the first in the list.
+   - **Expected demand** comes from the agent's own usage history: the rise of the 7-day percent per hour, summed over its accounts, averaged per slot (weekday or weekend, by London hour of day). A slot counts at least 30% of the average hour. With no history, every hour expects the same demand, so the score is the allowance left per hour until the reset.
+   - **One unit.** The 5-hour allowance left is converted to 7-day percent with the login's own ratio of the two windows' sizes, learned from its readings (0.1 until three 5-hour periods have shown it). foci assumes that every account of one agent is on the same plan (the same 7-day size).
 
 Each account keeps its own login, sign-in expiry warnings, usage hold, rate-limit gate and usage figures: a hold on one account holds only the sessions on it, and its start and end notices go only to the chats whose session is on it (the default chat and the open app chats). `/usage`, `/mana`, `/login` and `/limit_reset` in a chat act on that chat's account.
 

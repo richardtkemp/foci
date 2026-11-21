@@ -22,10 +22,11 @@ type BindingStore interface {
 // A session's account is fixed the first time the session is asked about
 // (For) and stored with it (session.MetaKeyAccount), so a restart and a
 // resume find the same account (Dick 2026-11-19: "one session is tied to one
-// account"). A new top-level session takes the pick (pick: the account with
-// the most usage left). A child session (a branch, fork, spawn or batch: a
-// child key <root>/b<ts> or <root>/i<ts>) takes its root's account the first
-// time it is asked about, and stores it with itself: a child made before its
+// account"). A new top-level session takes the pick (pick, rule T-profile:
+// the account with the most allowance left per expected demand until its
+// windows reset). A child session (a branch, fork, spawn or batch: a child
+// key <root>/b<ts> or <root>/i<ts>) takes its root's account the first time
+// it is asked about, and stores it with itself: a child made before its
 // root was reset stays on the account its files are in when the reset root
 // moves to a new pick.
 //
@@ -47,6 +48,11 @@ type Pool struct {
 
 	mu    sync.Mutex
 	bound map[string]*Account // by session key
+
+	// dmu guards dem, the pick's demand profile and ratios, rebuilt in the
+	// first pick of each clock hour (demandAt).
+	dmu sync.Mutex
+	dem *demand
 }
 
 // NewPool returns the pool of accounts (in the agent's configured order),
@@ -162,19 +168,19 @@ func (p *Pool) Next() *Account {
 	return p.pick(time.Now())
 }
 
-// pick chooses the account of a new top-level session (#3186, Dick
-// 2026-11-19: "each new session chooses the account with the most usage
-// remaining"):
+// pick chooses the account of a new top-level session (#3186; the score is
+// rule T-profile, #3247, Dick 2026-11-21 16:17):
 //
 //   - an account that owes a login is passed over while another does not;
 //     when every account owes one, the first is taken (its login starts as
-//     for any session, RULINGS 4 Q7);
+//     for any session, #3186 RULINGS 4 Q7);
 //   - of the rest, an account that holds or stops is passed over while
-//     another is open; of the open ones the least used wins (Account.Used,
-//     the last figures its sessions reported, RULINGS 3 Q2 and Q3; an
-//     account with no figure counts as unused);
+//     another is open; of the open ones the one with the largest T-profile
+//     score wins (demand.score: the smaller of its 5h and 7d allowance left
+//     per expected demand until that window resets, from the last figures
+//     its sessions reported; an account with no figure counts as unused);
 //   - when every one holds or stops, the one whose hold lifts first wins
-//     (Q4; a hold with no known lift time comes last);
+//     (#3186 Q4; a hold with no known lift time comes last);
 //   - a tie goes to the first in the agent's list.
 func (p *Pool) pick(now time.Time) *Account {
 	if len(p.accounts) == 1 {
@@ -190,17 +196,21 @@ func (p *Pool) pick(now time.Time) *Account {
 		return p.accounts[0]
 	}
 	var (
-		best     *Account
-		bestOpen bool
-		bestUsed float64
-		bestLift time.Time
+		best      *Account
+		bestOpen  bool
+		bestScore float64
+		bestLift  time.Time
+		d         *demand
 	)
 	for _, a := range cands {
 		st := a.Hold()
 		open := st.Phase == usagehold.Open
-		var used float64
+		var score float64
 		if open {
-			used, _ = a.Used(now)
+			if d == nil {
+				d = p.demandAt(now)
+			}
+			score = d.score(a, now)
 		}
 		if best != nil {
 			switch {
@@ -209,16 +219,29 @@ func (p *Pool) pick(now time.Time) *Account {
 					continue
 				}
 			case open:
-				if used >= bestUsed {
+				if score <= bestScore {
 					continue
 				}
 			case !liftsBefore(st.LiftAt, bestLift):
 				continue
 			}
 		}
-		best, bestOpen, bestUsed, bestLift = a, open, used, st.LiftAt
+		best, bestOpen, bestScore, bestLift = a, open, score, st.LiftAt
 	}
 	return best
+}
+
+// demandAt is the pick's demand profile and ratios for the clock hour now is
+// in, built from the usage history in the first pick of each hour (the
+// profile reads completed hours only, so it cannot change within an hour; a
+// ratio waits at most an hour for a new figure).
+func (p *Pool) demandAt(now time.Time) *demand {
+	p.dmu.Lock()
+	defer p.dmu.Unlock()
+	if p.dem == nil || p.dem.hour != hourOf(now) {
+		p.dem = buildDemand(p.accounts, now)
+	}
+	return p.dem
 }
 
 // liftsBefore reports whether a hold lifting at x lifts strictly before one

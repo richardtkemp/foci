@@ -59,21 +59,25 @@ func (f *pickFixture) hold(key string, reached bool, lift time.Time) {
 	f.holds.Observe(key, usagehold.Event{Window: "five_hour", Util: 0.99, HasUtil: true, Reached: reached, ResetAt: lift}, time.Now())
 }
 
-// TestPick_MostUsageLeft (#3186 F2/F3): a new top-level session takes the
-// account whose fuller window is the least used; an account with no figure
-// counts as unused; a tie goes to the first in the list.
+// TestPick_MostUsageLeft (#3186 F2/F3, scored by rule T-profile since
+// #3247): a new top-level session takes the account with the most allowance
+// left per expected demand until its windows reset; an account with no
+// figure counts as unused; a tie goes to the first in the list. Every window
+// here resets in 3 h and there is no history, so the score is allowance left
+// per hour, the 5h one at the default ratio 0.1 of a 7d one: a min(9, 20),
+// b min(6, 70), c min(4, 95) (/3 h).
 func TestPick_MostUsageLeft(t *testing.T) {
 	f, accts := newPickFixture(t, "a", "b", "c")
 	p := NewPool(memStore{}, accts...)
 	f.report("a", map[string]float64{"five_hour": 10, "seven_day": 80})
 	f.report("b", map[string]float64{"five_hour": 40, "seven_day": 30})
 	f.report("c", map[string]float64{"five_hour": 60, "seven_day": 5})
-	if got := p.For("agent/c1"); got != f.accts["b"] {
-		t.Fatalf("new session on %s, want b (fuller windows: a 80, b 40, c 60)", got.Key())
+	if got := p.For("agent/c1"); got != f.accts["a"] {
+		t.Fatalf("new session on %s, want a (5h left per hour: a 3, b 2, c 1.3)", got.Key())
 	}
 
 	f2, accts2 := newPickFixture(t, "a", "b", "c")
-	f2.report("a", map[string]float64{"five_hour": 20})
+	f2.report("a", map[string]float64{"five_hour": 95})
 	p2 := NewPool(memStore{}, accts2...)
 	if got := p2.For("agent/c1"); got != f2.accts["b"] {
 		t.Errorf("new session on %s, want b (no figure = unused; the tie with c goes to the first)", got.Key())
@@ -141,28 +145,32 @@ func TestPick_SkipsAccountsOwingALogin(t *testing.T) {
 	}
 }
 
-// TestUsed_ReachedAndOldPeriods: a window reached in its current period
-// counts as full; a figure from before its window reset does not count.
-func TestUsed_ReachedAndOldPeriods(t *testing.T) {
+// TestScore_ReachedAndOldPeriods: a window reached in its current period
+// scores 0; a figure from before its window reset does not count (the
+// account scores as unused).
+func TestScore_ReachedAndOldPeriods(t *testing.T) {
 	f, _ := newPickFixture(t, "a")
 	a := f.accts["a"]
-	if _, known := a.Used(time.Now()); known {
-		t.Fatal("known with no figure")
+	now := time.Now()
+	d := buildDemand([]*Account{a}, now)
+	unused := d.score(a, now)
+	if unused <= 0 {
+		t.Fatalf("unused score = %v", unused)
 	}
 	old := 70.0
-	if err := f.hist.Save(delegator.UsageReport{Source: "t", ReceivedAt: time.Now().Add(-6 * time.Hour), Backend: "claude-code", Account: "a", AgentID: "x",
-		Windows: []delegator.UsageReportWindow{{Window: "five_hour", Used: &old, UsedUnit: delegator.UsageUnitPercent, ResetsAt: time.Now().Add(-time.Hour)}}}); err != nil {
+	if err := f.hist.Save(delegator.UsageReport{Source: "t", ReceivedAt: now.Add(-6 * time.Hour), Backend: "claude-code", Account: "a", AgentID: "x",
+		Windows: []delegator.UsageReportWindow{{Window: "seven_day", Used: &old, UsedUnit: delegator.UsageUnitPercent, ResetsAt: now.Add(-time.Hour)}}}); err != nil {
 		t.Fatal(err)
 	}
-	if u, known := a.Used(time.Now()); known || u != 0 {
-		t.Errorf("Used = %v, %v; a figure from before the reset must not count", u, known)
+	if s := d.score(a, now); s != unused {
+		t.Errorf("score = %v, want %v; a figure from before the reset must not count", s, unused)
 	}
-	if err := f.hist.Save(delegator.UsageReport{Source: "t", ReceivedAt: time.Now(), Backend: "claude-code", Account: "a", AgentID: "x",
-		Windows: []delegator.UsageReportWindow{{Window: "seven_day", Status: "rejected", LimitReached: true, ResetsAt: time.Now().Add(time.Hour)}}}); err != nil {
+	if err := f.hist.Save(delegator.UsageReport{Source: "t", ReceivedAt: now, Backend: "claude-code", Account: "a", AgentID: "x",
+		Windows: []delegator.UsageReportWindow{{Window: "seven_day", Status: "rejected", LimitReached: true, ResetsAt: now.Add(time.Hour)}}}); err != nil {
 		t.Fatal(err)
 	}
-	if u, known := a.Used(time.Now()); !known || u != 1 {
-		t.Errorf("Used = %v, %v; want a reached window to count as full", u, known)
+	if s := d.score(a, now); s != 0 {
+		t.Errorf("score = %v; want 0 for a reached window", s)
 	}
 }
 

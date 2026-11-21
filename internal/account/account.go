@@ -266,41 +266,6 @@ func (a *Account) Readings(agentID string) *usagelog.Binding {
 	}
 }
 
-// Used is how much of the account is used now (0..1): its highest use across
-// its usage windows, from the last figures its sessions reported (the usage
-// history; no fresh read, #3186 RULINGS 3 Q2 and Q3). A window whose limit is
-// reached in its current period counts as full; a figure from before a
-// window's reset does not count. known is false when no figure of the
-// current periods is stored (no store, or no report yet).
-func (a *Account) Used(now time.Time) (used float64, known bool) {
-	if a == nil || a.history == nil {
-		return 0, false
-	}
-	st := a.history()
-	if st == nil {
-		return 0, false
-	}
-	cur, err := st.Current(a.spec.Key, now)
-	if err != nil {
-		log.NewComponentLogger("account").Warnf("read the usage of account %s: %v", a.spec.Key, err)
-		return 0, false
-	}
-	for _, w := range cur.Windows {
-		u, ok := 0.0, false
-		if w.HasPercent {
-			u, ok = w.Percent/100, true
-		}
-		if w.LimitReached && (w.ResetsAt.IsZero() || w.ResetsAt.After(now)) {
-			u, ok = 1, true
-		}
-		if ok {
-			known = true
-			used = max(used, u)
-		}
-	}
-	return used, known
-}
-
 // Registry holds every account of the process by Key, so that agents on one
 // login share one Account. Holds and History are what its accounts get when
 // Get's Options leave them unset (nil Holds = usagehold.Default).
