@@ -1602,6 +1602,10 @@ func generateShellFunc(t *Tool) string {
     fi
     return 1
   fi
+  # The server resolves a relative path against the agent workspace, not the
+  # caller's cwd: anchor it here, as generated wrappers do for filepath
+  # params (#754, #3223). The stdin temp file is already absolute.
+  case "$file" in /*) ;; *) file="$PWD/$file" ;; esac
   foci-call "$(jq -nc --arg f "$file" --arg p "$prompt" '{"tool":"summary","params":{"file":$f,"prompt":$p}}')"
 }
 `, name, helpCheck, guard, name, name, name)

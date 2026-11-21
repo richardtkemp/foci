@@ -2909,3 +2909,37 @@ func TestSessionExecBridge_LongSessionName(t *testing.T) {
 		b.Close()
 	}
 }
+
+// TestSummaryShellRelativeFileResolvesAgainstCwd covers #3223: a relative
+// --file path was sent verbatim, so the server resolved it against the agent
+// workspace, not the caller's cwd ("open <workspace>/2026-11-02.md: no such
+// file" when run from <workspace>/memory). The wrapper must prefix $PWD, as
+// the generated wrappers do for format:filepath params (#754), and leave
+// absolute paths unchanged.
+func TestSummaryShellRelativeFileResolvesAgainstCwd(t *testing.T) {
+	t.Parallel()
+	body := generateShellFunc(NewSummaryTool(nil, nil, t.TempDir()))
+	dir := t.TempDir()
+
+	run := func(cmd string) string {
+		script := "foci__json() { return 1; }\nfoci-call() { printf '%s' \"$1\" | jq -r .params.file; }\n" +
+			body + "\n" + cmd + "\n"
+		c := osexec.Command("bash", "-c", script)
+		c.Dir = dir
+		c.Stdin = strings.NewReader("")
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Fatalf("bash: %v\nout=%s", err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	// bash's $PWD may differ from dir by symlinks (macOS /var -> /private/var).
+	pwd := run("printf '%s' \"$PWD\"")
+	if got, want := run("foci_summary --file notes.md 'what is this'"), pwd+"/notes.md"; got != want {
+		t.Errorf("relative --file sent as %q, want %q", got, want)
+	}
+	if got, want := run("foci_summary --file /etc/hosts 'what is this'"), "/etc/hosts"; got != want {
+		t.Errorf("absolute --file sent as %q, want %q", got, want)
+	}
+}
