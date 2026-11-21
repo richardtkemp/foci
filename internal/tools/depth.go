@@ -143,10 +143,11 @@ type DepthDeps struct {
 	Approve func(sessionKey, promptID, text string, cb func(approved bool)) error
 	// Now is the clock; nil = time.Now.
 	Now func() time.Time
-	// OnHandover runs after each point where a reported node's spawns may
-	// pass to its parent (#2624): a fan-in turn taken, a reset, a restore,
-	// depth mode turned off (#2628, OnDisable). The spawner delivers the results it held (Spawner.ReleaseHeld). Nil =
-	// none.
+	// OnHandover runs after each point where the owner of a node's spawns
+	// may change (#2624, #3206): a node reported or dismissed, a fan-in turn
+	// taken, a reset, a restore, depth mode turned off (#2628, OnDisable) or
+	// back on. The spawner re-reads every spawn's owner, moves what the app
+	// shows, and delivers the results it held (Spawner.Reown). Nil = none.
 	OnHandover func()
 }
 
@@ -383,7 +384,11 @@ func (m *DepthManager) OnEnable() {
 	m.mu.Unlock()
 	if due {
 		m.restore()
+		return
 	}
+	// Turning depth back on can hold again what was handed over while it
+	// was off (SpawnRoute), so spawn owners are re-read (#3206).
+	m.handover()
 }
 
 // OnDisable is called when [depth] enabled turns off (#2628): no fan-in can
@@ -1088,6 +1093,7 @@ func (m *DepthManager) report(caller, text string) (string, error) {
 	parent, tree := n.Parent, n.Tree
 	m.mu.Unlock()
 	m.persist(rec...)
+	m.handover() // its spawns' owner may change now (#3206)
 	m.closeAsks(caller)
 	m.checkFanIn(parent)
 	m.pushFeed(tree)
@@ -1342,6 +1348,7 @@ func (m *DepthManager) autoReport(key string) {
 	parent, tree := n.Parent, n.Tree
 	m.mu.Unlock()
 	m.persist(rec...)
+	m.handover() // its spawns' owner may change now (#3206)
 	m.closeAsks(key)
 	m.checkFanIn(parent)
 	m.pushFeed(tree)
@@ -1389,6 +1396,7 @@ func (m *DepthManager) Dismiss(rootKey, leafID string) error {
 	rec := snap(recs...)
 	m.mu.Unlock()
 	m.persist(rec...)
+	m.handover() // the dismissed nodes' spawns' owner may change now (#3206)
 	for _, k := range stop {
 		if m.deps.StopTurn != nil {
 			m.deps.StopTurn(k)

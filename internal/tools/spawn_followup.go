@@ -322,10 +322,7 @@ func (s *Spawner) StopTool() *Tool {
 func (s *Spawner) stop(caller, id string) (ToolResult, error) {
 	tr := s.deps.Tracker
 	if id == "all" {
-		n := tr.stopAll(caller, stoppedBySpawnStop)
-		for _, p := range s.handedOver(caller) {
-			n += tr.stopAll(p, stoppedBySpawnStop) // spawns handed over to the caller (#2624)
-		}
+		n := tr.stopAll(caller, stoppedBySpawnStop) // the ones it owns now, handed over included (#3206)
 		if n == 0 {
 			return TextResult("No running spawns to stop."), nil
 		}

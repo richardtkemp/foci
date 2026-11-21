@@ -150,6 +150,7 @@ func (t *SpawnTracker) ForgetAgent(agentID string) {
 	for parent := range t.spawns {
 		if session.AgentIDFromAnyKey(parent) == agentID {
 			delete(t.spawns, parent)
+			delete(t.routes, parent)
 		}
 	}
 	delete(t.stopping, agentID)
@@ -339,6 +340,7 @@ func (t *SpawnTracker) adopt(rec spawnRecord, running bool, outcome string, canc
 	} else {
 		s.ended, s.outcome = time.Now(), outcome
 	}
+	t.routeOf(rec.Parent) // its owner is known before anything reads it (#3206)
 	t.mu.Lock()
 	if t.spawns[rec.Parent] == nil {
 		t.spawns[rec.Parent] = map[string]*trackedSpawn{}

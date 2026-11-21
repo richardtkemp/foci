@@ -133,9 +133,11 @@ func (m *DepthManager) storedNodes() map[string]*depthNode {
 	return out
 }
 
-// handover tells the spawner a handover point passed, so held spawn results
-// whose owner may now take them are delivered, and wakes every waiter on
-// HandoverSignal (#2647: a held wake re-resolves its owner).
+// handover tells the spawner a spawn's owner may have changed (a handover
+// point passed, or a node's state did), so it re-reads the owners and
+// delivers the held results whose owner may now take them (#2624, #3206),
+// and wakes every waiter on HandoverSignal (#2647: a held wake re-resolves
+// its owner).
 func (m *DepthManager) handover() {
 	m.handoverMu.Lock()
 	if m.handoverCh != nil {

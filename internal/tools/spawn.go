@@ -409,7 +409,15 @@ func NewSpawner(deps SpawnDeps, agentFn func() SpawnAgent) *Spawner {
 			panic("tools.NewSpawner: a delegated agent's spawn deps set " + f + ", an API one-shot field")
 		}
 	}
-	return &Spawner{deps: deps, agentFn: agentFn, slots: newSpawnSlots(deps.MaxInherit)}
+	// Every app event of a spawn goes to its current owner's chat (#3206).
+	if deps.Observer != nil && deps.Tracker != nil {
+		deps.Observer = ownedObserver{inner: deps.Observer, t: deps.Tracker}
+	}
+	s := &Spawner{deps: deps, agentFn: agentFn, slots: newSpawnSlots(deps.MaxInherit)}
+	// The tracker asks this Spawner who owns its agent's sessions' spawns
+	// (#3206, spawn_reparent.go).
+	deps.Tracker.setRouteResolver(deps.AgentID, s.liveRoute)
+	return s
 }
 
 // SetMaxConcurrent changes how many spawn runs may go at once, effective for

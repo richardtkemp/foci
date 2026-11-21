@@ -137,12 +137,14 @@ func (d *toolDeps) getDepth() *tools.DepthManager {
 			return a != nil && a.HasResumableSession(bk)
 		},
 		Approve: newDepthApproveFn(agentID, d.connMgr),
-		// #2624: a handover point passed; the spawner delivers the results
-		// of reported leaves' spawns it held. Read at call time: the spawner
-		// may be built after the depth manager.
+		// #2624, #3206: a spawn's owner may have changed; the spawner
+		// re-reads the owners, moves the app's view of each moved spawn,
+		// and delivers the results of reported leaves' spawns it held.
+		// Read at call time: the spawner may be built after the depth
+		// manager.
 		OnHandover: func() {
 			if sp := d.spawner; sp != nil {
-				sp.ReleaseHeld()
+				sp.Reown()
 			}
 			// #2647: a closed leaf's pending wakes now belong to the node
 			// it handed over to; move their chat indicators with them.

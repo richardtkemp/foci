@@ -25,7 +25,7 @@ func newReparentHarness(t *testing.T, agent SpawnAgent, store *memSpawnStore) *r
 	}
 	h.depth = newDepthHarness(t, h.sp.store)
 	h.sp.spawner.deps.Route = h.depth.m.SpawnRoute
-	h.depth.m.deps.OnHandover = h.sp.spawner.ReleaseHeld
+	h.depth.m.deps.OnHandover = h.sp.spawner.Reown
 	return h
 }
 

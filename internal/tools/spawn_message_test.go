@@ -288,7 +288,7 @@ func TestSendToSpawnerHeldRoute(t *testing.T) {
 	mu.Lock()
 	hold = false
 	mu.Unlock()
-	s.ReleaseHeld()
+	s.Reown()
 	m := recv(t, got, "the released result")
 	if !strings.Contains(m.msg, "]\n[MESSAGES FROM YOUR SPAWN]") || !strings.Contains(m.msg, "held note") || !strings.Contains(m.msg, "[ITS RESULT]\n\n[SPAWN RESULT]") {
 		t.Fatalf("result = %q, want the held message heading it", m.msg)

@@ -130,6 +130,16 @@ type SpawnTracker struct {
 	// persistMu orders the writes of persist: each write snapshots the
 	// spawn's state under it, so the last write always holds the latest state.
 	persistMu sync.Mutex
+
+	// routes holds, per session that started spawns, who owns them now
+	// (#3206, spawn_reparent.go): every session-keyed query, delivery and
+	// app event reads it. A session with no entry owns its own spawns.
+	routes map[string]SpawnRoute
+	// resolvers computes an agent's routes (setRouteResolver), by agent id.
+	resolvers map[string]func(parent string) SpawnRoute
+	// obsMu orders the app events of spawns (ownedObserver) with the moves
+	// of Spawner.Reown, so none is shown in a chat the spawn has left.
+	obsMu sync.Mutex
 }
 
 type trackedSpawn struct {
@@ -150,7 +160,7 @@ type trackedSpawn struct {
 	// and persisted, until the parent's turn has taken it.
 	result string
 	// held: result waits for a depth fan-in before it may go to the spawn's
-	// owner (#2624, Spawner.ReleaseHeld). In memory only: a restart
+	// owner (#2624, Spawner.Reown). In memory only: a restart
 	// re-routes the persisted result, which holds it again if it must.
 	held bool
 	// kept holds the spawn's messages to its spawner (send_to_spawner) that
@@ -196,6 +206,12 @@ type SpawnLogEntry struct {
 // SpawnSnapshot is a copy of one tracked spawn's state.
 type SpawnSnapshot struct {
 	RunningSpawn
+	// Parent is the session that started the spawn: the key it is tracked
+	// and acted on under, whoever owns it now (#3206).
+	Parent string
+	// Via names Parent, when the spawn was handed over to the session it
+	// was listed for (SpawnRoute.Via); "" otherwise.
+	Via     string
 	Running bool
 	Outcome string // "" while running
 	Ended   time.Time
@@ -239,6 +255,7 @@ func (t *SpawnTracker) addWithPrompt(parent string, s RunningSpawn, cancel conte
 	if t == nil {
 		return
 	}
+	t.routeOf(parent) // its owner is known before anything reads it (#3206)
 	t.mu.Lock()
 	if t.spawns[parent] == nil {
 		t.spawns[parent] = map[string]*trackedSpawn{}
@@ -248,36 +265,62 @@ func (t *SpawnTracker) addWithPrompt(parent string, s RunningSpawn, cancel conte
 	t.persist(parent, s.ID)
 }
 
-// Running returns the running spawns of parentSession, oldest first (nil when
-// there are none).
-func (t *SpawnTracker) Running(parentSession string) []RunningSpawn {
+// ownedLocked calls fn with each spawn owner owns now (#3206): those it
+// started and kept, and those handed over to it, with the session that
+// started each. Caller holds t.mu.
+func (t *SpawnTracker) ownedLocked(owner string, fn func(parent string, s *trackedSpawn)) {
+	for p, m := range t.spawns {
+		if len(m) == 0 || t.ownerLocked(p) != owner {
+			continue
+		}
+		for _, s := range m {
+			fn(p, s)
+		}
+	}
+}
+
+// ownedSnapshot is s's snapshot as listed for its owner: with the session
+// that started it, and that session's name when it is another one.
+func (t *SpawnTracker) ownedSnapshot(owner, parent string, s *trackedSpawn, n int) SpawnSnapshot {
+	snap := s.snapshot(n)
+	snap.Parent = parent
+	if parent != owner {
+		snap.Via = t.routes[parent].Via
+	}
+	return snap
+}
+
+// Running returns the running spawns session owns now (#3206), oldest first
+// (nil when there are none): the ones it started, unless they have passed
+// to another depth node, and the ones handed over to it.
+func (t *SpawnTracker) Running(session string) []RunningSpawn {
 	if t == nil {
 		return nil
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	var out []RunningSpawn
-	for _, s := range t.spawns[parentSession] {
+	t.ownedLocked(session, func(_ string, s *trackedSpawn) {
 		if s.running {
 			out = append(out, s.info)
 		}
-	}
+	})
 	sortSpawns(out, func(r RunningSpawn) RunningSpawn { return r })
 	return out
 }
 
-// List returns every known spawn of parentSession, running and finished,
-// oldest first, without their logs.
-func (t *SpawnTracker) List(parentSession string) []SpawnSnapshot {
+// List returns every known spawn session owns now (#3206), running and
+// finished, oldest first, without their logs.
+func (t *SpawnTracker) List(session string) []SpawnSnapshot {
 	if t == nil {
 		return nil
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	var out []SpawnSnapshot
-	for _, s := range t.spawns[parentSession] {
-		out = append(out, s.snapshot(0))
-	}
+	t.ownedLocked(session, func(p string, s *trackedSpawn) {
+		out = append(out, t.ownedSnapshot(session, p, s, 0))
+	})
 	sortSpawns(out, func(s SpawnSnapshot) RunningSpawn { return s.RunningSpawn })
 	return out
 }
@@ -292,22 +335,37 @@ func sortSpawns[T any](s []T, info func(T) RunningSpawn) {
 	})
 }
 
-// Lookup finds a spawn of parentSession by its id or its branch key, with its
-// last n log entries (all when n <= 0).
-func (t *SpawnTracker) Lookup(parentSession, idOrBranch string, n int) (SpawnSnapshot, bool) {
-	if t == nil {
+// Lookup finds a spawn session owns now (#3206) by its id or its branch key,
+// with its last n log entries (all when n <= 0). The snapshot's Parent is
+// the session it is keyed under.
+func (t *SpawnTracker) Lookup(session, idOrBranch string, n int) (SpawnSnapshot, bool) {
+	if t == nil || idOrBranch == "" {
 		return SpawnSnapshot{}, false
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if s := t.find(parentSession, idOrBranch); s != nil {
-		snap := s.snapshot(n)
-		if n <= 0 {
-			snap.Log = slices.Clone(s.log)
+	var byID, byBranch *trackedSpawn
+	var idParent, branchParent string
+	t.ownedLocked(session, func(p string, s *trackedSpawn) {
+		switch {
+		case s.info.ID == idOrBranch:
+			byID, idParent = s, p
+		case s.info.BranchKey == idOrBranch && byBranch == nil:
+			byBranch, branchParent = s, p
 		}
-		return snap, true
+	})
+	s, p := byID, idParent
+	if s == nil {
+		s, p = byBranch, branchParent
 	}
-	return SpawnSnapshot{}, false
+	if s == nil {
+		return SpawnSnapshot{}, false
+	}
+	snap := t.ownedSnapshot(session, p, s, n)
+	if n <= 0 {
+		snap.Log = slices.Clone(s.log)
+	}
+	return snap, true
 }
 
 func (t *SpawnTracker) find(parent, idOrBranch string) *trackedSpawn {
@@ -325,54 +383,50 @@ func (t *SpawnTracker) find(parent, idOrBranch string) *trackedSpawn {
 	return nil
 }
 
-// spawnNamed is a spawn found by its name, with the session it is keyed under.
-type spawnNamed struct {
-	parent string
-	snap   SpawnSnapshot
-}
-
-// lookupName finds the spawns of parents named name (#2721), with their last
-// n log entries (all when n <= 0). A spawn with no name never matches.
-func (t *SpawnTracker) lookupName(parents []string, name string, n int) []spawnNamed {
+// lookupName finds the spawns session owns now named name (#2721, #3206),
+// with their last n log entries (all when n <= 0), by id. A spawn with no
+// name never matches. More than one is possible only across spawns handed
+// over from different depth leaves.
+func (t *SpawnTracker) lookupName(session, name string, n int) []SpawnSnapshot {
 	if t == nil || name == "" {
 		return nil
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	var out []spawnNamed
-	for _, p := range parents {
-		for _, s := range t.spawns[p] {
-			if s.info.Name != name {
-				continue
-			}
-			snap := s.snapshot(n)
-			if n <= 0 {
-				snap.Log = slices.Clone(s.log)
-			}
-			out = append(out, spawnNamed{parent: p, snap: snap})
+	var out []SpawnSnapshot
+	t.ownedLocked(session, func(p string, s *trackedSpawn) {
+		if s.info.Name != name {
+			return
 		}
-	}
-	slices.SortFunc(out, func(a, b spawnNamed) int { return strings.Compare(a.snap.ID, b.snap.ID) })
+		snap := t.ownedSnapshot(session, p, s, n)
+		if n <= 0 {
+			snap.Log = slices.Clone(s.log)
+		}
+		out = append(out, snap)
+	})
+	slices.SortFunc(out, func(a, b SpawnSnapshot) int { return strings.Compare(a.ID, b.ID) })
 	return out
 }
 
 // claimName reserves name for a spawn caller is starting (#2721). It fails
-// when a spawn of parents (the sessions whose spawns caller's spawn_status
-// lists: its own, and those handed over to it) is named name, or another of
-// caller's spawn calls is starting under it. release frees the reservation;
-// call it once the spawn is registered, or did not start.
-func (t *SpawnTracker) claimName(caller string, parents []string, name string) (release func(), err error) {
+// when a spawn caller owns now (the ones its spawn_status lists, #3206) is
+// named name, or another of caller's spawn calls is starting under it.
+// release frees the reservation; call it once the spawn is registered, or
+// did not start.
+func (t *SpawnTracker) claimName(caller, name string) (release func(), err error) {
 	if t == nil {
 		return func() {}, nil
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	for _, p := range parents {
-		for _, s := range t.spawns[p] {
-			if s.info.Name == name {
-				return nil, fmt.Errorf("this session already has a spawn named %q (%s); give this one another name (a finished spawn keeps its name until it is no longer listed by spawn_status)", name, s.info.ID)
-			}
+	var taken *trackedSpawn
+	t.ownedLocked(caller, func(_ string, s *trackedSpawn) {
+		if s.info.Name == name {
+			taken = s
 		}
+	})
+	if taken != nil {
+		return nil, fmt.Errorf("this session already has a spawn named %q (%s); give this one another name (a finished spawn keeps its name until it is no longer listed by spawn_status)", name, taken.info.ID)
 	}
 	if t.starting[caller][name] {
 		return nil, fmt.Errorf("another spawn named %q is starting in this session; give this one another name", name)
@@ -665,6 +719,7 @@ func (t *SpawnTracker) addDirect(parent string, s RunningSpawn, cancel context.C
 		return
 	}
 	s.Direct = true
+	t.routeOf(parent) // its owner is known before anything reads it (#3206)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.spawns[parent] == nil {
@@ -752,45 +807,52 @@ func (t *SpawnTracker) stopOne(parent, idOrBranch string) (known, stopped bool) 
 	return true, true
 }
 
-// StopOne cancels parentSession's one running spawn with this id, for the
-// user's per-item stop (#2901), and reports whether it was running.
-func (t *SpawnTracker) StopOne(parentSession, id string) bool {
+// StopOne cancels the one running spawn with this id that session owns now
+// (#3206), for the user's per-item stop (#2901), and reports whether it was
+// running.
+func (t *SpawnTracker) StopOne(session, id string) bool {
 	if t == nil {
 		return false
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	s := t.spawns[parentSession][id]
-	if s == nil || !s.running || s.stopped {
+	var found *trackedSpawn
+	t.ownedLocked(session, func(_ string, s *trackedSpawn) {
+		if s.info.ID == id {
+			found = s
+		}
+	})
+	if found == nil || !found.running || found.stopped {
 		return false
 	}
-	s.stopped, s.stoppedBy = true, "the user"
-	s.cancel()
+	found.stopped, found.stoppedBy = true, "the user"
+	found.cancel()
 	return true
 }
 
-// Stop cancels every running spawn of parentSession and returns how many it
-// stopped. Each spawn's own goroutine then ends it, reporting it stopped.
-func (t *SpawnTracker) Stop(parentSession string) int {
-	return t.stopAll(parentSession, "the user")
+// Stop cancels every running spawn session owns now (#3206) and returns how
+// many it stopped. Each spawn's own goroutine then ends it, reporting it
+// stopped.
+func (t *SpawnTracker) Stop(session string) int {
+	return t.stopAll(session, "the user")
 }
 
 // stopAll is Stop, recording who stopped the spawns.
-func (t *SpawnTracker) stopAll(parentSession, by string) int {
+func (t *SpawnTracker) stopAll(session, by string) int {
 	if t == nil {
 		return 0
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	n := 0
-	for _, s := range t.spawns[parentSession] {
+	t.ownedLocked(session, func(_ string, s *trackedSpawn) {
 		if !s.running || s.stopped {
-			continue
+			return
 		}
 		s.stopped, s.stoppedBy = true, by
 		s.cancel()
 		n++
-	}
+	})
 	return n
 }
 

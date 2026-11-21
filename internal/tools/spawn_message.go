@@ -160,7 +160,7 @@ func (s *Spawner) messageFromSpawn(parent, id string, direct bool, from, text st
 	case direct:
 		// Nothing is blocked on the call in the spawner's session.
 	default:
-		r := s.route(parent)
+		r := s.deliveryRoute(parent)
 		if r.Hold {
 			keepWhy = "your spawner has handed its work up and its parent has not taken it yet"
 		}

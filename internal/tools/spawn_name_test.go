@@ -415,20 +415,20 @@ func TestSpawnName_UnnamedRecordGetsPlaceholder(t *testing.T) {
 func TestSpawnName_ConcurrentCallsTakeOneName(t *testing.T) {
 	t.Parallel()
 	tr := NewSpawnTracker()
-	release, err := tr.claimName("test/c1", []string{"test/c1"}, "twin")
+	release, err := tr.claimName("test/c1", "twin")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tr.claimName("test/c1", []string{"test/c1"}, "twin"); err == nil {
+	if _, err := tr.claimName("test/c1", "twin"); err == nil {
 		t.Fatal("a second call claimed a name another call is starting under")
 	}
-	if r, err := tr.claimName("test/c2", []string{"test/c2"}, "twin"); err != nil {
+	if r, err := tr.claimName("test/c2", "twin"); err != nil {
 		t.Fatalf("another session: %v", err)
 	} else {
 		r()
 	}
 	release()
-	if r, err := tr.claimName("test/c1", []string{"test/c1"}, "twin"); err != nil {
+	if r, err := tr.claimName("test/c1", "twin"); err != nil {
 		t.Fatalf("after release: %v", err)
 	} else {
 		r()

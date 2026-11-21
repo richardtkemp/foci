@@ -135,7 +135,7 @@ func TestKeptSpawnerMessagesSurviveRestart(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	rt2.set(false)
-	h2.spawner.ReleaseHeld()
+	h2.spawner.Reown()
 
 	d := h2.nextDelivery(t)
 	i1, i2 := strings.Index(d.msg, "first note"), strings.Index(d.msg, "second note")

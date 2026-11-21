@@ -25,7 +25,7 @@ func spawnRestartNotice(prompt string) string {
 // by a shutdown (or lost in a crash) is delivered, or held again, by the next
 // process (#2589).
 func (s *Spawner) deliver(parent, id, msg string) {
-	r := s.route(parent)
+	r := s.deliveryRoute(parent)
 	msg = s.deps.Tracker.pushResult(parent, id, msg, r.Hold)
 	if r.Hold {
 		spawnLog.Infof("spawn=%s result held: its parent %s has reported and its report has not reached the fan-in yet", id, parent)
