@@ -141,6 +141,8 @@ func (t *toolCallEmitter) result(e turnevent.ToolResult) {
 		Result:          out,
 		ResultTruncated: cut,
 		IsError:         e.IsError,
+		// Result is "" then; the flag says why (#3188).
+		ResultNotReported: e.OutputNotReported,
 	}
 	if cut {
 		f.ResultBytes = n

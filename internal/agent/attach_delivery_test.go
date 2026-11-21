@@ -100,3 +100,50 @@ func TestAttachDelivery_SubagentPromptReachesRouter(t *testing.T) {
 		t.Errorf("router event = %#v, want %#v", got[0], want)
 	}
 }
+
+// TestAttachDelivery_ToolEndNotReported (#3188): a backend's not-reported end
+// reaches the router as a ToolResult with OutputNotReported, closes the call
+// in the tool tally, and a plain end with empty output stays unflagged.
+func TestAttachDelivery_ToolEndNotReported(t *testing.T) {
+	t.Parallel()
+	a := &Agent{}
+	be := &mockBackendDT{}
+	sk := "test/c3188"
+	a.AttachDelivery(be, sk)
+	tt := a.resetToolTally(sk)
+
+	capture := &eventCaptureSink{}
+	a.sessionRouter(sk).Register(capture)
+	defer a.sessionRouter(sk).Clear()
+
+	se := be.sessionEvents
+	if se == nil || se.OnToolEndNotReported == nil {
+		t.Fatal("AttachDelivery installed no OnToolEndNotReported: the flag never reaches the app or the trace")
+	}
+	se.OnToolStart("m1", "mcp:s.t", "{}")
+	se.ToolEndNotReported("m1", "mcp:s.t", false)
+	se.OnToolStart("c1", "bash", "{}")
+	se.OnToolEnd("c1", "bash", "", false)
+
+	var results []turnevent.ToolResult
+	for _, ev := range capture.snapshot() {
+		if r, ok := ev.(turnevent.ToolResult); ok {
+			results = append(results, r)
+		}
+	}
+	want := []turnevent.ToolResult{
+		{ID: "m1", Name: "mcp:s.t", OutputNotReported: true},
+		{ID: "c1", Name: "bash"},
+	}
+	if len(results) != len(want) {
+		t.Fatalf("router ToolResults = %#v, want %#v", results, want)
+	}
+	for i := range want {
+		if results[i] != want[i] {
+			t.Errorf("ToolResult %d = %#v, want %#v", i, results[i], want[i])
+		}
+	}
+	if got := tt.completed(); got != 2 {
+		t.Errorf("tally completed = %d, want 2 (a not-reported end still ends the call)", got)
+	}
+}

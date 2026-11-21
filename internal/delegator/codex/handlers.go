@@ -308,30 +308,24 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 			se.OnToolEnd(item.ID, "edit", fileChangeOutput(item), item.Status == "failed")
 		}
 
+	// The next four, and an unmapped tool (default), end with no output:
+	// foci reads none from their items, so each says so (#3188) instead of
+	// showing an empty result.
 	case "mcpToolCall":
-		if se != nil && se.OnToolEnd != nil {
-			name := "mcp:" + item.Server + "." + item.Tool
-			se.OnToolEnd(item.ID, name, "", item.Status == "failed")
-		}
+		se.ToolEndNotReported(item.ID, "mcp:"+item.Server+"."+item.Tool, item.Status == "failed")
 
 	case "dynamicToolCall":
-		if se != nil && se.OnToolEnd != nil {
-			name := item.Tool
-			if item.Namespace != "" {
-				name = item.Namespace + "." + item.Tool
-			}
-			se.OnToolEnd(item.ID, name, "", !itemSuccess(item))
+		name := item.Tool
+		if item.Namespace != "" {
+			name = item.Namespace + "." + item.Tool
 		}
+		se.ToolEndNotReported(item.ID, name, !itemSuccess(item))
 
 	case "webSearch":
-		if se != nil && se.OnToolEnd != nil {
-			se.OnToolEnd(item.ID, "web_search", "", false)
-		}
+		se.ToolEndNotReported(item.ID, "web_search", false)
 
 	case "imageGeneration":
-		if se != nil && se.OnToolEnd != nil {
-			se.OnToolEnd(item.ID, "image_gen", "", item.Status == "failed")
-		}
+		se.ToolEndNotReported(item.ID, "image_gen", item.Status == "failed")
 
 	case "reasoning":
 		if se != nil && se.OnThinkingDelta != nil {
@@ -363,9 +357,7 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 		if !started || nonToolItemTypes[item.Type] {
 			return
 		}
-		if se != nil && se.OnToolEnd != nil {
-			se.OnToolEnd(item.ID, item.Type, "", item.Status == "failed")
-		}
+		se.ToolEndNotReported(item.ID, item.Type, item.Status == "failed")
 	}
 }
 

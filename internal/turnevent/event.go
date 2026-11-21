@@ -139,11 +139,18 @@ type ToolCall struct {
 // ToolResult announces the outcome of a tool invocation. Name is included in
 // addition to the tool-use ID so sinks can dispatch to platform observers
 // without having to correlate with a prior ToolCall.
+//
+// OutputNotReported says the backend finished the tool but did not report its
+// output (#3188): Output is then "" because nothing was passed, not because
+// the tool printed nothing. Set per event, at the backend site that knows
+// (SessionEvents.ToolEndNotReported); a tool whose real output was empty
+// leaves it false.
 type ToolResult struct {
-	Name    string
-	ID      string
-	Output  string
-	IsError bool
+	Name              string
+	ID                string
+	Output            string
+	IsError           bool
+	OutputNotReported bool
 }
 
 // RetryNotice fires when the agent retries an upstream API call. Endpoint is

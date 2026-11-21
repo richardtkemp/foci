@@ -1142,6 +1142,12 @@ const (
 // ArgsBytes / ResultBytes then give the uncut size. Both are secret-redacted
 // before they are bounded. A truncated Args is no longer valid JSON.
 //
+// ResultNotReported (#3188) is set on a completion whose output the backend
+// did not report (turnevent.ToolResult.OutputNotReported): Result is then
+// absent because nothing was passed, and the client should say "output not
+// reported" rather than show an empty result. A tool that really printed
+// nothing has an absent Result and no ResultNotReported.
+//
 // Mode is the session's resolved show_tool_calls ("preview" or "full") at
 // the turn's start, with the Telegram meaning: preview = the client may
 // replace the card once the reply arrives; full = the card is kept. The
@@ -1159,6 +1165,8 @@ type ToolCall struct {
 	ResultTruncated bool   `json:"resultTruncated,omitempty"`
 	ResultBytes     int    `json:"resultBytes,omitempty"` // uncut size, set only when ResultTruncated
 	IsError         bool   `json:"isError,omitempty"`
+	// ResultNotReported: the backend did not report this call's output (#3188).
+	ResultNotReported bool `json:"resultNotReported,omitempty"`
 }
 
 func (ToolCall) Type() string { return TypeToolCall }

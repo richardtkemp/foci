@@ -425,3 +425,37 @@ func TestHubCaps_AdvertisesToolCalls(t *testing.T) {
 	}
 	t.Fatalf("caps.features = %v, want %q", h.caps().Features, featureToolCalls)
 }
+
+// A completion the backend did not report the output of carries
+// resultNotReported (#3188) and no result; a tool that really printed nothing
+// carries neither, so the client can tell the two apart.
+func TestAppSink_ToolCalls_ResultNotReported(t *testing.T) {
+	configured, override := "full", ""
+	_, b, c, conn := toolTurnConn(t, capableClient, &configured, &override)
+
+	sink, cleanup := conn.NewTurnSink(agent.Envelope{SessionKey: b.key()})
+	ctx := context.Background()
+	sink.Emit(ctx, turnevent.ToolCall{ID: "m1", Name: "mcp:s.t", Args: json.RawMessage(`{}`)})
+	sink.Emit(ctx, turnevent.ToolResult{ID: "m1", Name: "mcp:s.t", OutputNotReported: true})
+	sink.Emit(ctx, turnevent.ToolCall{ID: "c1", Name: "bash", Args: json.RawMessage(`{"command":"true"}`)})
+	sink.Emit(ctx, turnevent.ToolResult{ID: "c1", Name: "bash", Output: ""})
+	cleanup()
+
+	tc := toolCallFrames(drainRaw(t, c))
+	if len(tc) != 4 {
+		t.Fatalf("tool.call frames = %d, want 4", len(tc))
+	}
+	notReported, empty := tc[1], tc[3]
+	if notReported.d["state"] != fap.ToolCallDone || notReported.d["resultNotReported"] != true {
+		t.Errorf("not-reported completion = %v, want state done and resultNotReported true", notReported.d)
+	}
+	if _, ok := notReported.d["result"]; ok {
+		t.Errorf("not-reported completion carries a result: %v", notReported.d)
+	}
+	if empty.d["state"] != fap.ToolCallDone {
+		t.Errorf("empty completion = %v, want state done", empty.d)
+	}
+	if _, ok := empty.d["resultNotReported"]; ok {
+		t.Errorf("a tool that printed nothing is marked not reported: %v", empty.d)
+	}
+}

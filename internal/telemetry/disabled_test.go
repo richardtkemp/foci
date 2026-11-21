@@ -27,7 +27,7 @@ func TestDisabled(t *testing.T) {
 	turn.Begin(TurnInfo{TurnID: "x", SessionKey: "s", AgentID: "a"})
 	turn.SetInput("prompt", "model")
 	turn.ToolStart("id", "name", []byte(`{}`))
-	turn.ToolEnd("id", "name", "out", false)
+	turn.ToolEnd("id", "name", "out", false, false)
 	turn.Text("some text")
 	turn.ThinkingDelta("some thinking")
 	turn.ThinkingBlock("a whole thinking block")

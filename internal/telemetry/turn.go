@@ -256,10 +256,20 @@ func (t *Turn) ToolStart(id, name string, args []byte) {
 	t.tools[id] = toolSpan{span: span, name: name}
 }
 
+// toolOutputNotReported is a tool span's output text when the backend did not
+// report the tool's output (#3188); metadata output_not_reported is the
+// machine-readable form.
+const toolOutputNotReported = "(output not reported by the backend)"
+
 // ToolEnd closes the tool child with its output. A result whose call was
 // never seen (a tool started in an earlier turn — run_in_background Bash —
 // or a replay) gets a zero-length span so the output is still recorded.
-func (t *Turn) ToolEnd(id, name, output string, isError bool) {
+//
+// notReported (#3188): the backend did not report the output, so output is
+// "" for that reason, not because the tool printed nothing. The span then
+// carries metadata output_not_reported and, with content on, the output
+// text toolOutputNotReported instead of an empty output.
+func (t *Turn) ToolEnd(id, name, output string, isError, notReported bool) {
 	if t == nil {
 		return
 	}
@@ -289,12 +299,19 @@ func (t *Turn) ToolEnd(id, name, output string, isError bool) {
 		ts = toolSpan{span: span, name: name}
 	}
 	delete(t.tools, id)
-	ts.span.SetAttributes(attribute.Int(attrObsMetaPrefix+"output_chars", len(output)))
-	if o.Content {
-		out, n := field(o, output)
-		ts.span.SetAttributes(attribute.String(attrObsOutput, out))
-		if n > 0 {
-			ts.span.SetAttributes(attribute.Int(attrObsMetaPrefix+"output_redactions", n))
+	if notReported {
+		ts.span.SetAttributes(attribute.Bool(attrObsMetaPrefix+"output_not_reported", true))
+		if o.Content {
+			ts.span.SetAttributes(attribute.String(attrObsOutput, toolOutputNotReported))
+		}
+	} else {
+		ts.span.SetAttributes(attribute.Int(attrObsMetaPrefix+"output_chars", len(output)))
+		if o.Content {
+			out, n := field(o, output)
+			ts.span.SetAttributes(attribute.String(attrObsOutput, out))
+			if n > 0 {
+				ts.span.SetAttributes(attribute.Int(attrObsMetaPrefix+"output_redactions", n))
+			}
 		}
 	}
 	if isError {
@@ -589,7 +606,7 @@ func (s *turnSink) Emit(ctx context.Context, ev turnevent.Event) {
 	case turnevent.ToolCall:
 		s.t.ToolStart(e.ID, e.Name, e.Args)
 	case turnevent.ToolResult:
-		s.t.ToolEnd(e.ID, e.Name, e.Output, e.IsError)
+		s.t.ToolEnd(e.ID, e.Name, e.Output, e.IsError, e.OutputNotReported)
 	case turnevent.SubagentStart:
 		s.t.SubagentStart(e.GroupKey, e.Label, e.Prompt, e.RunIndex)
 	case turnevent.SubagentText:

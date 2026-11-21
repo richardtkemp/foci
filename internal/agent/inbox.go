@@ -2725,6 +2725,11 @@ func (a *Agent) AttachDelivery(be delegator.Delegator, sk string) {
 				}
 				router.Emit(context.Background(), turnevent.ToolResult{ID: id, Name: name, Output: output, IsError: isError})
 			},
+			OnToolEndNotReported: func(id, name string, isError bool) {
+				// No output to index: the own-material index is untouched (#3188).
+				tally.end(id, name)
+				router.Emit(context.Background(), turnevent.ToolResult{ID: id, Name: name, IsError: isError, OutputNotReported: true})
+			},
 			OnAPIRetry: func(r delegator.APIRetry) {
 				a.noteBackendRetry(sk, r)
 				// A BackendRetry, never a RetryNotice: only the app shows it (#2260).

@@ -903,10 +903,31 @@ type SessionEvents struct {
 	OnToolEnd       func(id, name, output string, isError bool) // tool execution finished
 	OnAPIRetry      func(r APIRetry)                            // the backend is waiting to retry a failed API call of the main thread (#2260); optional
 
+	// OnToolEndNotReported is OnToolEnd for a tool whose output the backend
+	// did not report (#3188): the app card and the Langfuse span say "not
+	// reported" instead of showing an empty result. Backends call it through
+	// ToolEndNotReported, never directly. Optional: unset, the end goes to
+	// OnToolEnd with output "".
+	OnToolEndNotReported func(id, name string, isError bool)
+
 	// OnPromptSuggestion carries the backend's prediction of what the user
 	// will type next (#2916). It arrives between turns, never during one.
 	// Optional; a backend with no such feature never calls it.
 	OnPromptSuggestion func(text string)
+}
+
+// ToolEndNotReported ends tool call id at a site where the backend knows it
+// did not report the tool's output (#3188). It is the call's only end, in
+// place of OnToolEnd: the event carries OutputNotReported, so a consumer can
+// tell it from a tool that printed nothing. Safe on a nil receiver.
+func (se *SessionEvents) ToolEndNotReported(id, name string, isError bool) {
+	switch {
+	case se == nil:
+	case se.OnToolEndNotReported != nil:
+		se.OnToolEndNotReported(id, name, isError)
+	case se.OnToolEnd != nil:
+		se.OnToolEnd(id, name, "", isError)
+	}
 }
 
 // APIRetry is one retry of a failed API call by a backend that owns inference

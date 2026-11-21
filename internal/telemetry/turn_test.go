@@ -289,7 +289,7 @@ func TestTurnErrorAndEdgeCases(t *testing.T) {
 		turnID := "agent/unseen@1"
 		_, turn := NewTurnSink(turnevent.NopSink{})
 		turn.Begin(TurnInfo{TurnID: turnID, SessionKey: "agent/unseen", AgentID: "agent", Trigger: "telegram", Via: "telegram", Backend: "claude-code", StartedAt: time.Now()})
-		turn.ToolEnd("toolu_ghost", "Bash", "out", false)
+		turn.ToolEnd("toolu_ghost", "Bash", "out", false, false)
 		turn.Complete("done", "model", nil, 0, nil)
 		flush(t)
 		sp := findSpan(exp.GetSpans(), "Bash")
