@@ -493,7 +493,7 @@ func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *
 		// Code config family ([cc_backend].default_allowed_tools).
 		var preApproved string
 		if spec, _ := delegator.SpecFor(acfg.Backend); spec.ConfigFamily == delegator.ConfigFamilyClaudeCode {
-			preApproved = cfg.CCBackend.MergedAllowedTools(acfg.BackendConfig.AllowedTools)
+			preApproved = ccAllowedTools(cfg.CCBackend, acfg.BackendConfig.AllowedTools)
 		}
 		writeCommandApproval(&b, bakedPerms, preApproved)
 	}

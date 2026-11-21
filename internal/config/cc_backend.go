@@ -19,16 +19,48 @@ var DefaultCCAllowedTools = []string{
 // says otherwise ("" = the agent's own model).
 const DefaultCCBatchModel = "haiku"
 
+// fociConfigApprovalSubcommands are the `foci config` subcommands that change
+// foci.toml only after the user approves the change in chat (#3232).
+var fociConfigApprovalSubcommands = []string{"set", "unset", "add"}
+
+// FociConfigAllowedTools returns the Claude Code permission rules that
+// pre-approve the approval-gated `foci config` subcommands, for the bare
+// command name `foci` and for each extra spelling of the CLI's path in
+// cliPaths (empty entries are skipped).
+//
+// The in-chat approval that `foci config set` asks for is the gate on the
+// change. Without these rules, Claude Code's auto-mode classifier judges the
+// call first and can refuse it as self-modification, so the user never sees
+// the approval (#3232). A permission rule is checked before the classifier.
+// Probed on claude 2.1.325: a matching rule decided in ~10 ms against the
+// classifier's 1.6–2.5 s. The rule does not cover a compound command
+// (`… && other`), a command substitution, or a `VAR=value` prefix: those
+// still go to the classifier (auto mode) or to foci (default mode).
+func FociConfigAllowedTools(cliPaths ...string) []string {
+	names := append([]string{"foci"}, cliPaths...)
+	var rules []string
+	for _, n := range names {
+		if n == "" {
+			continue
+		}
+		for _, sub := range fociConfigApprovalSubcommands {
+			rules = append(rules, "Bash("+n+" config "+sub+":*)")
+		}
+	}
+	return rules
+}
+
 // MergedAllowedTools combines the global DefaultAllowedTools with the
-// per-agent backend_config.allowed_tools value. Duplicates are removed
-// (first occurrence wins, preserving default ordering). The result is
+// per-agent backend_config.allowed_tools value, then appends the builtin
+// rules (foci's own, always on: FociConfigAllowedTools). Duplicates are
+// removed (first occurrence wins, preserving default ordering). The result is
 // a comma-separated string suitable for Claude Code's --allowedTools argv.
-// An empty string is returned when both inputs are empty.
+// An empty string is returned when all inputs are empty.
 //
 // Accepts per-agent input as either a comma-separated string or a slice of
 // strings (TOML []any), since backend_config is an untyped map and either
 // form is a natural way to write permission rules in TOML.
-func (c CCBackendConfig) MergedAllowedTools(perAgent any) string {
+func (c CCBackendConfig) MergedAllowedTools(perAgent any, builtin ...string) string {
 	var rules []string
 	seen := make(map[string]bool)
 	add := func(r string) {
@@ -59,6 +91,10 @@ func (c CCBackendConfig) MergedAllowedTools(perAgent any) string {
 				add(s)
 			}
 		}
+	}
+
+	for _, r := range builtin {
+		add(r)
 	}
 
 	return strings.Join(rules, ",")

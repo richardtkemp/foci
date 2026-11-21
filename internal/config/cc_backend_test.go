@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestMergedAllowedTools_DefaultOnly proves that when the per-agent override
 // is nil/empty, MergedAllowedTools returns only the default rules as a
@@ -92,5 +95,33 @@ func TestMergedAllowedTools_WhitespaceTrim(t *testing.T) {
 	want := "Write(/tmp/**),Bash(git:*)"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestFociConfigAllowedTools proves the builtin rules (#3232) pre-approve the
+// three approval-gated `foci config` subcommands, for the bare name and for
+// each CLI path given, and skip an empty path.
+func TestFociConfigAllowedTools(t *testing.T) {
+	got := strings.Join(FociConfigAllowedTools("", "/usr/local/bin/foci"), ",")
+	want := "Bash(foci config set:*),Bash(foci config unset:*),Bash(foci config add:*)," +
+		"Bash(/usr/local/bin/foci config set:*),Bash(/usr/local/bin/foci config unset:*),Bash(/usr/local/bin/foci config add:*)"
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+}
+
+// TestMergedAllowedTools_Builtin proves builtin rules come after the default
+// and per-agent rules, and a builtin rule the operator also listed appears
+// once, where the operator put it.
+func TestMergedAllowedTools_Builtin(t *testing.T) {
+	c := CCBackendConfig{DefaultAllowedTools: []string{"Read(/tmp/**)"}}
+	got := c.MergedAllowedTools("Bash(foci config set:*)", "Bash(foci config set:*)", "Bash(foci config unset:*)")
+	want := "Read(/tmp/**),Bash(foci config set:*),Bash(foci config unset:*)"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	// No default, no per-agent rule: the builtin rules alone.
+	if got := (CCBackendConfig{}).MergedAllowedTools(nil, "Bash(foci config add:*)"); got != "Bash(foci config add:*)" {
+		t.Errorf("builtin only: got %q", got)
 	}
 }

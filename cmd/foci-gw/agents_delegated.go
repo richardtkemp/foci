@@ -581,7 +581,7 @@ var reloginRun = relogin.Run
 //
 // [cc_backend] folded keys:
 //
-//	allowed_tools — merged (per-agent rules appended to global)
+//	allowed_tools — merged (per-agent rules appended to global, then foci's builtin rules: ccAllowedTools)
 //	binary — global default; per-agent override wins
 //	batch_model — global default (haiku); per-agent override wins
 //
@@ -593,7 +593,7 @@ var reloginRun = relogin.Run
 func foldGlobalBackendConfig(cfg *config.Config, spec delegator.Spec, bc config.BackendConfig) config.BackendConfig {
 	switch spec.ConfigFamily {
 	case delegator.ConfigFamilyClaudeCode:
-		merged := cfg.CCBackend.MergedAllowedTools(bc.AllowedTools)
+		merged := ccAllowedTools(cfg.CCBackend, bc.AllowedTools)
 		if merged != "" {
 			bc.AllowedTools = strings.Split(merged, ",")
 		}

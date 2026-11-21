@@ -21,6 +21,8 @@ foci.toml is owned by root and writable only by the gateway (`root:foci-secrets 
 
 Ask for one change per request. Say in chat why you are asking before you run it, so the user knows what the prompt is for.
 
+**Run it as its own command: `foci config set …` (or the full path of the `foci` binary), with no `VAR=value` prefix and nothing chained after it.** On Claude Code, foci pre-approves `foci config set`, `unset` and `add` in exactly that form, so the auto-mode classifier never judges the call and the user always gets the approval prompt. A prefixed (`HOME=… foci config set`) or chained (`… && …`) command goes to the classifier, which can refuse it as self-modification before the user sees anything (#3232).
+
 ## Operations
 
 | Command | What it does |
