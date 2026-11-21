@@ -57,7 +57,7 @@ Each interactive element gets a ref like [ref=s1e5]. Use these refs to interact.
 - **fields** — Array of `{ref, value}` objects for filling multiple fields at once.
 - **submit** — Boolean. Press Enter after filling.
 - **key** — Key name to press (Enter, Tab, Escape, etc.).
-- **script** — JavaScript code to evaluate in the page context.
+- **script** — JavaScript to evaluate in the page context: one expression (`document.title`, `JSON.stringify(x)`, an IIFE) or a function expression (`() => …`). A function is called; promises are awaited. Wrap statements as `(() => { …; return x })()`.
 - **waitType** — Either `load` (page load) or `idle` (network idle).
 - **fullPage** — Boolean. Capture full scrollable page instead of viewport.
 - **returnPath** — Boolean. Return file path instead of base64-encoded image.

@@ -1004,3 +1004,54 @@ func procState(pid int) string {
 func stillRunning(state string) bool {
 	return state != "" && state != "Z" && state != "X"
 }
+
+func TestBrowserEvaluateAcceptsExpressionsAndFunctions(t *testing.T) {
+	// #3234: evaluate passed the script to rod's page.Eval, which calls
+	// (script).apply(...), so only a function literal worked. An expression
+	// (an IIFE, JSON.stringify(...)) failed with "(...).apply is not a
+	// function". Both shapes must now return their value, and the side
+	// effect of an expression must run exactly once.
+	t.Parallel()
+	srv := testHTMLServer(t, `<html><head><title>Eval Page</title></head><body><h1>Hi</h1></body></html>`)
+
+	mgr := sharedBrowserManager(t)
+	tool := NewBrowserTool(mgr)
+	if _, err := tool.Execute(context.Background(), marshalParams(t, map[string]any{"action": "navigate", "url": srv.URL})); err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+
+	cases := []struct {
+		name, script, want string
+	}{
+		{"arrow function", `() => document.title`, "Result: Eval Page"},
+		{"function keyword", `function () { return 1 + 2 }`, "Result: 3"},
+		{"async arrow", `async () => 7`, "Result: 7"},
+		{"plain expression", `document.title`, "Result: Eval Page"},
+		{"call expression", `JSON.stringify({a: 1})`, `Result: {"a":1}`},
+		{"IIFE", `(() => { return 40 + 2 })()`, "Result: 42"},
+		{"trailing semicolon", `document.title;`, "Result: Eval Page"},
+		{"trailing line comment", "document.title // the title", "Result: Eval Page"},
+		{"promise expression", `Promise.resolve(5)`, "Result: 5"},
+		{"side effect runs once", `(() => { window.__n = (window.__n || 0) + 1; return window.__n })()`, "Result: 1"},
+	}
+	for _, c := range cases {
+		res, err := tool.Execute(context.Background(), marshalParams(t, map[string]any{"action": "evaluate", "script": c.script}))
+		if err != nil {
+			t.Errorf("%s: evaluate %q: %v", c.name, c.script, err)
+			continue
+		}
+		if res.Text != c.want {
+			t.Errorf("%s: evaluate %q = %q, want %q", c.name, c.script, res.Text, c.want)
+		}
+	}
+
+	// A script that is neither an expression nor a function (a statement
+	// list) fails with an error that says what shape is accepted.
+	_, err := tool.Execute(context.Background(), marshalParams(t, map[string]any{"action": "evaluate", "script": `const a = 1; a`}))
+	if err == nil {
+		t.Fatal("statement-list script: want an error, got none")
+	}
+	if !strings.Contains(err.Error(), "expression") {
+		t.Errorf("statement-list script error %q does not say an expression is expected", err)
+	}
+}

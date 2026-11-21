@@ -420,6 +420,20 @@ func writeTempFileExcl(pattern string, data []byte, mode os.FileMode) (string, e
 	return path, nil
 }
 
+// evalWrapperJS turns an evaluate script into the function rod's page.Eval
+// requires. rod calls (js).apply(this, arguments), so a bare expression such
+// as JSON.stringify(x) failed with "(...).apply is not a function" (#3234).
+// The wrapper evaluates the script once as an expression: a function value
+// (() => …, function () {…}, async () => …) is then called, and any other
+// value is returned as is. The newline before the closing parenthesis keeps
+// a trailing // comment from swallowing it; a trailing ; is trimmed because
+// it is not valid inside the parentheses.
+func evalWrapperJS(script string) string {
+	script = strings.TrimRight(script, "\t\n\v\f\r ;")
+	return "function () { const __fociEvalValue = (\n" + script + "\n); " +
+		"return typeof __fociEvalValue === 'function' ? __fociEvalValue.apply(this, arguments) : __fociEvalValue }"
+}
+
 func browserEvaluate(mgr *BrowserManager, p browserParams) (tools.ToolResult, error) {
 	if p.Script == "" {
 		return tools.ToolResult{}, errors.New("script required")
@@ -430,8 +444,11 @@ func browserEvaluate(mgr *BrowserManager, p browserParams) (tools.ToolResult, er
 		return tools.ToolResult{}, err
 	}
 
-	result, err := page.Eval(p.Script)
+	result, err := page.Eval(evalWrapperJS(p.Script))
 	if err != nil {
+		if strings.Contains(err.Error(), "SyntaxError") {
+			return tools.ToolResult{}, fmt.Errorf("evaluate failed: %w (script must be one JavaScript expression, e.g. document.title, or a function expression like () => …; wrap statements in (() => { …; return x })())", err)
+		}
 		return tools.ToolResult{}, fmt.Errorf("evaluate failed: %w", err)
 	}
 
