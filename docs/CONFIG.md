@@ -1378,7 +1378,7 @@ When a Claude Code or Codex usage window (Claude Code: the 5-hour and 7-day wind
 
 ### Keepalive (`[keepalive]` / `[[agents.keepalive]]`)
 
-Cache keepalive timer. Fires a lightweight branch session to keep the prompt cache warm. For Anthropic, the interval defaults to 55 minutes (just under the 1-hour cache TTL). For OpenAI and DeepSeek models, keepalive is auto-detected by developer name — these developers have a 5-minute prompt cache TTL, so keepalive fires every ~4m45s. Keepalive yields to a running quiet-hours or pre-cold compaction (see [Compaction & Sessions](#compaction--sessions)): re-warming a full context that is about to be compacted is the exact waste that trigger exists to remove.
+Cache keepalive timer. Fires a lightweight branch session to keep the prompt cache warm. For Anthropic, the interval defaults to 55 minutes (just under the 1-hour cache TTL). For OpenAI and DeepSeek models, keepalive is auto-detected by developer name and fires at 95% of the model's prompt cache TTL: 30 minutes for OpenAI GPT-5.6 and later (every ~28m30s), 5 minutes for earlier OpenAI models and DeepSeek (every ~4m45s). Keepalive yields to a running quiet-hours or pre-cold compaction (see [Compaction & Sessions](#compaction--sessions)): re-warming a full context that is about to be compacted is the exact waste that trigger exists to remove.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
