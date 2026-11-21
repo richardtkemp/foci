@@ -450,6 +450,14 @@ type AssistantMessage struct {
 	Error           *string     `json:"error,omitempty"` // "rate_limit", assistantErrAuthFailed, etc.
 	UUID            string      `json:"uuid,omitempty"`
 	SessionID       string      `json:"session_id,omitempty"`
+	// LocalCommandOutcome is set on the frame CC streams for a local command's
+	// reply (a /compact): kind "failed" when the command failed (#3002, #3211).
+	LocalCommandOutcome *LocalCommandOutcome `json:"local_command_outcome,omitempty"`
+}
+
+// LocalCommandOutcome is how a local command (a /compact) ended.
+type LocalCommandOutcome struct {
+	Kind string `json:"kind"` // "failed" on failure
 }
 
 // BetaMessage is the Anthropic API message object embedded in an

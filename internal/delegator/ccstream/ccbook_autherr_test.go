@@ -69,7 +69,7 @@ func TestAuthErrorCallSettlesAtZero(t *testing.T) {
 		tb.mainTailRunning(true)
 		tb.mainRead(tb.clock)
 		tb.streamNamed(m.Message.ID, m.UUID, "T1", tb.clock)
-		tb.authErrored(m.Message.ID, authErrorLine(m, tb.clock))
+		tb.callFailed(m.Message.ID, failedCallLine(m, tb.clock))
 		if n := tb.unseenNamed(); n != 0 {
 			t.Errorf("unseenNamed = %d, want 0: the line never comes, a flush must not wait for it", n)
 		}
@@ -102,7 +102,7 @@ func TestAuthErrorCallSettlesAtZero(t *testing.T) {
 		tm := decodeFrame(t, turnAuthFrame)
 		tb := newTestBook(t, nil)
 		tb.streamNamed(tm.Message.ID, tm.UUID, "T1", tb.clock)
-		tb.authErrored(tm.Message.ID, authErrorLine(tm, tb.clock))
+		tb.callFailed(tm.Message.ID, failedCallLine(tm, tb.clock))
 		tb.mainLine(line(tm.Message.ID, "<synthetic>", tb.clock, "stop_sequence", 0, 0, 0, 0, 0))
 		tb.closeWindows(tb.window)
 		calls := tb.calls(t)
@@ -118,7 +118,7 @@ func TestAuthErrorCallSettlesAtZero(t *testing.T) {
 		tb := newTestBook(t, nil)
 		tb.streamNamed(m.Message.ID, m.UUID, "T1", tb.clock)
 		tb.turnEnded("T1", tb.clock)
-		tb.authErrored(m.Message.ID, authErrorLine(m, tb.clock))
+		tb.callFailed(m.Message.ID, failedCallLine(m, tb.clock))
 		if !tb.closed["T1"] {
 			t.Error("T1's activity still open: it waits for a line that never comes")
 		}

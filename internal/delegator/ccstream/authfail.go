@@ -121,7 +121,7 @@ func (b *Backend) reportLoginExpiry(c credentialExpiry) {
 // assistantErrAuthFailed frame, or a frame CC produced itself (the synthetic
 // model) whose text is an auth failure. The second covers a failed /compact,
 // which CC 2.1.314 streams with no top-level error field (#3002 probe). Such a
-// call cost nothing; the ledger settles it at zero (ccBook.authErrored).
+// call cost nothing; the ledger settles it at zero (ccBook.callFailed).
 func assistantAuthError(msg *AssistantMessage) bool {
 	if msg.Error != nil && *msg.Error == assistantErrAuthFailed {
 		return true
@@ -136,4 +136,26 @@ func assistantAuthError(msg *AssistantMessage) bool {
 		}
 	}
 	return isAuthFailure(text.String())
+}
+
+// localCommandFailed is LocalCommandOutcome.Kind for a local command that
+// failed.
+const localCommandFailed = "failed"
+
+// assistantFailedNoCost reports whether an assistant frame is one CC made for a
+// call that failed and may write no transcript line for: an auth error
+// (assistantAuthError, #3002), or a frame of the synthetic model with a failed
+// local command outcome (a /compact that failed for any reason, e.g. a network
+// outage: #3211 probe on CC 2.1.325, no top-level error field, no assistant
+// line in the transcript). The ledger settles such a call at zero
+// (ccBook.callFailed). A synthetic frame with only an API error on it (an
+// ordinary turn whose call exhausted its retries) is NOT one: CC writes its
+// line, so the book keeps waiting and invStreamIdBooked still fires if that
+// ever stops (orchestrator review, 2026-11-21).
+func assistantFailedNoCost(msg *AssistantMessage) bool {
+	if assistantAuthError(msg) {
+		return true
+	}
+	return msg.Message.Model == syntheticModel &&
+		msg.LocalCommandOutcome != nil && msg.LocalCommandOutcome.Kind == localCommandFailed
 }

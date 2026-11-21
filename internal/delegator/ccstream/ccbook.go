@@ -67,12 +67,16 @@
 //     call that spawned it, with the same message id (#2492). It is the main
 //     tail's to book: a sub line whose id the main thread named or holds is
 //     skipped, so the call is never booked with the fork as its actor.
-//   - An AUTH ERROR (#3002): a call that ended in an authentication error
-//     cost nothing (Dick, 2026-11-10: "settled at zero cost", no alarm). CC
-//     writes no assistant line for a /compact that failed so (only a system
-//     local_command record), so the book does not wait for its line: if one
-//     comes (an ordinary turn's does) it books as usual, else the call books
-//     at its window's close with no counts, at $0, completed.
+//   - A FAILED CALL (#3002, #3211): a call that ended in an authentication
+//     error (Dick, 2026-11-10: "settled at zero cost", no alarm), or a
+//     <synthetic> frame with a failed local command outcome (a /compact that
+//     failed, e.g. on a network outage), cost nothing. CC writes no assistant
+//     line for a /compact that failed (only a system local_command record),
+//     so the book does not wait for its line: if one comes (an ordinary
+//     turn's does) it books as usual, else the call books at its window's
+//     close with no counts, at $0, completed. An ordinary call that exhausted
+//     its retries streams a <synthetic> frame with an API error and CC writes
+//     its line: it stays awaited, so a missing line still alarms.
 //   - At process exit the last remainder is flushed from the cost-state record
 //     CC appends on a graceful close, else from the last result.
 //   - CHECKS (#2111 §8), once the booked set is what CC counted — at each
@@ -402,16 +406,17 @@ type namedCall struct {
 	// retracted: a refusal fallback retracted this call (#2255) — not waited
 	// for from here on, and dropped at its window's close.
 	retracted bool
-	// authErr: the call ended in an authentication error (#3002) — not waited
-	// for, and booked from this zero-count line at its window's close if its
-	// transcript line never came.
-	authErr *ccLine
+	// failed: the call failed and cost nothing (#3002 auth error, #3211
+	// failed local command) — not waited for, and booked from
+	// this zero-count line at its window's close if its transcript line never
+	// came.
+	failed  *ccLine
 	pending *ccLine // latest line seen without a stop_reason
 }
 
 // awaited reports whether the book waits for the call's transcript line: a
-// retracted call's spend books elsewhere, and an auth error's costs nothing.
-func (n *namedCall) awaited() bool { return !n.retracted && n.authErr == nil }
+// retracted call's spend books elsewhere, and a failed call costs nothing.
+func (n *namedCall) awaited() bool { return !n.retracted && n.failed == nil }
 
 // ccAgent is one subagent seen in this process.
 type ccAgent struct {
@@ -691,23 +696,23 @@ func (c *ccBook) retract(uuids []string) {
 	}
 }
 
-// authErrored marks the named call id as one that ended in an authentication
-// error (#3002): l is its zero-count line, built from the stream frame. From
+// callFailed marks the named call id as one that failed and cost nothing
+// (#3002, #3211): l is its zero-count line, built from the stream frame. From
 // here on the book does not wait for its transcript line. A call not named
 // (already booked) is not touched. A turn whose last awaited call this was can
 // close its activity now.
-func (c *ccBook) authErrored(id string, l *ccLine) {
+func (c *ccBook) callFailed(id string, l *ccLine) {
 	n := c.named[id]
-	if n == nil || n.authErr != nil || l == nil {
+	if n == nil || n.failed != nil || l == nil {
 		return
 	}
-	n.authErr = l
+	n.failed = l
 	c.closeIfIdle(n.turn, c.now())
 }
 
-// authErrorLine is the zero-count line an auth-error call books from when CC
+// failedCallLine is the zero-count line a failed call books from when CC
 // writes none for it: the frame's model and stop_reason, no tokens.
-func authErrorLine(msg *AssistantMessage, at time.Time) *ccLine {
+func failedCallLine(msg *AssistantMessage, at time.Time) *ccLine {
 	l := &ccLine{id: msg.Message.ID, model: msg.Message.Model, at: at, complete: true}
 	if msg.Message.StopReason != nil {
 		l.stopReason = *msg.Message.StopReason
@@ -1191,10 +1196,10 @@ func (c *ccBook) closeWindows(w int) {
 			c.bookCall(n.pending, n.turn, "", n.window, accounting.FinalityInterrupted)
 			continue
 		}
-		if n.authErr != nil {
-			c.bookCall(n.authErr, n.turn, "", n.window, accounting.FinalityCompleted)
+		if n.failed != nil {
+			c.bookCall(n.failed, n.turn, "", n.window, accounting.FinalityCompleted)
 			c.mainWin[id] = n.window
-			c.lg.Infof("ledger: session %s: call %s ended in an authentication error and no transcript line came; booked at $0 (#3002)",
+			c.lg.Infof("ledger: session %s: call %s failed (an auth error or a failed local command) and no transcript line came; booked at $0 (#3002, #3211)",
 				c.session, id)
 			continue
 		}

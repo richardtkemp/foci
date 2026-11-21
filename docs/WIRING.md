@@ -2328,14 +2328,18 @@ writes in its place (the retry prompt, or the final "could not be parsed" `<synt
 assistant line) lists it in `retractedMessageUuids`. The main tail (`parseCCRetraction`)
 enqueues those as `ccRetractEv` → `ccBook.retract`, so the attempt is treated like a refusal
 retraction above; CC's `modelUsage` counts it, so its spend lands in the window's remainder.
-**An auth error (#3002, live on CC 2.1.314):** a call that ended in an authentication error
-cost nothing. `OnAssistant` tests each top-level frame with `assistantAuthError` (CC's
-`error: authentication_failed`, or a `<synthetic>` frame whose text `isAuthFailure` matches —
-a failed `/compact` streams with no `error` field and gets no assistant line, only a system
-`local_command` record) and sends its zero-count line as `ccEvent.authErr` →
-`ccBook.authErrored` (`namedCall.authErr`). The call is not waited for (`namedCall.awaited`):
-its own line books it as usual if it comes, else it books at window close with no counts, at
-$0, `completed`, with an INFO line and no alarm.
+**A failed call (#3002 auth, live on CC 2.1.314; #3211 network, live on CC 2.1.326):** a
+frame CC made for a call that failed cost nothing. `OnAssistant` tests each top-level frame
+with `assistantFailedNoCost`: an auth error (`assistantAuthError`: CC's
+`error: authentication_failed`, or a `<synthetic>` frame whose text `isAuthFailure` matches),
+or a `<synthetic>` frame with `local_command_outcome.kind: failed`. A failed `/compact`
+(auth, or a network outage) streams with no `error` field and gets no assistant line, only a
+system `local_command` record. An ordinary call that exhausted its retries streams a
+`<synthetic>` frame with `error: server_error` and CC writes its line: it stays awaited, so a
+missing line still raises `invStreamIdBooked`. The frame's zero-count line goes as `ccEvent.failed` → `ccBook.callFailed`
+(`namedCall.failed`). The call is not waited for (`namedCall.awaited`): its own line books it
+as usual if it comes, else it books at window close with no counts, at $0, `completed`, with
+an INFO line and no alarm.
 **A fork subagent (#2492, live on CC 2.1.314)** copies one parent line into its transcript,
 the main-thread call that spawned it (same message id and timestamp). `subLine` skips a line
 whose id the main thread named or holds, so that call books on the main thread, never with
