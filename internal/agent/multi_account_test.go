@@ -59,8 +59,9 @@ func twoAccountAgent(a *Agent, reg *usagehold.Registry) (accA, accB *account.Acc
 }
 
 // TestMultiAccount_HoldOnOneAccountHoldsOnlyItsSessions (#3186 F6, F9): a
-// hold on A holds the agent's sessions on A, children included; its sessions
-// on B keep running, their periodic work, keepalive and spawns included.
+// hold on A holds the agent's sessions on A, their forks included; its
+// sessions on B keep running, their periodic work, keepalive and spawns
+// included.
 func TestMultiAccount_HoldOnOneAccountHoldsOnlyItsSessions(t *testing.T) {
 	a, cancel := startedAgent(t)
 	defer cancel()
@@ -68,6 +69,12 @@ func TestMultiAccount_HoldOnOneAccountHoldsOnlyItsSessions(t *testing.T) {
 	a.DelegatedManager = &DelegatedManager{BackendType: "claude-code"}
 	reg := usagehold.New()
 	accA, _ := twoAccountAgent(a, reg)
+	// The children are forks (#3246: a fork is on its source's account).
+	for _, c := range [][2]string{{multiOnA + "/b1709596800", multiOnA}, {multiOnB + "/i1709596801", multiOnB}} {
+		if _, err := a.Accounts().Inherit(c[0], c[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
 	a.StartUsageHold()
 	defer a.StopUsageHold()
 	d := &recordingDriver{}
@@ -175,9 +182,9 @@ func TestMultiAccount_HoldNoticeOnlyInChatsOnTheAccount(t *testing.T) {
 	}
 }
 
-// TestMultiAccount_NewSessionTakesThePick (#3186 F2, F4): a new top-level
-// session goes to an open account while another holds, and its child
-// follows it.
+// TestMultiAccount_NewSessionTakesThePick (#3186 F2, F4, #3246): a new
+// session goes to an open account while another holds, a fresh child of a
+// session on the held account included.
 func TestMultiAccount_NewSessionTakesThePick(t *testing.T) {
 	reg := usagehold.New()
 	a := holdAgent(reg, "claude-code")
@@ -187,8 +194,8 @@ func TestMultiAccount_NewSessionTakesThePick(t *testing.T) {
 	if got := a.AccountFor("multi/c9"); got != accB {
 		t.Fatalf("new session on %s while A holds, want B", got.Key())
 	}
-	if got := a.AccountFor("multi/c9/b1709596800"); got != accB {
-		t.Errorf("its child on %s, want B", got.Key())
+	if got := a.AccountFor(multiOnA + "/b1709596800"); got != accB {
+		t.Errorf("fresh child of a session on A on %s, want the pick B", got.Key())
 	}
 }
 

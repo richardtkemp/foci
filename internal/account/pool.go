@@ -22,13 +22,17 @@ type BindingStore interface {
 // A session's account is fixed the first time the session is asked about
 // (For) and stored with it (session.MetaKeyAccount), so a restart and a
 // resume find the same account (Dick 2026-11-19: "one session is tied to one
-// account"). A new top-level session takes the pick (pick, rule T-profile:
-// the account with the most allowance left per expected demand until its
-// windows reset). A child session (a branch, fork, spawn or batch: a child
-// key <root>/b<ts> or <root>/i<ts>) takes its root's account the first time
-// it is asked about, and stores it with itself: a child made before its
-// root was reset stays on the account its files are in when the reset root
-// moves to a new pick.
+// account"). A new session takes the pick (pick, rule T-profile: the account
+// with the most allowance left per expected demand until its windows reset),
+// a child session (a key <root>/b<ts> or <root>/i<ts>: a spawn, a batch, a
+// fresh branch) included. The one exception is a child whose backend
+// conversation is a copy of another session's (a transcript fork: a
+// reflection, keepalive, clone spawn, facet, depth leaf or /fork): its maker
+// binds it to its source's account with Inherit before it runs, since its
+// files are in that account's folder and it reuses the cache that account
+// warmed (#3246, Dick 2026-11-21 11:47). Every binding is stored with its
+// own session, so a fork made before its root was reset stays on the
+// account its files are in when the reset root moves to a new pick.
 //
 // A session stored before accounts existed has no record; the gateway records
 // the pool's first account on those at startup (session.SessionIndex
@@ -121,18 +125,10 @@ func (p *Pool) Resolve(sessionKey string) (*Account, error) {
 	if a = p.byKey(stored); a != nil {
 		return p.bind(sessionKey, a, false), nil
 	}
-	if parent := parentKey(sessionKey); parent != "" {
-		pa, err := p.Resolve(parent)
-		if err != nil || pa == nil {
-			return pa, err
-		}
-		a = pa
-	} else {
-		// Asked outside every lock: an account's hold state can call its
-		// subscribers, which ask this pool about their sessions.
-		a = p.pick(time.Now())
-	}
-	a = p.bind(sessionKey, a, true)
+	// A new session, a child included: a fork was bound by Inherit before it
+	// ran. Asked outside every lock: an account's hold state can call its
+	// subscribers, which ask this pool about their sessions.
+	a = p.bind(sessionKey, p.pick(time.Now()), true)
 	if stored != "" && a.Key() != stored {
 		poolLog.Infof("session %s was on account %s, which the agent no longer has: it is now on %s", sessionKey, stored, a.Key())
 		if p.OnLeft != nil {
@@ -159,7 +155,34 @@ func (p *Pool) bind(sessionKey string, a *Account, store bool) *Account {
 	return a
 }
 
-// Next is the account a new top-level session would take now (the pick),
+// Inherit binds childKey to the account sourceKey is on, and stores it with
+// childKey: childKey's backend conversation is a copy of sourceKey's (a
+// transcript fork, Agent.ForkBackendBranch), so its files are in that
+// account's folder and its first call reads the cache that account warmed
+// (#3246, Dick 2026-11-21 11:47: "if we fork/copy transcript then we must use
+// the same account"). It binds over any earlier binding of childKey. sourceKey
+// may be a child on an account other than its root's (a fork of a character
+// spawn): the fork follows its source. It returns the account, and nil with
+// the error when sourceKey's account cannot be read (nothing is bound). A nil
+// or empty pool returns nil, nil.
+func (p *Pool) Inherit(childKey, sourceKey string) (*Account, error) {
+	if p == nil || len(p.accounts) == 0 {
+		return nil, nil
+	}
+	if !p.owns(childKey) {
+		return nil, fmt.Errorf("session %s belongs to another agent, not %s: its account is in that agent's pool", childKey, p.agent)
+	}
+	a, err := p.Resolve(sourceKey)
+	if err != nil || a == nil {
+		return nil, err
+	}
+	p.mu.Lock()
+	delete(p.bound, childKey)
+	p.mu.Unlock()
+	return p.bind(childKey, a, true), nil
+}
+
+// Next is the account a new session would take now (the pick),
 // without binding anything; nil for a nil or empty pool.
 func (p *Pool) Next() *Account {
 	if p == nil || len(p.accounts) == 0 {
@@ -168,7 +191,7 @@ func (p *Pool) Next() *Account {
 	return p.pick(time.Now())
 }
 
-// pick chooses the account of a new top-level session (#3186; the score is
+// pick chooses the account of a new session (#3186; a child too, #3246; the score is
 // rule T-profile, #3247, Dick 2026-11-21 16:17):
 //
 //   - an account that owes a login is passed over while another does not;
@@ -306,13 +329,3 @@ func (p *Pool) Moved(oldKey, newKey string) {
 }
 
 var poolLog = log.NewComponentLogger("account")
-
-// parentKey is the key of the session sessionKey is a child of (its root),
-// or "" when it is a top-level session or does not parse as a session key.
-func parentKey(sessionKey string) string {
-	sk, err := session.ParseSessionKey(sessionKey)
-	if err != nil || sk.IsRoot() {
-		return ""
-	}
-	return sk.Root().String()
-}

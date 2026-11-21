@@ -24,11 +24,12 @@ func testAccount(key string) *Account {
 	return New(Options{Backend: "claude-code", Spec: delegator.AccountSpec{Key: key, Name: key}, Holds: usagehold.New()})
 }
 
-// TestPool_SessionAndChildrenShareTheStoredAccount (#3186 P2): a session is
-// bound to one account the first time it is asked about, the binding is
-// stored on its root key, and every descendant (branch, spawn, batch: a
-// child key of the root) is on the same account.
-func TestPool_SessionAndChildrenShareTheStoredAccount(t *testing.T) {
+// TestPool_SessionAndForksShareTheStoredAccount (#3186 P2, #3246): a
+// session is bound to one account the first time it is asked about, the
+// binding is stored on its key, and every fork of it (a child Inherit bound:
+// a branch or spawn that copies its transcript) is on the same account,
+// stored with the fork.
+func TestPool_SessionAndForksShareTheStoredAccount(t *testing.T) {
 	a, b := testAccount("a"), testAccount("b")
 	st := memStore{}
 	p := NewPool(st, a, b)
@@ -40,31 +41,32 @@ func TestPool_SessionAndChildrenShareTheStoredAccount(t *testing.T) {
 		t.Errorf("stored account = %q, want a", v)
 	}
 	for _, child := range []string{root + "/b1709596800", root + "/i1709596801"} {
-		if got := p.For(child); got != a {
-			t.Errorf("child %s on %v, want its root's account", child, got.Key())
+		if _, err := p.Inherit(child, root); err != nil {
+			t.Fatal(err)
 		}
-	}
-	for _, child := range []string{root + "/b1709596800", root + "/i1709596801"} {
+		if got := p.For(child); got != a {
+			t.Errorf("fork %s on %v, want its root's account", child, got.Key())
+		}
 		if v := st[child+"\x00"+session.MetaKeyAccount]; v != "a" {
-			t.Errorf("child %s stored on %q, want a (each session's account is stored with it)", child, v)
+			t.Errorf("fork %s stored on %q, want a (each session's account is stored with it)", child, v)
 		}
 	}
 }
 
 // TestPool_StoredBindingSurvivesARestart (#3186 P2, the #3104 F1 risk): a
 // session stored on an account other than the pool's first is on that
-// account in a new pool (a restart) too, and so are its children. Were it
+// account in a new pool (a restart) too, and so are its stored forks. Were it
 // taken to the first account instead, its transcript, forks and cleanup
 // would resolve in another account's folder.
 func TestPool_StoredBindingSurvivesARestart(t *testing.T) {
 	a, b := testAccount("a"), testAccount("b")
-	st := memStore{"agent/c1\x00" + session.MetaKeyAccount: "b"}
+	st := memStore{"agent/c1\x00" + session.MetaKeyAccount: "b", "agent/c1/b17\x00" + session.MetaKeyAccount: "b"}
 	p := NewPool(st, a, b)
 	if got := p.For("agent/c1"); got != b {
 		t.Errorf("stored session on %v, want b", got.Key())
 	}
 	if got := p.For("agent/c1/b17"); got != b {
-		t.Errorf("its child on %v, want b", got.Key())
+		t.Errorf("its fork on %v, want b", got.Key())
 	}
 	if got := p.For("agent/c2"); got != a {
 		t.Errorf("new session on %v, want a", got.Key())

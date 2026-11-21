@@ -167,6 +167,15 @@ func (a *Agent) ForkBackendBranch(ctx context.Context, parentKey string, opts se
 		_ = a.DelegatedManager.CleanupBackendSession(ctx, parentKey, forkedID)
 		return "", false
 	}
+	// The clone is in the parent's account folder and reuses the cache that
+	// account warmed, so the branch is on the parent's account; a child no
+	// one binds here takes the pick (account.Pool.Inherit, #3246). Bound
+	// before the key is used anywhere, so no account question can pick first.
+	if _, err := a.DelegatedManager.Accounts.Inherit(branchKey, parentKey); err != nil {
+		a.taggedLog(opts.BranchType).Errorf("fork %s: bind %s to the parent's account: %v", parentKey, branchKey, err)
+		_ = a.DelegatedManager.CleanupBackendSession(ctx, parentKey, forkedID)
+		return "", false
+	}
 	// Point the branch key at the forked backend session so the next turn on it
 	// resumes the clone (full parent context) via the normal getOrCreate path.
 	if opts.BackendEphemeral() {
