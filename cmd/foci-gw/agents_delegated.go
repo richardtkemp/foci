@@ -1222,7 +1222,13 @@ func deliverRateLimitNotice(connMgr platform.ConnectionManager, agentID, session
 		if conn == nil {
 			return false
 		}
-		conn.SendNotification(notice)
+		// Only the newest usage notice stays visible in a chat where the
+		// transport supports it (the app, #3248); elsewhere a plain notice.
+		if l, ok := conn.(platform.LatestOnlyNoticeSender); ok {
+			l.SendLatestOnlyNotification(platform.NoticeKindUsage, notice)
+		} else {
+			conn.SendNotification(notice)
+		}
 		if platform.DropsAgentWideSends(conn) {
 			// The connection has no conversation of its own to address
 			// (Slack's unbound conn), so SendNotification has dropped the

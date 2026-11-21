@@ -22,6 +22,11 @@ import (
 //     conversation.
 //   - interactive.progressEdit: a batched ask's whole answer list; one per
 //     (conversation, promptId), since a conversation can hold several asks.
+//   - notification with a latest-only messageId (latestNoticeID, #3248): a
+//     notice of which only the newest of its kind stays visible in a chat
+//     (the usage warnings). The client replaces the row by messageId, so the
+//     older copies only replay a notice the user must no longer see; one per
+//     messageId, which already names the conversation and the kind.
 //
 // Seq safety is the #1064 upgrade's: the copy kept is the newest, so a
 // conversation's highest stored seq is never deleted, the seq high-water is
@@ -32,6 +37,17 @@ import (
 
 // migrationLatestOnly1646 names the one-off prune of existing copies.
 const migrationLatestOnly1646 = "latest-only-frames-1646"
+
+// latestNoticePrefix starts every latest-only notification's messageId.
+const latestNoticePrefix = "latest-"
+
+// latestNoticeID is the fixed messageId of convID's latest-only notice of
+// kind (#3248): the same id for every notice of that kind in the
+// conversation, so each replaces the one before. It names the conversation
+// because the client keys message rows by messageId alone.
+func latestNoticeID(kind, convID string) string {
+	return latestNoticePrefix + kind + "-" + convID
+}
 
 // supersedeKey reports whether a stored wire is a latest-only frame and, if
 // so, the payload field that scopes "latest" beside the conversation ("" =
@@ -52,6 +68,16 @@ func supersedeKey(wire string) (typ, field, value string, ok bool) {
 			return "", "", "", false
 		}
 		return fap.TypeInteractiveProgressEdit, "promptId", env.D.PromptID, true
+	case strings.HasPrefix(wire, `{"t":"`+fap.TypeNotification+`"`) && strings.Contains(wire, `"messageId":"`+latestNoticePrefix):
+		var env struct {
+			D struct {
+				MessageID string `json:"messageId"`
+			} `json:"d"`
+		}
+		if json.Unmarshal([]byte(wire), &env) != nil || !strings.HasPrefix(env.D.MessageID, latestNoticePrefix) {
+			return "", "", "", false
+		}
+		return fap.TypeNotification, "messageId", env.D.MessageID, true
 	}
 	return "", "", "", false
 }
@@ -78,8 +104,8 @@ func (s *frameStore) supersede(w frameWrite) {
 			w.convID, w.seq, typ)
 	} else {
 		_, err = tx.Exec(`DELETE FROM app_frames WHERE conv_id = ? AND seq < ? AND json_extract(wire, '$.t') = ?
-			AND json_extract(wire, '$.d.promptId') = ?`,
-			w.convID, w.seq, typ, value)
+			AND json_extract(wire, ?) = ?`,
+			w.convID, w.seq, typ, "$.d."+field, value)
 	}
 	if err != nil {
 		appLog.Errorf("frame store supersede (conv=%s seq=%d): %v", w.convID, w.seq, err)

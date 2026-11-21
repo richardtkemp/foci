@@ -121,15 +121,16 @@ type appConn struct {
 }
 
 var (
-	_ platform.Connection           = (*appConn)(nil)
-	_ platform.ButtonSender         = (*appConn)(nil)
-	_ platform.BatchButtonSender    = (*appConn)(nil)
-	_ platform.BatchButtonRestorer  = (*appConn)(nil)
-	_ platform.InteractiveRemover   = (*appConn)(nil)
-	_ agent.Driver                  = (*appConn)(nil)
-	_ turn.SessionSubagentDeliverer = (*appConn)(nil)
-	_ platform.UrgentNoticeSender   = (*appConn)(nil)
-	_ platform.SessionMessageEditor = (*appConn)(nil)
+	_ platform.Connection             = (*appConn)(nil)
+	_ platform.ButtonSender           = (*appConn)(nil)
+	_ platform.BatchButtonSender      = (*appConn)(nil)
+	_ platform.BatchButtonRestorer    = (*appConn)(nil)
+	_ platform.InteractiveRemover     = (*appConn)(nil)
+	_ agent.Driver                    = (*appConn)(nil)
+	_ turn.SessionSubagentDeliverer   = (*appConn)(nil)
+	_ platform.UrgentNoticeSender     = (*appConn)(nil)
+	_ platform.SessionMessageEditor   = (*appConn)(nil)
+	_ platform.LatestOnlyNoticeSender = (*appConn)(nil)
 )
 
 // errNoBinding is returned by ButtonSender sends and by media sends when the
@@ -448,6 +449,23 @@ func (c *appConn) SendNotificationDirect(text string) string {
 // #911). The messageID is registered so a later EditMessageText can replace
 // the notification in place. urgent sets fap.Notification.Urgent (#3180).
 func (c *appConn) notify(text string, urgent bool) string {
+	return c.notifyAs(text, urgent, "")
+}
+
+// SendLatestOnlyNotification delivers a notice of which only the newest of
+// kind stays in the chat (#3248). It goes where SendNotification would, with
+// the conversation's fixed messageID for kind (latestNoticeID): the client's
+// full-row upsert replaces the earlier row, which takes the new timestamp and
+// so moves to the bottom, and the frame store deletes the earlier stored
+// copies (supersedeKey), so a replay or history reload holds only the newest.
+// Implements platform.LatestOnlyNoticeSender.
+func (c *appConn) SendLatestOnlyNotification(kind, text string) {
+	c.notifyAs(text, false, kind)
+}
+
+// notifyAs is notify; a non-empty latestKind sends under the conversation's
+// fixed id for that kind instead of a new one, not registered for an edit.
+func (c *appConn) notifyAs(text string, urgent bool, latestKind string) string {
 	clean := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(text))
 	if clean == "" {
 		return ""
@@ -461,8 +479,13 @@ func (c *appConn) notify(text string, urgent bool) string {
 	if b == nil {
 		return ""
 	}
-	msgID := fap.NewULID()
-	c.hub.registerNotification(msgID, b)
+	var msgID string
+	if latestKind != "" {
+		msgID = latestNoticeID(latestKind, b.convID)
+	} else {
+		msgID = fap.NewULID()
+		c.hub.registerNotification(msgID, b)
+	}
 	b.send(fap.Notification{ConversationID: b.convID, MessageID: msgID, Text: clean, Level: "info", Urgent: urgent})
 	return msgID
 }

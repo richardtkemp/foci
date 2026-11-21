@@ -333,3 +333,48 @@ func TestDeliverRateLimitNoticeAllConfinedTriggerStaysInSession(t *testing.T) {
 		t.Errorf("primary got %d notices, want 0", got)
 	}
 }
+
+// latestRLConn is an rlConn on a transport that keeps only the newest notice
+// of a kind in a chat (platform.LatestOnlyNoticeSender: the app, #3248).
+type latestRLConn struct {
+	*rlConn
+	kinds []string
+}
+
+func (c *latestRLConn) SendLatestOnlyNotification(kind, text string) {
+	c.kinds = append(c.kinds, kind)
+	c.notices = append(c.notices, text)
+}
+
+// TestDeliverRateLimitNoticeLatestOnlyWhereSupported (#3248): on a transport
+// that supports it, a usage notice is sent as the chat's latest-only usage
+// notice, so it replaces the one before; elsewhere it stays a plain notice.
+func TestDeliverRateLimitNoticeLatestOnlyWhereSupported(t *testing.T) {
+	t.Parallel()
+	m, open := newRLAllMgr()
+	app := &latestRLConn{rlConn: newRLConn("app", "clutch/app-1")}
+	mgr := &latestRLMgr{rlConnMgr: m, latest: map[string]platform.Connection{"clutch/app-1": app}}
+	openWithApp := func(agentID string) []string { return append(open(agentID), "clutch/app-1") }
+
+	deliverRateLimitNotice(mgr, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyAll, openWithApp)
+
+	if len(app.kinds) != 1 || app.kinds[0] != platform.NoticeKindUsage || app.notices[0] != rlNotice {
+		t.Errorf("app conn got kinds %v notices %v, want one %q notice %q", app.kinds, app.notices, platform.NoticeKindUsage, rlNotice)
+	}
+	if len(m.session.notices) != 1 {
+		t.Errorf("a transport without latest-only lost its plain notice: %v", m.session.notices)
+	}
+}
+
+// latestRLMgr serves the latest-only conns ahead of the rlConnMgr's own.
+type latestRLMgr struct {
+	*rlConnMgr
+	latest map[string]platform.Connection
+}
+
+func (m *latestRLMgr) ForSession(key string) platform.Connection {
+	if c, ok := m.latest[key]; ok {
+		return c
+	}
+	return m.rlConnMgr.ForSession(key)
+}

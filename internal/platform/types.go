@@ -433,6 +433,24 @@ type UrgentNoticeSender interface {
 	SendUrgentEditableInjected(sessionKey, text string) (msgID string, err error)
 }
 
+// LatestOnlyNoticeSender is optionally implemented by connections that can
+// keep only the newest notice of a kind visible in each chat (the app,
+// #3248). Sending one replaces the chat's earlier notice of the same kind:
+// live, and in the stored history a reconnecting device replays. Dick,
+// 2026-11-21, on the usage warnings: "only the most-rceently-rceieved should
+// ever be visible in chat". A transport without it gets the plain
+// SendNotification (Telegram and Discord are out of scope).
+type LatestOnlyNoticeSender interface {
+	// SendLatestOnlyNotification is SendNotification, replacing the chat's
+	// previous notice of kind (a short, stable name such as NoticeKindUsage).
+	SendLatestOnlyNotification(kind, text string)
+}
+
+// NoticeKindUsage is the LatestOnlyNoticeSender kind of the usage and
+// rate-limit notices (approaching a limit and limit reached, from every
+// backend): one kind, so a chat shows only the newest of them (#3248).
+const NoticeKindUsage = "usage"
+
 // OwnChatDocumentSender is optionally implemented by connections whose plain
 // SendDocument can land above the addressed session, in another chat of its
 // family tree (the app, #2755). A backend prompt's attachment must land exactly
