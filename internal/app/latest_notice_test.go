@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"foci/internal/fap"
 	"foci/internal/platform"
@@ -79,5 +80,45 @@ func TestSupersede_LatestOnlyNoticePerMessageID(t *testing.T) {
 	}
 	if got := fs.MaxSeq("c1"); got != 5 {
 		t.Errorf("MaxSeq = %d, want 5", got)
+	}
+}
+
+// #3249: a usage notice carries its windows on the wire, for the app's pill,
+// under the same latest-only id.
+func TestSendUsageNotice_CarriesWindows(t *testing.T) {
+	_, c, _, conn := boundConn(t)
+	resets := time.Date(2026, 11, 27, 9, 0, 0, 0, time.UTC)
+	conn.SendUsageNotice("⚠️ Approaching Anthropic 7-day rate limit.", &platform.UsageSnapshot{
+		Windows: []platform.UsageSnapshotWindow{
+			{Label: "5h", Length: 5 * time.Hour, UsedPct: 34},
+			{Label: "7d", Length: 7 * 24 * time.Hour, UsedPct: 91, ResetsAt: resets},
+		},
+		Warned: "7d",
+	})
+	conn.SendUsageNotice("plain", nil)
+	ds := drain(t, c)
+	if len(ds) != 2 {
+		t.Fatalf("frames = %v, want two notifications", types(ds))
+	}
+	want := latestNoticeID(platform.NoticeKindUsage, "c1")
+	for _, d := range ds {
+		if d.t != fap.TypeNotification || d.d["messageId"] != want {
+			t.Errorf("frame %s id %v, want a notification with id %q", d.t, d.d["messageId"], want)
+		}
+	}
+	u, _ := ds[0].d["usage"].(map[string]any)
+	ws, _ := u["windows"].([]any)
+	if u == nil || u["warned"] != "7d" || len(ws) != 2 {
+		t.Fatalf("usage = %v, want two windows, warned 7d", ds[0].d["usage"])
+	}
+	w7 := ws[1].(map[string]any)
+	if w7["label"] != "7d" || w7["usedPct"] != float64(91) || w7["resetsMs"] != float64(resets.UnixMilli()) {
+		t.Errorf("7d window = %v", w7)
+	}
+	if w5 := ws[0].(map[string]any); w5["resetsMs"] != nil {
+		t.Errorf("an unknown reset should be omitted: %v", w5)
+	}
+	if _, has := ds[1].d["usage"]; has {
+		t.Errorf("a notice with no snapshot carried usage: %v", ds[1].d)
 	}
 }

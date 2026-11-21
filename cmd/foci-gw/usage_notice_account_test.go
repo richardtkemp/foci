@@ -51,7 +51,7 @@ func TestDeliverRateLimitNoticeAll_OnlyChatsOnTheAccount(t *testing.T) {
 	pool, _, stuart := twoLoginPool(m)
 
 	// A read of stuart's login (no triggering session): only app-b is on it.
-	deliverRateLimitNotice(m, "clutch", "", rlNotice, config.RateLimitNotifyAll, open, usageNoticeChats(pool, stuart))
+	deliverRateLimitNotice(m, "clutch", "", rlNotice, nil, config.RateLimitNotifyAll, open, usageNoticeChats(pool, stuart))
 	if got := len(m.others["clutch/app-b"].notices); got != 1 {
 		t.Errorf("chat on the warning login got %d notices, want 1", got)
 	}
@@ -70,7 +70,7 @@ func TestDeliverRateLimitNoticeAll_NoChatOnTheAccountSendsNothing(t *testing.T) 
 	m, _ := newRLAllMgr()
 	pool, _, stuart := twoLoginPool(m)
 	onlyA := func(string) []string { return []string{"clutch/app-a"} }
-	deliverRateLimitNotice(m, "clutch", "", rlNotice, config.RateLimitNotifyAll, onlyA, usageNoticeChats(pool, stuart))
+	deliverRateLimitNotice(m, "clutch", "", rlNotice, nil, config.RateLimitNotifyAll, onlyA, usageNoticeChats(pool, stuart))
 	for k, c := range m.others {
 		if len(c.notices) != 0 {
 			t.Errorf("chat %s got %q, want nothing", k, c.notices)

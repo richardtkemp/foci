@@ -374,6 +374,16 @@ type UsageWindow struct {
 	LimitReached bool   `json:"limitReached,omitempty"`
 }
 
+// UsageNotice is a usage warning's account windows when it was raised
+// (#3249). Windows are as in AgentUsage, shortest first; a window whose limit
+// is reached but which has no percent figure has UsedPct 100. Warned is the
+// Label of the window the warning is about ("" when not known); the app shows
+// that window's reset.
+type UsageNotice struct {
+	Windows []UsageWindow `json:"windows"`
+	Warned  string        `json:"warned,omitempty"`
+}
+
 // ConversationInfo is a conversation (<-> a foci session key) within an agent.
 type ConversationInfo struct {
 	ID         string `json:"id"`
@@ -727,6 +737,11 @@ type Notification struct {
 	// notice sets it (Dick, 2026-11-19). Omitted when false, so an app that
 	// predates it treats the notification as before.
 	Urgent bool `json:"urgent,omitempty"`
+	// Usage, when set, marks a usage or rate-limit warning (#3249): the app
+	// shows it as a one-line pill (the agent's avatar, a mini ring per window,
+	// the warned window's reset) instead of Text. Text stays the whole notice,
+	// for an app that predates it, a copy, and the preview.
+	Usage *UsageNotice `json:"usage,omitempty"`
 	// Ambient marks a notification that is a trace in the transcript, not news,
 	// even with "Notify for system messages" on (a shell chit, a "Loaded skill"
 	// line): it is stored, replayed and rendered like any other, but the server

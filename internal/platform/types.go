@@ -446,6 +446,34 @@ type LatestOnlyNoticeSender interface {
 	SendLatestOnlyNotification(kind, text string)
 }
 
+// UsageNoticeSender is optionally implemented by connections that can show
+// a usage warning graphically (the app, #3249: a one-line pill with a mini
+// ring per window). It is the usage kind of LatestOnlyNoticeSender: the chat
+// keeps only the newest. text is the whole notice, kept for a client that
+// cannot draw it; usage nil sends the text alone.
+type UsageNoticeSender interface {
+	SendUsageNotice(text string, usage *UsageSnapshot)
+}
+
+// UsageSnapshot is an account's usage windows when a warning was raised
+// (#3249), shortest window first. Warned is the Label of the window the
+// warning is about ("" when not known).
+type UsageSnapshot struct {
+	Windows []UsageSnapshotWindow
+	Warned  string
+}
+
+// UsageSnapshotWindow is one window of a UsageSnapshot. Label is short
+// ("5h", "7d", "7d opus"); UsedPct is 0-100 (100 for a reached limit with
+// no figure); ResetsAt is zero when unknown.
+type UsageSnapshotWindow struct {
+	Label        string
+	Length       time.Duration
+	UsedPct      int
+	ResetsAt     time.Time
+	LimitReached bool
+}
+
 // NoticeKindUsage is the LatestOnlyNoticeSender kind of the usage and
 // rate-limit notices (approaching a limit and limit reached, from every
 // backend): one kind, so a chat shows only the newest of them (#3248).

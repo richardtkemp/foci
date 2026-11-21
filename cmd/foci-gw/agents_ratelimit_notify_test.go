@@ -111,7 +111,7 @@ func TestDeliverRateLimitNoticeTargets(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newRLMgr()
-			deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, tc.target, nil, nil)
+			deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, nil, tc.target, nil, nil)
 
 			if got := len(m.session.notices); got != tc.wantSession {
 				t.Errorf("session conn got %d notices %v, want %d", got, m.session.notices, tc.wantSession)
@@ -133,7 +133,7 @@ func TestDeliverRateLimitNoticeFallsBackToPrimary(t *testing.T) {
 	t.Parallel()
 	m := newRLMgr()
 	m.session = nil
-	deliverRateLimitNotice(m, "clutch", "clutch/headless", rlNotice, config.RateLimitNotifySession, nil, nil)
+	deliverRateLimitNotice(m, "clutch", "clutch/headless", rlNotice, nil, config.RateLimitNotifySession, nil, nil)
 	if got := len(m.primary.notices); got != 1 {
 		t.Errorf("primary got %d notices, want 1 — a session with no live conn must fall back", got)
 	}
@@ -145,7 +145,7 @@ func TestDeliverRateLimitNoticeBothCollapsesWhenSame(t *testing.T) {
 	t.Parallel()
 	m := newRLMgr()
 	m.session = m.primary
-	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyBoth, nil, nil)
+	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, nil, config.RateLimitNotifyBoth, nil, nil)
 	if got := len(m.primary.notices); got != 1 {
 		t.Errorf("primary got %d notices, want 1 (session conn == primary must not double-send)", got)
 	}
@@ -156,7 +156,7 @@ func TestDeliverRateLimitNoticeNoConnection(t *testing.T) {
 	t.Parallel()
 	m := &rlConnMgr{}
 	for _, target := range config.ValidRateLimitNotifyTargets {
-		deliverRateLimitNotice(m, "clutch", "clutch/main", rlNotice, target, nil, nil)
+		deliverRateLimitNotice(m, "clutch", "clutch/main", rlNotice, nil, target, nil, nil)
 	}
 }
 
@@ -169,7 +169,7 @@ func TestDeliverRateLimitNoticeBothConfinedSessionStaysInSession(t *testing.T) {
 	t.Parallel()
 	m := newRLMgr()
 	m.session.confines = true
-	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyBoth, nil, nil)
+	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, nil, config.RateLimitNotifyBoth, nil, nil)
 	if got := len(m.session.notices); got != 1 {
 		t.Errorf("session conn got %d notices %v, want 1", got, m.session.notices)
 	}
@@ -188,7 +188,7 @@ func TestDeliverRateLimitNoticeBothConfinedWithoutConnectionStaysOut(t *testing.
 	m := newRLMgr()
 	m.session = nil
 	m.confinedKey = m.sessionKey
-	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyBoth, nil, nil)
+	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, nil, config.RateLimitNotifyBoth, nil, nil)
 	if got := len(m.primary.notices); got != 0 {
 		t.Errorf("primary conn got %d notices %v, want 0 — a confined session with no live connection drops the notice, never copies it to another platform's chat", got, m.primary.notices)
 	}
@@ -207,7 +207,7 @@ func TestDeliverRateLimitNoticeDropLoggedAsDrop(t *testing.T) {
 	dropper.drops = true
 	m := &rlConnMgr{primary: dropper, sessionKey: session}
 
-	deliverRateLimitNotice(m, "clutch", session, rlNotice, config.RateLimitNotifySession, nil, nil)
+	deliverRateLimitNotice(m, "clutch", session, rlNotice, nil, config.RateLimitNotifySession, nil, nil)
 
 	if got := logs.Lines("DEBUG", "notice dropped by "+dropper.name); len(got) != 1 {
 		t.Errorf("drop DEBUG lines = %d, want exactly 1:\n%s", len(got), logs.String())
@@ -242,7 +242,7 @@ func newRLAllMgr() (*rlConnMgr, func(string) []string) {
 func TestDeliverRateLimitNoticeAllReachesEveryOpenChat(t *testing.T) {
 	t.Parallel()
 	m, open := newRLAllMgr()
-	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyAll, open, nil)
+	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, nil, config.RateLimitNotifyAll, open, nil)
 
 	if got := len(m.session.notices); got != 1 {
 		t.Errorf("triggering session got %d notices, want 1", got)
@@ -264,7 +264,7 @@ func TestDeliverRateLimitNoticeAllOncePerChat(t *testing.T) {
 	t.Parallel()
 	m, _ := newRLAllMgr()
 	open := func(string) []string { return []string{m.sessionKey, "clutch/app-a", "clutch/app-a"} }
-	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyAll, open, nil)
+	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, nil, config.RateLimitNotifyAll, open, nil)
 
 	if got := len(m.session.notices); got != 1 {
 		t.Errorf("triggering open chat got %d notices, want exactly 1", got)
@@ -281,7 +281,7 @@ func TestDeliverRateLimitNoticeAllNoOpenChatsFallsBack(t *testing.T) {
 	t.Parallel()
 	m := newRLMgr()
 	m.session = nil
-	deliverRateLimitNotice(m, "clutch", "clutch/headless", rlNotice, config.RateLimitNotifyAll, func(string) []string { return nil }, nil)
+	deliverRateLimitNotice(m, "clutch", "clutch/headless", rlNotice, nil, config.RateLimitNotifyAll, func(string) []string { return nil }, nil)
 	if got := len(m.primary.notices); got != 1 {
 		t.Errorf("primary got %d notices, want 1", got)
 	}
@@ -294,7 +294,7 @@ func TestDeliverRateLimitNoticeAllSkipsConfinedOpenChat(t *testing.T) {
 	t.Parallel()
 	m, open := newRLAllMgr()
 	m.others["clutch/app-b"].confines = true
-	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyAll, open, nil)
+	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, nil, config.RateLimitNotifyAll, open, nil)
 	if got := len(m.others["clutch/app-b"].notices); got != 0 {
 		t.Errorf("confined open chat got %d notices, want 0", got)
 	}
@@ -306,7 +306,7 @@ func TestDeliverRateLimitNoticeAllSkipsConfinedOpenChat(t *testing.T) {
 	// connection) skips the chat too.
 	m2, open2 := newRLAllMgr()
 	m2.confinedOthers = map[string]bool{"clutch/app-a": true}
-	deliverRateLimitNotice(m2, "clutch", m2.sessionKey, rlNotice, config.RateLimitNotifyAll, open2, nil)
+	deliverRateLimitNotice(m2, "clutch", m2.sessionKey, rlNotice, nil, config.RateLimitNotifyAll, open2, nil)
 	if got := len(m2.others["clutch/app-a"].notices); got != 0 {
 		t.Errorf("platform-confined open chat got %d notices, want 0", got)
 	}
@@ -320,7 +320,7 @@ func TestDeliverRateLimitNoticeAllConfinedTriggerStaysInSession(t *testing.T) {
 	t.Parallel()
 	m, open := newRLAllMgr()
 	m.session.confines = true
-	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyAll, open, nil)
+	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, nil, config.RateLimitNotifyAll, open, nil)
 	if got := len(m.session.notices); got != 1 {
 		t.Errorf("confined triggering session got %d notices, want 1", got)
 	}
@@ -356,7 +356,7 @@ func TestDeliverRateLimitNoticeLatestOnlyWhereSupported(t *testing.T) {
 	mgr := &latestRLMgr{rlConnMgr: m, latest: map[string]platform.Connection{"clutch/app-1": app}}
 	openWithApp := func(agentID string) []string { return append(open(agentID), "clutch/app-1") }
 
-	deliverRateLimitNotice(mgr, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyAll, openWithApp)
+	deliverRateLimitNotice(mgr, "clutch", m.sessionKey, rlNotice, nil, config.RateLimitNotifyAll, openWithApp, nil)
 
 	if len(app.kinds) != 1 || app.kinds[0] != platform.NoticeKindUsage || app.notices[0] != rlNotice {
 		t.Errorf("app conn got kinds %v notices %v, want one %q notice %q", app.kinds, app.notices, platform.NoticeKindUsage, rlNotice)

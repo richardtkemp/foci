@@ -131,6 +131,7 @@ var (
 	_ platform.UrgentNoticeSender     = (*appConn)(nil)
 	_ platform.SessionMessageEditor   = (*appConn)(nil)
 	_ platform.LatestOnlyNoticeSender = (*appConn)(nil)
+	_ platform.UsageNoticeSender      = (*appConn)(nil)
 )
 
 // errNoBinding is returned by ButtonSender sends and by media sends when the
@@ -449,7 +450,7 @@ func (c *appConn) SendNotificationDirect(text string) string {
 // #911). The messageID is registered so a later EditMessageText can replace
 // the notification in place. urgent sets fap.Notification.Urgent (#3180).
 func (c *appConn) notify(text string, urgent bool) string {
-	return c.notifyAs(text, urgent, "")
+	return c.notifyAs(text, urgent, "", nil)
 }
 
 // SendLatestOnlyNotification delivers a notice of which only the newest of
@@ -460,12 +461,36 @@ func (c *appConn) notify(text string, urgent bool) string {
 // copies (supersedeKey), so a replay or history reload holds only the newest.
 // Implements platform.LatestOnlyNoticeSender.
 func (c *appConn) SendLatestOnlyNotification(kind, text string) {
-	c.notifyAs(text, false, kind)
+	c.notifyAs(text, false, kind, nil)
+}
+
+// SendUsageNotice sends a usage warning as the chat's latest-only usage
+// notice (#3248), carrying usage as fap.Notification.Usage so the app draws
+// it as a pill (#3249). Implements platform.UsageNoticeSender.
+func (c *appConn) SendUsageNotice(text string, usage *platform.UsageSnapshot) {
+	c.notifyAs(text, false, platform.NoticeKindUsage, usageNoticeWire(usage))
+}
+
+// usageNoticeWire is u's wire form (nil u: nil).
+func usageNoticeWire(u *platform.UsageSnapshot) *fap.UsageNotice {
+	if u == nil {
+		return nil
+	}
+	n := &fap.UsageNotice{Windows: make([]fap.UsageWindow, 0, len(u.Windows)), Warned: u.Warned}
+	for _, w := range u.Windows {
+		uw := fap.UsageWindow{Label: w.Label, LengthMs: w.Length.Milliseconds(), UsedPct: w.UsedPct, LimitReached: w.LimitReached}
+		if !w.ResetsAt.IsZero() {
+			uw.ResetsMs = w.ResetsAt.UnixMilli()
+		}
+		n.Windows = append(n.Windows, uw)
+	}
+	return n
 }
 
 // notifyAs is notify; a non-empty latestKind sends under the conversation's
 // fixed id for that kind instead of a new one, not registered for an edit.
-func (c *appConn) notifyAs(text string, urgent bool, latestKind string) string {
+// usage is the frame's Usage (nil: none).
+func (c *appConn) notifyAs(text string, urgent bool, latestKind string, usage *fap.UsageNotice) string {
 	clean := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(text))
 	if clean == "" {
 		return ""
@@ -486,7 +511,7 @@ func (c *appConn) notifyAs(text string, urgent bool, latestKind string) string {
 		msgID = fap.NewULID()
 		c.hub.registerNotification(msgID, b)
 	}
-	b.send(fap.Notification{ConversationID: b.convID, MessageID: msgID, Text: clean, Level: "info", Urgent: urgent})
+	b.send(fap.Notification{ConversationID: b.convID, MessageID: msgID, Text: clean, Level: "info", Urgent: urgent, Usage: usage})
 	return msgID
 }
 

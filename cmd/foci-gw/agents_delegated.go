@@ -332,6 +332,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		hooks.OnRateLimitNotice = func(sessionKey, notice string) {
 			deliverRateLimitNotice(connMgr, agentID, sessionKey,
 				withUsageTable(nameUsageNotice(acct, notice), acct.Readings(agentID)),
+				usageSnapshotOf(notice, acct.Readings(agentID)),
 				p.resolvedLive.Load().Notify.RateLimitNotifyTo, app.OpenSessionsForAgent,
 				usageNoticeChats(ag.Accounts(), acct))
 		}
@@ -1215,7 +1216,11 @@ func firstLine(s string) string {
 // under "session"
 // that notice reaches only the session that FIRST crossed the utilization
 // bucket — "all" is the setting that tells every open chat.
-func deliverRateLimitNotice(connMgr platform.ConnectionManager, agentID, sessionKey, notice, target string, openSessions func(agentID string) []string, onAccount func(sessionKey string) bool) {
+//
+// usage is the notice's windows (usageSnapshotOf; nil: none): a connection
+// that draws usage warnings (platform.UsageNoticeSender, the app's pill,
+// #3249) gets it with the text.
+func deliverRateLimitNotice(connMgr platform.ConnectionManager, agentID, sessionKey, notice string, usage *platform.UsageSnapshot, target string, openSessions func(agentID string) []string, onAccount func(sessionKey string) bool) {
 	logger := log.NewComponentLogger("agent:" + agentID)
 
 	send := func(conn platform.Connection, outcome route.DeliveryOutcome) bool {
@@ -1223,10 +1228,14 @@ func deliverRateLimitNotice(connMgr platform.ConnectionManager, agentID, session
 			return false
 		}
 		// Only the newest usage notice stays visible in a chat where the
-		// transport supports it (the app, #3248); elsewhere a plain notice.
-		if l, ok := conn.(platform.LatestOnlyNoticeSender); ok {
-			l.SendLatestOnlyNotification(platform.NoticeKindUsage, notice)
-		} else {
+		// transport supports it (the app, #3248), drawn as a pill where it
+		// can be (#3249); elsewhere a plain notice.
+		switch c := conn.(type) {
+		case platform.UsageNoticeSender:
+			c.SendUsageNotice(notice, usage)
+		case platform.LatestOnlyNoticeSender:
+			c.SendLatestOnlyNotification(platform.NoticeKindUsage, notice)
+		default:
 			conn.SendNotification(notice)
 		}
 		if platform.DropsAgentWideSends(conn) {
@@ -1313,7 +1322,7 @@ func deliverUsageReadNotices(connMgr platform.ConnectionManager, agentID string,
 	}
 	log.NewComponentLogger("agent:"+agentID).Infof("usage read (%s) of account %s raised %d usage notice(s) (target=%s)", source, acct.Key(), len(notices), target)
 	notice := nameUsageNotice(acct, strings.Join(notices, "\n\n"))
-	deliverRateLimitNotice(connMgr, agentID, "", withUsageTable(notice, hist), target, openSessions, usageNoticeChats(pool, acct))
+	deliverRateLimitNotice(connMgr, agentID, "", withUsageTable(notice, hist), usageSnapshotOf(strings.Join(notices, "\n\n"), hist), target, openSessions, usageNoticeChats(pool, acct))
 }
 
 // deliverRateLimitNoticeAll is the "all" target (#3137, Dick 2026-11-16:
