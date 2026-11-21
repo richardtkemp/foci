@@ -49,7 +49,7 @@ func scriptUsageEvent(t *testing.T, h *testharness.Harness, agentID, match strin
 
 // TestL2_MultiAccount_PickHoldAndRestart (#3186 F2, F3, F6, F7):
 //  1. chat 1 is new with no figure on either account: it takes the first,
-//     A, and reports A's five-hour window at 50%;
+//     A, and reports A's five-hour window at 90% (resetting in 2 h);
 //  2. chat 2 is new: it takes B (no figure = unused), and its CC runs with
 //     B's folder, where its transcript is;
 //  3. A's window reaches 99%: A holds; chat 1 is told and its next message
@@ -80,9 +80,15 @@ func TestL2_MultiAccount_PickHoldAndRestart(t *testing.T) {
 	}
 	accountOf := func(key string) string { return readChatState(t, h, key).meta["account"] }
 
-	// 1. Chat 1 takes A and reports A at 50%. A second turn names the
-	// transcript in the index row.
-	scriptUsageEvent(t, h, "multi", "WARM_3186_A", 0.5)
+	// 1. Chat 1 takes A and reports A at 90%, resetting in 2 h. Under the
+	// T-profile pick (#3247) an account's score is its tighter window's
+	// headroom per hour to reset, the 5h window weighted by the default
+	// 5h/7d cap ratio (0.1). With no 7d figure both accounts score
+	// 100%/168 h on the 7d window, so the 5h window must bind for A:
+	// 10% x 0.1 / 2 h = 0.5 < 0.595, so chat 2 takes B. (At 50% the 7d
+	// window binds both, they tie, and the tie goes to A.) A second turn
+	// names the transcript in the index row.
+	scriptUsageEvent(t, h, "multi", "WARM_3186_A", 0.9)
 	send(chat1, "WARM_3186_A")
 	waitForTurnDone(t, h, "multi", key1, "WARM_3186_A")
 	send(chat1, "WARM_3186_A2")
@@ -97,7 +103,7 @@ func TestL2_MultiAccount_PickHoldAndRestart(t *testing.T) {
 		waitForTurnDone(t, h, "multi", key2, m)
 	}
 	if acct := accountOf(key2); !strings.Contains(acct, ccB) {
-		t.Fatalf("chat 2 on account %q, want B (%s): A is 50%% used, B has no figure", acct, ccB)
+		t.Fatalf("chat 2 on account %q, want B (%s): A is 90%% used, resetting in 2 h, B has no figure", acct, ccB)
 	}
 	st2 := waitForIndexedFile(t, h, key2)
 	ws := agentWorkspace(h, "multi")
