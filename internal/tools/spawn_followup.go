@@ -203,6 +203,14 @@ func spawnState(snap SpawnSnapshot, now time.Time) string {
 	if snap.Resumes > 0 {
 		resumed = fmt.Sprintf(", resumed %d time(s) after a foci restart", snap.Resumes)
 	}
+	if snap.Queued {
+		// #3235: started at the spawn limit; its run has not begun.
+		st := "queued " + spawnAge(now.Sub(snap.Started)) + ", waiting for a free spawn slot ([tools] max_concurrent_spawns)"
+		if snap.Pending > 0 {
+			st += fmt.Sprintf(", %d message(s) waiting", snap.Pending)
+		}
+		return st + resumed
+	}
 	if snap.Running {
 		st := "running " + spawnAge(now.Sub(snap.Started))
 		if snap.Pending > 0 {

@@ -47,7 +47,8 @@ func TestSpawnInheritSemaphore(t *testing.T) {
 
 	ctx := WithSessionKey(context.Background(), "test/imain")
 
-	// Launch 4 concurrent inherit calls (all return immediately with ack)
+	// Launch 4 inherit calls: each returns at once, started or, past the
+	// limit, queued (#3235).
 	for i := 0; i < 4; i++ {
 		params, _ := json.Marshal(map[string]string{
 			"name":    "async1",
@@ -58,8 +59,8 @@ func TestSpawnInheritSemaphore(t *testing.T) {
 		if err != nil {
 			t.Fatalf("spawn %d: %v", i, err)
 		}
-		if !strings.Contains(result.Text, "Spawn started in background") {
-			t.Fatalf("spawn %d: expected async ack, got %q", i, result.Text)
+		if !strings.Contains(result.Text, "Spawn started in background") && !strings.Contains(result.Text, "Spawn QUEUED") {
+			t.Fatalf("spawn %d: expected a started or queued ack, got %q", i, result.Text)
 		}
 	}
 

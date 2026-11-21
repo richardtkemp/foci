@@ -163,7 +163,7 @@ func TestSpawnerSetMaxConcurrentRaiseStartsQueued(t *testing.T) {
 	ctx := WithSessionKey(context.Background(), "test/imain")
 	params, _ := json.Marshal(map[string]string{"name": "slots1", "prompt": "task", "context": "clone"})
 
-	// The first spawn takes the only slot; the next two block in Execute.
+	// The first spawn takes the only slot; the next two return queued (#3235).
 	acks := make(chan string, 3)
 	for i := 0; i < 3; i++ {
 		go func() {
@@ -180,13 +180,23 @@ func TestSpawnerSetMaxConcurrentRaiseStartsQueued(t *testing.T) {
 		return atomic.LoadInt32(&running) == 1 && w == 2
 	})
 
-	spawner.SetMaxConcurrent(3)
-	waitFor(t, "queued spawns to start after the raise", func() bool { return atomic.LoadInt32(&running) == 3 })
+	started, queued := 0, 0
 	for i := 0; i < 3; i++ {
-		if a := <-acks; !strings.Contains(a, "Spawn started in background") {
-			t.Fatalf("ack %q, want a background ack", a)
+		switch a := <-acks; {
+		case strings.Contains(a, "Spawn started in background"):
+			started++
+		case strings.Contains(a, "Spawn QUEUED"):
+			queued++
+		default:
+			t.Fatalf("ack %q, want a started or queued ack", a)
 		}
 	}
+	if started != 1 || queued != 2 {
+		t.Fatalf("%d started and %d queued acks, want 1 and 2", started, queued)
+	}
+
+	spawner.SetMaxConcurrent(3)
+	waitFor(t, "queued spawns to start after the raise", func() bool { return atomic.LoadInt32(&running) == 3 })
 
 	// Lower to 1 while 3 run: none is stopped, and a fourth waits until the
 	// count drops below 1.
@@ -194,21 +204,21 @@ func TestSpawnerSetMaxConcurrentRaiseStartsQueued(t *testing.T) {
 	if r := atomic.LoadInt32(&running); r != 3 {
 		t.Fatalf("lowering left %d running, want all 3", r)
 	}
-	go func() { r, _ := tool.Execute(ctx, params); acks <- r.Text }()
-	waitFor(t, "fourth to queue", func() bool { _, w, _ := spawner.slots.counts(); return w == 1 })
-	time.Sleep(20 * time.Millisecond)
-	if len(acks) != 0 {
-		t.Fatal("a fourth spawn started above the lowered limit")
+	r4, err := tool.Execute(ctx, params)
+	if err != nil || !strings.Contains(r4.Text, "Spawn QUEUED") {
+		t.Fatalf("fourth spawn: %q, %v; want a queued ack", r4.Text, err)
+	}
+	if _, w, _ := spawner.slots.counts(); w != 1 {
+		t.Fatalf("%d waiting, want the fourth queued", w)
+	}
+	if r := atomic.LoadInt32(&running); r != 3 {
+		t.Fatalf("%d running, want 3: a fourth spawn started above the lowered limit", r)
 	}
 	close(release)
-	select {
-	case a := <-acks:
-		if !strings.Contains(a, "Spawn started in background") {
-			t.Fatalf("fourth ack %q, want a background ack", a)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("fourth spawn never started once the running ones ended")
-	}
+	waitFor(t, "the fourth spawn to start once the running ones ended", func() bool {
+		h, w, _ := spawner.slots.counts()
+		return w == 0 && h == 0 && atomic.LoadInt32(&running) == 0
+	})
 	if m := atomic.LoadInt32(&maxRunning); m != 3 {
 		t.Fatalf("max running %d, want 3", m)
 	}
@@ -235,4 +245,133 @@ func (a *slotSpawnAgent) HandleMessage(ctx context.Context, _ string, _ []string
 	}
 	turnevent.Emit(ctx, turnevent.TurnComplete{FinalText: "ok"})
 	return nil
+}
+
+// #3235: a background spawn started at the limit does not wait in its call.
+// It returns at once saying it is queued (runs going, the limit, how many
+// queued), spawn_status shows it queued, and it runs when a slot frees, with
+// a message spawn_send queued for it meanwhile.
+func TestBackgroundSpawnAtLimitReturnsQueued(t *testing.T) {
+	t.Parallel()
+	var running, maxRunning int32
+	release := make(chan struct{})
+	notifier, got := recordingNotifier()
+	agent := &slotSpawnAgent{running: &running, max: &maxRunning, release: release}
+	spawner := NewSpawner(SpawnDeps{
+		Sessions:       &mockSessionBrancher{},
+		AgentID:        "queued-slots",
+		FallbackModel:  "anthropic/claude-haiku-4-5",
+		FallbackFormat: "anthropic",
+		MaxInherit:     1,
+		Notifier:       notifier,
+		Tracker:        NewSpawnTracker(),
+	}, func() SpawnAgent { return agent })
+	ctx := WithSessionKey(context.Background(), "queued-slots/imain")
+	spawn := func(name string) string {
+		t.Helper()
+		params, _ := json.Marshal(map[string]string{"name": name, "prompt": "task " + name, "context": "clone"})
+		done := make(chan string, 1)
+		go func() {
+			r, err := spawner.SpawnTool().Execute(ctx, params)
+			if err != nil {
+				done <- "error: " + err.Error()
+				return
+			}
+			done <- r.Text
+		}()
+		select {
+		case a := <-done:
+			return a
+		case <-time.After(5 * time.Second):
+			t.Fatalf("spawn %s did not return: the call blocks at the spawn limit", name)
+			return ""
+		}
+	}
+
+	if a := spawn("first"); !strings.Contains(a, "Spawn started in background") {
+		t.Fatalf("first ack %q, want started", a)
+	}
+	waitFor(t, "the first spawn to run", func() bool { return atomic.LoadInt32(&running) == 1 })
+
+	a := spawn("second")
+	for _, want := range []string{"Spawn QUEUED", "1 spawn runs are going", "max_concurrent_spawns) is 1", "1 spawn(s) queued", "Name: second", "Background ID: second"} {
+		if !strings.Contains(a, want) {
+			t.Errorf("queued ack lacks %q:\n%s", want, a)
+		}
+	}
+	list := spawner.StatusTool()
+	st, err := list.Execute(ctx, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(st.Text, "second  queued ") {
+		t.Fatalf("spawn_status does not show the second spawn queued:\n%s", st.Text)
+	}
+	if _, err := spawner.SendTool().Execute(ctx, json.RawMessage(`{"id":"second","message":"also this"}`)); err != nil {
+		t.Fatalf("spawn_send to a queued spawn: %v", err)
+	}
+	if r := atomic.LoadInt32(&running); r != 1 {
+		t.Fatalf("%d running, want 1: the queued spawn ran above the limit", r)
+	}
+
+	close(release)
+	for i := 0; i < 2; i++ {
+		r := recv(t, got, "a [SPAWN RESULT]")
+		if !strings.Contains(r.msg, "completed") {
+			t.Fatalf("result %q, want completed", r.msg)
+		}
+	}
+	st, _ = list.Execute(ctx, json.RawMessage(`{"id":"second"}`))
+	for _, want := range []string{"(started: a spawn slot freed)", "also this"} {
+		if !strings.Contains(st.Text, want) {
+			t.Errorf("second spawn's status lacks %q:\n%s", want, st.Text)
+		}
+	}
+	if m := atomic.LoadInt32(&maxRunning); m != 1 {
+		t.Fatalf("max running %d, want 1", m)
+	}
+}
+
+// #3235: spawn_stop on a queued spawn takes it off the queue: it never runs,
+// reports stopped, and frees its place.
+func TestQueuedBackgroundSpawnStops(t *testing.T) {
+	t.Parallel()
+	var running, maxRunning int32
+	release := make(chan struct{})
+	defer close(release)
+	notifier, got := recordingNotifier()
+	agent := &slotSpawnAgent{running: &running, max: &maxRunning, release: release}
+	spawner := NewSpawner(SpawnDeps{
+		Sessions:       &mockSessionBrancher{},
+		AgentID:        "queued-stop",
+		FallbackModel:  "anthropic/claude-haiku-4-5",
+		FallbackFormat: "anthropic",
+		MaxInherit:     1,
+		Notifier:       notifier,
+		Tracker:        NewSpawnTracker(),
+	}, func() SpawnAgent { return agent })
+	ctx := WithSessionKey(context.Background(), "queued-stop/imain")
+	for _, name := range []string{"first", "second"} {
+		params, _ := json.Marshal(map[string]string{"name": name, "prompt": "task", "context": "clone"})
+		if _, err := spawner.SpawnTool().Execute(ctx, params); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitFor(t, "one running, one queued", func() bool {
+		_, w, _ := spawner.slots.counts()
+		return atomic.LoadInt32(&running) == 1 && w == 1
+	})
+	if _, err := spawner.StopTool().Execute(ctx, json.RawMessage(`{"id":"second"}`)); err != nil {
+		t.Fatal(err)
+	}
+	r := recv(t, got, "the stopped spawn's [SPAWN RESULT]")
+	if !strings.Contains(r.msg, "second") || !strings.Contains(r.msg, "was stopped") {
+		t.Fatalf("result %q, want the second spawn stopped", r.msg)
+	}
+	if h, w, _ := spawner.slots.counts(); h != 1 || w != 0 {
+		t.Fatalf("held=%d waiting=%d, want 1 and 0", h, w)
+	}
+	if m := atomic.LoadInt32(&maxRunning); m != 1 {
+		t.Fatalf("max running %d, want 1: the stopped spawn ran", m)
+	}
 }

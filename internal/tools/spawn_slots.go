@@ -28,6 +28,18 @@ func newSpawnSlots(limit int) *spawnSlots {
 // acquire blocks until it holds a slot (nil) or ctx ends (ctx.Err(), no slot
 // held). A grant that races the cancellation wins: the slot is handed back.
 func (s *spawnSlots) acquire(ctx context.Context) error {
+	if wait := s.reserve(); wait != nil {
+		return wait(ctx)
+	}
+	return nil
+}
+
+// reserve takes a slot at once when one is free and nobody waits (nil), or
+// joins the FIFO queue now and returns wait, which blocks until the slot is
+// granted (nil) or ctx ends (ctx.Err(), no slot held). A background spawn uses
+// it to return to its caller at once, queued, without losing its place
+// (#3235). Exactly one wait call must follow a non-nil return.
+func (s *spawnSlots) reserve() (wait func(ctx context.Context) error) {
 	s.mu.Lock()
 	if s.held < s.limit && len(s.waiters) == 0 {
 		s.held++
@@ -37,23 +49,25 @@ func (s *spawnSlots) acquire(ctx context.Context) error {
 	grant := make(chan struct{})
 	s.waiters = append(s.waiters, grant)
 	s.mu.Unlock()
-	select {
-	case <-grant:
-		return nil
-	case <-ctx.Done():
-		s.mu.Lock()
-		for i, w := range s.waiters {
-			if w == grant {
-				s.waiters = append(s.waiters[:i], s.waiters[i+1:]...)
-				s.mu.Unlock()
-				return ctx.Err()
+	return func(ctx context.Context) error {
+		select {
+		case <-grant:
+			return nil
+		case <-ctx.Done():
+			s.mu.Lock()
+			for i, w := range s.waiters {
+				if w == grant {
+					s.waiters = append(s.waiters[:i], s.waiters[i+1:]...)
+					s.mu.Unlock()
+					return ctx.Err()
+				}
 			}
+			s.mu.Unlock()
+			// Already granted (dequeued and counted): give the slot back.
+			<-grant
+			s.release()
+			return ctx.Err()
 		}
-		s.mu.Unlock()
-		// Already granted (dequeued and counted): give the slot back.
-		<-grant
-		s.release()
-		return ctx.Err()
 	}
 }
 

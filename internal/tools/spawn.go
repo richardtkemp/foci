@@ -614,6 +614,9 @@ func spawnToolDescription(modes []string) string {
 		b.WriteString("\nUse " + strings.Join(rest, ", and ") + ".")
 	}
 	b.WriteString("\nWith agent=<id>, the spawn runs as another agent, in character mode. spawn_status lists your spawns while they run, and spawn_stop stops one.")
+	// #3235: the limit was undocumented, and a spawn at it blocked the call
+	// with no message.
+	b.WriteString("\nAt most [tools] max_concurrent_spawns background spawns of this agent run at once (default 20). A background spawn started at the limit returns at once saying it is queued, shows as queued in spawn_status, and starts by itself when one finishes.")
 	// #3081, Dick 2026-11-13: "foreground is blocking and therefore only for
 	// short-ish tasks or special occasions, OR if the spawning session is
 	// itself in the background. principle here is that we should keep
@@ -1567,11 +1570,13 @@ func (s *Spawner) startClone(ctx context.Context, name, prompt string, persisten
 // launchBackground registers a background spawn on its branch (running holds
 // the branch key and, for a character spawn, Character and SpawnModel) and
 // starts its first run; the tool returns at once with where it runs.
+//
+// At the spawn limit ([tools] max_concurrent_spawns) it does not wait for a
+// slot (#3235): it registers the spawn as queued, returns at once saying so,
+// and starts the run when its slot comes (startWhenSlotFree).
 func (s *Spawner) launchBackground(ctx context.Context, agent SpawnAgent, parent string, running RunningSpawn, prompt string) (ToolResult, error) {
 	deps := s.deps
-	if err := s.slots.acquire(ctx); err != nil {
-		return ToolResult{}, err
-	}
+	wait := s.slots.reserve() // nil: it holds a slot now
 	// Registered before the goroutine starts, so a /stop that lands at
 	// once still finds it (#2139).
 	spawnCtx, cancel := s.runContext(ctx, running, true)
@@ -1588,6 +1593,9 @@ func (s *Spawner) launchBackground(ctx context.Context, agent SpawnAgent, parent
 		running.Model = h.deps.ModelFor(running.BranchKey)
 	}
 	deps.Tracker.addWithPrompt(parent, running, cancel, prompt)
+	if wait != nil {
+		deps.Tracker.setQueued(parent, running.ID)
+	}
 	deps.Tracker.appendLog(parent, running.ID, "prompt", prompt)
 	if deps.Observer != nil {
 		deps.Observer.SpawnStarted(parent, running, prompt)
@@ -1599,9 +1607,62 @@ func (s *Spawner) launchBackground(ctx context.Context, agent SpawnAgent, parent
 	if running.Agent != "" {
 		kind += " as " + running.Agent
 	}
+	texts := []string{s.hostOf(running).withSteerNotice(prompt)}
+	if wait != nil {
+		held, waiting, limit := s.slots.counts()
+		spawnLog.Infof("spawn=%s branch=%s parent=%s queued: %d running, limit %d, %d queued (itself included)",
+			running.ID, running.BranchKey, parent, held, limit, waiting)
+		deps.Tracker.appendLog(parent, running.ID, "message", fmt.Sprintf("(queued: %d spawn runs going, limit %d)", held, limit))
+		go s.startWhenSlotFree(wait, agent, parent, running, texts, spawnCtx, cancel)
+		queued := fmt.Sprintf("%s QUEUED, not started: %d spawn runs are going and the limit ([tools] max_concurrent_spawns) is %d; %d spawn(s) queued, this one included. It starts by itself when a slot frees.\nName: %s\nSpawn: %s\nBranch: %s\nPrompt: %s\nResults will be delivered when complete. spawn_status shows it as queued until it starts; spawn_send queues a message for it; spawn_stop takes it off the queue.\nBackground ID: %s",
+			kind, held, limit, waiting, running.Label(), running.ID, running.BranchKey, truncatePromptPreview(prompt), spawnBackgroundID(running))
+		return TextResult(queued), nil
+	}
 	pending := fmt.Sprintf("%s started in background.\nName: %s\nSpawn: %s\nBranch: %s\nPrompt: %s\nResults will be delivered when complete. Send it more with spawn_send; check on it with spawn_status (by its name or id).",
 		kind, running.Label(), running.ID, running.BranchKey, truncatePromptPreview(prompt))
-	return s.runBackground(ctx, agent, parent, running, []string{s.hostOf(running).withSteerNotice(prompt)}, spawnCtx, cancel, pending)
+	return s.runBackground(ctx, agent, parent, running, texts, spawnCtx, cancel, pending)
+}
+
+// startWhenSlotFree runs a queued background spawn (#3235) once wait grants
+// its slot: from then on it runs, and reports, as one that started at once.
+// A stop while it waits ends the wait: the spawn ends stopped and reports so,
+// without a run. A shutdown leaves it, and its persisted record, for the next
+// process to resume.
+func (s *Spawner) startWhenSlotFree(wait func(context.Context) error, agent SpawnAgent, parent string, running RunningSpawn,
+	texts []string, spawnCtx context.Context, cancel context.CancelFunc) {
+	tr, id := s.deps.Tracker, running.ID
+	if err := wait(spawnCtx); err != nil {
+		cancel()
+		end := tr.finishOrNext(parent, id, true)
+		if end.interrupted {
+			spawnLog.Infof("spawn=%s branch=%s cut short by shutdown while queued — left for the next process to resume", id, running.BranchKey)
+			return
+		}
+		if end.handedOff != nil {
+			// A run on its branch took it over; that run reports.
+			end.handedOff.tookOver()
+			return
+		}
+		if end.stopped {
+			tr.setOutcome(parent, id, "stopped")
+		} else {
+			tr.setOutcome(parent, id, "failed")
+			tr.appendLog(parent, id, "error", err.Error())
+		}
+		if s.deps.Observer != nil {
+			s.deps.Observer.SpawnEnded(parent, id)
+		}
+		s.deliver(parent, id, s.resultMessage(parent, id, running.BranchKey, end.stopped, err, "", end.dropped))
+		s.startWake(parent, id)
+		s.closeBranch(running)
+		return
+	}
+	tr.startQueued(parent, id)
+	tr.appendLog(parent, id, "message", "(started: a spawn slot freed)")
+	spawnLog.Infof("spawn=%s branch=%s parent=%s got a spawn slot: starting", id, running.BranchKey, parent)
+	// Messages sent while it was queued go with its task, in order.
+	texts = append(texts, tr.drainPending(parent, id)...)
+	_, _ = s.runBackground(context.Background(), agent, parent, running, texts, spawnCtx, cancel, "")
 }
 
 // withSteerNotice adds to a background spawn's task the paragraph its backend
