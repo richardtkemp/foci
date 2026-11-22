@@ -295,3 +295,88 @@ func TestSpawn_RefusedDuringUsageHold(t *testing.T) {
 		t.Errorf("turns = %d, want none", len(calls))
 	}
 }
+
+// heldRecordingObserver records the usage-hold pauses shown for spawns
+// (#3256), on top of the recording observer.
+type heldRecordingObserver struct {
+	recordingSpawnObserver
+	hmu  sync.Mutex
+	held []spawnHeldCall
+}
+
+type spawnHeldCall struct {
+	id      string
+	held    bool
+	untilMs int64
+}
+
+var _ SpawnHoldObserver = (*heldRecordingObserver)(nil)
+
+func (o *heldRecordingObserver) SpawnHeld(_, id string, held bool, untilMs int64) {
+	o.hmu.Lock()
+	defer o.hmu.Unlock()
+	o.held = append(o.held, spawnHeldCall{id, held, untilMs})
+}
+
+func (o *heldRecordingObserver) heldCalls() []spawnHeldCall {
+	o.hmu.Lock()
+	defer o.hmu.Unlock()
+	return append([]spawnHeldCall(nil), o.held...)
+}
+
+// liftHoldSpawnAgent is a holdSpawnAgent that tells when its hold lifts.
+type liftHoldSpawnAgent struct {
+	*holdSpawnAgent
+	liftAt time.Time
+}
+
+var _ UsageHoldLifter = (*liftHoldSpawnAgent)(nil)
+
+func (l *liftHoldSpawnAgent) UsageHoldLiftAt(string) time.Time { return l.liftAt }
+
+// TestSpawn_UsageHoldShowsHeld proves a paused spawn is shown held with the
+// hold's lift time while paused, and not held after the lift (#3256): the
+// app then shows the chat as held, not as running.
+func TestSpawn_UsageHoldShowsHeld(t *testing.T) {
+	t.Parallel()
+	inner := newHoldSpawnAgent(true)
+	liftAt := time.UnixMilli(1_800_000_000_000)
+	ag := &liftHoldSpawnAgent{holdSpawnAgent: inner, liftAt: liftAt}
+	obs := &heldRecordingObserver{}
+	results := make(chan string, 4)
+	notifier := NewAsyncNotifier(func(_, msg, _, _ string, _ *AgentOrigin) { results <- msg })
+	tracker := NewSpawnTracker()
+	deps := SpawnDeps{Sessions: &mockSessionBrancher{}, AgentID: "test", FallbackModel: "anthropic/claude-haiku-4-5",
+		FallbackFormat: "anthropic", MaxInherit: 2, Notifier: notifier, Tracker: tracker, Observer: obs}
+	tool := NewSpawner(deps, func() SpawnAgent { return ag }).SpawnTool()
+	params, _ := json.Marshal(map[string]any{"name": "held", "prompt": "long task", "context": "clone"})
+	if _, err := tool.Execute(WithSessionKey(context.Background(), "test/imain"), params); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	select {
+	case <-inner.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the spawn's first step never started")
+	}
+
+	inner.startHold()
+	deadline := time.Now().Add(2 * time.Second)
+	for len(obs.heldCalls()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	calls := obs.heldCalls()
+	if len(calls) != 1 || !calls[0].held || calls[0].untilMs != liftAt.UnixMilli() {
+		t.Fatalf("held calls during the hold = %+v, want one held call with the lift time %d", calls, liftAt.UnixMilli())
+	}
+
+	inner.liftHold()
+	select {
+	case <-results:
+	case <-time.After(3 * time.Second):
+		t.Fatal("no [SPAWN RESULT] after the lift")
+	}
+	calls = obs.heldCalls()
+	if len(calls) != 2 || calls[1].held || calls[1].id != calls[0].id {
+		t.Fatalf("held calls after the lift = %+v, want the pause ended", calls)
+	}
+}

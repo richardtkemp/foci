@@ -816,6 +816,13 @@ type Activity struct {
 	// reset"): it does not set Kind, and a waiting spawn is left out of
 	// Subagents. The app shows "waiting for usage reset ~HH:MM" in the chat's
 	// activity place instead. UsageWaitIDs are the waiting spawns' ids.
+	//
+	// Work the usage hold holds counts the same way (#3256): a spawn the
+	// hold paused is in UsageWaitIDs, not Subagents, and the hold's lift
+	// time (when known) and that of input the hold holds on the session
+	// count toward UsageResetMs. A paused spawn with no known lift time is in
+	// UsageWaitIDs with no UsageResetMs. The roster shows a held icon for a
+	// conversation with no activity and a wait.
 	UsageResetMs int64    `json:"usageResetMs,omitempty"`
 	UsageWaitIDs []string `json:"usageWaitIds,omitempty"`
 }

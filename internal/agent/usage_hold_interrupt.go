@@ -101,6 +101,17 @@ func (a *Agent) UsageHoldActive(sessionKey string) bool {
 	return a.usageHoldPhase(sessionKey) != usagehold.Open
 }
 
+// UsageHoldLiftAt is when sessionKey's account lifts its hold or stop: zero
+// when it is open, or when no lift time is known (#3256). It implements
+// tools.UsageHoldLifter.
+func (a *Agent) UsageHoldLiftAt(sessionKey string) time.Time {
+	st := a.UsageHold(sessionKey)
+	if st.Phase == usagehold.Open {
+		return time.Time{}
+	}
+	return st.LiftAt
+}
+
 // WaitUsageLift blocks until sessionKey's account is open, or ctx ends
 // (false).
 func (a *Agent) WaitUsageLift(ctx context.Context, sessionKey string) bool {
@@ -365,4 +376,7 @@ func (a *Agent) WaitTurnIdle(ctx context.Context, sk string) bool {
 	}
 }
 
-var _ tools.SpawnTurnInterrupter = (*Agent)(nil)
+var (
+	_ tools.SpawnTurnInterrupter = (*Agent)(nil)
+	_ tools.UsageHoldLifter      = (*Agent)(nil)
+)

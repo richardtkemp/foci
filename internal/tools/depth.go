@@ -149,6 +149,26 @@ type DepthDeps struct {
 	// back on. The spawner re-reads every spawn's owner, moves what the app
 	// shows, and delivers the results it held (Spawner.Reown). Nil = none.
 	OnHandover func()
+	// UsageHold reports whether sessionKey's account is in a usage hold (or
+	// stop), and when it lifts (zero = unknown) (#3256, #3214): a leaf's turn
+	// waits for the lift then, and status and fan-out say so. Nil = never.
+	UsageHold func(sessionKey string) (held bool, liftAt time.Time)
+}
+
+// usageHold reports sessionKey's usage hold by the deps (#3256).
+func (m *DepthManager) usageHold(sessionKey string) (bool, time.Time) {
+	if m.deps.UsageHold == nil {
+		return false, time.Time{}
+	}
+	return m.deps.UsageHold(sessionKey)
+}
+
+// depthHoldUntil names when a usage hold lifts, for an agent to read.
+func depthHoldUntil(liftAt time.Time) string {
+	if liftAt.IsZero() {
+		return "until it lifts"
+	}
+	return "until " + liftAt.Local().Format("Mon 2 Jan 15:04 MST")
 }
 
 // depthLeafSpec is one leaf a fan-out asks for. Prompt is the leaf's opening
@@ -901,12 +921,19 @@ func (m *DepthManager) doFanout(ctx context.Context, caller string, leaves []dep
 	}
 	depthLog.Infof("fan-out %s → %d leaves, %d with a task (tree %s, level %d)", caller, len(children), len(tasks), tree, children[0].Level)
 
+	held, lift := false, time.Time{}
+	if len(tasks) > 0 {
+		held, lift = m.usageHold(caller)
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are now waiting on %d leaves; end your turn. You will get one [DEPTH RESULTS] message when all have reported.\n", len(children))
 	for _, c := range children {
 		how := "question: shown to the user as the leaf's opening message; the leaf waits for their answer"
 		if c.Opening == depthOpenTask {
 			how = "task: the leaf is working on it now; the user does not see the task, only the leaf's result"
+			if held {
+				how = "task: the leaf starts on it when the usage hold lifts; the user does not see the task, only the leaf's result"
+			}
 		}
 		fmt.Fprintf(&b, "- %s (%s) — %s\n", c.Title, c.LeafID, how)
 	}
@@ -914,7 +941,12 @@ func (m *DepthManager) doFanout(ctx context.Context, caller string, leaves []dep
 		b.WriteString("The user can keep talking to you in this chat while the leaves are open: answer as normal. Nothing said here reaches the leaves, and they reach you only through that message, which may arrive after the chat has moved on.\n")
 	}
 	if ctxTokens > 0 {
-		fmt.Fprintf(&b, "Each leaf started from a copy of your context: %d tokens.", ctxTokens)
+		fmt.Fprintf(&b, "Each leaf started from a copy of your context: %d tokens.\n", ctxTokens)
+	}
+	if held {
+		// #3214: the task turns wait for the lift; do not report them as
+		// running.
+		fmt.Fprintf(&b, "Warning: the usage hold is on %s. The task leaves will not start until it lifts; foci_depth_status shows them as held until then.\n", depthHoldUntil(lift))
 	}
 	return strings.TrimRight(b.String(), "\n"), nil
 }
@@ -1897,8 +1929,16 @@ func (m *DepthManager) status(caller string) string {
 				switch {
 				case x.AckPending:
 					state = "active, wrapping up after the user marked it complete"
-				case queued[i] || (m.deps.Surface != nil && m.deps.Surface.LeafBusy(x.Key)):
+				case m.deps.Surface != nil && m.deps.Surface.LeafBusy(x.Key):
 					state = "active, running"
+				case queued[i]:
+					// A queued turn does not start while the usage hold is on
+					// (#3214): the leaf is held, not running.
+					if held, lift := m.usageHold(x.Key); held {
+						state = "active, held by the usage hold " + depthHoldUntil(lift) + " (its turn starts when the hold lifts)"
+					} else {
+						state = "active, running"
+					}
 				default:
 					state = "active, waiting for the user"
 				}

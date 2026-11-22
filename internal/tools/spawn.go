@@ -88,6 +88,13 @@ type UsageHoldPauser interface {
 	UsageHoldPause(key, kind string, on bool)
 }
 
+// UsageHoldLifter is the optional pauser side that tells when key's usage
+// hold lifts (zero: open, or no lift time known) (#3256). *agent.Agent
+// implements it.
+type UsageHoldLifter interface {
+	UsageHoldLiftAt(key string) time.Time
+}
+
 // agentOrNil is the spawner's agent, nil when it has no agent getter.
 func (s *Spawner) agentOrNil() SpawnAgent {
 	if s == nil || s.agentFn == nil {

@@ -2847,7 +2847,16 @@ type convBinding struct {
 	// spawnShells maps a running direct spawn's id to the shell call it was
 	// started from (tools.RunningSpawn.CallerShell): that call's
 	// background-command entry is hidden while the spawn runs (#2685).
-	spawnShells      map[string]string
+	spawnShells map[string]string
+	// spawnHolds maps the id of a spawn the usage hold paused to when the
+	// hold lifts, unix ms (0 = unknown) (#3256). Such a spawn is not
+	// activity, as a spawn waiting for the usage reset is not (#3146).
+	spawnHolds map[string]int64
+	// inputHeld: the usage hold holds input of this session (a message that
+	// arrived during the hold, or the resume line of a turn it interrupted),
+	// lifting at inputHeldMs (unix ms; 0 = unknown) (#3256). Not activity.
+	inputHeld        bool
+	inputHeldMs      int64
 	waitingDetail    string       // target agent id we're awaiting, empty if none
 	waitingStartedMs int64        // when the wait on waitingDetail began, unix ms (#2913)
 	activitySent     fap.Activity // last-emitted Activity frame (zero == idle, nothing sent)
@@ -3145,33 +3154,55 @@ func spawnWaitsForUsageReset(s fap.RunningSubagent) bool {
 	return s.RetryUntilMs > 0 && s.RetryStatus == 429
 }
 
-// activeSpawnsLocked is b.spawns without the spawns that wait for the usage
-// reset: such a wait is not activity (Dick, 2026-11-16, #3146). Caller holds mu.
+// spawnHeldLocked reports whether a spawn is held, not active: it waits for
+// the usage reset (#3146) or the usage hold paused it (#3256). Caller holds
+// mu.
+func (b *convBinding) spawnHeldLocked(s fap.RunningSubagent) bool {
+	if spawnWaitsForUsageReset(s) {
+		return true
+	}
+	_, paused := b.spawnHolds[s.ID]
+	return paused
+}
+
+// activeSpawnsLocked is b.spawns without the held spawns: waiting for the
+// usage reset (Dick, 2026-11-16, #3146) or paused by the usage hold (#3256)
+// is not activity. Caller holds mu.
 func (b *convBinding) activeSpawnsLocked() []fap.RunningSubagent {
-	if !slices.ContainsFunc(b.spawns, spawnWaitsForUsageReset) {
+	if !slices.ContainsFunc(b.spawns, b.spawnHeldLocked) {
 		return b.spawns
 	}
 	var active []fap.RunningSubagent
 	for _, s := range b.spawns {
-		if !spawnWaitsForUsageReset(s) {
+		if !b.spawnHeldLocked(s) {
 			active = append(active, s)
 		}
 	}
 	return active
 }
 
-// usageWaitLocked returns when the latest usage-reset wait of the agent's
-// turn or its spawns ends (unix ms; 0 = none waits) and the waiting spawns'
-// ids (#3146). Caller holds mu.
-func (b *convBinding) usageWaitLocked() (untilMs int64, ids []string) {
+// usageWaitLocked returns when the latest wait of this conversation's held
+// work ends (unix ms; 0 = none waits, or no end is known) and the held
+// spawns' ids. Held work is the agent's turn or a spawn waiting for the usage
+// reset (#3146), a spawn the usage hold paused, or input the usage hold holds
+// (#3256). held reports whether any work is held, known end or not. Caller
+// holds mu.
+func (b *convBinding) usageWaitLocked() (untilMs int64, ids []string, held bool) {
 	untilMs = b.usageWaitMs
+	if b.inputHeld {
+		untilMs = max(untilMs, b.inputHeldMs)
+	}
 	for _, s := range b.spawns {
+		if !b.spawnHeldLocked(s) {
+			continue
+		}
+		ids = append(ids, s.ID)
 		if spawnWaitsForUsageReset(s) {
-			ids = append(ids, s.ID)
 			untilMs = max(untilMs, s.RetryUntilMs)
 		}
+		untilMs = max(untilMs, b.spawnHolds[s.ID])
 	}
-	return untilMs, ids
+	return untilMs, ids, untilMs > 0 || len(ids) > 0 || b.inputHeld
 }
 
 // agentActivityLocked resolves the AGENT's own activity, ignoring subagents:
@@ -3207,10 +3238,10 @@ func (b *convBinding) activityIdle() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	kind, _ := b.resolveActivity()
-	// A usage-reset wait shows no activity (#3146) but still holds work in
+	// Held work shows no activity (#3146, #3256) but is still work in
 	// flight, so the chat stays open.
-	until, _ := b.usageWaitLocked()
-	return kind == fap.ActivityKindIdle && until == 0
+	_, _, held := b.usageWaitLocked()
+	return kind == fap.ActivityKindIdle && !held
 }
 
 // activityFrameLocked builds the full Activity frame from the current inputs:
@@ -3226,7 +3257,7 @@ func (b *convBinding) activityFrameLocked() fap.Activity {
 	if spawns := b.activeSpawnsLocked(); len(subagents)+len(spawns) > 0 {
 		a.Subagents = append(append([]fap.RunningSubagent(nil), subagents...), spawns...)
 	}
-	a.UsageResetMs, a.UsageWaitIDs = b.usageWaitLocked()
+	a.UsageResetMs, a.UsageWaitIDs, _ = b.usageWaitLocked()
 	return a
 }
 
@@ -3422,10 +3453,37 @@ func (b *convBinding) setSpawnRetry(id string, untilMs int64, status int) {
 	})
 }
 
+// setSpawnHeld marks one spawn as paused by the usage hold until untilMs
+// (unix ms; 0 = unknown), or no longer paused (#3256).
+func (b *convBinding) setSpawnHeld(id string, held bool, untilMs int64) {
+	b.applyActivity(func() {
+		if !held {
+			delete(b.spawnHolds, id)
+			return
+		}
+		if b.spawnHolds == nil {
+			b.spawnHolds = map[string]int64{}
+		}
+		b.spawnHolds[id] = untilMs
+	})
+}
+
+// setInputHeld records whether the usage hold holds input of this session,
+// and when it lifts (unix ms; 0 = unknown) (#3256).
+func (b *convBinding) setInputHeld(held bool, untilMs int64) {
+	if !held {
+		untilMs = 0
+	}
+	b.applyActivity(func() {
+		b.inputHeld, b.inputHeldMs = held, untilMs
+	})
+}
+
 func (b *convBinding) removeSpawn(id string) {
 	b.applyActivity(func() {
 		b.spawns = slices.DeleteFunc(b.spawns, func(s fap.RunningSubagent) bool { return s.ID == id })
 		delete(b.spawnShells, id)
+		delete(b.spawnHolds, id)
 	})
 }
 

@@ -38,6 +38,16 @@ func (a *Agent) UsageHeldInput(sessionKey string) bool {
 	return a.usageHold.heldBySession[sessionKey] > 0
 }
 
+// UsageHeldInputLift reports whether the usage hold holds input of
+// sessionKey, and when its account lifts (zero = unknown) (#3256): the app
+// shows such a chat as held, not as idle.
+func (a *Agent) UsageHeldInputLift(sessionKey string) (held bool, liftAt time.Time) {
+	if !a.UsageHeldInput(sessionKey) {
+		return false, time.Time{}
+	}
+	return true, a.UsageHoldLiftAt(sessionKey)
+}
+
 // SetOnWaitInputsChanged registers fn to be called with a session key when
 // one of that session's stay-busy inputs held here changes: its pending
 // async results, or whether the usage hold holds its input. nil detaches.

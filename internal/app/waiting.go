@@ -281,8 +281,38 @@ func (h *Hub) refreshWaitingAll() {
 	}
 	h.mu.RUnlock()
 	for _, b := range bindings {
+		h.refreshInputHeld(b)
 		h.refreshWaiting(b)
 	}
+}
+
+// heldInputs is the optional agent side of a held chat (#3256): whether the
+// usage hold holds input of a session, and when that hold lifts (zero =
+// unknown). *agent.Agent implements it.
+type heldInputs interface {
+	UsageHeldInputLift(sessionKey string) (held bool, liftAt time.Time)
+}
+
+// refreshInputHeld re-reads whether the usage hold holds input of b's
+// session, and when it lifts, into b's activity (#3256): such input is held
+// work, shown as held and not as activity. It runs when the agent reports a
+// change of its held input and on every sweep, which also follows a hold
+// whose lift time moved. Caller must not hold h.mu or b.mu.
+func (h *Hub) refreshInputHeld(b *convBinding) {
+	if h == nil || b == nil {
+		return
+	}
+	agentID, sk := b.identity()
+	in, ok := h.waitInputs(agentID).(heldInputs)
+	if !ok {
+		return
+	}
+	held, lift := in.UsageHeldInputLift(sk)
+	var ms int64
+	if held && !lift.IsZero() {
+		ms = lift.UnixMilli()
+	}
+	b.setInputHeld(held, ms)
 }
 
 // startWaitingSweep starts the time-based re-check, once per hub, on the
@@ -362,5 +392,8 @@ func NotifyWaitInputsChanged(sessionKey string) {
 	if b == nil {
 		return
 	}
-	go h.refreshWaiting(b)
+	go func() {
+		h.refreshInputHeld(b)
+		h.refreshWaiting(b)
+	}()
 }

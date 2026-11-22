@@ -11,6 +11,7 @@ package main
 import (
 	"context"
 	"errors"
+	"time"
 
 	"foci/internal/agent"
 	"foci/internal/app"
@@ -137,6 +138,14 @@ func (d *toolDeps) getDepth() *tools.DepthManager {
 			return a != nil && a.HasResumableSession(bk)
 		},
 		Approve: newDepthApproveFn(agentID, d.connMgr),
+		// #3256, #3214: a leaf's turn waits for a usage hold's lift.
+		UsageHold: func(sk string) (bool, time.Time) {
+			a := ag()
+			if a == nil || !a.UsageHoldActive(sk) {
+				return false, time.Time{}
+			}
+			return true, a.UsageHoldLiftAt(sk)
+		},
 		// #2624, #3206: a spawn's owner may have changed; the spawner
 		// re-reads the owners, moves the app's view of each moved spawn,
 		// and delivers the results of reported leaves' spawns it held.

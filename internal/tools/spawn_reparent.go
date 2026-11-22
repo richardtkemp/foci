@@ -171,7 +171,10 @@ type ownedObserver struct {
 	t     *SpawnTracker
 }
 
-var _ SpawnObserver = ownedObserver{}
+var (
+	_ SpawnObserver     = ownedObserver{}
+	_ SpawnHoldObserver = ownedObserver{}
+)
 
 // owned runs fn with the owner of parent's spawns, under obsMu.
 func (o ownedObserver) owned(parent string, fn func(owner string)) {
@@ -202,6 +205,14 @@ func (o ownedObserver) SpawnModel(parent, id, model string) {
 
 func (o ownedObserver) SpawnRetry(parent, id string, untilMs int64, status int) {
 	o.owned(parent, func(owner string) { o.inner.SpawnRetry(owner, id, untilMs, status) })
+}
+
+// SpawnHeld forwards a usage-hold pause to the owner, when the inner
+// observer shows one (#3256).
+func (o ownedObserver) SpawnHeld(parent, id string, held bool, untilMs int64) {
+	if ho, ok := o.inner.(SpawnHoldObserver); ok {
+		o.owned(parent, func(owner string) { ho.SpawnHeld(owner, id, held, untilMs) })
+	}
 }
 
 func (o ownedObserver) SpawnEnded(parent, id string) {

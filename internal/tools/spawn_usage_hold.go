@@ -132,7 +132,56 @@ func (s *Spawner) waitHoldLift(pauser UsageHoldPauser, spawnCtx context.Context,
 	s.deps.Tracker.appendLog(parent, id, "message", "(paused by the usage hold)")
 	pauser.UsageHoldPause(branchKey, "spawn", true)
 	defer pauser.UsageHoldPause(branchKey, "spawn", false)
+	defer s.showHeld(pauser, parent, id, branchKey)()
 	return pauser.WaitUsageLift(spawnCtx, branchKey)
+}
+
+// heldLiftPoll is how often a paused spawn's held state is told again (#3256),
+// so a hold that moves its lift time is followed, and a spawn handed over to
+// another owner meanwhile (Reown, which shows it running there) is shown held
+// there too. The app drops a repeat that changes nothing.
+var heldLiftPoll = 30 * time.Second
+
+// showHeld tells the observer the spawn is paused by the usage hold, with
+// when the hold lifts, and tells it again every heldLiftPoll while the pause
+// lasts (#3256): the app then shows the spawn as held, not as running. The
+// returned func ends the pause shown. A no-op without an observer that shows
+// holds.
+func (s *Spawner) showHeld(pauser UsageHoldPauser, parent, id, branchKey string) (end func()) {
+	ho, ok := s.deps.Observer.(SpawnHoldObserver)
+	if !ok {
+		return func() {}
+	}
+	liftMs := func() int64 {
+		l, ok := pauser.(UsageHoldLifter)
+		if !ok {
+			return 0
+		}
+		if at := l.UsageHoldLiftAt(branchKey); !at.IsZero() {
+			return at.UnixMilli()
+		}
+		return 0
+	}
+	ho.SpawnHeld(parent, id, true, liftMs())
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		t := time.NewTicker(heldLiftPoll)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				ho.SpawnHeld(parent, id, true, liftMs())
+			}
+		}
+	}()
+	return func() {
+		close(stop)
+		<-done
+		ho.SpawnHeld(parent, id, false, 0)
+	}
 }
 
 // liveWork reports whether branchKey has work in flight (a turn, queued

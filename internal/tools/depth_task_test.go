@@ -370,3 +370,58 @@ func TestDepthTaskMaxConcurrent(t *testing.T) {
 		t.Errorf("after all tasks: running %d waiting %d queued %d", running, waiting, queued)
 	}
 }
+
+// TestDepthTaskLeafHeldByUsageHold is #3214 (folded into #3256): under a
+// usage hold, the fan-out warns that the task leaves will not start until
+// the hold lifts, and status shows a leaf whose turn is queued as held until
+// the lift time, not "active, running".
+func TestDepthTaskLeafHeldByUsageHold(t *testing.T) {
+	h := newDepthHarness(t, nil)
+	h.m.deps.OrientationTemplate = depthTaskOrientation
+	lift := time.Date(2026, 11, 20, 16, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	holding := true
+	h.m.deps.UsageHold = func(string) (bool, time.Time) {
+		mu.Lock()
+		defer mu.Unlock()
+		return holding, lift
+	}
+	var during string
+	h.runner.mu.Lock()
+	h.runner.during = func(depthTurn) { during = h.m.status(depthRoot) }
+	h.runner.mu.Unlock()
+
+	raw := json.RawMessage(`{"leaves": [{"title": "Dig", "task": "Investigate the crash in X."}]}`)
+	res, err := h.m.fanoutTool().Execute(depthCtx(depthRoot), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.runner.wait(t, 1)
+	want := depthHoldUntil(lift)
+	if !strings.Contains(res.Text, "Warning: the usage hold is on "+want) || strings.Contains(res.Text, "working on it now") {
+		t.Errorf("fan-out reply = %q, want the hold warning and no 'working on it now'", res.Text)
+	}
+	if !strings.Contains(during, "held by the usage hold "+want) || strings.Contains(during, "active, running") {
+		t.Errorf("status while the task turn is queued = %q, want held by the usage hold %s", during, want)
+	}
+
+	// With the account open, a queued turn is running and no warning goes out.
+	mu.Lock()
+	holding = false
+	mu.Unlock()
+	h2 := newDepthHarness(t, nil)
+	h2.m.deps.OrientationTemplate = depthTaskOrientation
+	h2.m.deps.UsageHold = h.m.deps.UsageHold
+	var during2 string
+	h2.runner.mu.Lock()
+	h2.runner.during = func(depthTurn) { during2 = h2.m.status(depthRoot) }
+	h2.runner.mu.Unlock()
+	res, err = h2.m.fanoutTool().Execute(depthCtx(depthRoot), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h2.runner.wait(t, 1)
+	if strings.Contains(res.Text, "usage hold") || !strings.Contains(during2, "active, running") {
+		t.Errorf("open account: reply = %q, status = %q, want no hold warning and the leaf running", res.Text, during2)
+	}
+}

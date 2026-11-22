@@ -349,7 +349,11 @@ func TestConvBindingFieldCensus(t *testing.T) {
 	// suppressed by a hash that survived the restart.
 	// spawns lists background foci spawns, goroutines of this process that a
 	// restart ends, so an empty list is the truth after one (#2139); spawnShells
-	// belongs to those same spawns (#2685).
+	// belongs to those same spawns (#2685), and so does spawnHolds (#3256): a
+	// restored spawn under a hold waits for the lift again and reports its
+	// pause anew.
+	// inputHeld/inputHeldMs mirror the agent's held input (#3256); the
+	// agent's hook and the waiting sweep set them again after a restart.
 	// readAfterTurn is a mark_read pending on a turn of this process (#2592);
 	// lastMsgID feeds only that read, which a turn applies after sending its
 	// own reply, so "" until the first message after a restart marks nothing
@@ -360,7 +364,7 @@ func TestConvBindingFieldCensus(t *testing.T) {
 		"suggestionSent": true,
 		"mu":             true, "clients": true, "clientStates": true, "buffer": true,
 		"seenOrder": true, "turnKind": true, "turnDetail": true, "turnCommand": true, "turnShell": true, "turnStartedMs": true, "turnToolSeq": true, "retryStartedMs": true, "waitingStartedMs": true, "retryDetail": true, "usageWaitMs": true,
-		"subagentDetail": true, "subagents": true, "spawns": true, "spawnShells": true, "waitingDetail": true,
+		"subagentDetail": true, "subagents": true, "spawns": true, "spawnShells": true, "spawnHolds": true, "inputHeld": true, "inputHeldMs": true, "waitingDetail": true,
 		"activitySent": true, "cacheExpiryMs": true, "lastCmdHash": true,
 		"lastMsgID": true, "readAfterTurn": true,
 		// The activity rate limit's state (#1064): the last frame the sockets

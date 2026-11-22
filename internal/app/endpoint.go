@@ -241,7 +241,10 @@ func SetSubagents(sessionKey string, running []delegator.RunningSubagent) {
 // go.
 type SpawnObserver struct{}
 
-var _ tools.SpawnObserver = SpawnObserver{}
+var (
+	_ tools.SpawnObserver     = SpawnObserver{}
+	_ tools.SpawnHoldObserver = SpawnObserver{}
+)
 
 func spawnBinding(sessionKey string) *convBinding {
 	activeMu.RLock()
@@ -306,6 +309,16 @@ func (SpawnObserver) SpawnModel(parentSession, id, model string) {
 func (SpawnObserver) SpawnRetry(parentSession, id string, untilMs int64, status int) {
 	if b := spawnBinding(parentSession); b != nil {
 		b.setSpawnRetry(id, untilMs, status)
+	}
+}
+
+// SpawnHeld marks the spawn as paused by the usage hold until untilMs (unix
+// ms; 0 = unknown), or no longer paused (#3256). A paused spawn is held work,
+// not activity: it leaves the running list, and the chat shows it as it shows
+// a wait for the usage reset (#3146).
+func (SpawnObserver) SpawnHeld(parentSession, id string, held bool, untilMs int64) {
+	if b := spawnBinding(parentSession); b != nil {
+		b.setSpawnHeld(id, held, untilMs)
 	}
 }
 

@@ -100,6 +100,14 @@ type SpawnObserver interface {
 	SpawnEnded(parentSession, id string)
 }
 
+// SpawnHoldObserver is the optional SpawnObserver side of a spawn the usage
+// hold pauses (#3256): held reports the pause began, with when the hold lifts
+// (unix ms; 0 = unknown), or the lift time moved; !held reports the pause
+// ended. A platform shows the paused spawn as held, not as running.
+type SpawnHoldObserver interface {
+	SpawnHeld(parentSession, id string, held bool, untilMs int64)
+}
+
 // SpawnTracker holds every background spawn, keyed by parent session, so /stop
 // can stop a session's spawns on their own (#2139), the statusline can list
 // them (#2127), and the parent can steer a spawn and check on it (#2523). A
