@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,12 +51,51 @@ func (u *upgradableCodex) newBackend(t *testing.T) *Backend {
 	return be.(*Backend)
 }
 
-func startSession(t *testing.T, b *Backend, agent, key string) {
+// startSession starts a session on b. When b launched the app-server, it also
+// waits for that launch's background request to be answered (see
+// awaitStartupRequests), so the app-server is idle when the test goes on.
+func (u *upgradableCodex) startSession(t *testing.T, b *Backend, agent, key string) {
 	t.Helper()
 	if err := b.Start(context.Background(), delegator.StartOptions{AgentID: agent, SessionKey: key, WorkDir: t.TempDir()}); err != nil {
 		t.Fatalf("start %s: %v", key, err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
+	if b.process() == b {
+		u.awaitStartupRequests(t, b)
+	}
+}
+
+// awaitStartupRequests waits until the owner b has had its launch's
+// account/rateLimits/read answered (#3258). launchAppServer sends it from a
+// goroutine (seedRateLimits), so Start can return with it still waiting for a
+// reply, and a waiting request makes busyReason report the app-server busy:
+// under load the tests' "idle" app-server was refused a recycle. The stub
+// records each request as it reads it, and foci registers a request in
+// pendingRPC before it writes it, so "the stub has read it and nothing is
+// pending" means it was answered.
+func (u *upgradableCodex) awaitStartupRequests(t *testing.T, b *Backend) {
+	t.Helper()
+	b.mu.Lock()
+	launched := b.binStamp.real
+	b.mu.Unlock()
+	capture := u.v1Capture
+	if v2, _ := filepath.EvalSymlinks(u.v2); launched == v2 {
+		capture = u.v2Cap
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		data, _ := os.ReadFile(capture)
+		b.rpcMu.Lock()
+		pending := len(b.pendingRPC)
+		b.rpcMu.Unlock()
+		if strings.Contains(string(data), `"account/rateLimits/read"`) && pending == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the app-server's startup requests were not answered within 10s (%d pending)", pending)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func recycleNow(b *Backend) bool {
@@ -93,8 +133,8 @@ func TestRecycleOnBinaryChangeWhenIdle(t *testing.T) {
 	u := newUpgradableCodex(t)
 	const agent = "recycle-idle-agent"
 	b1, b2 := u.newBackend(t), u.newBackend(t)
-	startSession(t, b1, agent, "session/a")
-	startSession(t, b2, agent, "session/b")
+	u.startSession(t, b1, agent, "session/a")
+	u.startSession(t, b2, agent, "session/b")
 	if b2.process() != b1 {
 		t.Fatal("premise: the second session should share the first's app-server")
 	}
@@ -117,7 +157,7 @@ func TestRecycleOnBinaryChangeWhenIdle(t *testing.T) {
 	}
 
 	b3 := u.newBackend(t)
-	startSession(t, b3, agent, "session/c")
+	u.startSession(t, b3, agent, "session/c")
 	if b3.process() == b1 || !b3.IsRunning() {
 		t.Fatal("the next Start did not launch a new app-server")
 	}
@@ -144,8 +184,8 @@ func TestRecycleWaitsForRunningTurn(t *testing.T) {
 	u := newUpgradableCodex(t)
 	const agent = "recycle-busy-agent"
 	b1, b2 := u.newBackend(t), u.newBackend(t)
-	startSession(t, b1, agent, "session/a")
-	startSession(t, b2, agent, "session/b")
+	u.startSession(t, b1, agent, "session/a")
+	u.startSession(t, b2, agent, "session/b")
 	u.pointTo(t, u.v2)
 
 	setTurnActive(b2, true)
@@ -178,11 +218,11 @@ func TestStartRecyclesStaleIdleOwner(t *testing.T) {
 	u := newUpgradableCodex(t)
 	const agent = "recycle-start-agent"
 	b1 := u.newBackend(t)
-	startSession(t, b1, agent, "session/a")
+	u.startSession(t, b1, agent, "session/a")
 	u.pointTo(t, u.v2)
 
 	b2 := u.newBackend(t)
-	startSession(t, b2, agent, "session/b")
+	u.startSession(t, b2, agent, "session/b")
 	if b2.process() == b1 {
 		t.Fatal("Start attached to the app-server whose binary had changed")
 	}
@@ -196,12 +236,12 @@ func TestStartAttachesToStaleBusyOwner(t *testing.T) {
 	u := newUpgradableCodex(t)
 	const agent = "recycle-start-busy-agent"
 	b1 := u.newBackend(t)
-	startSession(t, b1, agent, "session/a")
+	u.startSession(t, b1, agent, "session/a")
 	u.pointTo(t, u.v2)
 	setTurnActive(b1, true)
 
 	b2 := u.newBackend(t)
-	startSession(t, b2, agent, "session/b")
+	u.startSession(t, b2, agent, "session/b")
 	if b2.process() != b1 || !b1.IsRunning() {
 		t.Fatal("Start restarted an app-server with a turn running")
 	}
@@ -214,8 +254,8 @@ func TestBeginTurnOnRetiredAppServerRefuses(t *testing.T) {
 	u := newUpgradableCodex(t)
 	const agent = "recycle-begin-agent"
 	b1, b2 := u.newBackend(t), u.newBackend(t)
-	startSession(t, b1, agent, "session/a")
-	startSession(t, b2, agent, "session/b")
+	u.startSession(t, b1, agent, "session/a")
+	u.startSession(t, b2, agent, "session/b")
 	u.pointTo(t, u.v2)
 	if !recycleNow(b1) {
 		t.Fatal("premise: recycle")
@@ -234,7 +274,7 @@ func TestRecycleSkipsWhenBinaryMissing(t *testing.T) {
 	u := newUpgradableCodex(t)
 	const agent = "recycle-missing-agent"
 	b1 := u.newBackend(t)
-	startSession(t, b1, agent, "session/a")
+	u.startSession(t, b1, agent, "session/a")
 	u.pointTo(t, filepath.Join(t.TempDir(), "gone"))
 	if recycleNow(b1) {
 		t.Fatal("recycled with no binary to relaunch")
@@ -252,7 +292,7 @@ func TestWatchBinaryRecyclesIdleOwner(t *testing.T) {
 	u := newUpgradableCodex(t)
 	const agent = "recycle-watch-agent"
 	b1 := u.newBackend(t)
-	startSession(t, b1, agent, "session/a")
+	u.startSession(t, b1, agent, "session/a")
 	time.Sleep(100 * time.Millisecond)
 	if !b1.IsRunning() {
 		t.Fatal("the watcher stopped an app-server whose binary had not changed")
