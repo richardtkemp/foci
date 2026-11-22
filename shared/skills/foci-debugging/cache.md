@@ -33,7 +33,7 @@ CC has no payload log, but its transcript (path: `sessions.md`) carries the requ
 Reading a bust from them:
 
 - **Diagnosis first.** A `*_changed` reason on the bust's assistant line is the answer. Seen in practice: `system_changed` on the first call after a relaunch, with the read stopping at ~10.4k (the stable part of the system prompt).
-- **Then the digests.** Find the bust's `api-request` (its `requestRef`) and its `base`. The request changed nothing before its new messages when `keep` = base's `keep + len(tail)` and `shapeHash` and `params` match. A smaller `keep` means an earlier message changed. A different `shapeHash` means the system prompt or tools changed: diff the two `api-request-shape` records. A shape change alone does not bust: a tool added mid-conversation reads in full.
+- **Then the digests.** Take the bust's `api-request` and its `base`. Nothing before the new messages changed when `keep` = base's `keep + len(tail)` and `shapeHash` and `params` match. A smaller `keep`: an earlier message changed. A different `shapeHash`: the system prompt or tools changed (diff the `api-request-shape` records); alone it does not bust: a tool added mid-conversation reads in full.
 - **No `base`** (the first request of a CC process) means the digests cannot say; rely on the diagnosis.
 - **Digest unchanged, diagnosis `unavailable` or absent, read still short**: the request matched, yet the cache did not hold the prefix. Not a foci or CC change; record the case.
 
