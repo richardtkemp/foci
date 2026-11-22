@@ -60,6 +60,15 @@ func (a *Agent) SetOnWaitInputsChanged(fn func(sessionKey string)) {
 	a.AsyncNotifier.SetOnChange(fn)
 }
 
+// usageHoldsInject reports whether the usage hold, as it stands now, holds
+// system injection env: one it parked with no durable form (so no
+// usageHeldID), e.g. a depth task leaf's turn (#3257). Each mirror sync reads
+// the phase afresh, so after the lift an inject still held by background
+// work no longer counts.
+func (a *Agent) usageHoldsInject(env Envelope) bool {
+	return injectGateApplies(env.Inject) && a.usageHoldsTrigger(env.SessionKey, env.Inject.Trigger, env.Inject.HoldPermit)
+}
+
 // syncUsageHeldMirror records how much of inb's input the usage hold holds,
 // for UsageHeldInput, and reports a change of "any held" to the registered
 // hook. Worker-confined callers (it reads inb's worker-owned lists).
@@ -72,7 +81,7 @@ func (a *Agent) syncUsageHeldMirror(inb *sessionInbox) {
 		if userInject(env.Inject) {
 			userInjects++
 		}
-		if env.usageHeldID != "" || userInject(env.Inject) {
+		if env.usageHeldID != "" || userInject(env.Inject) || a.usageHoldsInject(env) {
 			n++
 		}
 	}
