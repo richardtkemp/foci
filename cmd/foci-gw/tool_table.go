@@ -842,12 +842,14 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 			// #3186), and an agent on two or more logins also sends every
 			// login's figures, the pick marked (#3253).
 			app.SetAgentUsageSource(acfg.ID, func() *fap.AgentUsage {
-				pick := accounts[0]
+				pick, overPace := accounts[0], false
 				if d.agLazy != nil {
 					if ag := d.agLazy(); ag != nil {
-						if next := ag.Accounts().Next(); next != nil {
+						pool := ag.Accounts()
+						if next := pool.Next(); next != nil {
 							pick = next
 						}
+						overPace = pool.OverPace(time.Now()) // #3267
 					}
 				}
 				logins := make([]usageLogin, len(accounts))
@@ -858,7 +860,7 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 						read:   appUsageFromBinding(acct.Readings(acfg.ID)),
 					}
 				}
-				return appUsageOfLogins(logins)
+				return appUsageOfLogins(logins, overPace)
 			})
 		}
 		spawnDeps.Delegated = &tools.DelegatedSpawn{

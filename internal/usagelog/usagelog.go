@@ -295,8 +295,18 @@ type PercentReading struct {
 // ratio, #3247). Rows with no figure (a Claude Code "allowed" event) are left
 // out.
 func (s *Store) PercentReadings(account string) ([]PercentReading, error) {
+	return s.percentReadings(account, 0)
+}
+
+// PercentReadingsSince is PercentReadings of the figures received at or after
+// since (the usage pace, #3267).
+func (s *Store) PercentReadingsSince(account string, since time.Time) ([]PercentReading, error) {
+	return s.percentReadings(account, since.UnixNano())
+}
+
+func (s *Store) percentReadings(account string, sinceNanos int64) ([]PercentReading, error) {
 	rows, err := s.db.Query(`SELECT window, report_id, received_at, used, used_unit, resets_at FROM usage_windows
-		WHERE account = ? AND used IS NOT NULL ORDER BY received_at, id`, account)
+		WHERE account = ? AND received_at >= ? AND used IS NOT NULL ORDER BY received_at, id`, account, sinceNanos)
 	if err != nil {
 		return nil, fmt.Errorf("usagelog: percent readings: %w", err)
 	}

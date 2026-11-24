@@ -125,11 +125,35 @@ func (p *demandProfile) value(h int64) float64 {
 		return m
 	}
 	we, hr := slotOf(h)
+	return p.slotValue(we, hr)
+}
+
+// slotValue is value for a slot of a profile with demand in it.
+func (p *demandProfile) slotValue(weekend, hour int) float64 {
+	m := p.mean()
 	v := m
-	if c := p.cnt[we][hr]; c > 0 {
-		v = p.sum[we][hr] / float64(c)
+	if c := p.cnt[weekend][hour]; c > 0 {
+		v = p.sum[weekend][hour] / float64(c)
 	}
 	return max(v, profileFloor*m)
+}
+
+// busyHour is the demand-weighted mean hour of one profile week (5 weekdays,
+// 2 weekend days): sum v^2 / sum v over its hours, the demand of the hour an
+// average unit of use falls in (#3267). 1 with no history.
+func (p *demandProfile) busyHour() float64 {
+	if p == nil || p.total <= 0 {
+		return p.mean()
+	}
+	var sumSq, sum float64
+	for we, days := range [2]float64{5, 2} {
+		for hr := range 24 {
+			v := p.slotValue(we, hr)
+			sumSq += days * v * v
+			sum += days * v
+		}
+	}
+	return sumSq / sum
 }
 
 // expected is the expected demand from t to end (part hours pro rata).
@@ -148,38 +172,59 @@ func (p *demandProfile) expected(t, end time.Time) float64 {
 }
 
 // addHourlyDemand adds to hourly the demand one login's 7d readings show:
-// the rise of the 7d percent between consecutive readings, spread evenly over
-// the time between them. A rise is measured from the highest figure seen so
+// each rise of the 7d percent (rises), spread evenly over its time.
+func addHourlyDemand(hourly map[int64]float64, readings []usagelog.PercentReading) {
+	for _, r := range rises(readings, isLong) {
+		spread(hourly, r.from, r.to, r.amount)
+	}
+}
+
+// rise is an increase of one window's percent between two readings.
+type rise struct {
+	from, to time.Time // to is when the reading that shows it was received
+	amount   float64
+}
+
+// rises lists the increases of the percent between consecutive readings of
+// the windows match names. A rise is measured from the highest figure seen so
 // far in the window's period, so figures from two sources that differ in
 // rounding do not count as demand; after a reset the first figure is all
-// rise, from the reset time.
-func addHourlyDemand(hourly map[int64]float64, readings []usagelog.PercentReading) {
+// rise, from the reset time. A figure with no reset time (Claude Code's 0%
+// while no 5h window is open) starts no period: the next one is judged by the
+// last reset time known.
+func rises(readings []usagelog.PercentReading, match func(window string) bool) []rise {
 	var (
+		out     []rise
 		prev    *usagelog.PercentReading
+		reset   time.Time // the last reset time reported
 		highest float64
 	)
 	for i := range readings {
 		r := &readings[i]
-		if !isLong(r.Window) {
+		if !match(r.Window) {
 			continue
 		}
 		if prev == nil {
-			prev, highest = r, r.Percent
+			prev, reset, highest = r, r.ResetsAt, r.Percent
 			continue
 		}
-		from, rise := prev.ReceivedAt, r.Percent-highest
-		if newPeriod(prev.ResetsAt, r.ResetsAt) {
-			rise, highest = r.Percent, 0
-			if !prev.ResetsAt.IsZero() && prev.ResetsAt.After(from) && prev.ResetsAt.Before(r.ReceivedAt) {
-				from = prev.ResetsAt
+		from, amount := prev.ReceivedAt, r.Percent-highest
+		if newPeriod(reset, r.ResetsAt) {
+			amount, highest = r.Percent, 0
+			if reset.After(from) && reset.Before(r.ReceivedAt) {
+				from = reset
 			}
 		}
 		highest = max(highest, r.Percent)
-		if rise > 0 {
-			spread(hourly, from, r.ReceivedAt, rise)
+		if amount > 0 {
+			out = append(out, rise{from: from, to: r.ReceivedAt, amount: amount})
 		}
 		prev = r
+		if !r.ResetsAt.IsZero() {
+			reset = r.ResetsAt
+		}
 	}
+	return out
 }
 
 // newPeriod reports whether a figure whose window resets at b belongs to a

@@ -362,6 +362,11 @@ type AgentInfo struct {
 type AgentUsage struct {
 	Windows  []UsageWindow  `json:"windows"`
 	Accounts []AccountUsage `json:"accounts,omitempty"`
+	// OverPace is true while the agent uses its 7d allowance too fast (#3267:
+	// account.Pool.OverPace, the mean pace of its logins). The app shows its
+	// accent colours red while the open chat's agent has it. Omitted when the
+	// agent is not over pace, when no pace is known, and by an older server.
+	OverPace bool `json:"overPace,omitempty"`
 }
 
 // AccountUsage is one login's allowance, for an agent on two or more logins

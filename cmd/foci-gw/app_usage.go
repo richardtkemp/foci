@@ -78,8 +78,8 @@ type usageLogin struct {
 // #3253. With two or more, Windows is the pick's (what an app that does not
 // read Accounts shows) and Accounts holds every login, one with no current
 // figure included with no windows so each login keeps its place. Nil when no
-// login has a figure.
-func appUsageOfLogins(logins []usageLogin) *fap.AgentUsage {
+// login has a figure. overPace is the agent's over-pace mark (#3267).
+func appUsageOfLogins(logins []usageLogin, overPace bool) *fap.AgentUsage {
 	readOf := func(l usageLogin) *fap.AgentUsage {
 		if l.read == nil {
 			return nil
@@ -87,9 +87,15 @@ func appUsageOfLogins(logins []usageLogin) *fap.AgentUsage {
 		return l.read()
 	}
 	if len(logins) == 1 {
-		return readOf(logins[0])
+		u := readOf(logins[0])
+		if u != nil {
+			u.OverPace = overPace
+		}
+		return u
 	}
-	var out fap.AgentUsage
+	// Windows is never nil: "windows":null fails the app's decode of the whole
+	// hello, so a pick with no figure sends [].
+	out := fap.AgentUsage{Windows: []fap.UsageWindow{}, OverPace: overPace}
 	seen := false
 	for _, l := range logins {
 		a := fap.AccountUsage{Name: l.name, Picked: l.picked, Windows: []fap.UsageWindow{}}

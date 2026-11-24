@@ -3,6 +3,7 @@ package app
 import (
 	"reflect"
 	"sync"
+	"time"
 
 	"foci/internal/fap"
 )
@@ -89,6 +90,39 @@ func AgentUsageChanged() {
 	h.agentUsageChanged()
 }
 
+// usageRecheckEvery is how often the hub compares the agents' usage with what
+// the last roster carried when no read asks for it (#3267). The over-pace mark
+// depends on the time as well as on the figures: without this it would stay
+// set while reads fail or are off ([tools] spawn_reserve_percent = 0).
+const usageRecheckEvery = 5 * time.Minute
+
+// startUsageRecheck starts the periodic recheck, once per hub, on the gateway
+// context (see startAutoCloseSweep); a hub with no context (every test-built
+// hub) starts no loop.
+func (h *Hub) startUsageRecheck() {
+	ctx := h.deps.Ctx
+	if ctx == nil {
+		return
+	}
+	h.usageRecheckOnce.Do(func() {
+		safeGo("usage-recheck", func() {
+			ticker := time.NewTicker(usageRecheckEvery)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if ctx.Err() != nil {
+						return
+					}
+					h.agentUsageChanged()
+				}
+			}
+		})
+	})
+}
+
 func (h *Hub) agentUsageChanged() {
 	h.mu.RLock()
 	ids := append([]string(nil), h.agentOrder...)
@@ -106,7 +140,7 @@ func (h *Hub) agentUsageChanged() {
 // sameShownUsage reports whether a and b show the same figures: AsOfMs is
 // ignored, since every read moves it and a re-sent roster for it alone would
 // change nothing the app shows. Each login's figures, name and pick mark
-// (#3253) count.
+// (#3253) count, and so does the over-pace mark (#3267).
 func sameShownUsage(a, b map[string]*fap.AgentUsage) bool {
 	stripWindows := func(in []fap.UsageWindow) []fap.UsageWindow {
 		ws := make([]fap.UsageWindow, len(in))
@@ -119,7 +153,7 @@ func sameShownUsage(a, b map[string]*fap.AgentUsage) bool {
 	strip := func(m map[string]*fap.AgentUsage) map[string]fap.AgentUsage {
 		out := make(map[string]fap.AgentUsage, len(m))
 		for id, u := range m {
-			s := fap.AgentUsage{Windows: stripWindows(u.Windows)}
+			s := fap.AgentUsage{Windows: stripWindows(u.Windows), OverPace: u.OverPace}
 			for _, a := range u.Accounts {
 				a.Windows = stripWindows(a.Windows)
 				s.Accounts = append(s.Accounts, a)

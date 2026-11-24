@@ -81,15 +81,15 @@ func TestAppUsageOfLogins(t *testing.T) {
 			return &fap.AgentUsage{Windows: ws}
 		}
 	}
-	one := appUsageOfLogins([]usageLogin{{name: "a@x", picked: true, read: fixed(34, 78)}})
-	if one == nil || len(one.Windows) != 2 || one.Accounts != nil {
-		t.Fatalf("one login = %+v, want its windows and no accounts", one)
+	one := appUsageOfLogins([]usageLogin{{name: "a@x", picked: true, read: fixed(34, 78)}}, true)
+	if one == nil || len(one.Windows) != 2 || one.Accounts != nil || !one.OverPace {
+		t.Fatalf("one login = %+v, want its windows, no accounts and the over-pace mark (#3267)", one)
 	}
 	two := appUsageOfLogins([]usageLogin{
 		{name: "a@x", read: fixed(34, 78)},
 		{name: "b@x", picked: true, read: fixed(12, 40)},
 		{name: "c@x", read: fixed()},
-	})
+	}, false)
 	if two == nil || len(two.Windows) != 2 || two.Windows[0].UsedPct != 12 {
 		t.Fatalf("Windows = %+v, want the pick's (b: 12/40)", two)
 	}
@@ -110,8 +110,19 @@ func TestAppUsageOfLogins(t *testing.T) {
 	if !strings.Contains(string(raw), `"windows":[]`) {
 		t.Errorf("login c JSON = %s, want windows:[] (the Kotlin field is not optional)", raw)
 	}
-	none := appUsageOfLogins([]usageLogin{{name: "a@x", picked: true, read: fixed()}, {name: "b@x", read: nil}})
+	none := appUsageOfLogins([]usageLogin{{name: "a@x", picked: true, read: fixed()}, {name: "b@x", read: nil}}, true)
 	if none != nil {
 		t.Errorf("no figure on any login = %+v, want nil", none)
+	}
+	// #3267: the pick alone has no figure. "windows":null would fail the app's
+	// decode of the whole hello.
+	pickNone := appUsageOfLogins([]usageLogin{{name: "a@x", picked: true, read: fixed()}, {name: "b@x", read: fixed(34, 78)}}, true)
+	raw, _ = json.Marshal(pickNone)
+	if !strings.HasPrefix(string(raw), `{"windows":[],`) || !strings.Contains(string(raw), `"overPace":true`) {
+		t.Errorf("pick with no figure JSON = %s, want windows:[] and overPace:true", raw)
+	}
+	raw, _ = json.Marshal(two)
+	if strings.Contains(string(raw), "overPace") {
+		t.Errorf("JSON of an agent not over pace = %s, want no overPace", raw)
 	}
 }

@@ -129,6 +129,11 @@ func TestSameShownUsage_PerLogin(t *testing.T) {
 	if sameShownUsage(base, mk(34, 1, false)) {
 		t.Error("the pick moving to another login did not count")
 	}
+	over := mk(34, 1, true)
+	over["cam"].OverPace = true
+	if sameShownUsage(base, over) {
+		t.Error("the agent going over pace did not count (#3267)")
+	}
 }
 
 // #3253: an agent whose logins carry figures only in Accounts (the pick has

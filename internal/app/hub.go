@@ -205,6 +205,8 @@ type Hub struct {
 
 	lockWatchOnce sync.Once // startLockWatchdog starts at most one watchdog per hub (#3171)
 
+	usageRecheckOnce sync.Once // startUsageRecheck starts at most one loop per hub (#3267)
+
 	wizardMu      sync.Mutex
 	wizards       map[string]*wizardSession // wizardId → live out-of-band wizard session
 	wizardByScope map[string]string         // wizard scope (session key) → wizardId
@@ -1020,11 +1022,13 @@ func (h *Hub) HasFacet(string) bool                 { return false }
 // above on every return path: the sweep judges open chats by their bindings'
 // last-activity stamps, and those are what the rebuild rehydrates. Test hubs
 // with no gateway context start no loop (startAutoCloseSweep). The waiting
-// sweep and the hub lock watchdog (#3171) start the same way.
+// sweep, the hub lock watchdog (#3171) and the usage recheck (#3267) start the
+// same way.
 func (h *Hub) StartAll(context.Context) {
 	defer h.startAutoCloseSweep()
 	defer h.startWaitingSweep()
 	defer h.startLockWatchdog()
+	defer h.startUsageRecheck()
 	// Aged-checkbox sweep (#1360): documents not updated for the resolved
 	// retention age ([platforms.app].checkbox_retention; zero = the code
 	// default) go at hub start (the spec's allowed cadence). Before the
