@@ -39,7 +39,7 @@ type durationEntry struct {
 // stay nil for Merge to work correctly).
 func ApplyTagDefaults(v any) {
 	rv := reflect.ValueOf(v)
-	if rv.Kind() == reflect.Ptr {
+	if rv.Kind() == reflect.Pointer {
 		rv = rv.Elem()
 	}
 	if rv.Kind() != reflect.Struct {
@@ -66,7 +66,7 @@ func applyTagDefaults(rv reflect.Value) {
 		}
 
 		// Pointer fields: apply when nil.
-		if f.Kind() == reflect.Ptr {
+		if f.Kind() == reflect.Pointer {
 			if !f.IsNil() {
 				continue
 			}

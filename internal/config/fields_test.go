@@ -401,7 +401,7 @@ func checkDescTags(t *testing.T, typ reflect.Type, section, prefix string, field
 
 		if f.Anonymous {
 			ft := f.Type
-			if ft.Kind() == reflect.Ptr {
+			if ft.Kind() == reflect.Pointer {
 				ft = ft.Elem()
 			}
 			if ft.Kind() == reflect.Struct {
@@ -419,7 +419,7 @@ func checkDescTags(t *testing.T, typ reflect.Type, section, prefix string, field
 		}
 
 		ft := f.Type
-		if ft.Kind() == reflect.Ptr {
+		if ft.Kind() == reflect.Pointer {
 			ft = ft.Elem()
 		}
 		if ft.Kind() == reflect.Struct {
@@ -464,7 +464,7 @@ func TestHotTagValuesValid(t *testing.T) {
 		for i := 0; i < typ.NumField(); i++ {
 			f := typ.Field(i)
 			ft := f.Type
-			if ft.Kind() == reflect.Ptr {
+			if ft.Kind() == reflect.Pointer {
 				ft = ft.Elem()
 			}
 			if ft.Kind() == reflect.Struct {

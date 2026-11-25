@@ -200,7 +200,7 @@ func buildFieldRegistry() ([]ConfigField, map[string]Constraint) {
 			continue
 		}
 		ft := f.Type
-		if ft.Kind() == reflect.Ptr {
+		if ft.Kind() == reflect.Pointer {
 			ft = ft.Elem()
 		}
 		if ft.Kind() != reflect.Struct {
@@ -230,7 +230,7 @@ func walkType(typ reflect.Type, section, prefix string, fields *[]ConfigField, c
 		// Recurse into embedded (anonymous) struct fields — no prefix added
 		if f.Anonymous {
 			ft := f.Type
-			if ft.Kind() == reflect.Ptr {
+			if ft.Kind() == reflect.Pointer {
 				ft = ft.Elem()
 			}
 			if ft.Kind() == reflect.Struct {
@@ -246,7 +246,7 @@ func walkType(typ reflect.Type, section, prefix string, fields *[]ConfigField, c
 
 		// Named struct field (or pointer to struct) — recurse with dotted prefix
 		ft := f.Type
-		if ft.Kind() == reflect.Ptr {
+		if ft.Kind() == reflect.Pointer {
 			ft = ft.Elem()
 		}
 		if ft.Kind() == reflect.Struct {
@@ -337,7 +337,7 @@ func inferFieldType(f reflect.StructField) FieldType {
 	}
 
 	typ := f.Type
-	if typ.Kind() == reflect.Ptr {
+	if typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
 	}
 

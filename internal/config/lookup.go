@@ -91,7 +91,7 @@ func tomlTagName(f reflect.StructField) string {
 
 // derefPtr dereferences a pointer value, returning an invalid Value if nil.
 func derefPtr(v reflect.Value) reflect.Value {
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		if v.IsNil() {
 			return reflect.Value{}
 		}

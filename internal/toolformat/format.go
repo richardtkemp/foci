@@ -226,9 +226,9 @@ func UnescapeUnicodeJSON(s string) string {
 		if i+5 < len(s) && s[i] == '\\' && s[i+1] == 'u' {
 			hexStr := s[i+2 : i+6]
 			if isHexString(hexStr) {
-				var cp int64
+				var cp rune
 				if _, err := fmt.Sscanf(hexStr, "%x", &cp); err == nil {
-					result.WriteRune(rune(cp))
+					result.WriteRune(cp)
 					i += 5
 					continue
 				}

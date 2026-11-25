@@ -275,10 +275,10 @@ deny_examples = [{ cmd = "rm x" }]
 // toml tags, so a field added later is covered without editing this test.
 func TestLoad_PreToolRulesAcceptEveryRuleKey(t *testing.T) {
 	values := map[reflect.Kind]string{
-		reflect.String: `"Bash"`,
-		reflect.Ptr:    "false",
-		reflect.Slice:  `["x"]`,
-		reflect.Map:    `{ command = "x" }`,
+		reflect.String:  `"Bash"`,
+		reflect.Pointer: "false",
+		reflect.Slice:   `["x"]`,
+		reflect.Map:     `{ command = "x" }`,
 	}
 	var lines []string
 	rt := reflect.TypeOf(pretool.Rule{})

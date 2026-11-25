@@ -302,7 +302,7 @@ func waitForExit(waitCh <-chan error, timeout time.Duration) bool {
 		return false
 	}
 	select {
-	case <-waitCh:
+	case _ = <-waitCh:
 		return true
 	case <-time.After(timeout):
 		return false

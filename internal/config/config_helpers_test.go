@@ -19,12 +19,12 @@ func (m mockSecrets) Get(key string) (string, bool) {
 
 // collectTOMLKeys walks a struct type recursively and returns all leaf TOML key paths.
 func collectTOMLKeys(t reflect.Type, prefix string) []string {
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if t.Kind() == reflect.Slice {
 		t = t.Elem()
-		if t.Kind() == reflect.Ptr {
+		if t.Kind() == reflect.Pointer {
 			t = t.Elem()
 		}
 	}
@@ -49,7 +49,7 @@ func collectTOMLKeys(t reflect.Type, prefix string) []string {
 		}
 
 		ft := f.Type
-		if ft.Kind() == reflect.Ptr {
+		if ft.Kind() == reflect.Pointer {
 			ft = ft.Elem()
 		}
 

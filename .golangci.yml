@@ -1,9 +1,11 @@
+version: "2"
+
 run:
   timeout: 5m
   tests: false
 
 linters:
-  disable-all: true
+  default: none
   enable:
     # Bug finders
     - errcheck       # unchecked errors
@@ -21,131 +23,143 @@ linters:
     - depguard       # forbid stdlib log packages
     - forbidigo      # forbid raw exec.Command (must use procx.Spawn)
 
-linters-settings:
-  dupl:
-    threshold: 100   # minimum tokens for duplication (lower = stricter)
+  settings:
+    dupl:
+      threshold: 100   # minimum tokens for duplication (lower = stricter)
 
-  depguard:
+    depguard:
+      rules:
+        prevent_stdlib_logging:
+          list-mode: lax
+          deny:
+            - pkg: "log/slog"
+              desc: "Use foci/internal/log instead of log/slog"
+            - pkg: "log$"
+              desc: "Use foci/internal/log instead of stdlib log"
+
+    forbidigo:
+      # Ban raw exec.Command / exec.CommandContext. All subprocess spawning
+      # must go through procx.Spawn / procx.SpawnSetsid so the
+      # foci-secrets supplementary group is stripped from children
+      # (otherwise child processes can read /home/foci/config/secrets.toml).
+      # Allowed callers: internal/procx/procx.go (the helper itself, which
+      # holds the bootstrap probe and the spawn entry points).
+      #
+      # Ban raw exec.LookPath. It resolves against os.Getenv("PATH") — the
+      # DAEMON's PATH. Since #1914 that is the TRUSTED population only; the
+      # agent/tool shells run on the operator's PATH, which is a different list.
+      # A site asking "is rg installed?" on an agent's behalf must ask about the
+      # agent's PATH, and a site resolving `systemctl` for foci must ask about
+      # the trusted one — so the population has to be named:
+      # procx.LookPath(procx.Operator, "rg") / procx.LookPath(procx.Trusted, ...).
+      # internal/procx implements the lookup itself and does not call this.
+      #
+      # Ban raw os.MkdirTemp / os.CreateTemp. All temp file/dir creation
+      # must go through tempdir.Mkdir / tempdir.Create / tempdir.SpawnMkdir
+      # (production) or testtemp.Mkdir / testtemp.Create (tests) so temp
+      # files land under /tmp/foci or /tmp/fgw, not scattered in /tmp.
+      # Exempted: tempdir.go/testtemp.go (the helpers), log/rotate.go,
+      # spill.go, http.go (atomic O_EXCL writes in a target dir).
+      forbid:
+        - pattern: ^exec\.Command$
+          msg: "use procx.Spawn (raw exec.Command leaks the foci-secrets group to children)"
+        - pattern: ^exec\.CommandContext$
+          msg: "use procx.Spawn (raw exec.CommandContext leaks the foci-secrets group to children)"
+        - pattern: ^os\.MkdirTemp$
+          msg: "use tempdir.Mkdir / tempdir.SpawnMkdir / testtemp.Mkdir (raw os.MkdirTemp scatters files in /tmp)"
+        - pattern: ^os\.CreateTemp$
+          msg: "use tempdir.Create / testtemp.Create (raw os.CreateTemp scatters files in /tmp)"
+        - pattern: ^exec\.LookPath$
+          msg: "use procx.LookPath(pop, name) — exec.LookPath reads the DAEMON's PATH, which since #1914 is not the agent's; a site must say which population it is asking about"
+      analyze-types: false
+
+    errcheck:
+      exclude-functions:
+        # Common cases where error checking is often skipped intentionally
+        - (io.Closer).Close
+        - (*os.File).Close
+
+    gosec:
+      excludes:
+        - G204  # subprocess with variable - common in shell tools
+        - G304  # file path from variable - common in file tools
+        - G101  # hardcoded credentials - false positives on constants
+        - G301  # directory permissions - 0755 needed for shared workspaces
+        - G306  # file permissions - need group write (0644/0664)
+        # Rules new in v2's gosec, not adopted by the migration (#3279). They
+        # report 50 places today.
+        - G117  # marshaled struct field named like a secret
+        - G118  # goroutine with context.Background while a request context exists
+        - G122  # path race in a filepath.Walk callback
+        - G703  # path traversal, taint analysis
+        - G704  # SSRF, taint analysis
+
+    staticcheck:
+      # v2 merged gosimple (S), stylecheck (ST) and quickfix (QF) into this linter.
+      # SA is what the v1 config ran.
+      checks: ["SA*"]
+
+    unparam:
+      check-exported: false
+
+  exclusions:
+    # No presets: nothing is excluded by default (v1 exclude-use-default: false).
+    # lax is the v1 default; v2's own default is strict.
+    generated: lax
     rules:
-      prevent_stdlib_logging:
-        list-mode: lax
-        deny:
-          - pkg: "log/slog"
-            desc: "Use foci/internal/log instead of log/slog"
-          - pkg: "log$"
-            desc: "Use foci/internal/log instead of stdlib log"
+      # Exclude some linters from test files
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+          - dupl
+          - unparam
+          - ineffassign
+          - forbidigo
 
-  forbidigo:
-    # Ban raw exec.Command / exec.CommandContext. All subprocess spawning
-    # must go through procx.Spawn / procx.SpawnSetsid so the
-    # foci-secrets supplementary group is stripped from children
-    # (otherwise child processes can read /home/foci/config/secrets.toml).
-    # Allowed callers: internal/procx/procx.go (the helper itself, which
-    # holds the bootstrap probe and the spawn entry points).
-    #
-    # Ban raw exec.LookPath. It resolves against os.Getenv("PATH") — the
-    # DAEMON's PATH. Since #1914 that is the TRUSTED population only; the
-    # agent/tool shells run on the operator's PATH, which is a different list.
-    # A site asking "is rg installed?" on an agent's behalf must ask about the
-    # agent's PATH, and a site resolving `systemctl` for foci must ask about
-    # the trusted one — so the population has to be named:
-    # procx.LookPath(procx.Operator, "rg") / procx.LookPath(procx.Trusted, ...).
-    # internal/procx implements the lookup itself and does not call this.
-    #
-    # Ban raw os.MkdirTemp / os.CreateTemp. All temp file/dir creation
-    # must go through tempdir.Mkdir / tempdir.Create / tempdir.SpawnMkdir
-    # (production) or testtemp.Mkdir / testtemp.Create (tests) so temp
-    # files land under /tmp/foci or /tmp/fgw, not scattered in /tmp.
-    # Exempted: tempdir.go/testtemp.go (the helpers), log/rotate.go,
-    # spill.go, http.go (atomic O_EXCL writes in a target dir).
-    forbid:
-      - p: ^exec\.Command$
-        msg: "use procx.Spawn (raw exec.Command leaks the foci-secrets group to children)"
-      - p: ^exec\.CommandContext$
-        msg: "use procx.Spawn (raw exec.CommandContext leaks the foci-secrets group to children)"
-      - p: ^os\.MkdirTemp$
-        msg: "use tempdir.Mkdir / tempdir.SpawnMkdir / testtemp.Mkdir (raw os.MkdirTemp scatters files in /tmp)"
-      - p: ^os\.CreateTemp$
-        msg: "use tempdir.Create / testtemp.Create (raw os.CreateTemp scatters files in /tmp)"
-      - p: ^exec\.LookPath$
-        msg: "use procx.LookPath(pop, name) — exec.LookPath reads the DAEMON's PATH, which since #1914 is not the agent's; a site must say which population it is asking about"
-    analyze-types: false
+      # Ignore unused ctx in tool functions - keep signature consistent
+      - path: tools/
+        text: "ctx.*is unused"
+        linters:
+          - unparam
 
-  errcheck:
-    exclude-functions:
-      # Common cases where error checking is often skipped intentionally
-      - (io.Closer).Close
-      - (*os.File).Close
+      # forbidigo exemption: internal/procx/procx.go is the sole permitted
+      # caller of exec.Command* — it contains the spawn helpers (Spawn /
+      # SpawnSetsid) and the CAP_SETGID probe.
+      - path: internal/procx/procx\.go
+        linters:
+          - forbidigo
 
-  gosec:
-    excludes:
-      - G204  # subprocess with variable - common in shell tools
-      - G304  # file path from variable - common in file tools
-      - G101  # hardcoded credentials - false positives on constants
-      - G301  # directory permissions - 0755 needed for shared workspaces
-      - G306  # file permissions - need group write (0644/0664)
+      # forbidigo exemption: temp helpers are the sole permitted callers of
+      # os.MkdirTemp / os.CreateTemp — they implement the sanctioned wrappers
+      # (Mkdir, Create, SpawnMkdir) that the rest of the codebase must use.
+      - path: internal/tempdir/tempdir\.go
+        linters:
+          - forbidigo
+      - path: internal/testtemp/testtemp\.go
+        linters:
+          - forbidigo
 
-  staticcheck:
-    checks: ["all"]
+      # forbidigo exemption: atomic O_EXCL writes in a target directory (not
+      # temp scattering) — these create temp files inside a specific log/spill/
+      # download dir for crash-safe rename, not under the OS temp root.
+      - path: internal/log/rotate\.go
+        linters:
+          - forbidigo
+      - path: internal/tools/spill/spill\.go
+        linters:
+          - forbidigo
+      - path: internal/tools/http\.go
+        linters:
+          - forbidigo
 
-  unparam:
-    check-exported: false
+      # forbidigo exemption: standalone developer tools in scripts/ are not
+      # daemon code — they don't carry the foci-secrets supplementary group,
+      # so exec.Command is safe here.
+      - path: scripts/
+        linters:
+          - forbidigo
 
 issues:
-  exclude-use-default: false
   max-issues-per-linter: 0
   max-same-issues: 0
-
-  exclude-rules:
-    # Exclude some linters from test files
-    - path: _test\.go
-      linters:
-        - errcheck
-        - gosec
-        - dupl
-        - unparam
-        - ineffassign
-        - forbidigo
-
-    # Ignore unused ctx in tool functions - keep signature consistent
-    - path: tools/
-      text: "ctx.*is unused"
-      linters:
-        - unparam
-
-    # forbidigo exemption: internal/procx/procx.go is the sole permitted
-    # caller of exec.Command* — it contains the spawn helpers (Spawn /
-    # SpawnSetsid) and the CAP_SETGID probe.
-    - path: internal/procx/procx\.go
-      linters:
-        - forbidigo
-
-    # forbidigo exemption: temp helpers are the sole permitted callers of
-    # os.MkdirTemp / os.CreateTemp — they implement the sanctioned wrappers
-    # (Mkdir, Create, SpawnMkdir) that the rest of the codebase must use.
-    - path: internal/tempdir/tempdir\.go
-      linters:
-        - forbidigo
-    - path: internal/testtemp/testtemp\.go
-      linters:
-        - forbidigo
-
-    # forbidigo exemption: atomic O_EXCL writes in a target directory (not
-    # temp scattering) — these create temp files inside a specific log/spill/
-    # download dir for crash-safe rename, not under the OS temp root.
-    - path: internal/log/rotate\.go
-      linters:
-        - forbidigo
-    - path: internal/tools/spill/spill\.go
-      linters:
-        - forbidigo
-    - path: internal/tools/http\.go
-      linters:
-        - forbidigo
-
-    # forbidigo exemption: standalone developer tools in scripts/ are not
-    # daemon code — they don't carry the foci-secrets supplementary group,
-    # so exec.Command is safe here.
-    - path: scripts/
-      linters:
-        - forbidigo

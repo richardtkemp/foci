@@ -333,7 +333,7 @@ func (s *TodoStore) List(agentID, status string, tags []string, priority, sort s
 			query += fmt.Sprintf(` ORDER BY %s, id %s`, priOrder, idDir)
 		} else {
 			statusOrder := `CASE status WHEN 'started' THEN 0 WHEN 'open' THEN 1 WHEN 'done' THEN 2 WHEN 'dropped' THEN 3 END`
-			query += fmt.Sprintf(` ORDER BY %s, %s, id %s`, statusOrder, priOrder, idDir)
+			query += fmt.Sprintf(` ORDER BY %s, %s, id %s`, statusOrder, priOrder, idDir) //nolint:gosec // G202: every operand is a literal set above
 		}
 	}
 

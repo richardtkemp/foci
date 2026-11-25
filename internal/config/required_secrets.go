@@ -115,7 +115,7 @@ func reflectSecretRefs(v reflect.Value, path string, refs *[]SecretRef) {
 			reflectSecretRefs(iter.Value(), elemPath, refs)
 		}
 
-	case reflect.Ptr:
+	case reflect.Pointer:
 		if !v.IsNil() {
 			reflectSecretRefs(v.Elem(), path, refs)
 		}

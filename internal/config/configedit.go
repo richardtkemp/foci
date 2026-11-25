@@ -444,7 +444,7 @@ var agentGlobalSections = sync.OnceValue(func() map[string]string {
 			continue
 		}
 		ft := f.Type
-		if ft.Kind() == reflect.Ptr {
+		if ft.Kind() == reflect.Pointer {
 			ft = ft.Elem()
 		}
 		if ft.Kind() != reflect.Struct {

@@ -461,7 +461,7 @@ func (b *Backend) closeInner() {
 	// stalls since 2026-05-17. The cap stays regardless: it is the backstop
 	// for whatever the next unforeseen stall turns out to be.
 	select {
-	case <-b.waitCh:
+	case _ = <-b.waitCh:
 		b.logger().Infof("CC subprocess (pid=%d) exited", pid)
 	case <-time.After(closeGracefulWait):
 		// SIGTERM.
@@ -470,7 +470,7 @@ func (b *Backend) closeInner() {
 			_ = b.cmd.Process.Signal(syscall.SIGTERM)
 		}
 		select {
-		case <-b.waitCh:
+		case _ = <-b.waitCh:
 		case <-time.After(closeSigtermWait):
 			// SIGKILL.
 			b.logger().Warnf("process (pid=%d) did not exit after SIGTERM, sending SIGKILL", pid)
@@ -478,7 +478,7 @@ func (b *Backend) closeInner() {
 				_ = b.cmd.Process.Kill()
 			}
 			select {
-			case <-b.waitCh:
+			case _ = <-b.waitCh:
 			case <-time.After(closeSigkillWait):
 				// Liveness backstop — the waiter goroutine stalled. Process is
 				// already SIGKILL'd so the OS will reap it; we just stop

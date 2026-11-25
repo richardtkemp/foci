@@ -48,7 +48,7 @@ func (a *Agent) RunBatchTurn(ctx context.Context, sessionKey, prompt, purpose st
 	}
 	router := a.sessionRouter(sessionKey)
 	router.Register(early)
-	defer router.Register(turnevent.NopSink{})
+	defer func() { router.Register(turnevent.NopSink{}) }() // stays registered: its release is not wanted
 
 	if err := a.HandleMessage(ctx, sessionKey, []string{prompt}, nil); err != nil {
 		return "", err

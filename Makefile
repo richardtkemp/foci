@@ -33,9 +33,10 @@ NPROC := $(shell n=$$(sysctl -n hw.ncpu 2>/dev/null || echo 4); [ $$n -gt 8 ] &&
 # LINT_GOTOOLCHAIN: the Go the analysers load packages with. mk/remote.mk's
 # remote-lint passes the dispatching host's own `go env GOVERSION`, so the Mac
 # lints with the NUC's Go, not Homebrew's newer one: golangci-lint v1.64.8
-# cannot read Go 1.27 export data (every file failed typecheck, "export data
+# could not read Go 1.27 export data (every file failed typecheck, "export data
 # version 5 is greater than maximum supported version 2"; #2544), and that
-# mismatch is the >12 GB lint of #2501. go fetches the toolchain on first use.
+# mismatch is the >12 GB lint of #2501. v2 (#3279) was not tried without this.
+# go fetches the toolchain on first use.
 # A bare local-lint on the Mac (not dispatched) uses the default below, the
 # NUC's Go: keep it equal to `go env GOVERSION` on the NUC when that changes.
 LINT_GOTOOLCHAIN ?= go1.26.10
@@ -890,7 +891,7 @@ lint-fix:
 # Run specific linter
 lint-dupl:
 	@bash scripts/check-golangci-go.sh $(GOBIN)/golangci-lint
-	@$(GOBIN)/golangci-lint run --allow-serial-runners --disable-all -E dupl
+	@$(GOBIN)/golangci-lint run --allow-serial-runners --default=none -E dupl
 
 # Also runs as part of `lint` — this target is for a quick standalone check.
 lint-static-config: find-static-config-reads
