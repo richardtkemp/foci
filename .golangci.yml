@@ -87,7 +87,7 @@ linters:
         - G301  # directory permissions - 0755 needed for shared workspaces
         - G306  # file permissions - need group write (0644/0664)
         # Rules new in v2's gosec, not adopted by the migration (#3279). They
-        # report 50 places today.
+        # report 54 places today (#3284).
         - G117  # marshaled struct field named like a secret
         - G118  # goroutine with context.Background while a request context exists
         - G122  # path race in a filepath.Walk callback
