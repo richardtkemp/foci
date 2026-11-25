@@ -39,9 +39,11 @@ const (
 	// paceLookback bounds how far back OverPace looks for the reading that
 	// set the state of a pace between paceOff and paceOn.
 	paceLookback = 24 * time.Hour
-	// minLongLeft is the least 7d allowance left used as a divisor: the figure
-	// is a whole percent, so 100% used may have up to this much left.
-	minLongLeft = 0.5
+	// spentLevel: a login that has used this much of its 7d allowance counts
+	// as a pace of paceOn, idle or not, until its 7d reset (#3269 for a login
+	// with no 5h figure; #3273, Dick 2026-11-25 on a used-up login that counted
+	// as 0: "Either count as full or null"; full chosen).
+	spentLevel = 99.0
 
 	shortLength = 5 * time.Hour
 	longLength  = 7 * 24 * time.Hour
@@ -176,6 +178,9 @@ func (l *loginPace) at(t time.Time) (pace float64, ok bool) {
 		return 0, false
 	}
 	left, reset := longLeft(l.readings[n].Percent, l.readings[n].ResetsAt, t)
+	if 100-left >= spentLevel {
+		return paceOn, true
+	}
 	return l.pace(l.shortUse(t.Add(-paceWindow), t)*l.ratio, left, reset, t), true
 }
 
@@ -214,7 +219,7 @@ func longLeft(percent float64, reset, t time.Time) (left float64, next time.Time
 // left to last until reset.
 func (l *loginPace) pace(use, left float64, reset, t time.Time) float64 {
 	busyHours := l.profile.expected(t, reset) / l.profile.busyHour()
-	return use / paceWindow.Hours() * busyHours / max(minLongLeft, left)
+	return use / paceWindow.Hours() * busyHours / left
 }
 
 // shortUse is the 5h percent used in [from, to], of the rises known by to

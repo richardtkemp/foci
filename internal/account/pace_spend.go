@@ -19,10 +19,6 @@ import (
 // the ledger and is not seen.
 
 const (
-	// spentLevel: a login with no 5h figure that has used this much of its
-	// 7d allowance is over pace until its 7d reset (ruled). It then counts as
-	// a pace of paceOn in the mean of a pool.
-	spentLevel = 99.0
 	// A rate is learned from the newest rateMaxRise percent of 7d use, and
 	// needs rateMinRise percent. Over 126 one-percent steps of one login's
 	// real use (#3269), a rate from 5 of them was 10% off the next 5, inside

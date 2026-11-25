@@ -89,7 +89,7 @@ func TestSpendPace(t *testing.T) {
 // TestSpendPace_ShortFigure: a login with a 5h figure has the 5h method of
 // #3267, whatever its dollars and its 7d level.
 func TestSpendPace_ShortFigure(t *testing.T) {
-	for used, want := range map[float64]float64{80: 1, 99: 20} {
+	for used, want := range map[float64]float64{80: 1, 98: 10} {
 		f, accts := newPickFixture(t, "a")
 		l := &ledger{}
 		l.at(10*time.Minute, 1000)

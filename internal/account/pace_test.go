@@ -49,7 +49,7 @@ func wantPace(t *testing.T, accts []*Account, at time.Time, want float64) {
 // the same hour of use is a pace of 1 exactly at the rate that uses up what
 // is left at the reset, and four times as fast at 80% used as at 20%.
 func TestPace_AllowanceLeft(t *testing.T) {
-	for _, c := range []struct{ used, want float64 }{{20, 0.25}, {50, 0.4}, {80, 1}, {95, 4}, {100, 40}} {
+	for _, c := range []struct{ used, want float64 }{{20, 0.25}, {50, 0.4}, {80, 1}, {95, 4}} {
 		f, accts := newPickFixture(t, "a")
 		// 10% of 5h in the hour = 1% of 7d an hour, 20 h to the reset.
 		f.use("a", c.used, 20*time.Hour, map[int]float64{70: 4, 60: 5, 30: 11, 0: 15})
@@ -131,6 +131,41 @@ func TestPace_MeanOfLogins(t *testing.T) {
 		if got := NewPool(memStore{}, accts...).OverPace(paceNow); got != (c.want >= 1) {
 			t.Errorf("logins %v and %v: over pace = %v, want %v", c.a, c.b, got, c.want >= 1)
 		}
+	}
+}
+
+// TestPace_SpentLogin (#3273, Dick: "Either count as full or null"; full): at
+// 99% or more of its 7d allowance used a login counts as 1 until its reset,
+// idle or not, alone or in the mean.
+func TestPace_SpentLogin(t *testing.T) {
+	idle, busy := map[int]float64{60: 5, 0: 5}, map[int]float64{60: 0, 0: 40}
+	for _, c := range []struct {
+		name string
+		used float64
+		left time.Duration
+		use  map[int]float64
+		want float64
+	}{
+		{"98 idle", 98, 20 * time.Hour, idle, 0},
+		{"99 idle", 99, 20 * time.Hour, idle, 1},
+		{"100 idle", 100, 20 * time.Hour, idle, 1},
+		{"100 busy", 100, 20 * time.Hour, busy, 1},
+		{"100, reset", 100, -time.Minute, idle, 0},
+	} {
+		f, accts := newPickFixture(t, "a")
+		f.use("a", c.used, c.left, c.use)
+		wantPace(t, accts, paceNow, c.want)
+		if got := NewPool(memStore{}, accts...).OverPace(paceNow); got != (c.want >= 1) {
+			t.Errorf("%s: over pace = %v, want %v", c.name, got, c.want >= 1)
+		}
+	}
+	// Dick's Q12: one login at 100%, the other at 1.9 (80% used, 20 h left).
+	f, accts := newPickFixture(t, "spent", "b")
+	f.use("spent", 100, 20*time.Hour, idle)
+	f.use("b", 80, 20*time.Hour, map[int]float64{60: 0, 0: 19})
+	wantPace(t, accts, paceNow, 1.45)
+	if !NewPool(memStore{}, accts...).OverPace(paceNow) {
+		t.Error("one login spent, the other at 1.9: not over pace")
 	}
 }
 
