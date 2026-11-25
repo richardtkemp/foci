@@ -2,10 +2,12 @@ package main
 
 import (
 	"sync"
+	"time"
 
 	"foci/internal/account"
 	"foci/internal/config"
 	"foci/internal/delegator"
+	"foci/internal/delegator/accounting"
 	"foci/internal/log"
 	"foci/internal/relogin"
 	"foci/internal/session"
@@ -54,6 +56,10 @@ func agentAccounts(cfg *config.Config, spec delegator.Spec, agentID string, fold
 // folder.
 func accountFor(cfg *config.Config, spec delegator.Spec, as delegator.AccountSpec) *account.Account {
 	o := account.Options{Backend: spec.Name, Spec: as}
+	if spec.Account == nil {
+		// One login for all the backend's calls.
+		o.Spend = backendSpend(spec.Name)
+	}
 	if spec.Supports(delegator.CapRelogin) {
 		if as.Host {
 			o.Login = relogin.G
@@ -65,6 +71,27 @@ func accountFor(cfg *config.Config, spec delegator.Spec, as delegator.AccountSpe
 		}
 	}
 	return gwAccounts.Get(o)
+}
+
+// backendSpend is the account.Options.Spend of backend's one login: its calls
+// in the cost ledger (#3269). With no ledger there are none, so no rate is
+// learned from them and the login has no usage pace.
+func backendSpend(backend string) func(from, to time.Time) ([]account.Spend, error) {
+	return func(from, to time.Time) ([]account.Spend, error) {
+		l := accounting.Live()
+		if l == nil {
+			return nil, nil
+		}
+		costs, err := l.BackendCosts(backend, from, to)
+		out := make([]account.Spend, len(costs))
+		for i, c := range costs {
+			out[i] = account.Spend{At: c.BilledAt, Priced: c.USD != nil}
+			if c.USD != nil {
+				out[i].USD = *c.USD
+			}
+		}
+		return out, err
+	}
 }
 
 // agentPool is the pool of agentID's accounts, keeping which session is on

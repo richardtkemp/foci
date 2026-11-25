@@ -29,7 +29,7 @@ func paceAt(t *testing.T, accts []*Account, at time.Time) (float64, bool) {
 	d := p.demandAt(at)
 	var ls []*loginPace
 	for _, a := range accts {
-		if l := newLoginPace(d, a, at.Add(-48*time.Hour)); l != nil {
+		if l := newLoginPace(d, a, at); l != nil {
 			ls = append(ls, l)
 		}
 	}
@@ -94,7 +94,8 @@ func TestPace_LongReset(t *testing.T) {
 	wantPace(t, accts, paceNow, (7*24-1.0/60)/100)
 }
 
-// TestPace_NoFigure: no 7d figure, no 5h figure, no history and no pool are
+// TestPace_NoFigure: no 7d figure, no 5h figure (nor spend, as a Claude
+// login), no history and no pool are
 // no pace: not over.
 func TestPace_NoFigure(t *testing.T) {
 	f, accts := newPickFixture(t, "a", "b")
@@ -177,7 +178,7 @@ func TestPace_UsagePattern(t *testing.T) {
 	wantPace(t, flatAccts, paceNow, 1.2)
 
 	d := NewPool(memStore{}, accts...).demandAt(paceNow)
-	l := newLoginPace(d, f.accts["a"], paceNow.Add(-48*time.Hour))
+	l := newLoginPace(d, f.accts["a"], paceNow)
 	got, ok := l.at(paceNow)
 	// Slots: 1 in 8 hours, the floor 0.3 x 1/3 = 0.1 in 16.
 	busy := (8*1.0 + 16*0.01) / (8*1.0 + 16*0.1)

@@ -2,6 +2,7 @@ package account
 
 import (
 	"slices"
+	"sort"
 	"time"
 
 	"foci/internal/usagelog"
@@ -22,7 +23,8 @@ import (
 //
 // The use is the rise of the 5h percent times the login's learned 5h/7d
 // ratio: both figures are whole percents, and one hour of the 7d percent is
-// too coarse.
+// too coarse. A login with no 5h figure (codex) has its use from the dollars
+// foci recorded (pace_spend.go).
 //
 // The sustainable rate is the 7d allowance left / the busy-hour equivalents to
 // the reset: the demand the T-profile (tprofile.go) expects until then /
@@ -56,12 +58,9 @@ func (p *Pool) OverPace(now time.Time) bool {
 		return false
 	}
 	d := p.demandAt(now)
-	// The earliest figure a pace in the lookback reads: one window before it,
-	// and that window's 5h period from its start.
-	since := now.Add(-paceLookback - paceWindow - shortLength)
 	var logins []*loginPace
 	for _, a := range p.accounts {
-		if l := newLoginPace(d, a, since); l != nil {
+		if l := newLoginPace(d, a, now); l != nil {
 			logins = append(logins, l)
 		}
 	}
@@ -115,10 +114,14 @@ type loginPace struct {
 	ratio    float64                   // the login's cap(5h) / cap(7d)
 	readings []usagelog.PercentReading // oldest first
 	short    []rise                    // the rises of the 5h percent
+	shortAt  time.Time                 // when the first 5h figure was received; zero = none
+	levels   []levelAt                 // the 7d level, when spend is set
+	spend    *spendUse                 // nil = the login's dollars are not known
 }
 
-// newLoginPace reads a's figures since; nil when there are none.
-func newLoginPace(d *demand, a *Account, since time.Time) *loginPace {
+// newLoginPace reads a's figures for the paces in the lookback from now; nil
+// when there are none.
+func newLoginPace(d *demand, a *Account, now time.Time) *loginPace {
 	if a == nil || a.history == nil {
 		return nil
 	}
@@ -126,7 +129,21 @@ func newLoginPace(d *demand, a *Account, since time.Time) *loginPace {
 	if st == nil {
 		return nil
 	}
-	rs, err := st.PercentReadingsSince(a.Key(), since)
+	// The earliest figure a pace in the lookback reads: one window before it,
+	// and that window's 5h period from its start.
+	const span = paceLookback + paceWindow + shortLength
+	rs, err := st.PercentReadingsSince(a.Key(), now.Add(-span))
+	if err == nil && len(rs) == 0 && a.spend != nil {
+		// Idle for longer, with what is left of its 7d period the same.
+		var cur usagelog.Current
+		if cur, err = st.Current(a.Key(), now); err == nil {
+			for _, w := range cur.Windows {
+				if isLong(w.Window) && w.HasPercent {
+					rs, err = st.PercentReadingsSince(a.Key(), w.PercentReceivedAt.Add(-span))
+				}
+			}
+		}
+	}
 	if err != nil {
 		poolLog.Warnf("read the usage history of account %s: %v", a.Key(), err)
 		return nil
@@ -134,39 +151,70 @@ func newLoginPace(d *demand, a *Account, since time.Time) *loginPace {
 	if len(rs) == 0 {
 		return nil
 	}
-	return &loginPace{profile: d.profile, ratio: d.shortRatio(a.Key()), readings: rs, short: rises(rs, isShort)}
+	l := &loginPace{profile: d.profile, ratio: d.shortRatio(a.Key()), readings: rs, short: rises(rs, isShort)}
+	if i := slices.IndexFunc(rs, func(r usagelog.PercentReading) bool { return isShort(r.Window) }); i >= 0 {
+		l.shortAt = rs[i].ReceivedAt
+	}
+	if a.spend != nil {
+		l.levels = longLevels(rs)
+		l.spend = &spendUse{key: a.Key(), rate: d.spendRate[a.Key()], read: a.spend}
+	}
+	return l
 }
 
 // at is the login's pace at t, from the figures received by then; ok is
-// false unless they hold both a 5h and a 7d figure (a codex plan with no 5h
-// window has no pace). A 7d window that reset since its last figure is unused
-// and resets one length later.
+// false unless they hold both a 5h and a 7d figure, or a 7d figure and the
+// login's dollars (spendPace).
 func (l *loginPace) at(t time.Time) (pace float64, ok bool) {
-	var long *usagelog.PercentReading
-	hasShort := false
-	for i := range l.readings {
-		r := &l.readings[i]
-		if r.ReceivedAt.After(t) {
-			break
-		}
-		if isLong(r.Window) {
-			long = r
-		}
-		hasShort = hasShort || isShort(r.Window)
+	if l.shortAt.IsZero() || l.shortAt.After(t) {
+		return l.spendPace(t)
 	}
-	if long == nil || !hasShort {
+	n := sort.Search(len(l.readings), func(i int) bool { return l.readings[i].ReceivedAt.After(t) })
+	for n--; n >= 0 && !isLong(l.readings[n].Window); n-- {
+	}
+	if n < 0 {
 		return 0, false
 	}
-	left, reset := 100-long.Percent, long.ResetsAt
-	if reset.IsZero() {
-		reset = t.Add(longLength)
+	left, reset := longLeft(l.readings[n].Percent, l.readings[n].ResetsAt, t)
+	return l.pace(l.shortUse(t.Add(-paceWindow), t)*l.ratio, left, reset, t), true
+}
+
+// spendPace is at for a login with no 5h figure.
+func (l *loginPace) spendPace(t time.Time) (pace float64, ok bool) {
+	n := sort.Search(len(l.levels), func(i int) bool { return l.levels[i].at.After(t) })
+	if n == 0 {
+		return 0, false // no 7d figure, or no dollars (spend is nil)
 	}
-	for !reset.After(t) {
-		left, reset = 100, reset.Add(longLength)
+	left, reset := longLeft(l.levels[n-1].percent, l.levels[n-1].reset, t)
+	if 100-left >= spentLevel {
+		return paceOn, true
 	}
-	rate := l.shortUse(t.Add(-paceWindow), t) * l.ratio / paceWindow.Hours()
+	use, ok := l.spend.percent(t.Add(-paceWindow), t)
+	if !ok {
+		return 0, false
+	}
+	return l.pace(use, left, reset, t), true
+}
+
+// longLeft is the 7d allowance left at t and when it resets, of a figure that
+// resets at reset. A 7d window that reset since its last figure is unused and
+// resets one length later.
+func longLeft(percent float64, reset, t time.Time) (left float64, next time.Time) {
+	left, next = 100-percent, reset
+	if next.IsZero() {
+		next = t.Add(longLength)
+	}
+	for !next.After(t) {
+		left, next = 100, next.Add(longLength)
+	}
+	return left, next
+}
+
+// pace is the pace of use (7d percent, over the paceWindow before t) with
+// left to last until reset.
+func (l *loginPace) pace(use, left float64, reset, t time.Time) float64 {
 	busyHours := l.profile.expected(t, reset) / l.profile.busyHour()
-	return rate * busyHours / max(minLongLeft, left), true
+	return use / paceWindow.Hours() * busyHours / max(minLongLeft, left)
 }
 
 // shortUse is the 5h percent used in [from, to], of the rises known by to

@@ -319,12 +319,15 @@ func learnRatio(readings []usagelog.PercentReading) (ratio float64, ok bool) {
 	return sumLong / sumShort, true
 }
 
-// demand is what the pick scores with, rebuilt once per clock hour
-// (Pool.demandAt): the pool's profile and each login's 5h/7d ratio.
+// demand is what the pick and the pace are worked out with, rebuilt once per
+// clock hour (Pool.demandAt): the pool's profile, each login's 5h/7d ratio and
+// the 7d percent per dollar of each login whose dollars are known.
 type demand struct {
 	hour    int64
 	profile *demandProfile
 	ratio   map[string]float64 // by account key; missing = defaultShortRatio
+	// spendRate is by account key; missing = not learned (learnSpendRate).
+	spendRate map[string]float64
 }
 
 func (d *demand) shortRatio(key string) float64 {
@@ -339,7 +342,7 @@ func (d *demand) shortRatio(key string) float64 {
 // first figure) and the ratios. An account with no store, or whose figures
 // cannot be read, adds nothing.
 func buildDemand(accounts []*Account, now time.Time) *demand {
-	d := &demand{hour: hourOf(now), ratio: map[string]float64{}}
+	d := &demand{hour: hourOf(now), ratio: map[string]float64{}, spendRate: map[string]float64{}}
 	hourly := map[int64]float64{}
 	start := int64(math.MaxInt64)
 	seen := map[*usagelog.Store]map[string]bool{}
@@ -370,6 +373,15 @@ func buildDemand(accounts []*Account, now time.Time) *demand {
 		addHourlyDemand(hourly, rs)
 		if r, ok := learnRatio(rs); ok {
 			d.ratio[a.Key()] = r
+		}
+		if a.spend != nil {
+			r, ok, err := learnSpendRate(rs, a.spend, time.Unix(d.hour*3600, 0))
+			switch {
+			case err != nil:
+				poolLog.Warnf("read the spend of account %s: %v", a.Key(), err)
+			case ok:
+				d.spendRate[a.Key()] = r
+			}
 		}
 	}
 	if start < d.hour {

@@ -41,6 +41,7 @@ type Account struct {
 
 	holds   *usagehold.Registry
 	history func() *usagelog.Store
+	spend   func(from, to time.Time) ([]Spend, error)
 }
 
 // Options is what New builds an Account from.
@@ -60,6 +61,9 @@ type Options struct {
 	// History returns the usage history store, nil when there is none; a nil
 	// func = no store.
 	History func() *usagelog.Store
+	// Spend lists the account's API calls billed in (from, to], oldest first
+	// (pace_spend.go); nil when the calls of this one account are not known.
+	Spend func(from, to time.Time) ([]Spend, error)
 }
 
 // New returns the account o describes.
@@ -67,7 +71,7 @@ func New(o Options) *Account {
 	a := &Account{
 		spec: o.Spec, backend: o.Backend,
 		login: o.Login, session: o.LoginSession, warner: o.ExpiryWarner,
-		holds: o.Holds, history: o.History,
+		holds: o.Holds, history: o.History, spend: o.Spend,
 	}
 	if a.login == nil {
 		a.login = &relogin.Gate{}

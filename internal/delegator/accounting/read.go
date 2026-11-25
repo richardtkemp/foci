@@ -147,6 +147,40 @@ func (l *Ledger) Calls(since time.Time) ([]CallRow, error) {
 	return out, cls.Err()
 }
 
+// CallCost is when one call was billed and what it cost; USD is nil when a
+// billed class is unpriced.
+type CallCost struct {
+	BilledAt time.Time
+	USD      *float64
+}
+
+// BackendCosts lists the calls of backend billed in (from, to], in billing
+// order: the spend a login's usage pace is worked out from (#3269).
+func (l *Ledger) BackendCosts(backend string, from, to time.Time) ([]CallCost, error) {
+	rows, err := l.db.Query(`SELECT billed_at, cost_usd FROM call_costs
+		WHERE backend = ? AND billed_at > ? AND billed_at <= ?
+		ORDER BY billed_at, id`, backend, formatTime(from), formatTime(to))
+	if err != nil {
+		return nil, fmt.Errorf("ledger: read %s costs: %w", backend, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []CallCost
+	for rows.Next() {
+		var (
+			c      CallCost
+			billed string
+		)
+		if err := rows.Scan(&billed, &c.USD); err != nil {
+			return nil, fmt.Errorf("ledger: scan %s cost: %w", backend, err)
+		}
+		if c.BilledAt, err = time.Parse(timeLayout, billed); err != nil {
+			return nil, fmt.Errorf("ledger: %s call billed_at %q: %w", backend, billed, err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // SessionStats is one session's totals, for /status and /context.
 type SessionStats struct {
 	// TurnCount counts the session's own turns: not compactions, nor the

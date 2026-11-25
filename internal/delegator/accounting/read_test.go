@@ -165,3 +165,43 @@ func TestCurrentContextFill(t *testing.T) {
 		t.Errorf("fill after a post-compaction turn = %d, want %d", f, 10+20000)
 	}
 }
+
+// TestBackendCosts: one backend's calls billed in (from, to], in billing
+// order, each with its own cost; an unpriced call has none.
+func TestBackendCosts(t *testing.T) {
+	l, _ := openLedger(t)
+	mustUpdate(t, l, func(tx *Tx) error { return tx.RecordTurn(turn("T")) })
+	at := func(key, backend, model string, m int) Call {
+		c := call(key, modelinfo.Tokens{modelinfo.ClassInput: 1000 * (m + 1)})
+		c.Backend, c.Model, c.BilledAt = backend, model, t0.Add(time.Duration(m)*time.Minute)
+		return c
+	}
+	book(t, l,
+		at("d", BackendCodex, "no-such-model-anywhere", 3),
+		at("a", BackendCodex, "claude-opus-5", 0),
+		at("c", BackendCodex, "claude-opus-5", 2),
+		at("b", BackendCodex, "claude-opus-5", 1),
+		at("x", BackendCCStream, "claude-opus-5", 2),
+		at("e", BackendCodex, "claude-opus-5", 4),
+	)
+	got, err := l.BackendCosts(BackendCodex, t0, t0.Add(3*time.Minute))
+	if err != nil || len(got) != 3 {
+		t.Fatalf("calls = %+v (%v), want the 3 after t0 up to t0+3m", got, err)
+	}
+	for i, c := range got {
+		m := i + 1
+		if !c.BilledAt.Equal(t0.Add(time.Duration(m) * time.Minute)) {
+			t.Errorf("call %d billed at %v", i, c.BilledAt)
+		}
+		if m == 3 {
+			if c.USD != nil {
+				t.Errorf("the unpriced call cost $%v", *c.USD)
+			}
+			continue
+		}
+		want, _ := modelinfo.CostAsOf("claude-opus-5", c.BilledAt, modelinfo.Tokens{modelinfo.ClassInput: 1000 * (m + 1)})
+		if c.USD == nil || !near(*c.USD, want) {
+			t.Errorf("call %d cost %v, want $%v", i, c.USD, want)
+		}
+	}
+}
