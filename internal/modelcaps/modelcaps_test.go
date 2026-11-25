@@ -20,6 +20,9 @@ func reset() {
 	registryMu.Lock()
 	registry = map[string]*store{}
 	registryMu.Unlock()
+	unpricedWarnedMu.Lock()
+	unpricedWarned = map[string]bool{}
+	unpricedWarnedMu.Unlock()
 }
 
 func TestRefreshAndLookup(t *testing.T) {

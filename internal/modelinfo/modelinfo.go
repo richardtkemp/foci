@@ -1315,22 +1315,7 @@ func ResolveRateModel(model string, at time.Time, prompt int) (string, bool) {
 // prompt picks the price tier (Tier); 0 always gives the base rates.
 func resolveGroup(model string, at time.Time, prompt int) (rateGroup, bool) {
 	segs, bare := splitSegs(model)
-	if IsSynthetic(model) || IsSynthetic(bare) {
-		return syntheticGroup, true
-	}
-	// Resolved before historyMu is taken: NewestInFamily takes registryMu, and
-	// the two locks are never held together.
-	canon, hasFamily := familyCanonicalLeaf(bare)
-
-	historyMu.RLock()
-	r, ok := historyLookupAsOfSegs(segs, bare, at)
-	family := false
-	if !ok && hasFamily {
-		r, ok = historyLookupAsOfSegs(map[string]bool{}, canon, at)
-		family = ok
-	}
-	historyMu.RUnlock()
-
+	g, family, ok := lookupGroup(segs, bare, at, prompt)
 	// Both hooks take their own mutexes, not historyMu.
 	switch {
 	case family:
@@ -1338,11 +1323,44 @@ func resolveGroup(model string, at time.Time, prompt int) (rateGroup, bool) {
 	case !ok:
 		noteUnpriced(bare)
 	}
-	g := r.group
+	return g, ok
+}
+
+// HasRates reports whether a call on model would be priced now: it resolves to
+// a rate group, as ResolveRateModel does, a family's or an all-zero one
+// included. It is for asking about a model no call has been made on, so it
+// fires neither UnpricedModelHook nor FamilyPricedModelHook, which report a
+// model's first priced call.
+func HasRates(model string) bool {
+	segs, bare := splitSegs(model)
+	_, _, ok := lookupGroup(segs, bare, time.Now(), 0)
+	return ok
+}
+
+// lookupGroup is resolveGroup without the two hooks, for a model split by
+// splitSegs. family reports that the group is the family canonical's, not the
+// model's own.
+func lookupGroup(segs map[string]bool, bare string, at time.Time, prompt int) (g rateGroup, family, ok bool) {
+	if IsSynthetic(bare) {
+		return syntheticGroup, false, true
+	}
+	// Resolved before historyMu is taken: NewestInFamily takes registryMu, and
+	// the two locks are never held together.
+	canon, hasFamily := familyCanonicalLeaf(bare)
+
+	historyMu.RLock()
+	r, ok := historyLookupAsOfSegs(segs, bare, at)
+	if !ok && hasFamily {
+		r, ok = historyLookupAsOfSegs(map[string]bool{}, canon, at)
+		family = ok
+	}
+	historyMu.RUnlock()
+
+	g = r.group
 	if ok {
 		g.tier = r.row.model.tierFor(prompt)
 	}
-	return g, ok
+	return g, family, ok
 }
 
 // zeroCostModel is the leaf of the rate group a call on a zero-cost endpoint

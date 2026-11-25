@@ -30,6 +30,7 @@ package modelcaps
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -308,6 +309,7 @@ func (s *store) storeEntries(entries map[string]Caps, fetchedAt time.Time) {
 	persister := s.persister
 	s.mu.Unlock()
 	log.NewComponentLogger(logComponent).Infof("[%s] catalogue refreshed: %d models", s.backend, len(entries))
+	warnUnpriced(s.backend, entries)
 
 	// Persist outside the store lock — DB I/O must not block lookups. Sources
 	// hand ownership of a completed snapshot to the store and never mutate it.
@@ -316,4 +318,44 @@ func (s *store) storeEntries(entries map[string]Caps, fetchedAt time.Time) {
 			log.NewComponentLogger(logComponent).Warnf("[%s] persist to db failed: %v", s.backend, err)
 		}
 	}
+}
+
+// unpricedWarned holds the models warnUnpriced has named in this process.
+var (
+	unpricedWarnedMu sync.Mutex
+	unpricedWarned   = map[string]bool{}
+)
+
+// warnUnpriced logs the models of a delegated backend's list that foci has no
+// rates for, so the gap shows when the backend offers them and not at the first
+// unpriced call (#3278). One WARN per list, and each model is named once per
+// process: a list comes from every app-server start and background refresh, so
+// a list of known gaps stays silent and a new model is still named.
+//
+// The direct-API list is not checked: its calls go through [endpoints], where
+// one can be zero_cost (#3035); the delegated backends do not use them.
+func warnUnpriced(backend string, entries map[string]Caps) {
+	if backend == BackendAPI {
+		return
+	}
+	var unpriced []string
+	for id := range entries {
+		m := backend + "/" + id
+		if modelinfo.HasRates(m) {
+			continue
+		}
+		unpricedWarnedMu.Lock()
+		first := !unpricedWarned[m]
+		unpricedWarned[m] = true
+		unpricedWarnedMu.Unlock()
+		if first {
+			unpriced = append(unpriced, m)
+		}
+	}
+	if len(unpriced) == 0 {
+		return
+	}
+	sort.Strings(unpriced)
+	log.NewComponentLogger(logComponent).Warnf("no rates for listed model(s) %s — a call on one will be unpriced (cost unknown, not zero); add its rates to internal/modelinfo/models.jsonl (scripts/sync-modelinfo) or [[modelinfo]]",
+		strings.Join(unpriced, ", "))
 }
