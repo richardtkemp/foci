@@ -1458,13 +1458,13 @@ type ResourcesConfig struct {
 // All fields are pointer types for Merge-based resolution (per-agent → global).
 // TOML: [browser] globally, [[agents]].browser per-agent.
 type BrowserConfig struct {
-	Enabled        *bool    `toml:"enabled"         default:"true" desc:"Enable the browser automation tool, letting the agent open and control a Chrome browser"`                 // enable browser tool
-	Headless       *bool    `toml:"headless"        default:"true" desc:"Run the automated Chrome browser with no visible window"`                                                 // run headless
-	TimeoutSec     *int     `toml:"timeout_sec"     default:"30"   desc:"Seconds to wait for a browser page operation, like a click or navigation, before it times out"`           // page operation timeout in seconds
-	UserDataDir    *string  `toml:"user_data_dir"                  desc:"Directory Chrome stores its browser profile in. Leave empty to use a fresh temporary profile each time"`  // Chrome user data dir (empty = temp profile)
-	ExecutablePath *string  `toml:"executable_path"                desc:"Path to the Chrome binary to launch. Leave empty to use a Chromium foci downloads, not an installed one"` // Chrome executable path (empty = go-rod's pinned Chromium, downloaded if absent)
-	DOMStableSec   *float64 `toml:"dom_stable_sec"  default:"1"    desc:"Seconds between page snapshots when waiting for a webpage to stop changing before treating it as loaded"` // DOM stability wait interval in seconds
-	DOMStableDiff  *float64 `toml:"dom_stable_diff" default:"0.2"  desc:"How much a page may differ between snapshots, as a fraction from 0 to 1, and still count as stable"`      // DOM stability diff threshold
+	Enabled        *bool    `toml:"enabled"         default:"true" desc:"Enable the browser automation tool, letting the agent open and control a Chrome browser"`                                                                              // enable browser tool
+	Headless       *bool    `toml:"headless"        default:"true" desc:"Run the automated Chrome browser with no visible window"`                                                                                                              // run headless
+	TimeoutSec     *int     `toml:"timeout_sec"     default:"30"   desc:"Seconds to wait for a browser page operation, like a click or navigation, before it times out"`                                                                        // page operation timeout in seconds
+	UserDataDir    *string  `toml:"user_data_dir"                  desc:"Directory Chrome stores its browser profile in. Leave empty to use a fresh temporary profile each time"`                                                               // Chrome user data dir (empty = temp profile)
+	ExecutablePath *string  `toml:"executable_path"                desc:"Path to the Chrome binary to launch. Leave empty to use a Chromium foci downloads, which cannot play H.264 or AAC video; set Chrome or Chrome for Testing to play it"` // Chrome executable path (empty = go-rod's pinned Chromium, downloaded if absent)
+	DOMStableSec   *float64 `toml:"dom_stable_sec"  default:"1"    desc:"Seconds between page snapshots when waiting for a webpage to stop changing before treating it as loaded"`                                                              // DOM stability wait interval in seconds
+	DOMStableDiff  *float64 `toml:"dom_stable_diff" default:"0.2"  desc:"How much a page may differ between snapshots, as a fraction from 0 to 1, and still count as stable"`                                                                   // DOM stability diff threshold
 }
 
 // DepthConfig holds configuration for depth mode (#2588): the experimental

@@ -63,3 +63,11 @@ Each interactive element gets a ref like [ref=s1e5]. Use these refs to interact.
 - **returnPath** — Boolean. Return file path instead of base64-encoded image.
 - **incognito** — Boolean. Enable (`true`, default) or disable (`false`) incognito mode. Used with `start` action. From the shell, pass JSON to turn it off (`foci_browser '{"action":"start","incognito":false}'`); the `--incognito` flag can only set it on. Only one session at a time can hold the persistent profile.
 - From the shell, pass `--returnPath` with `screenshot`, or the base64 image is printed into your output.
+
+## Video and audio
+
+Unless `[browser] executable_path` names Chrome or Chrome for Testing, the browser is an
+open-source Chromium that cannot play H.264 or AAC. Most site video players then show their
+own error ("Something went wrong"). That error does not mean the page has no video. The
+`start` result and the snapshot of a page with a `<video>` or `<audio>` element say so when
+the codecs are missing.

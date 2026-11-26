@@ -490,7 +490,13 @@ func browserStart(mgr *BrowserManager, p browserParams) (tools.ToolResult, error
 	if !mgr.incognito {
 		mode = "off"
 	}
-	return tools.ToolResult{Text: fmt.Sprintf("Browser started (incognito: %s)", mode)}, nil
+	text := fmt.Sprintf("Browser started (incognito: %s)", mode)
+	if page, err := mgr.getPage(); err == nil {
+		if missing, err := missingCodecs(page); err == nil && len(missing) > 0 {
+			text += "\n" + codecGapText(missing)
+		}
+	}
+	return tools.ToolResult{Text: text}, nil
 }
 
 func browserClose(mgr *BrowserManager) (tools.ToolResult, error) {

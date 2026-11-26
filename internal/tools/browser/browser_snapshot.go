@@ -70,6 +70,7 @@ func BuildSnapshot(page *rod.Page, generation int) (*Snapshot, error) {
 	fmt.Fprintf(&b, "- Page URL: %s\n", info.URL)
 	fmt.Fprintf(&b, "- Page Title: %s\n", info.Title)
 	fmt.Fprintf(&b, "- Frame Count: %d\n", len(snap.frames))
+	b.WriteString(mediaCodecNote(snap.frames))
 	fmt.Fprintf(&b, "- Page Snapshot\n```%s\n", lang)
 	b.WriteString(strings.TrimSpace(string(yamlBytes)))
 	b.WriteString("\n```\n")
