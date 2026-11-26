@@ -37,7 +37,6 @@ func depthLeafRules() []pretool.Rule {
 		return pretool.Rule{Name: depthLeafRulePrefix + name, Tool: tool, Action: pretool.ActionDeny,
 			Reason: delegator.DepthLeafRefusal(path)}
 	}
-	yes := true
 	bgShell := "A background shell command"
 	rules := []pretool.Rule{
 		deny("agent", "Agent", "The Agent tool (foreground or background)"),
@@ -47,12 +46,7 @@ func depthLeafRules() []pretool.Rule {
 	}
 	inBg := deny("bash_run_in_background", "Bash", bgShell+" (run_in_background)")
 	inBg.Input = map[string]pretool.Patterns{"run_in_background": {`^true$`}}
-	amp := deny("bash_ampersand", "Bash", bgShell+" (a command ended by &)")
-	amp.Background = &yes
-	detach := deny("bash_detach", "Bash", bgShell+" (nohup, setsid --fork or disown)")
-	detach.Command = pretool.Patterns{
-		`(\S*/)?(nohup|disown)(\s|$)`,
-		`(\S*/)?setsid\s+(\S+\s+)*(--fork|-[A-Za-z]*f[A-Za-z]*)(\s|$)`,
-	}
-	return append(rules, inBg, amp, detach)
+	return append(append(rules, inBg), pretool.DetachRules(depthLeafRulePrefix, func(what string) string {
+		return delegator.DepthLeafRefusal(bgShell + " (" + what + ")")
+	})...)
 }

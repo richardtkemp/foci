@@ -329,6 +329,15 @@ type SpawnDeps struct {
 	// (Agent.LiveTurnID), read when a spawn starts: the spawn is recorded
 	// against it (#2992). Nil or "" = the spawn is recorded under no turn.
 	LiveTurn func(sessionKey string) string
+
+	// ShellJobs returns what shell_job needs to check, approve and run a
+	// command (#3286, shell_job.go), or nil when the agent cannot run one
+	// (yet: the gateway sets it once the agent's rules are built). Read at
+	// each call.
+	ShellJobs func() *ShellJobEnv
+	// InDepthLeaf reports whether a session is a depth leaf, the only place
+	// shell_job runs (Dick 2026-11-26: leaves only). Nil = InDepthLeaf.
+	InDepthLeaf func(sessionKey string) bool
 }
 
 // turnUnattended calls d.TurnUnattended, false when unset.

@@ -74,6 +74,9 @@ func (s *Spawner) send(ctx context.Context, idOrBranch, message string) (ToolRes
 	if snap.Direct {
 		return ToolResult{}, fmt.Errorf("spawn %s returns its result directly to the call that started it, so it takes no messages; spawn_stop stops it", snap.ID)
 	}
+	if snap.Mode == spawnModeShell {
+		return ToolResult{}, fmt.Errorf("%s is a shell job (#3286): it runs a command, with no model, so it takes no messages; spawn_stop stops it", snap.ID)
+	}
 	text := spawnMessagePrefix + message
 	agent := s.agentOf(snap.RunningSpawn)
 	if agent == nil {

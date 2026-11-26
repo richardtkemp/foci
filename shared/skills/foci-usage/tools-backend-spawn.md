@@ -16,7 +16,13 @@ Per-tool reference for the Claude Code (shell) backend. How `foci_*` shell funct
 - `--agent <id>` runs AS another agent: its character, tools, workspace, permission rules, backend and model. The result comes back to you; nothing reaches that agent's chats. It implies character mode (do not pass `--context`); `--background` works. Its `send_to_chat` lands in YOUR chat; it cannot `send_to_session` or `remind`.
 - Every spawn first checks the plan allowance of the backend it runs on (the target's, with `--agent`). With less than `[tools] spawn_reserve_percent` (default 10%) left in the 5-hour or weekly window it is refused, naming the window, what is left and when it resets. `--use-reserve` runs it anyway. A backend with no usage data runs unchecked.
 - A clone's permission prompts reach the user headed `🐣 From spawn <id>: <name>` and never block your own turn. A character spawn's prompts are decided by the auto-approve rules, never asked. In auto mode nobody is asked. `/stop` stops your spawns too.
-- In a depth leaf `foci_spawn` is the only way to start subagent or background work (#2625). Monitor, Workflow and background shells are refused with a message (the Agent tool is absent, as in every session) (a timed-out foreground command is still backgrounded, not killed). A leaf may report while its spawns run: their results pass up the tree.
+- In a depth leaf `foci_spawn` is the only way to start subagent or background work (#2625). Monitor, Workflow and background shells are refused with a message (the Agent tool is absent, as in every session) (a timed-out foreground command is still backgrounded, not killed). A leaf may report while its spawns run: their results pass up the tree. To wait on a plain command there, use `foci_shell_job` (below), not a spawn.
+
+### `foci_shell_job --name <name> [--timeout 2h] '<command>'` (depth leaves only)
+- Runs a shell command in the background, in foci, with no model (#3286): e.g. watch CI, then merge. Refused outside a depth leaf.
+- The command is judged by your own auto-approve rules: an allowed one starts at once; any other is put to the user in the app and runs only if they approve (the call returns at once either way). A command that detaches a process (`&`, `nohup`, `setsid --fork`, `disown`) or that a deny rule matches is refused.
+- Timeout: default 1h, at most 4h. It takes no spawn slot.
+- It is a spawn to the other tools: `foci_spawn_status` lists it (`shell`), `foci_spawn_stop` kills it, `foci_spawn_send` refuses it. Its `[SPAWN RESULT]` carries the exit status and the end of the output (the full output's file when long), and passes up the tree if you have reported. A foci restart while it runs ends it, and it is reported lost, never re-run.
 
 ### `foci_spawn_send --id <name|spawn-id> "<message>"`
 - Tell a spawn more. A running spawn gets it folded into its current turn. A finished one resumes on its branch with its earlier context and reports a new `[SPAWN RESULT]`.

@@ -144,11 +144,30 @@ func (r *UserRunner) Redact(text string) string {
 	return redactSecrets(text, r.Store, r.Bitwarden)
 }
 
-// Run runs script and waits for it. Cancelling ctx kills the command's process
-// group and reports StateCancelled. The result's ForAgent is left for the caller
-// (the agent's result guard decides it).
+// CheckJob refuses a shell job's command (#3286) as the shell tool refuses it:
+// one that names a blocked path, or holds a {{secret:}} template. A shell job is
+// the agent's command, not the user's, so the blocked-path check that "!"
+// commands skip (#2812) applies to it. A leading sleep is not refused: the shell
+// tool refuses it because it blocks a turn, and a shell job blocks none.
+func (r *UserRunner) CheckJob(script string) error {
+	if r.Store != nil && r.Store.IsBlockedCommand(script) {
+		return errors.New("the command references a blocked path")
+	}
+	return checkSecretTemplates(script)
+}
+
+// Run runs script and waits for it, under the runner's own time limit
+// (Timeout). Cancelling ctx kills the command's process group and reports
+// StateCancelled. The result's ForAgent is left for the caller (the agent's
+// result guard decides it).
 func (r *UserRunner) Run(ctx context.Context, script string) usercmd.Result {
-	res := usercmd.Result{Command: r.Redact(script), Timeout: r.Timeout()}
+	return r.RunFor(ctx, script, r.Timeout())
+}
+
+// RunFor is Run with the time limit given by the caller: a shell job's own
+// (#3286).
+func (r *UserRunner) RunFor(ctx context.Context, script string, timeout time.Duration) usercmd.Result {
+	res := usercmd.Result{Command: r.Redact(script), Timeout: timeout}
 
 	if r.SpillTempDir != "" {
 		if err := os.MkdirAll(r.SpillTempDir, 0o700); err != nil {

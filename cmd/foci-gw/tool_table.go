@@ -454,6 +454,13 @@ var toolTable = []toolEntry{
 	{name: "spawn_stop", paths: pathBoth, enabled: spawnEnabled, build: func(d *toolDeps) *tools.Tool {
 		return d.getSpawner().StopTool()
 	}},
+	// shell_job (#3286): a depth leaf runs a plain shell command in the
+	// background, in foci, with no model; tracked, stopped and reported as a
+	// spawn. Delegated agents only (pathExec): their backend refuses a
+	// leaf's background shells (#2625), and their auto-approve rules are what
+	// the command is judged by (Agent.ShellJobs). It refuses outside a leaf.
+	{name: "shell_job", paths: pathExec, enabled: func(d *toolDeps) bool { return spawnEnabled(d) && depthEnabled(d) },
+		build: func(d *toolDeps) *tools.Tool { return d.getSpawner().ShellJobTool() }},
 	// send_to_spawner: a spawn, of any mode, messages the session that
 	// spawned it while it runs (#2662). Outside a spawn it refuses.
 	{name: "send_to_spawner", paths: pathBoth, enabled: spawnEnabled, build: func(d *toolDeps) *tools.Tool {
@@ -763,6 +770,17 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 			if ag := d.agLazy(); ag != nil {
 				ag.CloseSpawnBranchNow(bk)
 			}
+		},
+		// #3286: a depth leaf's shell jobs; set on the agent once its
+		// rules are built (configureDelegated), so read per call.
+		ShellJobs: func() *tools.ShellJobEnv {
+			if d.agLazy == nil {
+				return nil
+			}
+			if ag := d.agLazy(); ag != nil {
+				return ag.ShellJobs
+			}
+			return nil
 		},
 		// #2728: a spawn whose turn ends with background work running
 		// stays running until that work ends.

@@ -182,10 +182,15 @@ func (s *Spawner) adoptSpawns() *spawnRestorePlan {
 		host := s.hostOf(recInfo(rec))
 		var agent SpawnAgent
 		var reason string
-		if rec.OneShot != nil {
+		switch {
+		case rec.Shell:
+			// A shell job (#3286) is never run again: its command may not
+			// be safe to run twice (Dick 2026-11-26: "Report it lost").
+			reason = shellJobLostReason
+		case rec.OneShot != nil:
 			// An API one-shot (#2979) runs on the host's loop, not an agent's turn.
 			reason = cannotResumeOneShot(host, rec)
-		} else {
+		default:
 			if host != nil {
 				agent = host.agentFn()
 			}
@@ -251,6 +256,10 @@ func (s *Spawner) startResumes(resumes []pendingResume) {
 		}
 	}()
 }
+
+// shellJobLostReason is why a shell job running at a restart is reported
+// lost (#3286).
+const shellJobLostReason = "it is a shell job, and a shell job is never run again after a restart (its command may not be safe to run twice); check what it had done before running it again"
 
 // cannotResume says why a running spawn cannot be resumed, or "" when it can.
 // host is the Spawner of the agent the spawn runs as (nil: that agent is
@@ -329,6 +338,9 @@ func recInfo(rec spawnRecord) RunningSpawn {
 		// branch to resume on, though its result now comes as a
 		// [SPAWN RESULT].
 		mode = rec.OneShot.Mode
+	}
+	if rec.Shell {
+		mode = spawnModeShell // #3286: never resumed, reported lost
 	}
 	return RunningSpawn{
 		ID: rec.ID, BranchKey: rec.BranchKey, Name: rec.Name, Description: rec.Description,

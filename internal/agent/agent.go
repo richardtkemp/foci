@@ -133,6 +133,7 @@ type Agent struct {
 	ToolResultTempDir             string                                            // where to write large tool results
 	UserShell                     *shell.UserRunner                                 // runs chat "!" commands (#2812); nil refuses them
 	UserCommandOperators          func(platformID string) []string                  // a platform's resolved operator_users, for "!" commands
+	ShellJobs                     *tools.ShellJobEnv                                // checks, approves and runs a depth leaf's shell jobs (#3286); nil = none
 	ResultSummariser              tools.Summariser                                  // summarises an oversized result on a delegated agent (no API client); nil on API agents
 	SummaryContextTurns           int                                               // recent conversation turns for summary context
 	SummaryContextChars           int                                               // max chars of context to send to cheap model

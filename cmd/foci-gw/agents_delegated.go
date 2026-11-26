@@ -17,6 +17,7 @@ import (
 	"foci/internal/delegator/stoprule"
 	"foci/internal/log"
 	"foci/internal/platform"
+	"foci/internal/procx"
 	"foci/internal/provider"
 	"foci/internal/ratelimit"
 	"foci/internal/relogin"
@@ -361,7 +362,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 
 	// The manager's two prompt surfaces (#2275): approvals land in the
 	// owner's default chat, questions in the asking session's chat.
-	permPromptFn, questionPromptFn := backendPromptFuncs(backendPromptDeps{
+	promptDeps := backendPromptDeps{
 		ag: ag, connMgr: connMgr, sessionIdx: sessionIdx, agentID: agentID,
 		live:       depthSessionLive,
 		owner:      tools.SpawnBranchOwner,
@@ -372,7 +373,20 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			}
 			return sessionIdx.DefaultSessionKeyForAgentOn(agentID, p.cfg.DefaultPlatformFor(agentID))
 		},
-	})
+	}
+	permPromptFn, questionPromptFn := backendPromptFuncs(promptDeps)
+
+	// A depth leaf's shell jobs (#3286): judged by this agent's own rules,
+	// matched under the environment the job's command runs with, and put to
+	// the user in the app (the same chats a backend's approval goes to) when
+	// no rule allows them.
+	ag.ShellJobs = newShellJobEnv(ag.UserShell, shellJobRules{
+		runner:      ag.UserShell,
+		autoApprove: autoapprove.Compile(autoApproveRules),
+		env:         autoapprove.EnvironmentFromList(append(procx.Env(procx.Operator), execExtraEnv(p)...)),
+		preTool:     preToolRules,
+		workDir:     p.acfg.Workspace,
+	}, shellJobApprover{d: promptDeps})
 
 	ag.DelegatedManager = &agent.DelegatedManager{
 		SessionIndex: p.sessionIndex,

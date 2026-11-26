@@ -48,7 +48,7 @@ func TestToolTable_PerPathSets(t *testing.T) {
 	wantExec := []string{
 		"browser", "summary", "http_request", "web_search", "web_fetch",
 		"memory_search", "todo", "send_to_chat", "send_to_session",
-		"ask", "spawn", "spawn_send", "spawn_status", "spawn_stop", "send_to_spawner",
+		"ask", "spawn", "spawn_send", "spawn_status", "spawn_stop", "shell_job", "send_to_spawner",
 		"depth_fanout", "depth_report", "depth_claims", "depth_status",
 		"remind", "client",
 		"set_session_alias", "secrets", "close_session", "compact_session", "whoami",

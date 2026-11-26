@@ -72,6 +72,10 @@ type spawnRecord struct {
 	// (see trackedSpawn.stoppedBy), for that report.
 	Stopped   bool   `json:"stopped,omitempty"`
 	StoppedBy string `json:"stopped_by,omitempty"`
+	// Shell marks a shell job (#3286, shell_job.go): its Prompt is the
+	// command. It has no branch and is never run again: a new process
+	// reports a running one lost (Dick 2026-11-26: "Report it lost").
+	Shell bool `json:"shell,omitempty"`
 }
 
 // keptRecord is the persisted form of one kept message to the spawner.
@@ -182,6 +186,7 @@ func (s *trackedSpawn) record(parent string, live bool) *spawnRecord {
 		Agent: s.info.Agent, SpawnerUnattended: s.info.SpawnerUnattended, Depth: s.info.Depth,
 		Kept: keptRecords(s.kept), OneShot: s.oneShot,
 		Wake: slices.Clone(s.wake), Stopped: s.stopped, StoppedBy: stoppedBy,
+		Shell: s.info.Mode == spawnModeShell,
 	}
 }
 
@@ -311,7 +316,7 @@ func (t *SpawnTracker) loadRecords(agentID string) []spawnRecord {
 	var out []spawnRecord
 	for key, val := range rows {
 		var rec spawnRecord
-		if err := json.Unmarshal([]byte(val), &rec); err != nil || rec.ID == "" || rec.Parent == "" || (rec.BranchKey == "" && rec.OneShot == nil) {
+		if err := json.Unmarshal([]byte(val), &rec); err != nil || rec.ID == "" || rec.Parent == "" || (rec.BranchKey == "" && rec.OneShot == nil && !rec.Shell) {
 			spawnLog.Errorf("agent=%s persisted spawn %s unreadable (%v) — dropping it: %.200q", agentID, key, err, val)
 			_ = store.DeleteAgentMetadata(agentID, key)
 			continue
