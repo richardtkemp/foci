@@ -177,6 +177,55 @@ func TestAddHourlyDemand(t *testing.T) {
 	}
 }
 
+// TestRises_FallSamePeriod (#3268, Cam's work Mac 2026-11-20: 7d 96% -> 0%
+// with the same reset time): a fall of more than levelSlack that the next
+// figure confirms starts the level anew, so the use after it is demand. A
+// single low figure (codex repeats an old thread's figure) and a fall within
+// levelSlack (two sources rounding apart) are no fall. A figure with no reset
+// time is no evidence of a fall.
+func TestRises_FallSamePeriod(t *testing.T) {
+	t0 := time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
+	reset := t0.Add(3 * 24 * time.Hour)
+	at := func(d time.Duration, pct float64, reset time.Time) usagelog.PercentReading {
+		return usagelog.PercentReading{Window: "seven_day", ReceivedAt: t0.Add(d), Percent: pct, ResetsAt: reset}
+	}
+	sum := func(rs []usagelog.PercentReading) float64 {
+		var s float64
+		for _, r := range rises(rs, isLong) {
+			s += r.amount
+		}
+		return s
+	}
+	cases := []struct {
+		name string
+		rs   []usagelog.PercentReading
+		want float64
+	}{
+		{"confirmed fall", []usagelog.PercentReading{
+			at(0, 95, reset), at(time.Hour, 96, reset),
+			at(2*time.Hour, 0, reset), at(3*time.Hour, 0, reset), // the fall, confirmed
+			at(4*time.Hour, 10, reset), at(5*time.Hour, 30, reset),
+		}, 1 + 30},
+		{"fall to a figure above zero", []usagelog.PercentReading{
+			at(0, 96, reset), at(time.Hour, 4, reset), at(2*time.Hour, 6, reset), at(3*time.Hour, 9, reset),
+		}, 9}, // 4 since the fall, then 2 and 3
+		{"one low figure", []usagelog.PercentReading{
+			at(0, 95, reset), at(time.Hour, 74, reset), at(2*time.Hour, 95, reset), at(3*time.Hour, 97, reset),
+		}, 2},
+		{"rounding within slack", []usagelog.PercentReading{
+			at(0, 30.000000000000004, reset), at(time.Hour, 29, reset), at(2*time.Hour, 29, reset), at(3*time.Hour, 31, reset),
+		}, 1},
+		{"no reset time", []usagelog.PercentReading{
+			at(0, 40, reset), at(time.Hour, 0, time.Time{}), at(2*time.Hour, 0, time.Time{}), at(3*time.Hour, 42, reset),
+		}, 2},
+	}
+	for _, c := range cases {
+		if got := sum(c.rs); math.Abs(got-c.want) > 1e-9 {
+			t.Errorf("%s: rises sum to %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 // TestLearnRatio: cap(5h)/cap(7d) is the 7d rise over the 5h rise, summed
 // over 5h periods with a 5h rise of at least 10%; a period with a 7d reset
 // inside is skipped; fewer than three periods give no ratio.

@@ -192,13 +192,26 @@ type rise struct {
 // rise, from the reset time. A figure with no reset time (Claude Code's 0%
 // while no 5h window is open) starts no period: the next one is judged by the
 // last reset time known.
+//
+// A fall in the period (#3268: a plan's usage reset by hand, the reset time
+// unchanged) also starts the level anew, by longLevel's rule: a figure more
+// than levelSlack below the highest, and the next figure too. The first low
+// figure is then all rise (from the figure before it) and the highest is
+// measured from it. A figure with no reset time is no evidence of a fall.
 func rises(readings []usagelog.PercentReading, match func(window string) bool) []rise {
 	var (
 		out     []rise
 		prev    *usagelog.PercentReading
 		reset   time.Time // the last reset time reported
 		highest float64
+		low     *usagelog.PercentReading // the last figure fell below highest
+		lowFrom time.Time                // when the figure before low was received
 	)
+	add := func(from, to time.Time, amount float64) {
+		if amount > 0 {
+			out = append(out, rise{from: from, to: to, amount: amount})
+		}
+	}
 	for i := range readings {
 		r := &readings[i]
 		if !match(r.Window) {
@@ -209,15 +222,25 @@ func rises(readings []usagelog.PercentReading, match func(window string) bool) [
 			continue
 		}
 		from, amount := prev.ReceivedAt, r.Percent-highest
-		if newPeriod(reset, r.ResetsAt) {
+		fell := !r.ResetsAt.IsZero() && fellBelow(r.Percent, highest)
+		switch {
+		case newPeriod(reset, r.ResetsAt):
 			amount, highest = r.Percent, 0
 			if reset.After(from) && reset.Before(r.ReceivedAt) {
 				from = reset
 			}
+			fell = false
+		case fell && low != nil:
+			add(lowFrom, low.ReceivedAt, low.Percent)
+			amount, highest = r.Percent-low.Percent, low.Percent
+			fell = false
 		}
-		highest = max(highest, r.Percent)
-		if amount > 0 {
-			out = append(out, rise{from: from, to: r.ReceivedAt, amount: amount})
+		if fell {
+			low, lowFrom = r, prev.ReceivedAt
+		} else {
+			low = nil
+			highest = max(highest, r.Percent)
+			add(from, r.ReceivedAt, amount)
 		}
 		prev = r
 		if !r.ResetsAt.IsZero() {

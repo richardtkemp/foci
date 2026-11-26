@@ -28,9 +28,20 @@ const (
 	rateMinRise = 5.0
 	rateMaxRise = 20.0
 	// levelSlack: a codex figure goes back and forth by 1 at a step (the
-	// replies of two threads cross), which is no fall of the level.
+	// replies of two threads cross), which is no fall of the level. Claude
+	// Code's 7d figures from two sources differ by up to 1 too (#3268: of
+	// the 536 falls of a 7d figure with the same reset time on the NUC and
+	// the work Mac to 26 Nov, all but Cam's 96 -> 0 were at most 1).
 	levelSlack = 1.0
+	// slackTolerance: a figure stored as a fraction is x100 in floats, so a
+	// step of 1 can read 1.00000000000001.
+	slackTolerance = 1e-9
 )
+
+// fellBelow reports whether percent is below level by more than levelSlack.
+func fellBelow(percent, level float64) bool {
+	return percent < level-levelSlack-slackTolerance
+}
 
 // Spend is one API call of a login.
 type Spend struct {
@@ -59,7 +70,7 @@ func (l *longLevel) add(r usagelog.PercentReading) (rise float64, fresh bool) {
 	}
 	fresh = !l.known || newPeriod(l.reset, r.ResetsAt)
 	if !fresh {
-		low := r.Percent < l.percent-levelSlack
+		low := fellBelow(r.Percent, l.percent)
 		fresh, l.low = low && l.low, low
 	}
 	if !r.ResetsAt.IsZero() {
