@@ -24,8 +24,21 @@
 #
 # On the Mac itself the synced tree has no .git and no .remote.mk, and
 # scripts/remote-run.sh passes REMOTE_PICK= , so its make never dispatches again.
+#
+# The environment override needs help: .remote.mk's `REMOTE_HOSTS :=` beats an
+# environment value (a command-line one beats the file by itself). So an
+# environment REMOTE_HOSTS, empty included, is saved before the includes and put
+# back after them (#3283). This is what makes `REMOTE_HOSTS= git commit` work: the
+# commit hook's make sees only the environment.
+ifeq ($(origin REMOTE_HOSTS),environment)
+remote_hosts_from_env := yes
+remote_hosts_env := $(REMOTE_HOSTS)
+endif
 -include $(shell git rev-parse --git-common-dir 2>/dev/null)/../.remote.mk
 -include .remote.mk
+ifeq ($(remote_hosts_from_env),yes)
+REMOTE_HOSTS := $(remote_hosts_env)
+endif
 
 # What is in scope, and why (#2525; test and lint added by Dick's ruling 2026-10-24):
 #   test-one, vet   dispatched: an agent's iteration loop; Go builds and tests on

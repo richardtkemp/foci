@@ -186,6 +186,18 @@ g_overrides() {
   # shellcheck disable=SC2086
   out=$(mk -n $DISPATCH REMOTE_PICK=nosuch)
   expect "REMOTE_PICK= must name a listed host" "REMOTE_PICK=nosuch is not one of REMOTE_HOSTS (free locked)" "$out"
+  # The environment form too: .remote.mk's `REMOTE_HOSTS :=` beat it (#3283), and
+  # the commit hook's make sees only the environment (REMOTE_HOSTS= git commit).
+  # shellcheck disable=SC2086
+  out=$(REMOTE_HOSTS='' mk -n $DISPATCH)
+  expect "REMOTE_HOSTS= in the environment forces local" "running LOCALLY (no REMOTE_HOSTS in .remote.mk)" "$out"
+  [ -s "$FAKE_SSH_LOG" ] && fail "REMOTE_HOSTS= in the environment probes nothing" "$(cat "$FAKE_SSH_LOG")" || ok "REMOTE_HOSTS= in the environment probes nothing"
+  # shellcheck disable=SC2086
+  out=$(REMOTE_HOSTS=locked mk -n $DISPATCH)
+  expect "REMOTE_HOSTS=locked in the environment narrows the candidates" "running on build host locked:" "$out"
+  # shellcheck disable=SC2086
+  out=$(REMOTE_HOSTS=locked mk -n $DISPATCH REMOTE_HOSTS=)
+  expect "the command line beats the environment" "running LOCALLY" "$out"
 }
 
 # --- what the Mac-side make is told ---------------------------------------
