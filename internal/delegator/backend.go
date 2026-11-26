@@ -251,6 +251,23 @@ var ErrCompactionNoBoundary = errors.New("delegator: compaction produced no boun
 // release held input at once and say "stopped", never "did not finish".
 var ErrCompactionStopped = errors.New("delegator: compaction stopped before it finished")
 
+// CompactionFailedError is returned by WaitForCompaction when the backend
+// tried to compact and reported that the attempt failed (e.g. an expired
+// login or a dead network), as opposed to declining because there was too
+// little to compact (ErrCompactionNoBoundary). Reason is the backend's own
+// explanation, without a generic "Error during compaction:" prefix; empty
+// when the backend gave none (#3281).
+type CompactionFailedError struct {
+	Reason string
+}
+
+func (e *CompactionFailedError) Error() string {
+	if e.Reason == "" {
+		return "delegator: backend compaction failed (no reason given)"
+	}
+	return "delegator: backend compaction failed: " + e.Reason
+}
+
 // CompactionWaiter is optionally implemented by backends that can signal
 // when CC-initiated compaction has completed. ArmCompactionWait must be
 // called before the /compact command is sent so that the compact_boundary

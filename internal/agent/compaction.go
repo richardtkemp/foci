@@ -302,7 +302,14 @@ func (a *Agent) resolveCompactionNotice(sessionKey, msg string) {
 // compaction (#2947 saw codex finish 18s after foci gave up), so the text says
 // so rather than claiming the compaction failed.
 func compactionWaitFailedNotice(err error) string {
+	var failed *delegator.CompactionFailedError
 	switch {
+	case errors.As(err, &failed):
+		// The backend tried and failed (#3281): say so, in its words.
+		if failed.Reason == "" {
+			return "❌ Compaction failed; the backend gave no reason."
+		}
+		return "❌ Compaction failed: " + failed.Reason
 	case errors.Is(err, context.DeadlineExceeded):
 		return fmt.Sprintf("❌ Compaction did not finish within %s; foci stopped waiting. The backend may still complete it.", delegatedCompactTimeout)
 	case errors.Is(err, context.Canceled):

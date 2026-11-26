@@ -668,6 +668,17 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 				}
 			}
 		}
+		if status.CompactResult != nil && *status.CompactResult == "failed" {
+			// CC tried to compact and could not: resolve the wait now with
+			// the failure, so the idle that follows does not report it as a
+			// decline ("Nothing to compact", #3281).
+			b.turnMu.Lock()
+			err, resolved := b.signalCompactionFailed(status.CompactError)
+			b.turnMu.Unlock()
+			if resolved {
+				b.logger().Infof("compaction: CC reported compact_result=failed: %v", err)
+			}
+		}
 
 	case "compact_boundary":
 		var cb CompactBoundaryMessage

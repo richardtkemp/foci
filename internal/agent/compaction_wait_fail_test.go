@@ -164,3 +164,37 @@ func TestDoCompact_FailureResolvesNotice(t *testing.T) {
 		})
 	}
 }
+
+// TestRunDelegatedCompact_BackendFailureIsNotADecline (#3281): a compaction
+// the backend tried and failed resolves the ⏳ to a ❌ that says it failed,
+// with the backend's reason when it gave one, never "Nothing to compact".
+func TestRunDelegatedCompact_BackendFailureIsNotADecline(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		reason string
+		want   string
+	}{
+		{name: "with reason", reason: "Failed to authenticate: OAuth session expired and could not be refreshed",
+			want: "❌ Compaction failed: Failed to authenticate: OAuth session expired and could not be refreshed"},
+		{name: "no reason", reason: "", want: "❌ Compaction failed; the backend gave no reason."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			key := "test/ibackendfail-" + strings.ReplaceAll(tc.name, " ", "-")
+			ag, _, notifies := newFailingCompactAgent(t, key, nil, &delegator.CompactionFailedError{Reason: tc.reason})
+			_, err := ag.CompactSession(context.Background(), key, false)
+			if errors.Is(err, delegator.ErrCompactionNoBoundary) {
+				t.Fatalf("err = %v: a failure must not read as a decline", err)
+			}
+			var failed *delegator.CompactionFailedError
+			if !errors.As(err, &failed) {
+				t.Fatalf("err = %v, want it to wrap *delegator.CompactionFailedError", err)
+			}
+			if len(*notifies) != 1 || (*notifies)[0] != tc.want {
+				t.Errorf("notify messages = %q, want exactly [%q]", *notifies, tc.want)
+			}
+		})
+	}
+}

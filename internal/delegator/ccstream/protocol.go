@@ -511,6 +511,14 @@ type StatusMessage struct {
 	Type    string  `json:"type"`             // "system"
 	Subtype string  `json:"subtype"`          // "status"
 	Status  *string `json:"status,omitempty"` // "compacting" or null
+	// CompactResult and CompactError close a compaction CC attempted: the
+	// status frame that ends it ("status":null) carries "success" or
+	// "failed", and on "failed" CC's reason, e.g. "Error during compaction:
+	// API Error: Connection refused ..." (CC 2.1.325, probed live #3281).
+	// CC leaves CompactError out when its history is suppressed. A /compact
+	// CC refuses before it starts ("No messages to compact") sends neither.
+	CompactResult *string `json:"compact_result,omitempty"`
+	CompactError  *string `json:"compact_error,omitempty"`
 }
 
 // CompactBoundaryMessage marks the boundary of a compaction event.

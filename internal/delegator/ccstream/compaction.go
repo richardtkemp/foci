@@ -189,6 +189,59 @@ func (b *Backend) resolveCompactionWait(err error) {
 	}
 }
 
+// CC's compact_error texts that do not mean "the compaction failed" (strings
+// from the CC 2.1.325 binary). CC closes a refused or aborted compaction with
+// compact_result "failed" too, so these are told apart by their words.
+const (
+	// ccCompactNotEnough is the decline for too short a session; foci keeps
+	// reporting it as a decline (ErrCompactionNoBoundary).
+	ccCompactNotEnough = "Not enough messages to compact"
+	// ccCompactAborted and ccCompactRequestAborted are an interrupted
+	// compaction (auto/reactive path and manual path respectively).
+	ccCompactAborted        = "aborted"
+	ccCompactRequestAborted = "API Error: Request was aborted."
+	// ccCompactErrorPrefix opens CC's text for a failed /compact; it adds
+	// nothing to foci's own "Compaction failed:" wording.
+	ccCompactErrorPrefix = "Error during compaction:"
+)
+
+// compactFailureOutcome maps the compact_error of a status frame whose
+// compact_result is "failed" to the compaction wait's outcome. ok=false means
+// the frame is a decline: leave the wait for the idle handler, which reports
+// ErrCompactionNoBoundary as before (#3281).
+func compactFailureOutcome(compactError *string) (err error, ok bool) {
+	reason := ""
+	if compactError != nil {
+		reason = strings.TrimSpace(*compactError)
+	}
+	switch {
+	case strings.HasPrefix(reason, ccCompactNotEnough):
+		return nil, false
+	case reason == ccCompactAborted || reason == ccCompactRequestAborted:
+		return delegator.ErrCompactionStopped, true
+	}
+	reason = strings.TrimSpace(strings.TrimPrefix(reason, ccCompactErrorPrefix))
+	return &delegator.CompactionFailedError{Reason: reason}, true
+}
+
+// signalCompactionFailed resolves an armed compaction wait from a status frame
+// that reports compact_result "failed", unless the frame is a decline (see
+// compactFailureOutcome). Skipped while the /compact is deferred behind another
+// turn: a failed auto-compaction inside that turn says nothing about it
+// (#2147). The idle that follows finds the wait resolved and no-ops. Caller
+// must hold turnMu.
+func (b *Backend) signalCompactionFailed(compactError *string) (error, bool) {
+	if b.compactCh == nil || b.compactDeferred {
+		return nil, false
+	}
+	err, ok := compactFailureOutcome(compactError)
+	if !ok {
+		return nil, false
+	}
+	b.resolveCompactionWait(err)
+	return err, true
+}
+
 // signalCompactionAbort resolves the compaction wait with
 // ErrCompactionNoBoundary if one is still armed (compact_boundary never
 // arrived). Called from the idle handler: since compact_boundary always
