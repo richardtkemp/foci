@@ -992,7 +992,7 @@ func (a *askState) persistLocked() {
 			Queued:        p.queued,
 		})
 	}
-	data, err := json.Marshal(out)
+	data, err := json.Marshal(out) //nolint:gosec // G117: session_key is a session routing id, not a credential
 	if err != nil {
 		askLog.Warnf("marshal pending asks: %v", err)
 		return

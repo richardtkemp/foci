@@ -165,7 +165,7 @@ func (s *Spawner) resume(ctx context.Context, agent SpawnAgent, parent string, r
 		tr.pushPending(parent, running.ID, text)
 		held, waiting, limit := s.slots.counts()
 		tr.appendLog(parent, running.ID, "message", fmt.Sprintf("(queued: %d spawn runs going, limit %d)", held, limit))
-		go s.startWhenSlotFree(wait, agent, parent, running, nil, spawnCtx, cancel, false)
+		go s.startWhenSlotFree(wait, agent, parent, running, nil, spawnCtx, cancel, false) //nolint:gosec // G118: a background spawn is detached from the tool call by design (runContext)
 		was := "had finished"
 		if fromWait {
 			was = "had ended its turn and was waiting on work it started in the background (that work goes on)"

@@ -181,7 +181,7 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 	case turnevent.ToolCall:
 		seq := s.b.setTurnTool(fap.ActivityKindTool, toolformat.ActivityLabel(e.Name, e.Args), toolformat.FullCommand(e.Name, e.Args), toolformat.IsShellTool(e.Name))
 		if cmd := toolformat.UndescribedShellCommand(e.Name, e.Args); cmd != "" && s.describeCommand != nil {
-			go describeRunningCommand(s.b, seq, cmd, commandSummaryDelay, s.describeCommand)
+			go describeRunningCommand(s.b, seq, cmd, commandSummaryDelay, s.describeCommand) //nolint:gosec // G118: the description must outlive the tool-call event; describe bounds the model call with its own timeout
 		}
 		// A read of a skill file leaves the same "Loaded skill" line in the
 		// transcript that Telegram and Discord show (#1299, #2335). The app has no

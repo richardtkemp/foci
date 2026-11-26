@@ -86,13 +86,12 @@ linters:
         - G101  # hardcoded credentials - false positives on constants
         - G301  # directory permissions - 0755 needed for shared workspaces
         - G306  # file permissions - need group write (0644/0664)
-        # Rules new in v2's gosec, not adopted by the migration (#3279). They
-        # report 54 places today (#3284).
-        - G117  # marshaled struct field named like a secret
-        - G118  # goroutine with context.Background while a request context exists
-        - G122  # path race in a filepath.Walk callback
-        - G703  # path traversal, taint analysis
-        - G704  # SSRF, taint analysis
+        # Rules new in v2's gosec (#3279). #3284 read all 54 reports and found
+        # no real defect. G117 and G118 are adopted (8 reasoned nolints). These
+        # three stay off:
+        - G122  # path race in a Walk callback: the 5 walks (memory reindex, agent rename, 2 dev scripts) read files and guard nothing a race could bypass
+        - G703  # path traversal by taint: same class as G304; all 36 paths come from CLI flags, env, config, the agent's own file tools, or names already sanitised (blob ids/exts)
+        - G704  # SSRF by taint: all 5 are the foci CLI calling its own gateway URL or unix socket
 
     staticcheck:
       # v2 merged gosimple (S), stylecheck (ST) and quickfix (QF) into this linter.

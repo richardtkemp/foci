@@ -374,7 +374,7 @@ func newFCMPusherFromFields(ctx context.Context, fields fcmCredentialFields, tok
 	if sa.TokenURI == "" {
 		sa.TokenURI = googleJWTTokenURL
 	}
-	data, err := json.Marshal(sa)
+	data, err := json.Marshal(sa) //nolint:gosec // G117: builds the FCM service-account JSON in memory for the FCM client; never logged or stored
 	if err != nil {
 		appLog.Warnf("fcm credentials (secret fields): marshal: %v — push disabled", err)
 		return nil

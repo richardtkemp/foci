@@ -114,7 +114,7 @@ func Write(id string, env map[string]string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("session-env mkdir %s: %w", dir, err)
 	}
-	data, err := json.Marshal(entry)
+	data, err := json.Marshal(entry) //nolint:gosec // G117: FOCI_SESSION_KEY is a session routing id, not a credential
 	if err != nil {
 		return fmt.Errorf("session-env marshal %s: %w", id, err)
 	}

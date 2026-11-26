@@ -845,7 +845,7 @@ func (h *Hub) ServeSTT(w http.ResponseWriter, r *http.Request) {
 	appLog.Infof("stt credential issued: device=%s agent=%s", dev.DeviceID, agentID)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(sttCredentialResponse{
+	_ = json.NewEncoder(w).Encode(sttCredentialResponse{ //nolint:gosec // G117: this endpoint hands the STT key to an authenticated device by design
 		Endpoint:   cred.Endpoint,
 		Model:      cred.Model,
 		APIKey:     cred.APIKey,

@@ -89,7 +89,7 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 	r.noteWarmAttempt(parentKey, time.Now())
 	r.log.Infof("firing background work for agent %s (idle %s)", r.agentID, elapsed.Round(time.Second))
 
-	go func() {
+	go func() { //nolint:gosec // G118: the background branch must outlive the scheduler tick, as reflection and consolidation do
 		defer func() {
 			ended := time.Now()
 			// Save before clearing the flag: idle must mean persisted (#2143).

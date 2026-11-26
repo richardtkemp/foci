@@ -1634,7 +1634,7 @@ func (s *Spawner) launchBackground(ctx context.Context, agent SpawnAgent, parent
 		spawnLog.Infof("spawn=%s branch=%s parent=%s queued: %d running, limit %d, %d queued (itself included)",
 			running.ID, running.BranchKey, parent, held, limit, waiting)
 		deps.Tracker.appendLog(parent, running.ID, "message", fmt.Sprintf("(queued: %d spawn runs going, limit %d)", held, limit))
-		go s.startWhenSlotFree(wait, agent, parent, running, texts, spawnCtx, cancel, true)
+		go s.startWhenSlotFree(wait, agent, parent, running, texts, spawnCtx, cancel, true) //nolint:gosec // G118: a background spawn is detached from the tool call by design (runContext)
 		queued := fmt.Sprintf("%s QUEUED, not started: %d spawn runs are going and the limit ([tools] max_concurrent_spawns) is %d; %d spawn(s) queued, this one included. It starts by itself when a slot frees.\nName: %s\nSpawn: %s\nBranch: %s\nPrompt: %s\nResults will be delivered when complete. spawn_status shows it as queued until it starts; spawn_send queues a message for it; spawn_stop takes it off the queue.\nBackground ID: %s",
 			kind, held, limit, waiting, running.Label(), running.ID, running.BranchKey, truncatePromptPreview(prompt), spawnBackgroundID(running))
 		return TextResult(queued), nil
