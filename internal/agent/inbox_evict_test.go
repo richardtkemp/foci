@@ -180,6 +180,12 @@ func TestInboxEvict_EnqueueRacingEviction(t *testing.T) {
 // TestInboxEvict_LoadExactlyOnce proves (d): under concurrent senders on a few
 // keys with eviction at a very short interval and threshold, every message is
 // observed exactly once and no worker goroutine is left behind.
+//
+// How many evictions a burst produces depends on scheduling: on a loaded host
+// the reaper and the workers get less CPU and one burst of 512 messages saw
+// only 6 (#3280). So the senders run in rounds until the load has produced
+// loadMinEvictions evictions, each round the same paced burst, and the test
+// fails only if loadMaxRounds rounds never get there.
 func TestInboxEvict_LoadExactlyOnce(t *testing.T) {
 	a, cancel := evictingAgent(t, 100*time.Microsecond, 50*time.Microsecond)
 	var mu sync.Mutex
@@ -194,36 +200,49 @@ func TestInboxEvict_LoadExactlyOnce(t *testing.T) {
 		total.Add(int64(len(batch)))
 	})
 	d := &recordingDriver{}
-	const senders, perSender = 8, 64 // 512 messages
-	var wg sync.WaitGroup
-	for s := 0; s < senders; s++ {
-		wg.Add(1)
-		go func(s int) {
-			defer wg.Done()
-			for i := 0; i < perSender; i++ {
-				key := fmt.Sprintf("test/k%d", (s+i)%3)
-				text := fmt.Sprintf("m-%d-%d", s, i)
-				for !a.Enqueue(Envelope{SessionKey: key, Text: text, Driver: d}) {
-					time.Sleep(time.Millisecond) // full channel: retry, the message is not lost
+	const senders, perSender = 8, 64 // 512 messages a round
+	const loadMinEvictions, loadMaxRounds = 10, 50
+	rounds := 0
+	for ; rounds < loadMaxRounds && a.inboxEvictions.Load() < loadMinEvictions; rounds++ {
+		var wg sync.WaitGroup
+		for s := 0; s < senders; s++ {
+			wg.Add(1)
+			go func(r, s int) {
+				defer wg.Done()
+				for i := 0; i < perSender; i++ {
+					key := fmt.Sprintf("test/k%d", (s+i)%3)
+					text := fmt.Sprintf("m-%d-%d-%d", r, s, i)
+					for !a.Enqueue(Envelope{SessionKey: key, Text: text, Driver: d}) {
+						time.Sleep(time.Millisecond) // full channel: retry, the message is not lost
+					}
+					// Pace the senders so keys go idle between messages and
+					// evictions interleave with enqueues (asserted below).
+					time.Sleep(time.Duration(i%4) * 200 * time.Microsecond)
 				}
-				// Pace the senders so keys go idle between messages and
-				// evictions interleave with enqueues (asserted below).
-				time.Sleep(time.Duration(i%4) * 200 * time.Microsecond)
-			}
-		}(s)
+			}(rounds, s)
+		}
+		wg.Wait()
 	}
-	wg.Wait()
-	if n := a.inboxEvictions.Load(); n < 10 {
-		t.Fatalf("only %d evictions during the load: the race was not exercised", n)
+	if n := a.inboxEvictions.Load(); n < loadMinEvictions {
+		t.Fatalf("only %d evictions in %d rounds of load: the race was not exercised", n, rounds)
 	}
-	mustWait(t, "every message", func() bool { return total.Load() >= senders*perSender })
+	if rounds > 1 {
+		t.Logf("%d rounds of load to reach %d evictions", rounds, loadMinEvictions)
+	}
+	want := int64(rounds * senders * perSender)
+	mustWait(t, "every message", func() bool { return total.Load() >= want })
 	mu.Lock()
-	for s := 0; s < senders; s++ {
-		for i := 0; i < perSender; i++ {
-			if n := seen[fmt.Sprintf("m-%d-%d", s, i)]; n != 1 {
-				t.Errorf("m-%d-%d observed %d times", s, i, n)
+	for r := 0; r < rounds; r++ {
+		for s := 0; s < senders; s++ {
+			for i := 0; i < perSender; i++ {
+				if n := seen[fmt.Sprintf("m-%d-%d-%d", r, s, i)]; n != 1 {
+					t.Errorf("m-%d-%d-%d observed %d times", r, s, i, n)
+				}
 			}
 		}
+	}
+	if int64(len(seen)) != want {
+		t.Errorf("observed %d distinct messages, want %d", len(seen), want)
 	}
 	mu.Unlock()
 	mustWait(t, "all idle inboxes evicted", func() bool { return inboxCount(a) == 0 && a.inboxWorkers.Load() == 0 })
