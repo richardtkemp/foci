@@ -2,6 +2,7 @@ package app
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"foci/internal/fap"
@@ -310,5 +311,39 @@ func TestReminders_RosterSeedsThePushCache(t *testing.T) {
 	}
 	if g := reminderLists(t, ca); len(g) != 1 || len(g[0]) != 0 {
 		t.Errorf("after dismiss chat A frames = %v, want one empty list", g)
+	}
+}
+
+// A pending-wake read on a closed reminder store (the gateway's shutdown
+// closes the stores while a push or waiting pass can still be iterating every
+// conversation) logs no ERROR and sends no frame: the devices keep the list
+// they hold. One closed-store read per conversation once wrote 7,269 ERROR
+// lines in a second (#3271).
+func TestReminders_ClosedStoreReadIsQuietAndKeepsTheList(t *testing.T) {
+	h := newTestHub()
+	rs := withReminderStore(t, h, "ag", nil)
+
+	a := h.ensureBinding(nil, "ag", "conv-a")
+	ca := fakeClient()
+	a.attach(ca)
+	drain(t, ca)
+	if _, err := rs.AddWake("ag", a.key(), "check the build", "30m"); err != nil {
+		t.Fatal(err)
+	}
+	if g := reminderLists(t, ca); len(g) != 1 || len(g[0]) != 1 {
+		t.Fatalf("setup frames = %v, want one list with the wake", g)
+	}
+
+	if err := rs.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out := captureOpenSetLog(t, func() {
+		NotifyRemindersChanged("ag")
+	})
+	if strings.Contains(out, "list pending wakes") {
+		t.Errorf("closed-store read logged %q, want nothing", out)
+	}
+	if g := reminderLists(t, ca); len(g) != 0 {
+		t.Errorf("closed-store read sent %v, want no frame (keep the held list)", g)
 	}
 }

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"slices"
 	"sync"
 
@@ -73,8 +74,11 @@ var wakeOwner = tools.WakeOwner
 // pendingWakesFor converts the store's pending wakes owned by sessionKey to
 // wire form, ordered by due time: those set from it, less any it has handed
 // over, plus those handed to it by a closed depth leaf (#2647). A wake with no
-// session key (a legacy row) matches no chat. Never nil, so an empty list
-// encodes as [].
+// session key (a legacy row) matches no chat. An empty list is [], so it
+// encodes as []; nil means the store could not be read, and a push keeps the
+// list the devices hold. A read on a closed store (the gateway's shutdown,
+// #3271) logs nothing: every conversation's pass reads it, and one ERROR line
+// each made thousands.
 func pendingWakesFor(rs *memory.ReminderStore, agentID, sessionKey string, held func(string) bool) []fap.PendingReminder {
 	out := []fap.PendingReminder{}
 	if sessionKey == "" {
@@ -82,8 +86,10 @@ func pendingWakesFor(rs *memory.ReminderStore, agentID, sessionKey string, held 
 	}
 	wakes, err := rs.PendingWakes(agentID)
 	if err != nil {
-		appLog.Errorf("list pending wakes for %s: %v", agentID, err)
-		return out
+		if !errors.Is(err, memory.ErrReminderStoreClosed) {
+			appLog.Errorf("list pending wakes for %s: %v", agentID, err)
+		}
+		return nil
 	}
 	for _, r := range wakes {
 		if r.SessionKey == "" || wakeOwner(r.SessionKey) != sessionKey {
@@ -99,7 +105,7 @@ func pendingWakesFor(rs *memory.ReminderStore, agentID, sessionKey string, held 
 }
 
 // remindersFor returns the pending wakes for one conversation's session, or
-// nil when the agent has no registered store.
+// nil when the agent has no registered store or its store could not be read.
 func remindersFor(agentID, sessionKey string) []fap.PendingReminder {
 	reminderMu.RLock()
 	src := reminderSources[agentID]
@@ -139,7 +145,11 @@ func (h *Hub) pushReminders(agentID string) {
 	}
 	h.mu.RUnlock()
 	for _, b := range bindings {
-		b.setReminders(remindersFor(agentID, b.key()))
+		// nil: no list could be read (no store, or a closed one at
+		// shutdown, #3271); the devices keep the list they hold.
+		if list := remindersFor(agentID, b.key()); list != nil {
+			b.setReminders(list)
+		}
 		// A wake set, fired, cancelled or run can move the conversation's
 		// waiting-on-other value (#3112).
 		h.refreshWaiting(b)

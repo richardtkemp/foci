@@ -2,9 +2,11 @@ package memory
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"foci/internal/session"
@@ -50,9 +52,19 @@ type Reminder struct {
 	SessionKey string // originating session (wake reminders only; empty for legacy rows)
 }
 
+// ErrReminderStoreClosed is the error of a read on a closed store. The
+// gateway's shutdown closes the stores while app passes over every
+// conversation can still be reading them; a caller tells this expected end
+// apart from a real read failure with errors.Is (#3271).
+var ErrReminderStoreClosed = errors.New("reminder store closed")
+
 // ReminderStore manages deferred thoughts in SQLite.
 type ReminderStore struct {
 	db *sql.DB
+
+	// closed is set by Close, so a read that fails because the store is
+	// closed reports ErrReminderStoreClosed.
+	closed atomic.Bool
 
 	// firedMu guards fired: the in-process overlay of wakes whose timer has
 	// fired but whose turn has not run yet (#2233). It is runtime state on top
@@ -228,11 +240,17 @@ func (rs *ReminderStore) AddWake(agentID, sessionKey, text, when string) (int64,
 
 // PendingWakes returns all wake reminders for the given agent, ordered by due time.
 func (rs *ReminderStore) PendingWakes(agentID string) ([]Reminder, error) {
+	if rs.closed.Load() {
+		return nil, ErrReminderStoreClosed
+	}
 	rows, err := rs.db.Query(
 		"SELECT id, text, due_at, due_tag, created, session_key FROM reminders WHERE agent_id = ? AND wake = 1 ORDER BY unixepoch(due_at)",
 		agentID,
 	)
 	if err != nil {
+		if rs.closed.Load() {
+			return nil, ErrReminderStoreClosed // Close raced the query
+		}
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
@@ -308,6 +326,7 @@ func (rs *ReminderStore) DismissAll(agentID string) error {
 
 // Close closes the underlying database.
 func (rs *ReminderStore) Close() error {
+	rs.closed.Store(true)
 	return rs.db.Close()
 }
 

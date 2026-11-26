@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -427,5 +428,20 @@ func TestReminderOnChange_FiresForWakeChangesOnly(t *testing.T) {
 	}
 	if got := rs.WakeState(id, nil); got != WakeStateFired {
 		t.Errorf("WakeState fired = %q, want fired", got)
+	}
+}
+
+// PendingWakes on a closed store reports ErrReminderStoreClosed, so a caller
+// racing the gateway's shutdown can tell it from a real read failure (#3271).
+func TestPendingWakes_ClosedStore(t *testing.T) {
+	rs, err := NewReminderStore(filepath.Join(t.TempDir(), "reminders.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rs.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rs.PendingWakes("ag"); !errors.Is(err, ErrReminderStoreClosed) {
+		t.Errorf("PendingWakes after Close: err = %v, want ErrReminderStoreClosed", err)
 	}
 }
