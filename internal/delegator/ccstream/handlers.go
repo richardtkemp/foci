@@ -71,15 +71,25 @@ func isSyntheticNoResponse(m BetaMessage) bool {
 }
 
 // syntheticSessionLimitText returns the text of m when it is CC's synthetic
-// usage-limit message (the sentinel model carrying "You've hit your session
-// limit …", "… weekly limit …" or any other "hit your <kind> limit", #2488),
-// else "". Only the synthetic sentinel model is read, never a real reply, so a
-// reply that merely discusses limits cannot close the gate (#1238). Unlike a direct-API 429, this arrives as an assistant
-// message on the stream and never reaches classifyAPIError, so the delegated
-// backend detects it here to engage the rate-limit gate.
+// usage-limit message, else "": the sentinel model carrying "You've hit your
+// session limit …", "… weekly limit …" or any other "hit your <kind> limit"
+// (#2488), or any other message of CC's own limit family (ccLimitPrefixes):
+// "You're out of usage credits · resets …", "Your org is out of usage · add
+// funds to continue", "You've hit your team's shared budget" (#3262). CC
+// builds all of them when the plan limit rejected a call and usage credits
+// could not cover it. The "<model> requires usage credits" message is left
+// out: it is a model block (#3106, syntheticModelBlockText). Only the
+// synthetic sentinel model is read, never a real reply, so a reply that
+// merely discusses limits cannot close the gate (#1238). Unlike a direct-API
+// 429 or 402, this arrives as an assistant message on the stream, not as an
+// API error, so the delegated backend detects it here to engage the
+// rate-limit gate.
 func syntheticSessionLimitText(m BetaMessage) string {
 	s := syntheticText(m)
 	if syntheticLimitRe.MatchString(s) {
+		return s
+	}
+	if isCCLimitText(s) && !syntheticModelBlockRe.MatchString(s) {
 		return s
 	}
 	return ""
@@ -91,7 +101,8 @@ func syntheticSessionLimitText(m BetaMessage) string {
 // to continue." The pattern is CC's own matcher for this message, read from
 // the 2.1.325 binary: a model family at the start, an optional version of up
 // to 40 characters, then the phrase. "Fast mode requires usage credits" and
-// "You're out of usage credits" are other messages and do not match.
+// "You're out of usage credits" are other messages and do not match (the
+// second is a limit, ccLimitPrefixes, #3262).
 var syntheticModelBlockRe = regexp.MustCompile(`^(?:Fable|Haiku|Mythos|Opus|Sonnet)(?: [^\x{00B7}\n]{1,40})? requires usage credits\b`)
 
 // syntheticModelBlockText returns the text of m when it is CC's synthetic

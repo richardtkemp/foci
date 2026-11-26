@@ -79,9 +79,11 @@ func (b *Backend) RunningSubagents() []delegator.RunningSubagent { return b.agen
 //     and CC fell back to another model (model_refusal_fallback), for the
 //     session's chat (#2200).
 //   - EngageRateLimit fires when CC reports a usage limit: a synthetic
-//     "You've hit your <session|weekly|…> limit · resets <time>" message
-//     (which unlike a direct-API 429 never reaches classifyAPIError), or a
-//     rate_limit_event rejecting the five-hour or weekly window (#2488).
+//     "You've hit your <session|weekly|…> limit · resets <time>" message or
+//     another of CC's limit family ("You're out of usage credits", "Your org
+//     is out of usage · add funds to continue", #3262) — a stream message,
+//     not an API error — or a rate_limit_event rejecting the five-hour or
+//     weekly window (#2488).
 //   - OnModelBlocked fires when CC reports the session's model needs usage
 //     credits ("Fable 5 requires usage credits. Switch to another model…"),
 //     with this Backend's foci session key (#3106). It does not close the

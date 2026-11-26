@@ -111,6 +111,42 @@ func rejectedWindowSignal(info RateLimitInfo, now time.Time) ratelimit.Signal {
 // "reached your Fable limit" wording CC also uses (#3102).
 var syntheticLimitRe = regexp.MustCompile(`(?i)\b(?:hit|reached) your [a-z0-9-]+ limit\b`)
 
+// ccLimitPrefixes is Claude Code's own list of the openings of its "you cannot
+// use Claude now" messages, read from the CC 2.1.325 binary (the list its
+// limit-message check reads, beside the "<model> requires usage credits"
+// pattern, syntheticModelBlockRe) (#3262). CC builds these when the plan limit
+// rejected a call and usage credits could not cover it: "You're out of usage
+// credits · resets 3pm (Europe/London)", "Your org is out of usage · add funds
+// to continue", "You've hit your team's shared budget", and so on. Only the
+// first two openings were caught before, and only with a one-word limit name
+// (syntheticLimitRe). The "·" is U+00B7, as CC writes it.
+var ccLimitPrefixes = []string{
+	"You've hit your",
+	"You've reached your",
+	"You're out of usage credits",
+	"Your org is out of usage · add funds to continue",
+	"Your org is out of usage · contact your admin",
+	"Your seat type doesn't include usage credits",
+	"Your seat type doesn't include usage",
+	"Your usage allocation has been disabled by your admin",
+	"Your group's usage limit is set to $0",
+	"Fable 5 requires usage credits",
+	"You're out of extra usage",
+	"Your seat type doesn't include extra usage",
+}
+
+// isCCLimitText reports whether s is one of CC's limit messages, by CC's own
+// rule: it starts with one of ccLimitPrefixes or matches the model-credits
+// pattern.
+func isCCLimitText(s string) bool {
+	for _, p := range ccLimitPrefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return syntheticModelBlockRe.MatchString(s)
+}
+
 // sessionLimitResetDateRe matches the dated reset clause of CC's longer
 // limits, e.g. "resets Oct 12, 12am (Europe/London)" (#2488), and the form
 // with a year CC writes when the reset is not in the current year, e.g.
