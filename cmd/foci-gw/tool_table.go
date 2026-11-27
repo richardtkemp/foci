@@ -838,11 +838,13 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 							app.OpenSessionsForAgent, hist))
 				}
 			}
-			// A spawn runs on its spawner's account, so the check reads the
-			// account of the session that asks.
+			// The check reads the account the spawn runs on: the one its
+			// usage-hold gate approved (a spawn on a session of its own takes
+			// the pool's pick, #3292), else the account of the session that
+			// asks (a clone runs on its spawner's account).
 			spawnDeps.Usage = func(ctx context.Context) tools.UsageRead {
-				var acct *account.Account
-				if d.agLazy != nil {
+				acct := tools.SpawnAccountFrom(ctx)
+				if acct == nil && d.agLazy != nil {
 					if ag := d.agLazy(); ag != nil {
 						acct = ag.AccountFor(tools.SessionKeyFromContext(ctx))
 					}

@@ -182,6 +182,28 @@ func (p *Pool) Inherit(childKey, sourceKey string) (*Account, error) {
 	return p.bind(childKey, a, true), nil
 }
 
+// Assign binds sessionKey, a new session no one has used yet, to a, and
+// stores it with sessionKey, over any earlier binding: a new spawn's session
+// goes on the account its spawn's usage-hold gate approved (Next at the
+// gate), so no second pick can land it elsewhere (#3292). a must be one of
+// the pool's accounts. A nil or empty pool, or a nil a, binds nothing.
+func (p *Pool) Assign(sessionKey string, a *Account) error {
+	if p == nil || len(p.accounts) == 0 || a == nil {
+		return nil
+	}
+	if !p.owns(sessionKey) {
+		return fmt.Errorf("session %s belongs to another agent, not %s: its account is in that agent's pool", sessionKey, p.agent)
+	}
+	if p.byKey(a.Key()) != a {
+		return fmt.Errorf("account %s is not one of agent %s's accounts", a.Key(), p.agent)
+	}
+	p.mu.Lock()
+	delete(p.bound, sessionKey)
+	p.mu.Unlock()
+	p.bind(sessionKey, a, true)
+	return nil
+}
+
 // Next is the account a new session would take now (the pick),
 // without binding anything; nil for a nil or empty pool.
 func (p *Pool) Next() *Account {

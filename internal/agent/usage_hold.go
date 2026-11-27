@@ -405,13 +405,19 @@ func (inb *sessionInbox) takeUsageRelease() []Envelope {
 }
 
 // UsageHoldRefusal is tools.UsageHoldRefuser: why sessionKey may start no
-// spawn (and spawn_send may not reach one of its spawns) now, or "" when its
-// account is open. sessionKey is one of this agent's sessions: a spawn of the
-// agent's own runs on its spawner's account; a spawn as this agent from
-// another agent asks about this agent's cross-agent root (#3220). The reason
-// names the account when it has a name (#3220 problem 4).
+// spawn that runs on its account (a clone, which copies its transcript), and
+// spawn_send may not reach one of its spawns, now; "" when its account is
+// open. sessionKey is one of this agent's sessions; a spawn as this agent
+// from another agent asks about this agent's cross-agent root (#3220). Any
+// other spawn of the agent's own runs on the pick and asks SpawnAccount
+// (#3292). The reason names the account when it has a name (#3220 problem 4).
 func (a *Agent) UsageHoldRefusal(sessionKey string) string {
-	acct := a.AccountFor(sessionKey)
+	return accountHoldRefusal(a.AccountFor(sessionKey))
+}
+
+// accountHoldRefusal is why nothing but keepalives may start on acct now,
+// "" when it is open (a nil account is).
+func accountHoldRefusal(acct *account.Account) string {
 	st := acct.Hold()
 	switch st.Phase {
 	case usagehold.Hold:
@@ -420,6 +426,49 @@ func (a *Agent) UsageHoldRefusal(sessionKey string) string {
 		return acct.WithName("the usage limit is reached; nothing runs until "+formatLift(st.LiftAt)) + "."
 	}
 	return ""
+}
+
+var _ tools.SpawnAccountPicker = (*Agent)(nil)
+
+// SpawnAccount is tools.SpawnAccountPicker (#3292): the account a new spawn
+// of the agent's own that copies no transcript would run on now (the pool's
+// pick, #3246, which passes over a held account while another is open), and
+// why it may not start there ("" when the account is open). The hold of the
+// spawner's own account plays no part (Dick 2026-11-27 16:14). When the pick
+// holds, no account the spawn could run on is open: the reason then names
+// every account of a pool of two or more, with why each cannot take it.
+func (a *Agent) SpawnAccount() (*account.Account, string) {
+	pool := a.Accounts()
+	acct := pool.Next()
+	msg := accountHoldRefusal(acct)
+	if msg == "" {
+		return acct, ""
+	}
+	accts := pool.Accounts()
+	if len(accts) < 2 {
+		return nil, msg
+	}
+	parts := make([]string, 0, len(accts))
+	for _, x := range accts {
+		why := accountHoldRefusal(x)
+		if why == "" && x.Login().Pending() {
+			why = x.WithName("it owes a login") + "."
+		}
+		if why == "" {
+			continue // open now: a pick a moment later would take it
+		}
+		parts = append(parts, why)
+	}
+	if len(parts) == 0 {
+		return nil, msg
+	}
+	return nil, "no account this spawn could run on is open: " + strings.Join(parts, " ")
+}
+
+// BindSpawnAccount is tools.SpawnAccountPicker: it puts sessionKey, a new
+// spawn's own session, on acct (account.Pool.Assign).
+func (a *Agent) BindSpawnAccount(sessionKey string, acct *account.Account) error {
+	return a.Accounts().Assign(sessionKey, acct)
 }
 
 // UsageResumeLine is the hidden input a turn the usage hold interrupted gets

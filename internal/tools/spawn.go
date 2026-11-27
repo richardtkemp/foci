@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/account"
 	"foci/internal/config"
 	"foci/internal/delegator"
 	"foci/internal/delegator/accounting"
@@ -101,6 +102,59 @@ func (s *Spawner) agentOrNil() SpawnAgent {
 		return nil
 	}
 	return s.agentFn()
+}
+
+// SpawnAccountPicker is the optional agent side of the usage-hold gate of a
+// new spawn of the agent's own that copies no transcript (raw, character,
+// explore) (#3292, Dick 2026-11-27 16:14: "It doesn't matter about the hold
+// on the parent's account. If there is a valid target, spawns should be
+// permitted"). Such a spawn runs on a session of its own, which takes the
+// pool's pick (#3246), so the gate asks about that account, never about the
+// spawner's. *agent.Agent implements it.
+type SpawnAccountPicker interface {
+	// SpawnAccount is the account a new spawn would run on now (the pick)
+	// and why no spawn may start there now ("" when it may: the account is
+	// open). The reason names every account the spawn could run on. A nil
+	// account with "" is an agent with no account (always open).
+	SpawnAccount() (*account.Account, string)
+	// BindSpawnAccount puts sessionKey, the new spawn's own session, on
+	// acct before anything uses it, so the spawn runs on the account the
+	// gate approved and no second pick moves it.
+	BindSpawnAccount(sessionKey string, acct *account.Account) error
+}
+
+type spawnAccountKey struct{}
+
+// withSpawnAccount carries the account the gate approved for a new spawn to
+// where its session is made (bindSpawnAccount) and to its allowance check.
+func withSpawnAccount(ctx context.Context, acct *account.Account) context.Context {
+	return context.WithValue(ctx, spawnAccountKey{}, acct)
+}
+
+// SpawnAccountFrom is the account the usage-hold gate approved for the spawn
+// ctx starts (#3292), nil when none was chosen (a clone, a spawn as another
+// agent, an agent with no account): the spawn then runs on its spawner's
+// account or the target's. The allowance check reads this account's usage.
+func SpawnAccountFrom(ctx context.Context) *account.Account {
+	a, _ := ctx.Value(spawnAccountKey{}).(*account.Account)
+	return a
+}
+
+// bindSpawnAccount puts sessionKey, a new spawn's own session, on the account
+// the gate approved for it (SpawnAccountFrom), when one was. A failure is
+// logged: the session then takes the pool's pick when it is first used.
+func (s *Spawner) bindSpawnAccount(ctx context.Context, sessionKey string) {
+	acct := SpawnAccountFrom(ctx)
+	if acct == nil {
+		return
+	}
+	p, ok := s.agentOrNil().(SpawnAccountPicker)
+	if !ok {
+		return
+	}
+	if err := p.BindSpawnAccount(sessionKey, acct); err != nil {
+		spawnLog.Warnf("agent=%s spawn session %s: put it on account %s, which its usage-hold gate approved: %v", s.deps.AgentID, sessionKey, acct.Key(), err)
+	}
 }
 
 // usageHoldRefusal is the hold reason of sessionKey on agent, "" when it may
@@ -719,12 +773,32 @@ func (s *Spawner) SpawnTool() *Tool {
 			// under its cross-agent root, so the target is asked about that
 			// root: never about the caller's session, which is in another
 			// agent's pool (asking moved it onto the target's account).
-			if host != s {
+			// A clone copies the caller's transcript, so it runs on the
+			// caller's account (#3246) and is asked about the caller's
+			// session. Any other spawn of the agent's own runs on a session
+			// of its own, on the pool's pick: it is asked about that account,
+			// and its session is put on it (#3292).
+			switch {
+			case host != s:
 				if msg := usageHoldRefusal(host.agentOrNil(), session.CrossAgentSpawnRoot(host.deps.AgentID)); msg != "" {
 					return ToolResult{}, fmt.Errorf("NOT started: the agent you asked to spawn, %s, is held (its account's hold, not yours): %s", host.deps.AgentID, msg)
 				}
-			} else if msg := usageHoldRefusal(s.agentOrNil(), SessionKeyFromContext(ctx)); msg != "" {
-				return ToolResult{}, fmt.Errorf("NOT started: %s", msg)
+			case p.Context != spawnModeClone:
+				if picker, ok := s.agentOrNil().(SpawnAccountPicker); ok {
+					acct, msg := picker.SpawnAccount()
+					if msg != "" {
+						return ToolResult{}, fmt.Errorf("NOT started: %s", msg)
+					}
+					if acct != nil {
+						ctx = withSpawnAccount(ctx, acct)
+					}
+					break
+				}
+				fallthrough
+			default:
+				if msg := usageHoldRefusal(s.agentOrNil(), SessionKeyFromContext(ctx)); msg != "" {
+					return ToolResult{}, fmt.Errorf("NOT started: %s", msg)
+				}
 			}
 			background := p.Context == spawnModeClone || p.Background
 
@@ -961,8 +1035,12 @@ func (s *Spawner) runBatchOneShot(ctx context.Context, mode, prompt, model strin
 	}
 	caller := crossAgentCallerFrom(ctx)
 	link, linked := spawnLinkFrom(ctx)
-	// The batch runs on a session of its own: its spend's home (#2992).
-	req.OnSession = func(k string) { noteSpawnBooking(ctx, k, "", false) }
+	// The batch runs on a session of its own: its spend's home (#2992), on
+	// the account the usage-hold gate approved (#3292).
+	req.OnSession = func(k string) {
+		s.bindSpawnAccount(ctx, k)
+		noteSpawnBooking(ctx, k, "", false)
+	}
 	if caller != "" || linked {
 		// The batch's tool calls come back over the exec bridge with only
 		// its session key (#2662): map it, while it runs, to the caller
@@ -970,6 +1048,7 @@ func (s *Spawner) runBatchOneShot(ctx context.Context, mode, prompt, model strin
 		// send_to_spawner.
 		var batchKey string
 		req.OnSession = func(k string) {
+			s.bindSpawnAccount(ctx, k)
 			noteSpawnBooking(ctx, k, "", false)
 			batchKey = k
 			if caller != "" {
@@ -1742,6 +1821,9 @@ func (s *Spawner) startBackgroundCharacter(ctx context.Context, host *Spawner, n
 		return ToolResult{}, fmt.Errorf("spawn character: create branch: %w", err)
 	}
 	running.BranchKey = branchKey
+	if host == s {
+		s.bindSpawnAccount(ctx, branchKey) // the account its gate approved (#3292)
+	}
 	if host.deps.SetNoCompact != nil {
 		host.deps.SetNoCompact(branchKey, true)
 	}
