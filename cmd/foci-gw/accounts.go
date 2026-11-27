@@ -56,9 +56,14 @@ func agentAccounts(cfg *config.Config, spec delegator.Spec, agentID string, fold
 // folder.
 func accountFor(cfg *config.Config, spec delegator.Spec, as delegator.AccountSpec) *account.Account {
 	o := account.Options{Backend: spec.Name, Spec: as}
-	if spec.Account == nil {
+	switch {
+	case spec.Account == nil:
 		// One login for all the backend's calls.
 		o.Spend = backendSpend(spec.Name)
+	case as.Dir != "":
+		// The calls whose transcript is in the login's folder (#3291): what
+		// its cap in its agents' usage pace is learned from.
+		o.Spend = folderSpend(as.Dir)
 	}
 	if spec.Supports(delegator.CapRelogin) {
 		if as.Host {
@@ -77,12 +82,29 @@ func accountFor(cfg *config.Config, spec delegator.Spec, as delegator.AccountSpe
 // in the cost ledger (#3269). With no ledger there are none, so no rate is
 // learned from them and the login has no usage pace.
 func backendSpend(backend string) func(from, to time.Time) ([]account.Spend, error) {
+	return ledgerSpend(func(l *accounting.Ledger, from, to time.Time) ([]accounting.CallCost, error) {
+		return l.BackendCosts(backend, from, to)
+	})
+}
+
+// folderSpend is the account.Options.Spend of the Claude Code login whose
+// config folder is dir: the calls whose transcript is in it (#3291). With no
+// ledger there are none, so no cap is learned from them.
+func folderSpend(dir string) func(from, to time.Time) ([]account.Spend, error) {
+	return ledgerSpend(func(l *accounting.Ledger, from, to time.Time) ([]accounting.CallCost, error) {
+		return l.FolderCosts(dir, from, to)
+	})
+}
+
+// ledgerSpend is an account.Options.Spend of the calls read reads from the
+// live cost ledger; none with no ledger.
+func ledgerSpend(read func(l *accounting.Ledger, from, to time.Time) ([]accounting.CallCost, error)) func(from, to time.Time) ([]account.Spend, error) {
 	return func(from, to time.Time) ([]account.Spend, error) {
 		l := accounting.Live()
 		if l == nil {
 			return nil, nil
 		}
-		costs, err := l.BackendCosts(backend, from, to)
+		costs, err := read(l, from, to)
 		out := make([]account.Spend, len(costs))
 		for i, c := range costs {
 			out[i] = account.Spend{At: c.BilledAt, Priced: c.USD != nil}

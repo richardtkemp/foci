@@ -3,6 +3,7 @@ package accounting
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"foci/internal/modelinfo"
@@ -163,6 +164,12 @@ func (l *Ledger) BackendCosts(backend string, from, to time.Time) ([]CallCost, e
 	if err != nil {
 		return nil, fmt.Errorf("ledger: read %s costs: %w", backend, err)
 	}
+	return scanCallCosts(rows, backend)
+}
+
+// scanCallCosts reads rows of (billed_at, cost_usd); what names the rows'
+// source in an error.
+func scanCallCosts(rows *sql.Rows, what string) ([]CallCost, error) {
 	defer func() { _ = rows.Close() }()
 	var out []CallCost
 	for rows.Next() {
@@ -171,14 +178,33 @@ func (l *Ledger) BackendCosts(backend string, from, to time.Time) ([]CallCost, e
 			billed string
 		)
 		if err := rows.Scan(&billed, &c.USD); err != nil {
-			return nil, fmt.Errorf("ledger: scan %s cost: %w", backend, err)
+			return nil, fmt.Errorf("ledger: scan %s cost: %w", what, err)
 		}
+		var err error
 		if c.BilledAt, err = time.Parse(timeLayout, billed); err != nil {
-			return nil, fmt.Errorf("ledger: %s call billed_at %q: %w", backend, billed, err)
+			return nil, fmt.Errorf("ledger: %s call billed_at %q: %w", what, billed, err)
 		}
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// FolderCosts lists the calls billed in (from, to] whose session file is in
+// dir, in billing order: the spend of the Claude Code login whose config
+// folder is dir (#3291). A call names its transcript, and a transcript is in
+// the folder of the login it ran on, so a session that moved to another
+// login has its later calls in that login's folder. A call with no session
+// file (a derived compaction or overhead row) is in no folder.
+func (l *Ledger) FolderCosts(dir string, from, to time.Time) ([]CallCost, error) {
+	prefix := strings.TrimSuffix(dir, "/") + "/"
+	rows, err := l.db.Query(`SELECT billed_at, cost_usd FROM call_costs
+		WHERE id IN (SELECT id FROM api_calls
+			WHERE billed_at > ? AND billed_at <= ? AND substr(session_file, 1, ?) = ?)
+		ORDER BY billed_at, id`, formatTime(from), formatTime(to), len(prefix), prefix)
+	if err != nil {
+		return nil, fmt.Errorf("ledger: read the costs in %s: %w", dir, err)
+	}
+	return scanCallCosts(rows, dir)
 }
 
 // SessionStats is one session's totals, for /status and /context.

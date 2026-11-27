@@ -25,15 +25,7 @@ func (f *pickFixture) use(key string, long float64, longLeft time.Duration, shor
 
 func paceAt(t *testing.T, accts []*Account, at time.Time) (float64, bool) {
 	t.Helper()
-	p := NewPool(memStore{}, accts...)
-	d := p.demandAt(at)
-	var ls []*loginPace
-	for _, a := range accts {
-		if l := newLoginPace(d, a, at); l != nil {
-			ls = append(ls, l)
-		}
-	}
-	return meanPace(ls, at)
+	return poolPace(NewPool(memStore{}, accts...).loginPaces(at), at)
 }
 
 func wantPace(t *testing.T, accts []*Account, at time.Time, want float64) {
@@ -118,10 +110,10 @@ func TestPace_NoFigure(t *testing.T) {
 	}
 }
 
-// TestPace_MeanOfLogins (#3267, Dick: "For multiple accounts per agent,
-// should follow the mean of their rate"): a login with no figure is left out,
-// an idle one counts as 0.
-func TestPace_MeanOfLogins(t *testing.T) {
+// TestPace_PoolOfLogins (#3291): an agent's pace is its pool's total use
+// over the total it can sustain; a login with no figure is left out. Here
+// both can sustain 1% an hour, so it is the mean of their paces.
+func TestPace_PoolOfLogins(t *testing.T) {
 	// 80% used, 20 h left: pace = 5h rise / 10.
 	for _, c := range []struct{ a, b, want float64 }{{16, 5, 1.05}, {16, 3, 0.95}, {16, 0, 0.8}} {
 		f, accts := newPickFixture(t, "a", "b", "nofigure")
@@ -135,8 +127,9 @@ func TestPace_MeanOfLogins(t *testing.T) {
 }
 
 // TestPace_SpentLogin (#3273, Dick: "Either count as full or null"; full): at
-// 99% or more of its 7d allowance used a login counts as 1 until its reset,
-// idle or not, alone or in the mean.
+// 99% or more of its 7d allowance used a login can sustain nothing until its
+// reset, so alone it is a pace of 1, idle or not; in a pool it adds its use
+// and nothing to what the pool can sustain (#3291).
 func TestPace_SpentLogin(t *testing.T) {
 	idle, busy := map[int]float64{60: 5, 0: 5}, map[int]float64{60: 0, 0: 40}
 	for _, c := range []struct {
@@ -159,11 +152,12 @@ func TestPace_SpentLogin(t *testing.T) {
 			t.Errorf("%s: over pace = %v, want %v", c.name, got, c.want >= 1)
 		}
 	}
-	// Dick's Q12: one login at 100%, the other at 1.9 (80% used, 20 h left).
+	// Dick's Q12: one login at 100%, the other at 1.9 (80% used, 20 h left):
+	// the pool is at the other's pace.
 	f, accts := newPickFixture(t, "spent", "b")
 	f.use("spent", 100, 20*time.Hour, idle)
 	f.use("b", 80, 20*time.Hour, map[int]float64{60: 0, 0: 19})
-	wantPace(t, accts, paceNow, 1.45)
+	wantPace(t, accts, paceNow, 1.9)
 	if !NewPool(memStore{}, accts...).OverPace(paceNow) {
 		t.Error("one login spent, the other at 1.9: not over pace")
 	}
@@ -214,7 +208,8 @@ func TestPace_UsagePattern(t *testing.T) {
 
 	d := NewPool(memStore{}, accts...).demandAt(paceNow)
 	l := newLoginPace(d, f.accts["a"], paceNow)
-	got, ok := l.at(paceNow)
+	fl, ok := l.at(paceNow)
+	got := fl.use / fl.supply
 	// Slots: 1 in 8 hours, the floor 0.3 x 1/3 = 0.1 in 16.
 	busy := (8*1.0 + 16*0.01) / (8*1.0 + 16*0.1)
 	want := 1.0 / 20 * (8*1.0 + 16*0.1) / busy
@@ -245,4 +240,106 @@ func TestBusyHour(t *testing.T) {
 	if got := (*demandProfile)(nil).busyHour(); got != 1 {
 		t.Errorf("busyHour with no history = %v, want 1", got)
 	}
+}
+
+// TestPace_DicksExample (#3291, Dick 2026-11-27: "one at 99% used and expires
+// in one hour, one at 0% used and expires in 24 hours. There's no way I will
+// use all 100% of the second account in 24 hours, so actually my situation is
+// very healthy!"): 3% of 7d an hour, all on the second login, is a pace of
+// 3 / (100 / 24) = 0.72, and not over; the mean of the two logins' paces was
+// (1 + 0.72) / 2 = 0.86, over once it reached 1. At 98% the first login adds
+// its 2% in the hour to what the pool can sustain.
+func TestPace_DicksExample(t *testing.T) {
+	for _, c := range []struct {
+		used float64
+		want float64
+	}{{99, 3 / (100.0 / 24)}, {98, 3 / (2 + 100.0/24)}} {
+		f, accts := newPickFixture(t, "a", "b")
+		f.use("a", c.used, time.Hour, map[int]float64{60: 5, 0: 5})
+		f.use("b", 0, 24*time.Hour, map[int]float64{60: 0, 0: 30}) // 30% of 5h = 3% of 7d
+		wantPace(t, accts, paceNow, c.want)
+		if NewPool(memStore{}, accts...).OverPace(paceNow) {
+			t.Errorf("first login at %v%%: over pace", c.used)
+		}
+	}
+	// At 5% of 7d an hour the second login alone would be over, but not the
+	// pool with the first at 98%: 5 / 6.17.
+	f, accts := newPickFixture(t, "a", "b")
+	f.use("a", 98, time.Hour, map[int]float64{60: 5, 0: 5})
+	f.use("b", 0, 24*time.Hour, map[int]float64{60: 0, 0: 50})
+	wantPace(t, accts, paceNow, 5/(2+100.0/24))
+}
+
+// TestPace_IdleLogin (#3291): a login idle for longer than the lookback adds
+// what it can sustain, from its last figures: 50% left 50 h from its reset is
+// 1% an hour, so the busy login's pace of 1 is a pool pace of 0.5. Before,
+// it was left out and the agent was over pace.
+func TestPace_IdleLogin(t *testing.T) {
+	f, accts := newPickFixture(t, "busy", "idle")
+	f.use("busy", 80, 20*time.Hour, map[int]float64{60: 0, 0: 10})
+	f.save("idle", ago(72*time.Hour), win{"five_hour", 3, ago(70 * time.Hour)}, win{"seven_day", 50, paceNow.Add(50 * time.Hour)})
+	wantPace(t, accts, paceNow, 0.5)
+	if NewPool(memStore{}, accts...).OverPace(paceNow) {
+		t.Error("over pace with an idle login beside a busy one at 1")
+	}
+}
+
+// capFixture is newPickFixture with each login's 7d percent per dollar
+// learned: from 60 h before paceNow, in a period that reset 20 h before it,
+// its 7d figure rose 1% an hour for 11 hours, with usdPerPercent[key] in
+// each hour (the first rise does not count). A login missing from it has no
+// dollars.
+func capFixture(t *testing.T, usdPerPercent map[string]float64, keys ...string) (*pickFixture, []*Account) {
+	t.Helper()
+	f, accts := newPickFixture(t, keys...)
+	old := ago(20 * time.Hour)
+	for _, a := range accts {
+		usd, ok := usdPerPercent[a.Key()]
+		if !ok {
+			continue
+		}
+		l := &ledger{}
+		a.spend = l.read
+		f.save(a.Key(), ago(60*time.Hour), win{"seven_day", 0, old})
+		for i := range 11 {
+			end := time.Duration(59-i) * time.Hour
+			l.at(end+30*time.Minute, usd)
+			f.save(a.Key(), ago(end), win{"seven_day", float64(i + 1), old})
+		}
+	}
+	return f, accts
+}
+
+// TestPace_Caps (#3291, Dick: "We can imply the caps! We have the data"):
+// each login weighs by its cap, its dollars per 7d percent, learned from its
+// own calls. A login of 4 times the cap with as much left can sustain 4
+// times the use, so 2% of its own 7d an hour on the small login is a pace of
+// 2 / (4 x 1 + 1) = 0.4, where equal caps would make it 2 / 2 = 1. A login
+// with no rate learned weighs as the mean of the learned caps; with none
+// learned the caps are equal.
+func TestPace_Caps(t *testing.T) {
+	f, accts := capFixture(t, map[string]float64{"big": 4, "small": 1}, "big", "small", "new")
+	for _, k := range []string{"big", "small", "new"} {
+		f.use(k, 80, 20*time.Hour, map[int]float64{60: 0, 0: map[string]float64{"small": 20}[k]})
+	}
+	caps := map[string]float64{}
+	for _, l := range NewPool(memStore{}, accts...).loginPaces(paceNow) {
+		caps[l.key] = l.cap
+	}
+	for k, want := range map[string]float64{"big": 4, "small": 1, "new": 2.5} {
+		if math.Abs(caps[k]-want) > 1e-9 {
+			t.Errorf("cap of %s = %v, want %v", k, caps[k], want)
+		}
+	}
+	// The 7d rises make a demand profile, so a login sustains its 20% left
+	// over the busy hours to the reset, the same for all three.
+	d := NewPool(memStore{}, accts...).demandAt(paceNow)
+	busy := d.profile.expected(paceNow, paceNow.Add(20*time.Hour)) / d.profile.busyHour()
+	wantPace(t, accts[:2], paceNow, 2/(4*20/busy+20/busy))
+	wantPace(t, accts, paceNow, 2/(4*20/busy+20/busy+2.5*20/busy))
+
+	f2, accts2 := newPickFixture(t, "a", "b")
+	f2.use("a", 80, 20*time.Hour, map[int]float64{60: 0, 0: 20})
+	f2.use("b", 80, 20*time.Hour, map[int]float64{60: 0, 0: 0})
+	wantPace(t, accts2, paceNow, 1)
 }

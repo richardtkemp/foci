@@ -18,8 +18,21 @@ import (
 //	the 7d use per hour it can sustain to its 7d reset
 //
 // so 1 means: if every usual hour from now on is like the last one, the 7d
-// allowance is used up exactly at its reset. An agent's pace is the mean of
-// its logins' paces.
+// allowance is used up exactly at its reset.
+//
+// An agent's pace is its pool's (#3291, Dick 2026-11-27: "this should
+// actually be a weighted mean"; "We can imply the caps!"):
+//
+//	the sum of its logins' 7d use per hour, each x its cap
+//	-------------------------------------------------------
+//	the sum of the rates they can sustain, each x its cap
+//
+// so 1 means the agent's combined 7d allowance runs out, at this rate, as its
+// logins renew. A login's cap is its dollars per 7d percent, 1 / its learned
+// 7d percent per dollar (learnSpendRate); a login with no rate learned counts
+// as the mean cap of those with one, and with none learned the caps count as
+// equal. A login with no figure is left out; an idle one adds what it can
+// sustain and no use. With one login the pool's pace is the login's.
 //
 // The use is the rise of the 5h percent times the login's learned 5h/7d
 // ratio: both figures are whole percents, and one hour of the 7d percent is
@@ -39,10 +52,13 @@ const (
 	// paceLookback bounds how far back OverPace looks for the reading that
 	// set the state of a pace between paceOff and paceOn.
 	paceLookback = 24 * time.Hour
-	// spentLevel: a login that has used this much of its 7d allowance counts
-	// as a pace of paceOn, idle or not, until its 7d reset (#3269 for a login
-	// with no 5h figure; #3273, Dick 2026-11-25 on a used-up login that counted
-	// as 0: "Either count as full or null"; full chosen).
+	// spentLevel: a login that has used this much of its 7d allowance can
+	// sustain nothing until its 7d reset, and a pool whose logins can all
+	// sustain nothing is at a pace of paceOn, idle or not (#3269 for a login
+	// with no 5h figure; #3273, Dick 2026-11-25 on a used-up login that
+	// counted as 0: "Either count as full or null"; full chosen). In a pool
+	// with another login it adds its use and nothing to what can be sustained
+	// (#3291).
 	spentLevel = 99.0
 
 	shortLength = 5 * time.Hour
@@ -59,6 +75,12 @@ func (p *Pool) OverPace(now time.Time) bool {
 	if p == nil {
 		return false
 	}
+	return overPace(p.loginPaces(now), now)
+}
+
+// loginPaces is what the paces of p's logins in the lookback from now are
+// worked out from, each with its cap; a login with no figure is left out.
+func (p *Pool) loginPaces(now time.Time) []*loginPace {
 	d := p.demandAt(now)
 	var logins []*loginPace
 	for _, a := range p.accounts {
@@ -66,7 +88,31 @@ func (p *Pool) OverPace(now time.Time) bool {
 			logins = append(logins, l)
 		}
 	}
-	return overPace(logins, now)
+	setCaps(logins, d)
+	return logins
+}
+
+// setCaps sets each login's cap: 1 / its learned 7d percent per dollar, else
+// the mean of the learned caps, else 1 (none learned: equal caps).
+func setCaps(logins []*loginPace, d *demand) {
+	var sum float64
+	n := 0
+	for _, l := range logins {
+		if r := d.spendRate[l.key]; r > 0 {
+			l.cap = 1 / r
+			sum += l.cap
+			n++
+		}
+	}
+	for _, l := range logins {
+		switch {
+		case l.cap > 0:
+		case n > 0:
+			l.cap = sum / float64(n)
+		default:
+			l.cap = 1
+		}
+	}
 }
 
 // overPace is OverPace of the logins' readings.
@@ -82,7 +128,7 @@ func overPace(logins []*loginPace, now time.Time) bool {
 	}
 	slices.SortFunc(times, func(a, b time.Time) int { return b.Compare(a) })
 	for _, t := range times {
-		pace, ok := meanPace(logins, t)
+		pace, ok := poolPace(logins, t)
 		switch {
 		case !ok || pace < paceOff:
 			return false
@@ -93,25 +139,36 @@ func overPace(logins []*loginPace, now time.Time) bool {
 	return false
 }
 
-// meanPace is the mean pace at t of the logins that have one; ok is false
-// when none has.
-func meanPace(logins []*loginPace, t time.Time) (pace float64, ok bool) {
-	var sum float64
-	n := 0
+// poolPace is the pace at t of the logins that have one, weighted by their
+// caps (see the file comment); ok is false when none has. Logins that can
+// sustain nothing (all spent) are at paceOn.
+func poolPace(logins []*loginPace, t time.Time) (pace float64, ok bool) {
+	var use, supply float64
 	for _, l := range logins {
-		if v, ok := l.at(t); ok {
-			sum += v
-			n++
+		if f, known := l.at(t); known {
+			use += f.use * l.cap
+			supply += f.supply * l.cap
+			ok = true
 		}
 	}
-	if n == 0 {
+	switch {
+	case !ok:
 		return 0, false
+	case supply <= 0:
+		return paceOn, true
 	}
-	return sum / float64(n), true
+	return use / supply, true
 }
+
+// flow is one login's side of a pace at a moment, in 7d percent per hour:
+// its use over the last paceWindow, and the use it can sustain to its 7d
+// reset (per busy hour; 0 when spent). Its own pace is use / supply.
+type flow struct{ use, supply float64 }
 
 // loginPace is what one login's pace is worked out from.
 type loginPace struct {
+	key      string
+	cap      float64 // dollars per 7d percent, or the stand-in (setCaps)
 	profile  *demandProfile
 	ratio    float64                   // the login's cap(5h) / cap(7d)
 	readings []usagelog.PercentReading // oldest first
@@ -135,8 +192,9 @@ func newLoginPace(d *demand, a *Account, now time.Time) *loginPace {
 	// and that window's 5h period from its start.
 	const span = paceLookback + paceWindow + shortLength
 	rs, err := st.PercentReadingsSince(a.Key(), now.Add(-span))
-	if err == nil && len(rs) == 0 && a.spend != nil {
-		// Idle for longer, with what is left of its 7d period the same.
+	if err == nil && len(rs) == 0 {
+		// Idle for longer, with what is left of its 7d period the same: it
+		// adds what it can sustain to its pool (#3291).
 		var cur usagelog.Current
 		if cur, err = st.Current(a.Key(), now); err == nil {
 			for _, w := range cur.Windows {
@@ -153,7 +211,7 @@ func newLoginPace(d *demand, a *Account, now time.Time) *loginPace {
 	if len(rs) == 0 {
 		return nil
 	}
-	l := &loginPace{profile: d.profile, ratio: d.shortRatio(a.Key()), readings: rs, short: rises(rs, isShort)}
+	l := &loginPace{key: a.Key(), profile: d.profile, ratio: d.shortRatio(a.Key()), readings: rs, short: rises(rs, isShort)}
 	if i := slices.IndexFunc(rs, func(r usagelog.PercentReading) bool { return isShort(r.Window) }); i >= 0 {
 		l.shortAt = rs[i].ReceivedAt
 	}
@@ -164,10 +222,10 @@ func newLoginPace(d *demand, a *Account, now time.Time) *loginPace {
 	return l
 }
 
-// at is the login's pace at t, from the figures received by then; ok is
+// at is the login's flow at t, from the figures received by then; ok is
 // false unless they hold both a 5h and a 7d figure, or a 7d figure and the
 // login's dollars (spendPace).
-func (l *loginPace) at(t time.Time) (pace float64, ok bool) {
+func (l *loginPace) at(t time.Time) (f flow, ok bool) {
 	if l.shortAt.IsZero() || l.shortAt.After(t) {
 		return l.spendPace(t)
 	}
@@ -175,30 +233,27 @@ func (l *loginPace) at(t time.Time) (pace float64, ok bool) {
 	for n--; n >= 0 && !isLong(l.readings[n].Window); n-- {
 	}
 	if n < 0 {
-		return 0, false
+		return flow{}, false
 	}
 	left, reset := longLeft(l.readings[n].Percent, l.readings[n].ResetsAt, t)
-	if 100-left >= spentLevel {
-		return paceOn, true
-	}
-	return l.pace(l.shortUse(t.Add(-paceWindow), t)*l.ratio, left, reset, t), true
+	return l.flow(l.shortUse(t.Add(-paceWindow), t)*l.ratio, left, reset, t), true
 }
 
 // spendPace is at for a login with no 5h figure.
-func (l *loginPace) spendPace(t time.Time) (pace float64, ok bool) {
+func (l *loginPace) spendPace(t time.Time) (f flow, ok bool) {
 	n := sort.Search(len(l.levels), func(i int) bool { return l.levels[i].at.After(t) })
 	if n == 0 {
-		return 0, false // no 7d figure, or no dollars (spend is nil)
+		return flow{}, false // no 7d figure, or no dollars (spend is nil)
 	}
 	left, reset := longLeft(l.levels[n-1].percent, l.levels[n-1].reset, t)
-	if 100-left >= spentLevel {
-		return paceOn, true
-	}
 	use, ok := l.spend.percent(t.Add(-paceWindow), t)
 	if !ok {
-		return 0, false
+		if 100-left < spentLevel {
+			return flow{}, false
+		}
+		use = 0 // spent: over pace, whatever its use (#3273)
 	}
-	return l.pace(use, left, reset, t), true
+	return l.flow(use, left, reset, t), true
 }
 
 // longLeft is the 7d allowance left at t and when it resets, of a figure that
@@ -215,11 +270,15 @@ func longLeft(percent float64, reset, t time.Time) (left float64, next time.Time
 	return left, next
 }
 
-// pace is the pace of use (7d percent, over the paceWindow before t) with
-// left to last until reset.
-func (l *loginPace) pace(use, left float64, reset, t time.Time) float64 {
-	busyHours := l.profile.expected(t, reset) / l.profile.busyHour()
-	return use / paceWindow.Hours() * busyHours / left
+// flow is the flow of use (7d percent, over the paceWindow before t) with
+// left to last until reset; a spent login (spentLevel) sustains nothing.
+func (l *loginPace) flow(use, left float64, reset, t time.Time) flow {
+	f := flow{use: use / paceWindow.Hours()}
+	if 100-left < spentLevel {
+		busyHours := l.profile.expected(t, reset) / l.profile.busyHour()
+		f.supply = left / busyHours
+	}
+	return f
 }
 
 // shortUse is the 5h percent used in [from, to], of the rises known by to

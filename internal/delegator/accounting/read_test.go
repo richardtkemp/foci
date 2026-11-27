@@ -205,3 +205,40 @@ func TestBackendCosts(t *testing.T) {
 		}
 	}
 }
+
+// TestFolderCosts (#3291): the calls billed in (from, to] whose session file
+// is in the folder, in billing order. A folder whose name starts with the
+// other's is another folder, and a call with no session file is in none.
+func TestFolderCosts(t *testing.T) {
+	l, _ := openLedger(t)
+	mustUpdate(t, l, func(tx *Tx) error { return tx.RecordTurn(turn("T")) })
+	at := func(key, file string, m int) Call {
+		c := call(key, modelinfo.Tokens{modelinfo.ClassInput: 1000 * (m + 1)})
+		c.SessionFile, c.BilledAt = file, t0.Add(time.Duration(m)*time.Minute)
+		return c
+	}
+	book(t, l,
+		at("a", "/u/.claude/projects/p/s1.jsonl", 0),
+		at("c", "/u/.claude/projects/p/s1/subagents/x.jsonl", 2),
+		at("b", "/u/.claude/projects/p/s2.jsonl", 1),
+		at("s", "/u/.claude-stuart/projects/p/s3.jsonl", 2),
+		at("n", "", 2),
+		at("e", "/u/.claude/projects/p/s1.jsonl", 4),
+	)
+	for _, dir := range []string{"/u/.claude", "/u/.claude/"} {
+		got, err := l.FolderCosts(dir, t0, t0.Add(3*time.Minute))
+		if err != nil || len(got) != 2 {
+			t.Fatalf("%s: calls = %+v (%v), want the 2 in the folder after t0 up to t0+3m", dir, got, err)
+		}
+		for i, c := range got {
+			m := i + 1
+			want, _ := modelinfo.CostAsOf("claude-opus-5", c.BilledAt, modelinfo.Tokens{modelinfo.ClassInput: 1000 * (m + 1)})
+			if !c.BilledAt.Equal(t0.Add(time.Duration(m)*time.Minute)) || c.USD == nil || !near(*c.USD, want) {
+				t.Errorf("%s: call %d = %v $%v, want t0+%dm $%v", dir, i, c.BilledAt, c.USD, m, want)
+			}
+		}
+	}
+	if got, err := l.FolderCosts("/u/.claude-stuart", t0, t0.Add(3*time.Minute)); err != nil || len(got) != 1 {
+		t.Errorf("the other folder's calls = %+v (%v), want 1", got, err)
+	}
+}

@@ -62,7 +62,9 @@ type Options struct {
 	// func = no store.
 	History func() *usagelog.Store
 	// Spend lists the account's API calls billed in (from, to], oldest first
-	// (pace_spend.go); nil when the calls of this one account are not known.
+	// (pace_spend.go; the 7d percent per dollar learned from them is also the
+	// login's cap in its pool's usage pace, #3291); nil when the calls of this
+	// one account are not known.
 	Spend func(from, to time.Time) ([]Spend, error)
 }
 

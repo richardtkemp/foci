@@ -14,9 +14,12 @@ import (
 // percent per dollar (learnSpendRate). The rest of the pace is pace.go's. At
 // spentLevel used or more the login is over pace until its reset.
 //
-// Only a login that is all of its backend's (Options.Spend) has a spend: the
-// ledger names a call's backend, not its login. Use outside foci is not in
-// the ledger and is not seen.
+// A login's dollars (Options.Spend) are its backend's calls when it is the
+// backend's one login, else, for a Claude Code login, the calls whose
+// transcript is in its config folder (#3291). Such a login has a 5h figure,
+// so its rate only sets its cap in its pool (pace.go). Use outside foci is
+// not in the ledger and is not seen: it makes the rate too high and the cap
+// too small.
 
 const (
 	// A rate is learned from the newest rateMaxRise percent of 7d use, and

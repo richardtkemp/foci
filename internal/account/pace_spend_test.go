@@ -143,7 +143,8 @@ func TestSpendPace_Unpriced(t *testing.T) {
 // TestSpendPace_Spent (ruled): at 99% or more used a login with no 5h figure is
 // over pace until its reset: idle, with no rate learned, when its last figure
 // is days old, when the figure goes back by one, and when codex repeats an old
-// figure. In the mean of a pool it counts as 1.
+// figure. In a pool it adds nothing to what the pool can sustain (#3291), so
+// the pool is at the other login's pace.
 func TestSpendPace_Spent(t *testing.T) {
 	type fig struct {
 		before time.Duration
@@ -181,7 +182,7 @@ func TestSpendPace_Spent(t *testing.T) {
 	accts[0].spend = (&ledger{}).read
 	f.save("codex", ago(time.Hour), win{"codex/7d", 100, paceNow.Add(time.Hour)})
 	f.use("b", 95, 20*time.Hour, map[int]float64{60: 5, 0: 15}) // pace 4
-	wantPace(t, accts, paceNow, 2.5)
+	wantPace(t, accts, paceNow, 4)
 }
 
 // TestSpendPace_Hysteresis: between the thresholds the state is the one at
