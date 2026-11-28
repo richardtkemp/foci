@@ -2,12 +2,14 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"strings"
 	"sync"
 	"time"
 
+	"foci/internal/account"
 	"foci/internal/delegator"
 )
 
@@ -73,6 +75,29 @@ type UsageRead struct {
 
 // UsageReader returns the current allowance reading of one agent's backend.
 type UsageReader func(ctx context.Context) UsageRead
+
+// AccountUsageReader is an agent's spawn allowance reader (SpawnDeps.Usage)
+// over the readers of its accounts: it reads the account the spawn runs on.
+// That is the account its usage-hold gate approved (SpawnAccountFrom: a
+// spawn of the agent's own on a session of its own, #3292), else the account
+// of ctx's session in accountFor (the agent's pool): the spawner's for a
+// clone, which runs on its spawner's account, and the agent's cross-agent
+// root for a spawn as this agent from another agent (#3296), whose ctx the
+// spawn tool puts on that root. A session on no account of the agent reads
+// an error, and the spawn runs with its allowance unchecked.
+func AccountUsageReader(accountFor func(sessionKey string) *account.Account, readers map[*account.Account]UsageReader) UsageReader {
+	return func(ctx context.Context) UsageRead {
+		acct := SpawnAccountFrom(ctx)
+		if acct == nil && accountFor != nil {
+			acct = accountFor(SessionKeyFromContext(ctx))
+		}
+		read := readers[acct]
+		if read == nil {
+			return UsageRead{Err: errors.New("the asking session is on no account of this agent")}
+		}
+		return read(ctx)
+	}
+}
 
 // UsageRecorder stores one successful usage read in the usage history
 // (#3103): source is delegator.UsageSourceScheduled for a scheduled read,

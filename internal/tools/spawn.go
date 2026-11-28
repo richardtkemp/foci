@@ -813,8 +813,16 @@ func (s *Spawner) SpawnTool() *Tool {
 			}
 
 			// The allowance of the backend the spawn runs on: the target's for a
-			// spawn as another agent, against the caller's reserve.
-			note, err := host.checkAllowance(ctx, s.reservePercent(), p.UseReserve)
+			// spawn as another agent, against the caller's reserve. The
+			// target's reader reads the account of the session it is asked
+			// about, so it is asked about the target's cross-agent root, the
+			// session its hold gate asked about above: the caller's session
+			// is in another agent's pool, where it is on no account (#3296).
+			allowCtx := ctx
+			if host != s {
+				allowCtx = WithSessionKey(ctx, session.CrossAgentSpawnRoot(host.deps.AgentID))
+			}
+			note, err := host.checkAllowance(allowCtx, s.reservePercent(), p.UseReserve)
 			if err != nil {
 				return ToolResult{}, err
 			}

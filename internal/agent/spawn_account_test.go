@@ -59,9 +59,18 @@ type branchRecordingAgent struct {
 	*Agent
 	beforeBranch func() // runs as the branch is made, after the gate
 	branch       string // the last branch made
+	// block, when set, keeps each turn running until it is closed or the
+	// turn's ctx ends (a running spawn, for spawn_send).
+	block chan struct{}
 }
 
-func (b *branchRecordingAgent) HandleMessage(context.Context, string, []string, []platform.Attachment) error {
+func (b *branchRecordingAgent) HandleMessage(ctx context.Context, _ string, _ []string, _ []platform.Attachment) error {
+	if b.block != nil {
+		select {
+		case <-b.block:
+		case <-ctx.Done():
+		}
+	}
 	return nil
 }
 
@@ -77,11 +86,11 @@ func keys(accts []*account.Account) []string {
 // whose batches run on runner and whose background character spawns run on
 // branch (made by the agent, then asked about once, as a first use would).
 func spawnAccountSetup(t *testing.T) (a *Agent, accA, accB *account.Account, runner *accountBatchRunner, spawn func(mode string) (string, error)) {
-	a, accA, accB, runner, spawn, _ = spawnAccountSetupBG(t)
+	a, accA, accB, runner, spawn, _, _ = spawnAccountSetupBG(t)
 	return
 }
 
-func spawnAccountSetupBG(t *testing.T) (a *Agent, accA, accB *account.Account, runner *accountBatchRunner, spawn func(mode string) (string, error), bg *branchRecordingAgent) {
+func spawnAccountSetupBG(t *testing.T) (a *Agent, accA, accB *account.Account, runner *accountBatchRunner, spawn func(mode string) (string, error), bg *branchRecordingAgent, sp *tools.Spawner) {
 	t.Helper()
 	reg := usagehold.New()
 	a = holdAgent(reg, "claude-code")
@@ -91,7 +100,7 @@ func spawnAccountSetupBG(t *testing.T) (a *Agent, accA, accB *account.Account, r
 	runner = &accountBatchRunner{a: a}
 	bg = &branchRecordingAgent{Agent: a}
 	branches := 0
-	sp := tools.NewSpawner(tools.SpawnDeps{
+	sp = tools.NewSpawner(tools.SpawnDeps{
 		AgentID:    "multi",
 		MaxInherit: 2,
 		Tracker:    tools.NewSpawnTracker(),
@@ -127,7 +136,7 @@ func spawnAccountSetupBG(t *testing.T) (a *Agent, accA, accB *account.Account, r
 		res, err := tool.Execute(tools.WithSessionKey(context.Background(), multiOnA), params)
 		return res.Text, err
 	}
-	return a, accA, accB, runner, spawn, bg
+	return a, accA, accB, runner, spawn, bg, sp
 }
 
 func holdAt(acct *account.Account, lift time.Duration) {
@@ -222,7 +231,7 @@ func TestSpawn_RunsOnTheAccountItsGateApproved(t *testing.T) {
 // still on B, stored so. (Its turn then waits for B's lift, as the hold of
 // the account it runs on decides.)
 func TestSpawn_BackgroundCharacterRunsOnTheAccountItsGateApproved(t *testing.T) {
-	a, accA, accB, _, spawn, bg := spawnAccountSetupBG(t)
+	a, accA, accB, _, spawn, bg, _ := spawnAccountSetupBG(t)
 	holdAt(accA, time.Hour)
 	bg.beforeBranch = func() { holdAt(accB, 3*time.Hour) }
 	if _, err := spawn("character-bg"); err != nil {

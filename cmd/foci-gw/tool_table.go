@@ -838,23 +838,16 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 							app.OpenSessionsForAgent, hist))
 				}
 			}
-			// The check reads the account the spawn runs on: the one its
-			// usage-hold gate approved (a spawn on a session of its own takes
-			// the pool's pick, #3292), else the account of the session that
-			// asks (a clone runs on its spawner's account).
-			spawnDeps.Usage = func(ctx context.Context) tools.UsageRead {
-				acct := tools.SpawnAccountFrom(ctx)
-				if acct == nil && d.agLazy != nil {
+			// The check reads the account the spawn runs on (#3292, #3296):
+			// see tools.AccountUsageReader.
+			spawnDeps.Usage = tools.AccountUsageReader(func(sessionKey string) *account.Account {
+				if d.agLazy != nil {
 					if ag := d.agLazy(); ag != nil {
-						acct = ag.AccountFor(tools.SessionKeyFromContext(ctx))
+						return ag.AccountFor(sessionKey)
 					}
 				}
-				read := readers[acct]
-				if read == nil {
-					return tools.UsageRead{Err: errors.New("the asking session is on no account of this agent")}
-				}
-				return read(ctx)
-			}
+				return nil
+			}, readers)
 			// #3151: the app's new-conversation picker shows the agent's
 			// allowance from its stored figures. A conversation that does
 			// not exist yet has no session to ask: its main figures are the

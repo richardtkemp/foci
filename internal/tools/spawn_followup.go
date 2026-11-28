@@ -83,6 +83,9 @@ func (s *Spawner) send(ctx context.Context, idOrBranch, message string) (ToolRes
 		return ToolResult{}, fmt.Errorf("spawn_send: agent not available")
 	}
 
+	// Gated on the account the spawn runs on (its branch's, on the agent
+	// that runs it), never the caller's: a raw, character or explore spawn
+	// can run on another account than its spawner (#3292, #3296).
 	if msg := usageHoldRefusal(agent, snap.BranchKey); msg != "" {
 		return ToolResult{}, fmt.Errorf("NOT delivered to spawn %s: %s", snap.ID, msg)
 	}
