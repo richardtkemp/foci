@@ -79,11 +79,12 @@ type UsageReader func(ctx context.Context) UsageRead
 // AccountUsageReader is an agent's spawn allowance reader (SpawnDeps.Usage)
 // over the readers of its accounts: it reads the account the spawn runs on.
 // That is the account its usage-hold gate approved (SpawnAccountFrom: a
-// spawn of the agent's own on a session of its own, #3292), else the account
-// of ctx's session in accountFor (the agent's pool): the spawner's for a
-// clone, which runs on its spawner's account, and the agent's cross-agent
-// root for a spawn as this agent from another agent (#3296), whose ctx the
-// spawn tool puts on that root. A session on no account of the agent reads
+// spawn on a session of its own, #3292, a spawn as this agent from another
+// agent included, #3297), else the account of ctx's session in accountFor
+// (the agent's pool): the spawner's for a clone, which runs on its spawner's
+// account, and the agent's cross-agent root for a spawn as this agent from
+// another agent whose agent picks no account (#3296), whose ctx the spawn
+// tool puts on that root. A session on no account of the agent reads
 // an error, and the spawn runs with its allowance unchecked.
 func AccountUsageReader(accountFor func(sessionKey string) *account.Account, readers map[*account.Account]UsageReader) UsageReader {
 	return func(ctx context.Context) UsageRead {

@@ -108,9 +108,11 @@ func (s *Spawner) agentOrNil() SpawnAgent {
 // new spawn of the agent's own that copies no transcript (raw, character,
 // explore) (#3292, Dick 2026-11-27 16:14: "It doesn't matter about the hold
 // on the parent's account. If there is a valid target, spawns should be
-// permitted"). Such a spawn runs on a session of its own, which takes the
-// pool's pick (#3246), so the gate asks about that account, never about the
-// spawner's. *agent.Agent implements it.
+// permitted"), and of a spawn as another agent, asked of the target (#3297).
+// Such a spawn runs on a session of its own, which takes the pool's pick
+// (#3246), so the gate asks about that account, never about the spawner's
+// (nor, for a spawn as another agent, the target's cross-agent root's).
+// *agent.Agent implements it.
 type SpawnAccountPicker interface {
 	// SpawnAccount is the account a new spawn would run on now (the pick)
 	// and why no spawn may start there now ("" when it may: the account is
@@ -132,9 +134,11 @@ func withSpawnAccount(ctx context.Context, acct *account.Account) context.Contex
 }
 
 // SpawnAccountFrom is the account the usage-hold gate approved for the spawn
-// ctx starts (#3292), nil when none was chosen (a clone, a spawn as another
-// agent, an agent with no account): the spawn then runs on its spawner's
-// account or the target's. The allowance check reads this account's usage.
+// ctx starts (#3292; for a spawn as another agent, one of the target's
+// accounts, #3297), nil when none was chosen (a clone, an agent with no
+// account or no SpawnAccountPicker): the spawn then runs on its spawner's
+// account or the target root's. The allowance check reads this account's
+// usage.
 func SpawnAccountFrom(ctx context.Context) *account.Account {
 	a, _ := ctx.Value(spawnAccountKey{}).(*account.Account)
 	return a
@@ -155,6 +159,12 @@ func (s *Spawner) bindSpawnAccount(ctx context.Context, sessionKey string) {
 	if err := p.BindSpawnAccount(sessionKey, acct); err != nil {
 		spawnLog.Warnf("agent=%s spawn session %s: put it on account %s, which its usage-hold gate approved: %v", s.deps.AgentID, sessionKey, acct.Key(), err)
 	}
+}
+
+// crossAgentHeld is the refusal of a spawn as agentID whose account(s) hold:
+// the target's hold, not the caller's (#3220 problem 4).
+func crossAgentHeld(agentID, msg string) error {
+	return fmt.Errorf("NOT started: the agent you asked to spawn, %s, is held (its account's hold, not yours): %s", agentID, msg)
 }
 
 // usageHoldRefusal is the hold reason of sessionKey on agent, "" when it may
@@ -769,9 +779,11 @@ func (s *Spawner) SpawnTool() *Tool {
 			}
 			// The usage hold (#2491): no new spawn while the account it runs
 			// on holds. A spawn as another agent runs on the TARGET's account
-			// (Dick 2026-11-21, #3220 Q-3220a: "The target agent's hold"),
-			// under its cross-agent root, so the target is asked about that
-			// root: never about the caller's session, which is in another
+			// (Dick 2026-11-21, #3220 Q-3220a: "The target agent's hold"):
+			// on a session of its own under the target's cross-agent root,
+			// which takes the target pool's pick (#3246), so the target is
+			// asked for that pick, and the spawn's session is put on it
+			// (#3297); never about the caller's session, which is in another
 			// agent's pool (asking moved it onto the target's account).
 			// A clone copies the caller's transcript, so it runs on the
 			// caller's account (#3246) and is asked about the caller's
@@ -780,8 +792,19 @@ func (s *Spawner) SpawnTool() *Tool {
 			// and its session is put on it (#3292).
 			switch {
 			case host != s:
-				if msg := usageHoldRefusal(host.agentOrNil(), session.CrossAgentSpawnRoot(host.deps.AgentID)); msg != "" {
-					return ToolResult{}, fmt.Errorf("NOT started: the agent you asked to spawn, %s, is held (its account's hold, not yours): %s", host.deps.AgentID, msg)
+				target := host.agentOrNil()
+				if picker, ok := target.(SpawnAccountPicker); ok {
+					acct, msg := picker.SpawnAccount()
+					if msg != "" {
+						return ToolResult{}, crossAgentHeld(host.deps.AgentID, msg)
+					}
+					if acct != nil {
+						ctx = withSpawnAccount(ctx, acct)
+					}
+					break
+				}
+				if msg := usageHoldRefusal(target, session.CrossAgentSpawnRoot(host.deps.AgentID)); msg != "" {
+					return ToolResult{}, crossAgentHeld(host.deps.AgentID, msg)
 				}
 			case p.Context != spawnModeClone:
 				if picker, ok := s.agentOrNil().(SpawnAccountPicker); ok {
@@ -814,10 +837,11 @@ func (s *Spawner) SpawnTool() *Tool {
 
 			// The allowance of the backend the spawn runs on: the target's for a
 			// spawn as another agent, against the caller's reserve. The
-			// target's reader reads the account of the session it is asked
-			// about, so it is asked about the target's cross-agent root, the
-			// session its hold gate asked about above: the caller's session
-			// is in another agent's pool, where it is on no account (#3296).
+			// reader reads the account the gate approved (SpawnAccountFrom,
+			// #3297), else the account of the session it is asked about: for
+			// a spawn as another agent the target's cross-agent root, never
+			// the caller's session, which is in another agent's pool, where
+			// it is on no account (#3296).
 			allowCtx := ctx
 			if host != s {
 				allowCtx = WithSessionKey(ctx, session.CrossAgentSpawnRoot(host.deps.AgentID))
@@ -1829,9 +1853,9 @@ func (s *Spawner) startBackgroundCharacter(ctx context.Context, host *Spawner, n
 		return ToolResult{}, fmt.Errorf("spawn character: create branch: %w", err)
 	}
 	running.BranchKey = branchKey
-	if host == s {
-		s.bindSpawnAccount(ctx, branchKey) // the account its gate approved (#3292)
-	}
+	// The account its gate approved, on the agent that runs it (#3292;
+	// the target's pool for a spawn as another agent, #3297).
+	host.bindSpawnAccount(ctx, branchKey)
 	if host.deps.SetNoCompact != nil {
 		host.deps.SetNoCompact(branchKey, true)
 	}

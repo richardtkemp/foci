@@ -407,10 +407,9 @@ func (inb *sessionInbox) takeUsageRelease() []Envelope {
 // UsageHoldRefusal is tools.UsageHoldRefuser: why sessionKey may start no
 // spawn that runs on its account (a clone, which copies its transcript), and
 // spawn_send may not reach one of its spawns, now; "" when its account is
-// open. sessionKey is one of this agent's sessions; a spawn as this agent
-// from another agent asks about this agent's cross-agent root (#3220). Any
-// other spawn of the agent's own runs on the pick and asks SpawnAccount
-// (#3292). The reason names the account when it has a name (#3220 problem 4).
+// open. sessionKey is one of this agent's sessions. Any other spawn, of the
+// agent's own (#3292) or as this agent from another agent (#3297), runs on
+// the pick and asks SpawnAccount. The reason names the account when it has a name (#3220 problem 4).
 func (a *Agent) UsageHoldRefusal(sessionKey string) string {
 	return accountHoldRefusal(a.AccountFor(sessionKey))
 }
@@ -431,10 +430,11 @@ func accountHoldRefusal(acct *account.Account) string {
 var _ tools.SpawnAccountPicker = (*Agent)(nil)
 
 // SpawnAccount is tools.SpawnAccountPicker (#3292): the account a new spawn
-// of the agent's own that copies no transcript would run on now (the pool's
-// pick, #3246, which passes over a held account while another is open), and
-// why it may not start there ("" when the account is open). The hold of the
-// spawner's own account plays no part (Dick 2026-11-27 16:14). When the pick
+// that copies no transcript (of the agent's own, or as this agent from
+// another agent, #3297) would run on now (the pool's pick, #3246, which
+// passes over a held account while another is open), and why it may not
+// start there ("" when the account is open). The hold of the spawner's own
+// account plays no part (Dick 2026-11-27 16:14). When the pick
 // holds, no account the spawn could run on is open: the reason then names
 // every account of a pool of two or more, with why each cannot take it.
 func (a *Agent) SpawnAccount() (*account.Account, string) {
